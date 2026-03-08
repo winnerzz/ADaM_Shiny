@@ -1,0 +1,29 @@
+Dataset,Variable,Label,Type,Source,Derivation
+ADAE,STUDYID,Study Identifier,Copied,SDTM.AE.STUDYID,Copied from source
+ADAE,USUBJID,Unique Subject Identifier,Copied,SDTM.AE.USUBJID,Copied from source
+ADAE,SUBJID,Subject Identifier for the Study,Copied,SDTM.DM.SUBJID (via ADSL),Copied from source
+ADAE,AESEQ,AE Sequence Number,Copied,SDTM.AE.AESEQ,Copied from source
+ADAE,TRT01A,Actual Treatment for Period 01,Copied,SDTM.DM.ACTARM (via ADSL),Copied from source
+ADAE,TRT01AN,Actual Treatment for Period 01 (N),Copied,,Copied from source
+ADAE,TRT01P,Planned Treatment for Period 01,Copied,SDTM.DM.ARM (via ADSL),Copied from source
+ADAE,TRT01PN,Planned Treatment for Period 01 (N),Copied,,Copied from source
+ADAE,AESPID,Sponsor-Defined Identifier,Copied,SDTM.AE.AESPID,Copied from source
+ADAE,AETERM,Reported Term for the Adverse Event,Copied,SDTM.AE.AETERM,Copied from source
+ADAE,AEDECOD,Dictionary-Derived Term,Copied,SDTM.AE.AEDECOD,Copied from source
+ADAE,ASTDT,Analysis Start Date,Derived,,ASTDT = AESTDTC (character ISO date)
+ADAE,AENDT,Analysis End Date,Derived,,AENDT = AEENDTC (character ISO date; blank if missing)
+ADAE,ASTDY,Analysis Start Relative Day,Derived,,ASTDY = (ASTDT - TRTSDT) + 1 (days; character; may be <=0)
+ADAE,AENDY,Analysis End Relative Day,Derived,,AENDY = (AENDT - TRTSDT) + 1 (days; character; may be <=0)
+ADAE,AESEV,Severity/Intensity,Copied,SDTM.AE.AESEV,Copied from source
+ADAE,ASEV,Analysis Severity,Derived,,ASEV = AESEV
+ADAE,ASEVN,Analysis Severity (N),Derived,,"ASEVN = numeric code for ASEV (MILD=1, MODERATE=2, SEVERE=3) stored as character"
+ADAE,AEREL,Causality,Copied,SDTM.AE.AEREL,Copied from source
+ADAE,RELGR1,Relationship Group 1,Derived,,"RELGR1 = 'RELATED' if AEREL in (RELATED, POSSIBLY RELATED) else 'NOT RELATED'"
+ADAE,RELGR1N,Relationship Group 1 (N),Derived,,"RELGR1N = numeric code for RELGR1 (RELATED=1, NOT RELATED=0) stored as character"
+ADAE,AETOXGR,Toxicity Grade,Copied,SDTM.AE.AETOXGR,Copied from source
+ADAE,ATOXGR,Analysis Toxicity Grade,Derived,,ATOXGR = AETOXGR
+ADAE,ATOXGRN,Analysis Toxicity Grade (N),Derived,,ATOXGRN = numeric(AETOXGR) stored as character
+ADAE,AESER,Serious Event,Copied,SDTM.AE.AESER,Copied from source
+ADAE,AESDTH,Results in Death Flag,Copied,SDTM.AE.AESDTH,Copied from source
+ADAE,AEOUT,Outcome of Adverse Event,Copied,SDTM.AE.AEOUT,Copied from source
+ADAE,TRTEMFL,Treatment Emergent Flag,Derived,,TRTEMFL = 'Y' if ASTDT >= TRTSDT else 'N'
