@@ -42,8 +42,8 @@ The app follows a flat 4-file structure (no R package, no modules):
 ## Sample Data
 
 Included CSV files for testing:
-- SDTM: `dm.csv`, `ex.csv`, `ae.csv`
-- Specs: `ads_adsl_full.csv`, `ads_adae_full.csv`
+- SDTM: `demo/dm.csv`, `demo/ex.csv`, `demo/ae.csv`
+- Specs: `demo/ads_adsl_full.csv`, `demo/ads_adae_full.csv`
 
 ## LLM Provider Configuration
 

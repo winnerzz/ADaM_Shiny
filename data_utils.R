@@ -42,14 +42,14 @@ dy_char <- function(d, ref) {
 #         2. 自动识别并清除所有 *DTC 日期列中的 Excel 前置单引号
 #         3. 返回命名列表，方便后续函数按名称取用
 # 参数：
-#   dm_path — DM（人口统计）CSV 文件路径，默认 "dm.csv"
-#   ex_path — EX（用药暴露）CSV 文件路径，默认 "ex.csv"
-#   ae_path — AE（不良事件）CSV 文件路径，默认 "ae.csv"
+#   dm_path — DM（人口统计）CSV 文件路径，默认 "demo/dm.csv"
+#   ex_path — EX（用药暴露）CSV 文件路径，默认 "demo/ex.csv"
+#   ae_path — AE（不良事件）CSV 文件路径，默认 "demo/ae.csv"
 # 返回：命名列表 list(dm = ..., ex = ..., ae = ...)
 # -----------------------------------------------------------------------------
-load_sdtm_data <- function(dm_path = "dm.csv",
-                           ex_path = "ex.csv",
-                           ae_path = "ae.csv") {
+load_sdtm_data <- function(dm_path = "demo/dm.csv",
+                           ex_path = "demo/ex.csv",
+                           ae_path = "demo/ae.csv") {
 
   # --- 1. 读取三个 SDTM CSV 文件，全部以字符型读入 ---
   # 使用 col_types = cols(.default = col_character()) 是关键：
