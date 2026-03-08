@@ -25,7 +25,7 @@
 
 ## 项目结构
 
-\`\`\`
+```
 ADaM_Shiny/
 ├── app.R           # 入口文件：安装依赖、加载模块、启动 Shiny 应用
 ├── ui.R            # UI 定义（bslib 页面布局，侧边栏 + 多 Tab 主面板）
@@ -38,7 +38,7 @@ ADaM_Shiny/
     ├── ae.csv              # SDTM AE 域示例
     ├── ads_adsl_full.csv   # ADSL Specification 示例
     └── ads_adae_full.csv   # ADAE Specification 示例
-\`\`\`
+```
 
 ---
 
@@ -51,13 +51,15 @@ ADaM_Shiny/
 
 ### 运行方式
 
-\`\`\`r
-# 方式一：在 R Console 中运行
+```r
+# 在 R Console 中运行
 shiny::runApp(".")
+```
 
-# 方式二：在终端中运行
+```bash
+# 或在终端中运行
 Rscript app.R
-\`\`\`
+```
 
 首次运行时，`app.R` 会自动检测并安装以下依赖包（无需手动安装）：
 
