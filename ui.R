@@ -398,14 +398,12 @@ ui <- page_sidebar(
       div(div(class="brand-title","ADaM Builder"), div(class="brand-sub","SDTM → ADaM  ·  AI-Assisted"))
     ),
 
-    # ── SDTM 上传 ────────────────────────────────────────────────────────────
+    # ── [U-1] SDTM 上传（配置驱动，动态渲染）────────────────────────────────
     div(class="upload-label", bs_icon("database",size="0.7rem"), " SDTM 数据集"),
-    div(fileInput("file_dm",NULL,accept=".csv",placeholder="DM — 人口统计 (.csv)"),
-        div(class="hint-text","Demographics · dm.csv")),
-    div(fileInput("file_ex",NULL,accept=".csv",placeholder="EX — 用药暴露 (.csv)"),
-        div(class="hint-text","Exposure · ex.csv")),
-    div(fileInput("file_ae",NULL,accept=".csv",placeholder="AE — 不良事件 (.csv)"),
-        div(class="hint-text","Adverse Events · ae.csv")),
+    # 域选择复选框（基础域 / 扩展域），由 server.R output$sdtm_domain_selector 渲染
+    uiOutput("sdtm_domain_selector"),
+    # 文件上传面板，依 rv$active_domains 动态生成，由 server.R output$sdtm_upload_panel 渲染
+    uiOutput("sdtm_upload_panel"),
 
     # ── [新增] 已上传文件状态卡片 ──────────────────────────────────────────
     uiOutput("uploaded_files_list"),
@@ -535,22 +533,12 @@ ui <- page_sidebar(
       )
     ),
 
-    # Tab 3 ── 输出数据集
+    # Tab 3 ── 输出数据集（[U-2] 改为动态渲染，支持任意数量的 ADaM 数据集）
     nav_panel(
       title = tagList(bs_icon("table"), " 输出数据集"),
       value = "tab_output",
-      navset_card_underline(id="output_subtabs",
-        nav_panel(title=tagList(bs_icon("person-lines-fill")," ADSL"),value="subtab_adsl",
-          card(card_header(layout_columns(col_widths=c(7,5),
-            div(style="display:flex;align-items:center;gap:0.6rem;",span("Subject-Level Analysis Dataset"),uiOutput("adsl_row_badge")),
-            div(style="text-align:right;",downloadButton("dl_adsl",tagList(bs_icon("download",size="0.8rem")," 下载 ADSL.csv"),class="btn-download"))
-          )),DTOutput("tbl_adsl"),uiOutput("adsl_placeholder"))),
-        nav_panel(title=tagList(bs_icon("clipboard2-x")," ADAE"),value="subtab_adae",
-          card(card_header(layout_columns(col_widths=c(7,5),
-            div(style="display:flex;align-items:center;gap:0.6rem;",span("Adverse Events Analysis Dataset"),uiOutput("adae_row_badge")),
-            div(style="text-align:right;",downloadButton("dl_adae",tagList(bs_icon("download",size="0.8rem")," 下载 ADAE.csv"),class="btn-download"))
-          )),DTOutput("tbl_adae"),uiOutput("adae_placeholder")))
-      )
+      # 标签页内容由 server.R output$output_dataset_tabs 动态生成
+      uiOutput("output_dataset_tabs")
     )
   )
 )

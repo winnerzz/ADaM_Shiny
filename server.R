@@ -19,6 +19,7 @@
 #              • Spec 加载改为使用 rv$spec_parsed（原：load_spec_json()）
 # =============================================================================
 
+source("domain_registry.R",   local = TRUE)  # [S-1] SDTM 域注册表
 source("data_utils.R",        local = TRUE)
 source("llm_api.R",           local = TRUE)
 source("provider_registry.R", local = TRUE)
@@ -548,9 +549,15 @@ server <- function(input, output, session) {
     spec_confirmed = FALSE,    # 全部确认后为 TRUE
     step_parse     = "idle",   # 聚合状态："idle"|"parsing"|"ok"|"warn"|"error"
 
-    # ── SDTM 文件元数据（DM / EX / AE）────────────────────────────────
+    # ── [S-2] ADaM 输出（多数据集，动态）────────────────────────────────
+    adam_datasets  = list(),          # 所有生成的 ADaM data.frame，键名为数据集名
+
+    # ── [S-2] 当前激活的 SDTM 域（供上传面板和 uploaded_files_list 使用）──
+    active_domains = c("dm","ex","ae"),
+
+    # ── SDTM 文件元数据（动态，任意数量域）──────────────────────────────
     # 格式：list(name, size, upload_time, datapath, rows, cols)
-    file_meta      = list(dm=NULL, ex=NULL, ae=NULL)
+    file_meta      = list()
   )
 
   # 日志追加
@@ -582,9 +589,9 @@ server <- function(input, output, session) {
   }
 
   # ===========================================================================
-  # Observer：上传 SDTM 文件 → 更新文件元数据
+  # [S-3] Observer：上传 SDTM 文件 → 更新文件元数据（覆盖全部注册域）
   # ===========================================================================
-  for (.sid in c("dm", "ex", "ae")) {
+  for (.sid in names(SDTM_DOMAIN_REGISTRY)) {
     local({
       sid <- .sid
       inp <- paste0("file_", sid)
@@ -610,6 +617,15 @@ server <- function(input, output, session) {
       })
     })
   }
+
+  # [S-3] Observer：域选择复选框变化 → 更新 rv$active_domains
+  observe({
+    required       <- .get_required_domain_ids()   # dm, ex（始终激活）
+    sel_core     <- input$sdtm_domains_core     %||% character(0)
+    sel_basic    <- input$sdtm_domains_basic    %||% character(0)
+    sel_extended <- input$sdtm_domains_extended %||% character(0)
+    rv$active_domains <- unique(c(required, sel_core, sel_basic, sel_extended))
+  })
 
   # ===========================================================================
   # Observer：上传 Spec CSV → 自动解析 → 弹出报告 Modal
@@ -800,12 +816,20 @@ server <- function(input, output, session) {
     rv$step_load <- "running"
     rv$step_llm  <- rv$step_review <- rv$step_run <- "idle"
 
-    # ── [修改 G-1] 校验：包含 spec_confirmed 检查 ──────────────────────────
+    # ── [S-4] 校验：动态推断所需域 + spec_confirmed 检查 ──────────────────────
+    needed_domains <- unique(c(
+      .get_required_domain_ids(),
+      if (isTRUE(rv$spec_confirmed)) infer_required_domains_from_spec(rv$specs)
+      else character(0)
+    ))
+    missing_domains <- needed_domains[
+      sapply(needed_domains, function(sid) is.null(rv$file_meta[[sid]]))
+    ]
     missing_files <- c(
-      if (is.null(input$file_dm))       "DM (dm.csv)",
-      if (is.null(input$file_ex))       "EX (ex.csv)",
-      if (is.null(input$file_ae))       "AE (ae.csv)",
-      if (!isTRUE(rv$spec_confirmed))   "Analysis Spec（请上传 CSV 并确认解析报告）"  # [修改 G-1]
+      if (length(missing_domains) > 0)
+        paste0("SDTM 域文件缺失：", paste(toupper(missing_domains), collapse=", ")),
+      if (!isTRUE(rv$spec_confirmed))
+        "Analysis Spec（请上传 CSV 并确认解析报告）"
     )
 
     if (length(missing_files) > 0) {
@@ -818,12 +842,15 @@ server <- function(input, output, session) {
       return()
     }
 
-    # ── 阶段 1：读取 SDTM ─────────────────────────────────────────────────────
+    # ── [S-4] 阶段 1：读取已上传的所有 SDTM 域 ────────────────────────────────
     .append_log("开始读取 SDTM 文件...", icon="⬤")
+    valid_meta <- Filter(Negate(is.null), rv$file_meta)
+    domain_paths <- setNames(
+      sapply(names(valid_meta), function(sid) valid_meta[[sid]]$datapath),
+      names(valid_meta)
+    )
     sdtm_data <- tryCatch({
-      load_sdtm_data(input$file_dm$datapath,
-                     input$file_ex$datapath,
-                     input$file_ae$datapath)
+      load_sdtm_data(domain_paths)
     }, error = function(e) {
       rv$step_load <- "error"
       .append_log("读取 SDTM 失败：", conditionMessage(e), icon="✖")
@@ -834,8 +861,9 @@ server <- function(input, output, session) {
 
     rv$sdtm      <- sdtm_data
     rv$step_load <- "done"
-    .append_log(sprintf("SDTM 加载完成  DM=%d行  EX=%d行  AE=%d行",
-                        nrow(sdtm_data$dm), nrow(sdtm_data$ex), nrow(sdtm_data$ae)), icon="✔")
+    .append_log(paste0("SDTM 加载完成  ",
+      paste(sapply(names(sdtm_data), function(sid)
+        paste0(toupper(sid), "=", nrow(sdtm_data[[sid]]), "行")), collapse="  ")), icon="✔")
 
     # ── [修改 G-2] 阶段 2：直接使用 rv$spec_parsed（原：load_spec_json()）──
     .append_log("加载已确认的 Spec 解析结果...", icon="⬤")  # [修改 G-2]
@@ -846,6 +874,11 @@ server <- function(input, output, session) {
                       if (!is.null(s$variables)) nrow(s$variables) else 0L))
     .append_log(sprintf("规格加载完成  %d 个数据集  共 %d 个变量",
                         length(spec_list), total_vars), icon="✔")
+
+    # ── [S-4] 提取目标数据集列表（用于 LLM prompt 和结果提取）──────────────────
+    target_datasets <- tolower(unique(unlist(lapply(rv$specs, function(s)
+      if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
+    if (length(target_datasets) == 0) target_datasets <- c("adsl", "adae")
 
     # ── 阶段 3：调用 LLM 生成代码 ─────────────────────────────────────────────
     rv$step_llm <- "running"
@@ -896,7 +929,8 @@ server <- function(input, output, session) {
         provider_key_map = provider_key_map,
         failover_chain   = failover_chain,
         sdtm_list        = sdtm_data,
-        base_url_map     = base_url_map
+        base_url_map     = base_url_map,
+        target_datasets  = target_datasets   # [S-4]
       )
     }, error = function(e) {
       rv$step_llm <- "error"
@@ -935,22 +969,20 @@ server <- function(input, output, session) {
   # ===========================================================================
   observeEvent(input$btn_clear_uploads, {
 
-    # ── 1. 重置前端 fileInput 控件（用户可见的文件名 + 进度条）──────────────
-    # shinyjs::reset() 的参数是 fileInput 的 inputId 字符串
-    shinyjs::reset("file_dm")
-    shinyjs::reset("file_ex")
-    shinyjs::reset("file_ae")
+    # ── 1. [S-7] 重置所有注册域的 fileInput 控件 ─────────────────────────────
+    for (sid in names(SDTM_DOMAIN_REGISTRY)) shinyjs::reset(paste0("file_", sid))
     shinyjs::reset("file_spec")
 
     # ── 2. 清空所有后台状态变量 ───────────────────────────────────────────────
-    rv$file_meta      <- list(dm=NULL, ex=NULL, ae=NULL)  # SDTM 文件元数据
-    rv$specs          <- list()   # 所有 Spec 文件解析记录
+    rv$file_meta      <- list()   # [S-7] 改为空列表（动态域）
+    rv$specs          <- list()
     rv$spec_confirmed <- FALSE
     rv$step_parse     <- "idle"
     rv$sdtm           <- NULL
     rv$step_load      <- "idle"
 
-    # 同时清空下游结果（避免旧数据残留在 Tab 3）
+    # [S-7] 清空多数据集容器
+    rv$adam_datasets  <- list()
     rv$adsl           <- NULL
     rv$adae           <- NULL
     rv$llm_result     <- NULL
@@ -1038,16 +1070,15 @@ server <- function(input, output, session) {
   })
 
   # ===========================================================================
-  # Observer：单文件删除按钮（4 个槽位）
+  # [S-3/S-7] Observer：单文件删除按钮（覆盖全部注册域）
   # ===========================================================================
-  # Static remove-file buttons for DM / EX / AE
-  for (.sid in c("dm", "ex", "ae")) {
+  for (.sid in names(SDTM_DOMAIN_REGISTRY)) {
     local({
       sid <- .sid
       observeEvent(input[[paste0("btn_remove_", sid)]], {
         shinyjs::reset(paste0("file_", sid))
         rv$file_meta[[sid]] <- NULL
-        if (!is.null(rv$adsl) || !is.null(rv$adae)) {
+        if (length(rv$adam_datasets) > 0) {
           showNotification(
             tagList(tags$strong("⚠ 注意"), tags$br(),
                     paste0("已删除 ", toupper(sid), " 文件。现有 ADaM 结果可能需重新生成。")),
@@ -1078,7 +1109,7 @@ server <- function(input, output, session) {
       rv$spec_confirmed <- FALSE  # require re-confirmation after deletion
     }
 
-    if (!is.null(rv$adsl) || !is.null(rv$adae)) {
+    if (length(rv$adam_datasets) > 0) {
       showNotification(
         tagList(tags$strong("⚠ 注意"), tags$br(),
                 "已删除 Spec 文件。现有 ADaM 结果可能需重新生成。"),
@@ -1117,9 +1148,8 @@ server <- function(input, output, session) {
     .append_log("开始执行用户确认的代码...", icon="▶")
 
     exec_env <- new.env(parent=baseenv())
-    exec_env$dm <- rv$sdtm$dm
-    exec_env$ex <- rv$sdtm$ex
-    exec_env$ae <- rv$sdtm$ae
+    # [S-5] 动态注入所有已加载的 SDTM 域（替换原来的固定 dm/ex/ae 赋值）
+    for (sid in names(rv$sdtm)) assign(sid, rv$sdtm[[sid]], envir=exec_env)
 
     for (pkg in c("dplyr","lubridate","stringr","tidyr","readr")) {
       if (requireNamespace(pkg, quietly=TRUE)) {
@@ -1155,15 +1185,19 @@ server <- function(input, output, session) {
       return()
     }
 
-    adsl_r <- tryCatch(get("adsl", envir=exec_env), error=function(e) NULL)
-    adae_r <- tryCatch(get("adae", envir=exec_env), error=function(e) NULL)
+    # [S-6] 动态提取所有预期数据集
+    expected_ds <- tolower(unique(unlist(lapply(rv$specs, function(s)
+      if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
+    if (length(expected_ds) == 0) expected_ds <- c("adsl", "adae")
 
-    errs <- c(
-      if (is.null(adsl_r)||!is.data.frame(adsl_r)) "代码未生成名为 'adsl' 的 data.frame",
-      if (is.null(adae_r)||!is.data.frame(adae_r)) "代码未生成名为 'adae' 的 data.frame"
-    )
-    if (length(errs)>0) {
-      err_msg <- paste(errs, collapse="\n")
+    extracted <- list()
+    for (ds in expected_ds) {
+      obj <- tryCatch(get(ds, envir=exec_env), error=function(e) NULL)
+      if (is.data.frame(obj)) extracted[[ds]] <- obj
+    }
+
+    if (length(extracted) == 0) {
+      err_msg <- paste0("代码未生成任何预期数据集：", paste(expected_ds, collapse=", "))
       rv$step_run <- "error"
       rv$run_result_err <- err_msg
       .append_log(err_msg, icon="✖")
@@ -1172,14 +1206,22 @@ server <- function(input, output, session) {
       return()
     }
 
-    rv$adsl <- adsl_r; rv$adae <- adae_r
+    rv$adam_datasets <- extracted
+    # [S-6] 向后兼容：同步 rv$adsl / rv$adae 供 Tab1 value_box 使用
+    if ("adsl" %in% names(extracted)) rv$adsl <- extracted[["adsl"]]
+    if ("adae" %in% names(extracted)) rv$adae <- extracted[["adae"]]
+
     rv$step_run <- "done"; rv$step_review <- "done"
-    rv$run_result_ok <- sprintf("执行成功  ADSL=%d×%d  ADAE=%d×%d",
-                                nrow(adsl_r),ncol(adsl_r),nrow(adae_r),ncol(adae_r))
-    .append_log(rv$run_result_ok, icon="✔")
+    rv$run_result_ok <- paste(
+      sapply(names(extracted), function(ds)
+        sprintf("%s=%d×%d", toupper(ds), nrow(extracted[[ds]]), ncol(extracted[[ds]]))),
+      collapse="  ")
+    .append_log(paste0("执行成功  ", rv$run_result_ok), icon="✔")
     showNotification(
       tagList(tags$strong("✔ ADaM 生成成功"), tags$br(),
-              sprintf("ADSL: %d行  ADAE: %d行", nrow(adsl_r), nrow(adae_r))),
+              paste(sapply(names(extracted), function(ds)
+                paste0(toupper(ds), ": ", nrow(extracted[[ds]]), "行")),
+                collapse="  ")),
       type="message", duration=5)
     nav_select(id = "main_tabs", selected = "tab_output", session = session)
   })
@@ -1241,12 +1283,8 @@ server <- function(input, output, session) {
       )
     }
 
-    # ── Static SDTM slots (DM / EX / AE) ────────────────────────────────────
-    sdtm_slots <- list(
-      list(sid="dm", label="DM"),
-      list(sid="ex", label="EX"),
-      list(sid="ae", label="AE")
-    )
+    # ── [S-9] SDTM slots：依 rv$active_domains 动态生成 ────────────────────
+    sdtm_slots <- lapply(rv$active_domains, function(sid) list(sid=sid, label=toupper(sid)))
     sdtm_items <- lapply(sdtm_slots, function(s) {
       meta <- rv$file_meta[[s$sid]]
       if (!is.null(meta)) {
@@ -1361,37 +1399,118 @@ server <- function(input, output, session) {
     div(style="font-size:0.78rem;color:#6e7681;align-self:center;", "等待 LLM 生成代码...")
   })
 
-  output$adsl_row_badge <- renderUI({ if(is.null(rv$adsl)) NULL else .row_badge(nrow(rv$adsl)) })
-  output$adae_row_badge <- renderUI({ if(is.null(rv$adae)) NULL else .row_badge(nrow(rv$adae)) })
-
-  output$tbl_adsl <- renderDT({
-    req(!is.null(rv$adsl))
-    datatable(rv$adsl, rownames=FALSE, selection="none", filter="top",
-              options=.dt_options(scroll_x=TRUE,page_length=15), class="cell-border")
-  }, server=TRUE)
-
-  output$adsl_placeholder <- renderUI({
-    if (!is.null(rv$adsl)) return(NULL)
-    .placeholder_ui("person-lines-fill","ADSL 数据集尚未生成","完成「代码审查与回档」流程后将在此处展示")
+  # ===========================================================================
+  # [S-8] 动态 UI：SDTM 域选择复选框
+  # ===========================================================================
+  output$sdtm_domain_selector <- renderUI({
+    all_groups <- c("core", "basic", "extended")
+    tagList(lapply(all_groups, function(grp) {
+      # 只显示非 required 的域（required 域始终激活，不需要复选框）
+      dom_ids <- names(Filter(
+        function(d) d$group == grp && !isTRUE(d$required),
+        SDTM_DOMAIN_REGISTRY))
+      if (length(dom_ids) == 0) return(NULL)
+      choices_vec <- setNames(
+        dom_ids,
+        sapply(dom_ids, function(id) SDTM_DOMAIN_REGISTRY[[id]]$label))
+      # core 组（ae）默认选中，其他组默认不选
+      default_sel <- if (grp == "core") dom_ids else character(0)
+      tagList(
+        div(class="hint-text",
+            style="margin:0.4rem 0 0.1rem 0;font-size:0.65rem;letter-spacing:0.08em;text-transform:uppercase;",
+            DOMAIN_GROUP_LABELS[[grp]]),
+        checkboxGroupInput(
+          paste0("sdtm_domains_", grp),
+          label    = NULL,
+          choices  = choices_vec,
+          selected = default_sel,
+          inline   = FALSE
+        )
+      )
+    }))
   })
 
-  output$tbl_adae <- renderDT({
-    req(!is.null(rv$adae))
-    datatable(rv$adae, rownames=FALSE, selection="none", filter="top",
-              options=.dt_options(scroll_x=TRUE,page_length=15), class="cell-border")
-  }, server=TRUE)
-
-  output$adae_placeholder <- renderUI({
-    if (!is.null(rv$adae)) return(NULL)
-    .placeholder_ui("clipboard2-x","ADAE 数据集尚未生成","完成「代码审查与回档」流程后将在此处展示")
+  # ===========================================================================
+  # [S-8] 动态 UI：SDTM 文件上传面板（依 rv$active_domains 实时渲染）
+  # ===========================================================================
+  output$sdtm_upload_panel <- renderUI({
+    tagList(lapply(rv$active_domains, function(sid) {
+      d <- SDTM_DOMAIN_REGISTRY[[sid]]
+      div(
+        fileInput(paste0("file_", sid), NULL, accept=".csv",
+                  placeholder=d$placeholder),
+        div(class="hint-text", d$label)
+      )
+    }))
   })
 
-  output$dl_adsl <- downloadHandler(
-    filename = function() paste0("adsl_",format(Sys.time(),"%Y%m%d_%H%M%S"),".csv"),
-    content  = function(file) { req(!is.null(rv$adsl)); readr::write_csv(rv$adsl,file,na="") }
-  )
-  output$dl_adae <- downloadHandler(
-    filename = function() paste0("adae_",format(Sys.time(),"%Y%m%d_%H%M%S"),".csv"),
-    content  = function(file) { req(!is.null(rv$adae)); readr::write_csv(rv$adae,file,na="") }
-  )
+  # ===========================================================================
+  # [S-8] 动态 UI：输出数据集标签页（依 rv$adam_datasets 实时渲染）
+  # ===========================================================================
+  output$output_dataset_tabs <- renderUI({
+    dsets <- rv$adam_datasets
+    if (length(dsets) == 0) {
+      return(navset_card_underline(id="output_subtabs",
+        nav_panel(title="数据集", value="subtab_empty",
+          .placeholder_ui("table", "ADaM 数据集尚未生成",
+                          "完成「代码审查与回档」流程后将在此处展示"))
+      ))
+    }
+    panels <- lapply(names(dsets), function(ds) {
+      nav_panel(
+        title = tagList(bs_icon("table"), " ", toupper(ds)),
+        value = paste0("subtab_", ds),
+        card(card_header(layout_columns(col_widths=c(7,5),
+          div(style="display:flex;align-items:center;gap:0.6rem;",
+              span(paste0(toupper(ds), " Analysis Dataset")),
+              uiOutput(paste0(ds, "_row_badge"))),
+          div(style="text-align:right;",
+              downloadButton(paste0("dl_", ds),
+                tagList(bs_icon("download", size="0.8rem"),
+                        paste0(" 下载 ", toupper(ds), ".csv")),
+                class="btn-download"))
+        )),
+        DTOutput(paste0("tbl_", ds)),
+        uiOutput(paste0(ds, "_placeholder"))
+        )
+      )
+    })
+    do.call(navset_card_underline, c(list(id="output_subtabs"), panels))
+  })
+
+  # ===========================================================================
+  # [S-8] 动态注册：每个 adam_datasets 条目对应的 renderDT / downloadHandler
+  # ===========================================================================
+  observe({
+    for (.ds in names(rv$adam_datasets)) {
+      local({
+        ds <- .ds
+        output[[paste0(ds, "_row_badge")]] <- renderUI({
+          df <- rv$adam_datasets[[ds]]
+          if (is.null(df)) return(NULL)
+          .row_badge(nrow(df))
+        })
+        output[[paste0("tbl_", ds)]] <- renderDT({
+          df <- rv$adam_datasets[[ds]]
+          req(!is.null(df))
+          datatable(df, rownames=FALSE, selection="none", filter="top",
+                    options=.dt_options(scroll_x=TRUE, page_length=15), class="cell-border")
+        }, server=TRUE)
+        output[[paste0(ds, "_placeholder")]] <- renderUI({
+          if (!is.null(rv$adam_datasets[[ds]])) return(NULL)
+          .placeholder_ui("table", paste0(toupper(ds), " 数据集尚未生成"),
+                          "完成「代码审查与回档」流程后将在此处展示")
+        })
+        output[[paste0("dl_", ds)]] <- downloadHandler(
+          filename = function() paste0(ds, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv"),
+          content  = function(file) {
+            d <- rv$adam_datasets[[ds]]
+            req(!is.null(d))
+            readr::write_csv(d, file, na="")
+          }
+        )
+      })
+    }
+  })
+
 }

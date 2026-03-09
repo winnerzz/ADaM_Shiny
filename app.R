@@ -88,7 +88,10 @@ source("ui.R")
 # Server 逻辑：定义 server 函数（观察者、响应式、输出渲染）
 source("server.R")
 
-message("  模块加载完成：data_utils ✔  llm_api ✔  ui ✔  server ✔")
+# 域注册表：SDTM_DOMAIN_REGISTRY / DOMAIN_GROUP_LABELS / .get_required_domain_ids()
+source("domain_registry.R")
+
+message("  模块加载完成：data_utils ✔  llm_api ✔  ui ✔  server ✔  domain_registry ✔")
 message("  启动应用...")
 message("═══════════════════════════════════════════════")
 

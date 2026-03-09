@@ -67,19 +67,20 @@ call_llm_engine_with_failover <- function(spec_json,
                                            data_summary,
                                            provider_key_map,
                                            failover_chain,
-                                           sdtm_list      = NULL,
-                                           base_url_map   = list(),
-                                           mock           = MOCK_MODE) {
+                                           sdtm_list       = NULL,
+                                           base_url_map    = list(),
+                                           mock            = MOCK_MODE,
+                                           target_datasets = NULL) {
   if (is.list(spec_json)) {
     spec_json <- toJSON(spec_json, pretty = TRUE, auto_unbox = TRUE)
   }
 
   if (isTRUE(mock)) {
     message("[llm_api] Mock 模式 — 返回硬编码响应")
-    return(.mock_llm_response())
+    return(.mock_llm_response(target_datasets = target_datasets %||% c("adsl", "adae")))
   }
 
-  prompts    <- .build_prompts(spec_json, data_summary, sdtm_list)
+  prompts    <- .build_prompts(spec_json, data_summary, sdtm_list, target_datasets)
   last_error <- NULL
 
   for (attempt in failover_chain) {
@@ -214,9 +215,53 @@ call_llm_engine <- function(spec_json,
 }
 
 # =============================================================================
-# [保留不变] Prompt 构建函数：.build_prompts()
+# [L-1] Prompt 构建函数：.build_prompts()
+# 新增 target_datasets 参数，动态生成数据集输出指令（向后兼容）
 # =============================================================================
-.build_prompts <- function(spec_json, data_summary, sdtm_list = NULL) {
+.build_prompts <- function(spec_json, data_summary, sdtm_list = NULL,
+                            target_datasets = NULL) {
+
+  # ── 推断目标数据集列表 ──────────────────────────────────────────────────────
+  if (is.null(target_datasets) || length(target_datasets) == 0) {
+    # 尝试从 spec_json 解析 dataset 字段
+    parsed_spec <- tryCatch(
+      fromJSON(spec_json, simplifyVector = TRUE),
+      error = function(e) NULL
+    )
+    if (!is.null(parsed_spec)) {
+      if (is.data.frame(parsed_spec)) {
+        target_datasets <- unique(tolower(na.omit(parsed_spec$dataset)))
+      } else if (!is.null(parsed_spec$dataset)) {
+        target_datasets <- tolower(as.character(parsed_spec$dataset))
+      } else if (is.list(parsed_spec)) {
+        target_datasets <- unique(tolower(na.omit(
+          sapply(parsed_spec, function(s) s$dataset %||% NA_character_)
+        )))
+      }
+    }
+    if (is.null(target_datasets) || length(target_datasets) == 0) {
+      target_datasets <- c("adsl", "adae")
+    }
+  }
+  target_datasets <- tolower(trimws(target_datasets))
+
+  # ── 构建数据集输出指令（动态）──────────────────────────────────────────────
+  ds_instruction <- if (identical(sort(target_datasets), sort(c("adsl", "adae")))) {
+    paste0(
+      "2. 最终必须生成名为 adsl 的 data.frame（subject-level）",
+      "和名为 adae 的 data.frame（adverse events），",
+      "因为后续程序会用 get('adsl') 和 get('adae') 提取结果\n"
+    )
+  } else {
+    ds_names_str <- paste(
+      sapply(target_datasets, function(ds) paste0("'", ds, "'")),
+      collapse = " 和 "
+    )
+    paste0(
+      "2. 最终必须生成以下 data.frame：", ds_names_str,
+      "，后续程序将用 get('数据集名') 逐一提取。\n"
+    )
+  }
 
   system_prompt <- paste0(
     "你是一位资深 CDISC ADaM 数据程序员，精通 R 语言（dplyr / lubridate / stringr）。\n",
@@ -239,9 +284,7 @@ call_llm_engine <- function(spec_json,
 
     "【代码规范】\n",
     "1. 代码必须包含 library(dplyr)、library(lubridate) 等必要包加载语句\n",
-    "2. 最终必须生成名为 adsl 的 data.frame（subject-level）",
-    "和名为 adae 的 data.frame（adverse events），",
-    "因为后续程序会用 get('adsl') 和 get('adae') 提取结果\n",
+    ds_instruction,
     "3. 日期变量使用字符型 YYYY-MM-DD 格式，",
     "Study Day 按 CDISC 规范：(date - ref_date) + 1\n",
     "4. 对所有自主推断（如缺失值处理、类型转换假设）必须在 risk_logs 中逐条记录\n",
@@ -402,9 +445,13 @@ call_llm_engine <- function(spec_json,
 }
 
 # =============================================================================
-# [保留不变] Mock 响应：.mock_llm_response()
+# [L-2] Mock 响应：.mock_llm_response()
+# 新增 target_datasets 参数：adsl+adae 时返回原有硬编码响应；否则生成通用骨架
 # =============================================================================
-.mock_llm_response <- function() {
+.mock_llm_response <- function(target_datasets = c("adsl", "adae")) {
+
+  # 向后兼容：adsl + adae 时返回原有硬编码响应
+  if (identical(sort(tolower(target_datasets)), sort(c("adsl", "adae")))) {
 
   r_code_str <- '
 # ============================================================
@@ -490,7 +537,45 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption="若存在其他治疗臂，请更新 trt_num_map")
   )
 
-  list(r_code = r_code_str, risk_logs = risk_logs_list)
+  return(list(r_code = r_code_str, risk_logs = risk_logs_list))
+  }
+
+  # ── 非标准目标：动态生成通用骨架代码 ──────────────────────────────────────
+  skeleton_blocks <- paste(
+    sapply(target_datasets, function(ds) {
+      paste0(
+        "# ── ", toupper(ds), " ──────────────────────────────────────────────\n",
+        ds, " <- data.frame(\n",
+        "  USUBJID = dm$USUBJID,\n",
+        "  STUDYID = dm$STUDYID,\n",
+        "  stringsAsFactors = FALSE\n",
+        ")\n",
+        'message("', ds, ' 生成完毕  行数=", nrow(', ds, '))\n'
+      )
+    }),
+    collapse = "\n"
+  )
+
+  r_code_generic <- paste0(
+    '# ============================================================\n',
+    '# [LLM Mock] 通用 ADaM 骨架代码\n',
+    '# 目标数据集：', paste(toupper(target_datasets), collapse = ", "), '\n',
+    '# ⚠ 请替换为基于实际规格的推导逻辑\n',
+    '# ============================================================\n',
+    'library(dplyr)\n',
+    'library(lubridate)\n\n',
+    skeleton_blocks
+  )
+
+  risk_generic <- list(
+    list(level    = "WARNING",
+         variable = "ALL",
+         description = paste0("Mock 模式返回通用占位骨架，目标数据集：",
+                              paste(target_datasets, collapse = ", ")),
+         assumption  = "请根据 ADaM 规格替换为实际推导逻辑后再执行")
+  )
+
+  list(r_code = r_code_generic, risk_logs = risk_generic)
 }
 
 # =============================================================================

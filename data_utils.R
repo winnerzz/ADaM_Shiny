@@ -37,38 +37,18 @@ dy_char <- function(d, ref) {
 
 # -----------------------------------------------------------------------------
 # 主函数：load_sdtm_data()
-# 说明：统一读取 SDTM 源数据（DM、EX、AE 三个 CSV 文件）并执行标准化预处理：
+# 说明：统一读取任意数量的 SDTM 域 CSV 文件，并执行标准化预处理：
 #         1. 所有列以字符型读入（避免 readr 自动类型推断造成的日期/数值错误）
 #         2. 自动识别并清除所有 *DTC 日期列中的 Excel 前置单引号
 #         3. 返回命名列表，方便后续函数按名称取用
 # 参数：
-#   dm_path — DM（人口统计）CSV 文件路径，默认 "dm.csv"
-#   ex_path — EX（用药暴露）CSV 文件路径，默认 "ex.csv"
-#   ae_path — AE（不良事件）CSV 文件路径，默认 "ae.csv"
-# 返回：命名列表 list(dm = ..., ex = ..., ae = ...)
+#   domain_paths — 命名字符向量，如 c(dm="/tmp/dm.csv", vs="/tmp/vs.csv")
+#                  键名为 SDTM 域 ID（小写），值为对应 CSV 文件路径
+# 返回：命名列表，键名与 domain_paths 一一对应
 # -----------------------------------------------------------------------------
-load_sdtm_data <- function(dm_path = "dm.csv",
-                           ex_path = "ex.csv",
-                           ae_path = "ae.csv") {
+load_sdtm_data <- function(domain_paths) {
 
-  # --- 1. 读取三个 SDTM CSV 文件，全部以字符型读入 ---
-  # 使用 col_types = cols(.default = col_character()) 是关键：
-  # 避免 readr 将日期自动解析为 Date 对象，保持 YYYY-MM-DD 字符串格式
-  message("[data_utils] 正在读取 DM: ", dm_path)
-  dm <- read_csv(dm_path, col_types = cols(.default = col_character()),
-                 show_col_types = FALSE)
-
-  message("[data_utils] 正在读取 EX: ", ex_path)
-  ex <- read_csv(ex_path, col_types = cols(.default = col_character()),
-                 show_col_types = FALSE)
-
-  message("[data_utils] 正在读取 AE: ", ae_path)
-  ae <- read_csv(ae_path, col_types = cols(.default = col_character()),
-                 show_col_types = FALSE)
-
-  # --- 2. 清除所有 *DTC 日期列中的 Excel 前置单引号 ---
-  # 遍历每个数据集的列名，对以 "DTC" 结尾的列应用 strip_excel_apos()
-  # 例如：RFSTDTC、RFXSTDTC、AESTDTC、AEENDTC 等
+  # --- 内部辅助：清除所有 *DTC 日期列中的 Excel 前置单引号 ---
   clean_dtc_cols <- function(df) {
     dtc_cols <- names(df)[str_ends(names(df), "DTC")]
     if (length(dtc_cols) > 0) {
@@ -79,28 +59,47 @@ load_sdtm_data <- function(dm_path = "dm.csv",
     df
   }
 
-  dm <- clean_dtc_cols(dm)
-  ex <- clean_dtc_cols(ex)
-  ae <- clean_dtc_cols(ae)
+  # --- 1. 逐域读取，全部以字符型读入 ---
+  result <- lapply(names(domain_paths), function(sid) {
+    path <- domain_paths[[sid]]
+    message("[data_utils] 正在读取 ", toupper(sid), ": ", path)
+    df <- read_csv(path, col_types = cols(.default = col_character()),
+                   show_col_types = FALSE)
 
-  # --- 3. 基础数据质量检查（非阻断，仅输出警告信息）---
-  # 检查关键字段 USUBJID 是否存在
-  for (domain_name in c("dm", "ex", "ae")) {
-    df <- get(domain_name)
+    # --- 2. 清除日期列前置单引号 ---
+    df <- clean_dtc_cols(df)
+
+    # --- 3. 非阻断性质量检查 ---
     if (!"USUBJID" %in% names(df)) {
-      warning("[data_utils] 警告：", toupper(domain_name),
+      warning("[data_utils] 警告：", toupper(sid),
               " 中未找到 USUBJID 列，请检查文件格式！")
     }
-  }
+    df
+  })
+  names(result) <- names(domain_paths)
 
-  # 输出读取摘要
-  message("[data_utils] 读取完成：",
-          "DM=", nrow(dm), "行, ",
-          "EX=", nrow(ex), "行, ",
-          "AE=", nrow(ae), "行")
+  # --- 4. 输出读取摘要 ---
+  summary_parts <- sapply(names(result),
+    function(sid) paste0(toupper(sid), "=", nrow(result[[sid]]), "行"))
+  message("[data_utils] 读取完成：", paste(summary_parts, collapse = ", "))
 
-  # --- 4. 返回命名列表 ---
-  list(dm = dm, ex = ex, ae = ae)
+  result
+}
+
+# -----------------------------------------------------------------------------
+# 辅助函数：infer_required_domains_from_spec()
+# 说明：从已解析的 Spec 列表中提取被引用的 SDTM 域名称，
+#       用于在调用 btn_generate 前自动推断需要哪些上传文件。
+# 参数：specs_list — rv$specs 的命名列表，每项包含 $parsed$variables$source
+# 返回：字符向量，SDTM_DOMAIN_REGISTRY 中已知的域 ID（小写）
+# -----------------------------------------------------------------------------
+infer_required_domains_from_spec <- function(specs_list) {
+  all_sources <- unlist(lapply(specs_list, function(s) {
+    if (is.null(s$parsed)) return(character(0))
+    s$parsed$variables$source
+  }))
+  domains <- unique(na.omit(tolower(stringr::str_extract(all_sources, "^[A-Za-z]+"))))
+  intersect(domains, names(SDTM_DOMAIN_REGISTRY))
 }
 
 # -----------------------------------------------------------------------------
