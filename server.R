@@ -839,6 +839,7 @@ server <- function(input, output, session) {
         tagList(tags$strong("⚠ 请先完成以下步骤"),
                 tags$br(), paste(missing_files, collapse="、")),
         type="error", duration=7)
+      shinyjs::runjs("adamProgress.error('✖ 前置条件不满足')")
       return()
     }
 
@@ -857,7 +858,10 @@ server <- function(input, output, session) {
       showNotification(paste0("SDTM 读取错误：", conditionMessage(e)), type="error", duration=8)
       NULL
     })
-    if (is.null(sdtm_data)) return()
+    if (is.null(sdtm_data)) {
+      shinyjs::runjs("adamProgress.error('✖ SDTM 文件读取失败')")
+      return()
+    }
 
     rv$sdtm      <- sdtm_data
     rv$step_load <- "done"
@@ -899,6 +903,7 @@ server <- function(input, output, session) {
         tagList(tags$strong("⚠ 请填写 API Key"),
                 tags$br(), "在侧边栏「LLM API 配置」中输入有效的 API Key 后重试。"),
         type="error", duration=7)
+      shinyjs::runjs("adamProgress.error('✖ 未配置 API Key')")
       return()
     }
 
@@ -936,6 +941,7 @@ server <- function(input, output, session) {
       rv$step_llm <- "error"
       .append_log("LLM 调用失败：", conditionMessage(e), icon="✖")
       showNotification(paste0("LLM 错误：", conditionMessage(e)), type="error", duration=8)
+      shinyjs::runjs("adamProgress.error('✖ API 调用失败')")
       NULL
     })
     if (is.null(llm_res)) return()
@@ -948,6 +954,11 @@ server <- function(input, output, session) {
     n_risks <- if (!is.null(rv$risk_logs_df)) nrow(rv$risk_logs_df) else 0
     .append_log(sprintf("LLM 返回完成  代码长度=%d字符  风险点=%d条",
                         nchar(llm_res$r_code %||% ""), n_risks), icon="✔")
+    tok        <- llm_res$token_info %||% list(input=0L, output=0L, total=0L)
+    shinyjs::runjs(sprintf(
+      "adamProgress.complete('✔ LLM 生成完成，识别 %d 条风险点', %d, %d)",
+      n_risks, tok$input %||% 0L, tok$output %||% 0L
+    ))
 
     updateAceEditor(session, "code_editor", value=llm_res$r_code)
     rv$step_review <- "running"
@@ -1126,6 +1137,14 @@ server <- function(input, output, session) {
     .append_log("代码已重置为 LLM 原始版本", icon="↺")
     showNotification("代码已恢复为 LLM 原始版本", type="message", duration=3)
   })
+
+  # ===========================================================================
+  # Observer：主题切换 → 同步 Ace 编辑器配色
+  # ===========================================================================
+  observeEvent(input$theme_is_light, {
+    ace_theme <- if (isTRUE(input$theme_is_light)) "github" else "tomorrow_night"
+    updateAceEditor(session, "code_editor", theme = ace_theme)
+  }, ignoreInit = TRUE)
 
   # ===========================================================================
   # Observer：确认并运行代码（无修改）

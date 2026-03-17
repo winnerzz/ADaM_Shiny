@@ -377,6 +377,194 @@ adam_theme <- bs_theme(
     /* ── 文件元数据分隔符 ── */
     .uf-meta-sep { color: #30363d; font-size: 0.65rem; }
     .uf-meta     { color: #6e7681; font-size: 0.67rem; font-family: 'JetBrains Mono',monospace; }
+
+    /* ── API 调用进度条 ── */
+    #adam-progress-wrap {
+      padding: 0.5rem 1rem 0.6rem 1rem;
+      border-bottom: 1px solid #21262d;
+      margin-bottom: 0.5rem;
+    }
+    #adam-progress-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 0.4rem;
+    }
+    #adam-progress-stage {
+      font-size: 0.75rem; color: #8b949e;
+      font-family: 'DM Sans', sans-serif;
+    }
+    #adam-progress-pct {
+      font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; color: #6e7681;
+    }
+    #adam-progress-track {
+      height: 3px; background: #21262d; border-radius: 2px; overflow: hidden;
+    }
+    #adam-progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #2dd4bf, #0ea5e9);
+      border-radius: 2px;
+      transition: width 0.5s ease, background 0.4s;
+    }
+    @keyframes adam-shimmer {
+      0%   { background-position: -300px 0; }
+      100% { background-position: 300px 0; }
+    }
+    #adam-progress-fill.shimmer {
+      background: linear-gradient(90deg, #2dd4bf 0%, #0ea5e9 40%, #2dd4bf 80%);
+      background-size: 600px 100%;
+      animation: adam-shimmer 1.8s infinite linear;
+    }
+    #adam-progress-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 0.32rem;
+    }
+    #adam-progress-time, #adam-progress-tokens {
+      font-size: 0.68rem; font-family: 'JetBrains Mono', monospace; color: #6e7681;
+    }
+    html.light-theme #adam-progress-wrap   { border-bottom-color: #d0d7de; }
+    html.light-theme #adam-progress-stage  { color: #57606a; }
+    html.light-theme #adam-progress-pct    { color: #6e7681; }
+    html.light-theme #adam-progress-track  { background: #eaeef2; }
+    html.light-theme #adam-progress-time,
+    html.light-theme #adam-progress-tokens { color: #8c959f; }
+
+    /* ── 主题切换按钮 ── */
+    .theme-toggle-btn {
+      background: transparent; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 5px; padding: 0.18rem 0.45rem; cursor: pointer;
+      transition: border-color 0.2s, color 0.2s; line-height: 1;
+      margin-left: auto; flex-shrink: 0; font-size: 0.85rem;
+    }
+    .theme-toggle-btn:hover { border-color: #2dd4bf; color: #2dd4bf; }
+    .icon-light-mode { display: none; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       浅色主题覆盖（html.light-theme 类激活时生效）
+       ═══════════════════════════════════════════════════════════════ */
+    html.light-theme {
+      --bs-body-bg: #ffffff; --bs-body-color: #24292f;
+      --bs-secondary-bg: #f6f8fa; --bs-border-color: #d0d7de;
+      --bs-card-bg: #f6f8fa; color-scheme: light;
+    }
+    html.light-theme body { background-color: #ffffff !important; color: #24292f !important; }
+
+    /* 图标切换 */
+    html.light-theme .icon-dark-mode  { display: none; }
+    html.light-theme .icon-light-mode { display: inline; }
+    html.light-theme .theme-toggle-btn { border-color: #d0d7de; color: #57606a; }
+    html.light-theme .theme-toggle-btn:hover { border-color: #0d9488; color: #0d9488; }
+
+    /* 侧边栏 */
+    html.light-theme .bslib-sidebar-layout > .sidebar {
+      background: #f6f8fa !important; border-right-color: #d0d7de !important;
+    }
+    html.light-theme .form-control[type='file'] {
+      background: #ffffff; border-color: #d0d7de; color: #57606a;
+    }
+    html.light-theme .form-control[type='file']:hover { border-color: #0d9488; color: #24292f; }
+    html.light-theme .upload-label { color: #57606a; }
+
+    /* 按钮 */
+    html.light-theme #btn_clear_uploads { border-color: #d0d7de; color: #6e7681; }
+    html.light-theme #btn_clear_uploads:hover { border-color: #f85149; color: #f85149; }
+    html.light-theme .btn-download { border-color: #d0d7de; color: #57606a; }
+    html.light-theme .btn-download:hover { border-color: #0d9488; color: #0d9488; }
+
+    /* 导航 Tab */
+    html.light-theme .nav-tabs { border-bottom-color: #d0d7de !important; }
+    html.light-theme .nav-tabs .nav-link { color: #57606a !important; }
+    html.light-theme .nav-tabs .nav-link:hover { color: #24292f !important; }
+    html.light-theme .nav-tabs .nav-link.active {
+      color: #0d9488 !important; border-bottom-color: #0d9488 !important;
+    }
+
+    /* 终端日志 */
+    html.light-theme #run_status {
+      background: #f6f8fa; border-color: #d0d7de; color: #1a7f37;
+    }
+
+    /* 卡片 */
+    html.light-theme .card { background: #f6f8fa !important; border-color: #d0d7de !important; }
+    html.light-theme .card-header {
+      background: #ffffff !important; border-bottom-color: #d0d7de !important; color: #57606a;
+    }
+
+    /* Modal */
+    html.light-theme .modal-content { background: #f6f8fa !important; border-color: #d0d7de !important; }
+    html.light-theme .modal-header  { background: #ffffff !important; border-bottom-color: #d0d7de !important; }
+    html.light-theme .modal-title   { color: #24292f !important; }
+    html.light-theme .modal-footer  { background: #ffffff !important; border-top-color: #d0d7de !important; }
+    html.light-theme .btn-close     { filter: none; }
+
+    /* 解析报告表格 */
+    html.light-theme .parse-map-table th {
+      background: #ffffff; color: #57606a; border-bottom-color: #d0d7de;
+    }
+    html.light-theme .parse-map-table td { color: #24292f; border-bottom-color: #eaeef2; }
+    html.light-theme .parse-map-table tr:hover td { background: rgba(0,0,0,0.02); }
+    html.light-theme .preview-scroll { border-color: #d0d7de; }
+    html.light-theme .preview-table th { background: #ffffff; color: #0d9488; border-bottom-color: #d0d7de; }
+    html.light-theme .preview-table td { color: #57606a; border-bottom-color: #eaeef2; }
+    html.light-theme .modal-section-title { color: #57606a; }
+
+    /* Spec 状态卡片 */
+    html.light-theme .spec-status-card { background: #ffffff; border-color: #d0d7de; }
+    html.light-theme .spec-status-card .status-text { color: #57606a; }
+    html.light-theme .spec-status-card .reopen-link { color: #0d9488; }
+
+    /* DT 表格 */
+    html.light-theme .dataTables_wrapper,
+    html.light-theme table.dataTable thead th,
+    html.light-theme table.dataTable tbody td { color: #24292f !important; }
+    html.light-theme table.dataTable thead th {
+      background: #f6f8fa !important; border-bottom-color: #d0d7de !important;
+    }
+    html.light-theme table.dataTable tbody tr         { background: #ffffff !important; }
+    html.light-theme table.dataTable tbody tr:hover td { background: #f0f3f6 !important; }
+    html.light-theme table.dataTable tbody tr.even td  { background: #ffffff !important; }
+    html.light-theme .dataTables_info,
+    html.light-theme .dataTables_length label,
+    html.light-theme .dataTables_filter label { color: #57606a !important; }
+    html.light-theme .dataTables_filter input,
+    html.light-theme .dataTables_length select {
+      background: #ffffff !important; border-color: #d0d7de !important; color: #24292f !important;
+    }
+    html.light-theme .dataTables_paginate .paginate_button { color: #57606a !important; }
+    html.light-theme .dataTables_paginate .paginate_button.current {
+      color: #0d9488 !important; background: rgba(13,148,136,0.1) !important;
+      border-color: #0d9488 !important;
+    }
+    html.light-theme .bslib-value-box { border-color: #d0d7de !important; }
+
+    /* 品牌栏 & 流水线 */
+    html.light-theme .brand-bar   { border-bottom-color: #d0d7de; }
+    html.light-theme .brand-title { color: #24292f; }
+    html.light-theme .brand-sub   { color: #57606a; }
+    html.light-theme hr.section-divider { border-color: #d0d7de; }
+    html.light-theme .step-dot  { background: #d0d7de; }
+    html.light-theme .step-label { color: #57606a; }
+    html.light-theme .hint-text  { color: #6e7681; }
+
+    /* 已上传文件卡片 */
+    html.light-theme .uploaded-files-card { background: #ffffff; border-color: #d0d7de; }
+    html.light-theme .uploaded-files-card .uf-title { color: #57606a; }
+    html.light-theme .uploaded-files-card .uf-item  { color: #24292f; }
+    html.light-theme .uploaded-files-card .uf-item.missing-item { color: #6e7681; }
+    html.light-theme .uf-meta     { color: #57606a; }
+    html.light-theme .uf-meta-sep { color: #d0d7de; }
+    html.light-theme .btn-remove-file { color: #6e7681; }
+    html.light-theme .btn-remove-file:hover { color: #f85149; }
+
+    /* API 配置 */
+    html.light-theme .api-config-section .form-control,
+    html.light-theme .api-config-section .form-select {
+      background: #ffffff !important; border-color: #d0d7de !important; color: #24292f !important;
+    }
+    html.light-theme .api-config-section .form-control:focus,
+    html.light-theme .api-config-section .form-select:focus {
+      border-color: #0d9488 !important; box-shadow: 0 0 0 2px rgba(13,148,136,0.15) !important;
+    }
+    html.light-theme .api-config-section label { color: #57606a !important; }
+    html.light-theme .failover-section { border-top-color: #d0d7de; }
   ")
 
 # =============================================================================
@@ -393,9 +581,145 @@ ui <- page_sidebar(
     width = 280, open = TRUE,
 
     # ── 品牌栏 ───────────────────────────────────────────────────────────────
+    tags$script(HTML("
+      /* ── 主题切换 ── */
+      function toggleAdamTheme() {
+        var isLight = document.documentElement.classList.toggle('light-theme');
+        Shiny.setInputValue('theme_is_light', isLight, {priority: 'event'});
+      }
+
+      /* ── API 进度条 ── */
+      window.adamProgress = (function() {
+        var active = false, crawlTimer = null, clockTimer = null;
+        var pct = 0, startTime = null;
+
+        function el(id) { return document.getElementById(id); }
+
+        function _fmtTime(s) {
+          if (s < 60) return s.toFixed(1) + 's';
+          return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+        }
+        function _fmtNum(n) {
+          if (!n || n <= 0) return '0';
+          return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+        }
+
+        function set(p, label, shimmer) {
+          pct = p;
+          var fill  = el('adam-progress-fill');
+          var stage = el('adam-progress-stage');
+          var pctEl = el('adam-progress-pct');
+          if (!fill) return;
+          if (p !== null) {
+            fill.style.width = p + '%';
+            if (pctEl) pctEl.textContent = Math.round(p) + '%';
+          }
+          if (label !== null && stage) stage.textContent = label;
+          if (shimmer) fill.classList.add('shimmer');
+          else         fill.classList.remove('shimmer');
+        }
+
+        function _stopTimers() {
+          if (crawlTimer) { clearInterval(crawlTimer); crawlTimer = null; }
+          if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+        }
+
+        function start() {
+          _stopTimers();
+          active = true; pct = 0; startTime = Date.now();
+          var fill = el('adam-progress-fill');
+          if (fill) { fill.style.background = ''; fill.style.width = '0%'; }
+          var timeEl = el('adam-progress-time'), tokEl = el('adam-progress-tokens');
+          if (timeEl)   timeEl.textContent   = '';
+          if (tokEl)    tokEl.textContent    = '';
+          var wrap = el('adam-progress-wrap');
+          if (wrap) { wrap.style.display = ''; wrap.style.opacity = '1'; wrap.style.transition = ''; }
+
+          /* 实时时钟 */
+          clockTimer = setInterval(function() {
+            if (!active || !startTime) return;
+            var t = el('adam-progress-time');
+            if (t) t.textContent = '⏱ ' + _fmtTime((Date.now() - startTime) / 1000);
+          }, 100);
+
+          /* 阶段推进 */
+          setTimeout(function() { if (active) set(8,  '✔ 验证输入...', false); }, 100);
+          setTimeout(function() { if (active) set(22, '✔ 加载 SDTM 文件...', false); }, 700);
+          setTimeout(function() { if (active) set(38, '构建 LLM Prompt...', false); }, 1400);
+          setTimeout(function() {
+            if (!active) return;
+            set(48, '调用 LLM API，等待响应...', true);
+            crawlTimer = setInterval(function() {
+              if (!active) { clearInterval(crawlTimer); return; }
+              var inc = pct < 65 ? 0.25 : 0.08;
+              if (pct < 88) set(Math.min(88, pct + inc), null, true);
+            }, 400);
+          }, 2200);
+        }
+
+        function complete(msg, inputTok, outputTok) {
+          active = false;
+          _stopTimers();
+          var elapsed = startTime ? (Date.now() - startTime) / 1000 : null;
+          var fill = el('adam-progress-fill');
+          if (fill) { fill.classList.remove('shimmer'); fill.style.background = '#3fb950'; }
+          set(100, msg || '✔ LLM 生成完成', false);
+
+          /* 最终时间 */
+          var timeEl = el('adam-progress-time');
+          if (timeEl && elapsed) timeEl.textContent = '⏱ ' + _fmtTime(elapsed);
+
+          /* token 统计 */
+          var tokEl = el('adam-progress-tokens');
+          if (tokEl) {
+            var total = (inputTok || 0) + (outputTok || 0);
+            if (total > 0) {
+              tokEl.textContent = _fmtNum(total) + ' tokens'
+                + '  (↑' + _fmtNum(inputTok) + ' / ↓' + _fmtNum(outputTok) + ')';
+            }
+          }
+
+          setTimeout(function() {
+            var wrap = el('adam-progress-wrap');
+            if (!wrap) return;
+            wrap.style.transition = 'opacity 0.7s';
+            wrap.style.opacity = '0';
+            setTimeout(function() {
+              wrap.style.display = 'none'; wrap.style.opacity = '1'; wrap.style.transition = '';
+              if (fill) { fill.style.background = ''; fill.style.width = '0%'; }
+            }, 700);
+          }, 3500);
+        }
+
+        function error(msg) {
+          active = false;
+          _stopTimers();
+          var elapsed = startTime ? (Date.now() - startTime) / 1000 : null;
+          var fill = el('adam-progress-fill');
+          if (fill) { fill.classList.remove('shimmer'); fill.style.background = '#f85149'; }
+          set(null, msg || '✖ 调用失败', false);
+          var timeEl = el('adam-progress-time');
+          if (timeEl && elapsed) timeEl.textContent = '⏱ ' + _fmtTime(elapsed);
+        }
+
+        /* 按钮点击 → 启动进度条 */
+        $(document).on('click', '#btn_generate', function() { start(); });
+
+        /* 完成/失败信号由 server.R 通过 shinyjs::runjs() 直接调用 */
+
+        return { start: start, complete: complete, error: error };
+      })();
+    ")),
     div(class = "brand-bar",
       div(class = "brand-icon", bs_icon("activity", size="1rem", color="#0d1117")),
-      div(div(class="brand-title","ADaM Builder"), div(class="brand-sub","SDTM → ADaM  ·  AI-Assisted"))
+      div(div(class="brand-title","ADaM Builder"), div(class="brand-sub","SDTM → ADaM  ·  AI-Assisted")),
+      tags$button(
+        class   = "theme-toggle-btn",
+        title   = "切换明暗主题",
+        onclick = "toggleAdamTheme()",
+        tags$span(class="icon-dark-mode",  "☀"),   # 深色模式下显示（点击切换到浅色）
+        tags$span(class="icon-light-mode", "🌙")   # 浅色模式下显示（点击切换回深色）
+      )
     ),
 
     # ── [U-1] SDTM 上传（配置驱动，动态渲染）────────────────────────────────
@@ -483,8 +807,23 @@ ui <- page_sidebar(
           value_box("风险点识别",     textOutput("vb_n_risks",   inline=TRUE), showcase=bs_icon("exclamation-triangle"), theme="secondary", height="110px"),
           value_box("LLM 状态",       textOutput("vb_llm_status",inline=TRUE), showcase=bs_icon("robot"),                theme="secondary", height="110px")
         ),
-        card(card_header(tagList(bs_icon("terminal-fill",size="0.75rem"),"  实时日志")),
-             verbatimTextOutput("run_status")),
+        card(
+          card_header(tagList(bs_icon("terminal-fill",size="0.75rem"),"  实时日志")),
+          div(id="adam-progress-wrap", style="display:none;",
+            div(id="adam-progress-header",
+              span(id="adam-progress-stage", "准备中..."),
+              span(id="adam-progress-pct",   "0%")
+            ),
+            div(id="adam-progress-track",
+              div(id="adam-progress-fill")
+            ),
+            div(id="adam-progress-footer",
+              span(id="adam-progress-time",   ""),
+              span(id="adam-progress-tokens", "")
+            )
+          ),
+          verbatimTextOutput("run_status")
+        ),
         card(
           card_header(layout_columns(col_widths=c(8,4),
             div(tagList(bs_icon("shield-exclamation",size="0.75rem"),"  LLM 自主推断风险点")),

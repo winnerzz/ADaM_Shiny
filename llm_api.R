@@ -204,14 +204,28 @@ call_llm_engine <- function(spec_json,
     error = function(e) .handle_http_error(e, provider)
   )
 
-  # ── 提取原始文本 ─────────────────────────────────────────────────────────────
+  # ── 提取原始文本 + token 用量 ────────────────────────────────────────────────
+  resp_body   <- resp_body_json(resp)
   raw_content <- if (cfg$anthropic_style) {
-    resp_body_json(resp)$content[[1]]$text
+    resp_body$content[[1]]$text
   } else {
-    resp_body_json(resp)$choices[[1]]$message$content
+    resp_body$choices[[1]]$message$content
   }
 
-  .parse_llm_json(raw_content, model)
+  # token 用量（OpenAI: prompt_tokens/completion_tokens；Anthropic: input_tokens/output_tokens）
+  usage <- resp_body$usage %||% list()
+  token_info <- if (cfg$anthropic_style) {
+    list(input  = as.integer(usage$input_tokens  %||% 0L),
+         output = as.integer(usage$output_tokens %||% 0L))
+  } else {
+    list(input  = as.integer(usage$prompt_tokens     %||% 0L),
+         output = as.integer(usage$completion_tokens %||% 0L))
+  }
+  token_info$total <- token_info$input + token_info$output
+
+  result <- .parse_llm_json(raw_content, model)
+  result$token_info <- token_info
+  result
 }
 
 # =============================================================================
@@ -539,7 +553,8 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption="若存在其他治疗臂，请更新 trt_num_map")
   )
 
-  return(list(r_code = r_code_str, risk_logs = risk_logs_list))
+  return(list(r_code = r_code_str, risk_logs = risk_logs_list,
+              token_info = list(input=0L, output=0L, total=0L)))
   }
 
   # ── 非标准目标：动态生成通用骨架代码 ──────────────────────────────────────
@@ -577,7 +592,8 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption  = "请根据 ADaM 规格替换为实际推导逻辑后再执行")
   )
 
-  list(r_code = r_code_generic, risk_logs = risk_generic)
+  list(r_code = r_code_generic, risk_logs = risk_generic,
+       token_info = list(input=0L, output=0L, total=0L))
 }
 
 # =============================================================================
