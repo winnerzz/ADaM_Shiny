@@ -61,7 +61,7 @@ MOCK_MODE <- FALSE   # ← 接入真实 API 时保持 FALSE
 #   base_url_map     — 命名列表，providerKey → 本地服务地址（本地推理使用）
 #   mock             — 逻辑型，TRUE 强制 Mock 模式
 #
-# 返回：list(r_code = "...", risk_logs = list(...))
+# 返回：list(derivation_plan = list(...), r_code = "...", risk_logs = list(...))
 # =============================================================================
 call_llm_engine_with_failover <- function(spec_json,
                                            data_summary,
@@ -70,17 +70,24 @@ call_llm_engine_with_failover <- function(spec_json,
                                            sdtm_list       = NULL,
                                            base_url_map    = list(),
                                            mock            = MOCK_MODE,
-                                           target_datasets = NULL) {
+                                           target_datasets = NULL,
+                                           prompt_profile  = list()) {
   if (is.list(spec_json)) {
     spec_json <- toJSON(spec_json, pretty = TRUE, auto_unbox = TRUE)
   }
 
   if (isTRUE(mock)) {
     message("[llm_api] Mock 模式 — 返回硬编码响应")
-    return(.mock_llm_response(target_datasets = target_datasets %||% c("adsl", "adae")))
+  return(.mock_llm_response(target_datasets = target_datasets %||% c("adsl", "adae")))
   }
 
-  prompts    <- .build_prompts(spec_json, data_summary, sdtm_list, target_datasets)
+  prompts    <- .build_prompts(
+    spec_json       = spec_json,
+    data_summary    = data_summary,
+    sdtm_list       = sdtm_list,
+    target_datasets = target_datasets,
+    prompt_profile  = prompt_profile
+  )
   last_error <- NULL
 
   for (attempt in failover_chain) {
@@ -92,7 +99,16 @@ call_llm_engine_with_failover <- function(spec_json,
     message("[llm_api] 调用 ", prov, " · 模型=", model)
 
     result <- tryCatch(
-      .call_real_api(prompts$system, prompts$user, key, model, prov, url),
+      .call_real_api(
+        prompts$system,
+        prompts$user,
+        key,
+        model,
+        prov,
+        url,
+        request_timeout = as.integer(prompt_profile$request_timeout %||% 180L),
+        max_tokens = as.integer(prompt_profile$max_tokens %||% 4096L)
+      ),
       error = function(e) {
         last_error <<- conditionMessage(e)
         message("[llm_api] 提供商 '", prov, "' 失败，尝试下一个。原因：", last_error)
@@ -115,7 +131,8 @@ call_llm_engine <- function(spec_json,
                             api_key   = "",
                             model     = "gpt-4o",
                             sdtm_list = NULL,
-                            mock      = MOCK_MODE) {
+                            mock      = MOCK_MODE,
+                            prompt_profile = list()) {
   if (is.list(spec_json)) {
     spec_json <- toJSON(spec_json, pretty = TRUE, auto_unbox = TRUE)
   }
@@ -128,7 +145,8 @@ call_llm_engine <- function(spec_json,
     provider_key_map = setNames(list(api_key), prov),
     failover_chain   = list(list(provider = prov, model = model)),
     sdtm_list        = sdtm_list,
-    mock             = mock
+    mock             = mock,
+    prompt_profile   = prompt_profile
   )
 }
 
@@ -138,7 +156,9 @@ call_llm_engine <- function(spec_json,
 # 统一处理所有 7 个提供商，无平行分支。
 # =============================================================================
 .call_real_api <- function(system_prompt, user_prompt, api_key, model, provider,
-                            base_url_override = NULL) {
+                            base_url_override = NULL,
+                            request_timeout = 180L,
+                            max_tokens = 4096L) {
   cfg      <- .get_provider_cfg(provider)
   base_url <- base_url_override %||% cfg$base_url %||% cfg[["base_url_default"]]
 
@@ -155,7 +175,7 @@ call_llm_engine <- function(spec_json,
   body <- if (cfg$anthropic_style) {
     list(
       model      = model,
-      max_tokens = 4096,
+      max_tokens = max_tokens,
       system     = system_prompt,
       messages   = list(list(role = "user", content = user_prompt))
     )
@@ -163,7 +183,7 @@ call_llm_engine <- function(spec_json,
     b <- list(
       model       = model,
       temperature = 0.1,
-      max_tokens  = 4096,
+      max_tokens  = max_tokens,
       messages    = list(
         list(role = "system", content = system_prompt),
         list(role = "user",   content = user_prompt)
@@ -176,7 +196,7 @@ call_llm_engine <- function(spec_json,
   # ── 构建请求对象 ────────────────────────────────────────────────────────────
   req <- request(base_url) |>
     req_body_json(body) |>
-    req_timeout(120) |>
+    req_timeout(request_timeout) |>
     req_retry(
       max_tries    = 3,
       is_transient = \(r) resp_status(r) %in% c(429L, 500L, 502L, 503L)
@@ -233,7 +253,22 @@ call_llm_engine <- function(spec_json,
 # 新增 target_datasets 参数，动态生成数据集输出指令（向后兼容）
 # =============================================================================
 .build_prompts <- function(spec_json, data_summary, sdtm_list = NULL,
-                            target_datasets = NULL) {
+                            target_datasets = NULL,
+                            prompt_profile = list()) {
+
+  generation_mode <- tolower(trimws(prompt_profile$mode %||% "balanced"))
+  if (!generation_mode %in% c("strict", "balanced", "adaptive")) {
+    generation_mode <- "balanced"
+  }
+  task_mode <- tolower(trimws(prompt_profile$task %||% "full_generation"))
+  if (!task_mode %in% c("full_generation", "plan_only", "code_from_plan")) {
+    task_mode <- "full_generation"
+  }
+  traceability_mode <- isTRUE(prompt_profile$traceability)
+  compact_mode      <- isTRUE(prompt_profile$compact_mode)
+  preview_rows_n    <- suppressWarnings(as.integer(prompt_profile$preview_rows %||% 5L))
+  if (is.na(preview_rows_n) || preview_rows_n < 3L) preview_rows_n <- 3L
+  if (preview_rows_n > 8L) preview_rows_n <- 8L
 
   # ── 推断目标数据集列表 ──────────────────────────────────────────────────────
   if (is.null(target_datasets) || length(target_datasets) == 0) {
@@ -279,12 +314,41 @@ call_llm_engine <- function(spec_json,
 
   system_prompt <- paste0(
     "你是一位资深 CDISC ADaM 数据程序员，精通 R 语言（dplyr / lubridate / stringr）。\n",
-    "你的任务是根据用户提供的 SDTM 源数据结构和 ADaM 变量规格，",
-    "生成完整、可直接运行的 R 代码，将 SDTM 转换为 ADaM 数据集。\n\n",
+    switch(task_mode,
+      plan_only = "你的当前任务是先形成结构化 derivation plan，并仅返回最小占位代码，不要展开完整实现。\n\n",
+      code_from_plan = "你的当前任务是基于已提供的 derivation plan 生成紧凑、可直接运行的 R 代码，不要重新发散解释规格。请始终以“用户直接执行这段代码后，必须得到目标 ADaM 数据集”为第一目标。\n\n",
+      "你的任务不是直接自由写代码，而是先形成结构化 derivation plan，再基于该 plan 生成完整、可直接运行的 R 代码，将 SDTM 转换为 ADaM 数据集。\n\n"
+    ),
 
     "【输出格式要求 - 严格执行】\n",
-    "你必须且只能返回一个合法的 JSON 对象，包含以下两个字段：\n",
+    "你必须且只能返回一个合法的 JSON 对象，包含以下三个字段：\n",
     "{\n",
+    '  "derivation_plan": {\n',
+    '    "plan_version": "版本号",\n',
+    '    "generated_by": "llm",\n',
+    '    "datasets": [\n',
+    '      {\n',
+    '        "dataset": "adsl",\n',
+    '        "dataset_role": "subject-level 或 event-level 或 analysis",\n',
+    '        "required_inputs": ["dm", "ex"],\n',
+    '        "join_plan": [],\n',
+    '        "variable_plan": [\n',
+    '          {\n',
+    '            "variable": "USUBJID",\n',
+    '            "label": "Unique Subject Identifier",\n',
+    '            "type": "char 或 num",\n',
+    '            "source_domain": "dm",\n',
+    '            "source_columns": ["USUBJID"],\n',
+    '            "derivation_rule": "直接映射或派生说明",\n',
+    '            "depends_on": ["USUBJID"],\n',
+    '            "confidence": "HIGH 或 MEDIUM 或 LOW"\n',
+    '          }\n',
+    '        ],\n',
+    '        "assumptions": ["需要人工确认的前提"],\n',
+    '        "open_questions": []\n',
+    '      }\n',
+    '    ]\n',
+    '  },\n',
     '  "r_code": "完整可运行的 R 代码字符串（换行用 \\n 转义）",\n',
     '  "risk_logs": [\n',
     '    {\n',
@@ -303,15 +367,65 @@ call_llm_engine <- function(spec_json,
     ds_instruction,
     "3. 日期变量使用字符型 YYYY-MM-DD 格式，",
     "Study Day 按 CDISC 规范：(date - ref_date) + 1\n",
-    "4. 对所有自主推断（如缺失值处理、类型转换假设）必须在 risk_logs 中逐条记录\n",
-    "5. 不要在 JSON 之外输出任何文字、注释或 Markdown 代码块标记"
+    "4. derivation_plan 必须覆盖每个目标数据集，并尽量覆盖所有 Spec 变量\n",
+    "5. 对所有自主推断（如缺失值处理、类型转换假设）必须同时体现在 derivation_plan 和 risk_logs 中\n",
+    "6. 不要在 JSON 之外输出任何文字、注释或 Markdown 代码块标记\n",
+    "7. 你生成的代码是最终执行代码，而不是草稿。必须保证用户执行后能直接得到目标数据集对象。\n",
+    switch(task_mode,
+      plan_only = "8. 当前为 plan-only 模式：r_code 字段仅返回简短占位字符串，如 '# PLAN_ONLY_MODE'。\n",
+      code_from_plan = paste0(
+        "8. 当前为 code-from-plan 模式：优先复用输入 plan，输出代码要紧凑，不要附加多余示例。\n",
+        "9. 为减少输出长度，derivation_plan 字段只返回最小占位对象：",
+        '{"plan_version":"reuse-input","generated_by":"reuse-input","datasets":[]}', "。\n",
+        "10. 代码必须精简：不要输出冗长注释、不要重复声明同一逻辑、不要生成演示性样板。\n"
+      ),
+      ""
+    ),
+    "\n【当前生成策略】\n",
+    switch(generation_mode,
+      strict = paste0(
+        "- 策略：稳健优先\n",
+        "- 优先遵循 Spec 明示信息，减少隐式推断\n",
+        "- 若信息不足，宁可保守处理，也不要过度补全\n"
+      ),
+      adaptive = paste0(
+        "- 策略：补全优先\n",
+        "- 在合理前提下可主动补全缺失映射或派生逻辑\n",
+        "- 但必须把所有补全前提完整写入 risk_logs\n"
+      ),
+      paste0(
+        "- 策略：平衡模式\n",
+        "- 在可运行性、可读性和推断保守性之间保持平衡\n"
+      )
+    ),
+    if (traceability_mode) paste0(
+      "- 追踪要求：强化可追溯性，",
+      "关键变量尽量保持逻辑分段清晰，并在 risk_logs 中更完整记录假设与来源\n"
+    ) else "",
+    if (compact_mode) {
+      "- 上下文密度：压缩模式，仅提供结构化数据摘要，不附加原始样本预览；请优先保持 plan 和代码简洁。\n"
+    } else {
+      paste0("- 上下文密度：每个 SDTM 域提供前 ", preview_rows_n, " 行样本预览\n")
+    }
   )
 
   part_spec <- paste0(
-    "## 1. ADaM 变量规格（JSON 格式）\n",
-    "以下是目标 ADaM 数据集的变量元数据，",
-    "包含变量名、标签、类型、来源域和派生逻辑：\n\n",
-    spec_json
+    if (task_mode == "code_from_plan") {
+      "## 1. Derivation Plan（JSON 格式）\n"
+    } else {
+      "## 1. ADaM 变量规格（JSON 格式）\n"
+    },
+    if (task_mode == "code_from_plan") {
+      "以下是已经确认的 derivation plan。请严格按该 plan 生成代码，并尽量保持 derivation_plan 字段与输入一致：\n\n"
+    } else {
+      "以下是目标 ADaM 数据集的变量元数据，包含变量名、标签、类型、来源域和派生逻辑。你应先把这些信息整理为 derivation plan，再生成代码：\n\n"
+    },
+    spec_json,
+    if (task_mode == "code_from_plan") {
+      "\n\n请牢记：用户会直接执行你输出的 r_code，因此最重要的是最终环境中能稳定得到目标数据集对象，而不是展示多种备选写法。"
+    } else {
+      ""
+    }
   )
 
   part_preview <- ""
@@ -319,7 +433,7 @@ call_llm_engine <- function(spec_json,
     domain_previews <- lapply(names(sdtm_list), function(domain) {
       df <- sdtm_list[[domain]]
       if (is.null(df) || nrow(df) == 0) return(NULL)
-      preview_rows <- head(df, 5)
+      preview_rows <- head(df, preview_rows_n)
       csv_lines    <- c(
         paste(names(preview_rows), collapse = ","),
         apply(preview_rows, 1, function(r) {
@@ -337,7 +451,7 @@ call_llm_engine <- function(spec_json,
     domain_previews <- Filter(Negate(is.null), domain_previews)
     if (length(domain_previews) > 0) {
       part_preview <- paste0(
-        "\n\n## 2. SDTM 源数据结构（各域前5行）\n",
+        "\n\n## 2. SDTM 源数据结构（各域前", preview_rows_n, "行）\n",
         "以下是上传的 SDTM 数据的实际列名和样本数据，",
         "请据此推断字段映射关系：\n\n",
         paste(domain_previews, collapse = "\n\n")
@@ -399,6 +513,10 @@ call_llm_engine <- function(spec_json,
     message("[llm_api] 警告：LLM 响应缺少 'risk_logs'，已补充为空列表")
     parsed$risk_logs <- list()
   }
+  if (is.null(parsed$derivation_plan)) {
+    message("[llm_api] 警告：LLM 响应缺少 'derivation_plan'，将由服务端回退生成")
+    parsed$derivation_plan <- NULL
+  }
 
   message("[llm_api] 解析成功  r_code=", nchar(parsed$r_code), "字符  ",
           "risk_logs=", length(parsed$risk_logs), "条")
@@ -451,9 +569,9 @@ call_llm_engine <- function(spec_json,
   # 超时
   if (str_detect(msg, "timeout|timed out|ETIMEDOUT")) {
     stop(
-      "请求超时（>120秒）。\n",
-      "可能原因：网络连接慢，或 Spec 过长导致 LLM 生成时间超限。\n",
-      "建议：减少 Spec 变量数量，或检查网络连接。"
+      "请求超时。\n",
+      "可能原因：网络连接慢，或 Spec / plan 仍然过长导致 LLM 生成时间超限。\n",
+      "建议：继续压缩规格输入，或改用更快的模型 / 本地推理服务。"
     )
   }
 
@@ -553,7 +671,40 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption="若存在其他治疗臂，请更新 trt_num_map")
   )
 
-  return(list(r_code = r_code_str, risk_logs = risk_logs_list,
+  derivation_plan <- list(
+    plan_version = "0.1-mock",
+    generated_by = "mock",
+    datasets = list(
+      list(
+        dataset = "adsl",
+        dataset_role = "subject-level",
+        required_inputs = c("dm", "ex"),
+        join_plan = list(list(type = "left_join", left = "dm", right = "ex_summary", by = "USUBJID")),
+        variable_plan = list(
+          list(variable = "USUBJID", type = "char", source_domain = "dm", source_columns = list("USUBJID"), derivation_rule = "Direct mapping from DM", depends_on = list("USUBJID"), confidence = "HIGH"),
+          list(variable = "TRT01P", type = "char", source_domain = "dm", source_columns = list("ARM"), derivation_rule = "Direct mapping from ARM", depends_on = list("ARM"), confidence = "HIGH"),
+          list(variable = "TRTSDT", type = "char", source_domain = "ex", source_columns = list("EXSTDTC", "RFXSTDTC"), derivation_rule = "Prefer EX min start date, fallback to DM reference start date", depends_on = list("EXSTDTC", "RFXSTDTC"), confidence = "MEDIUM")
+        ),
+        assumptions = list("EX domain available for treatment date summarization."),
+        open_questions = list()
+      ),
+      list(
+        dataset = "adae",
+        dataset_role = "event-level",
+        required_inputs = c("ae", "adsl"),
+        join_plan = list(list(type = "left_join", left = "ae", right = "adsl", by = "USUBJID")),
+        variable_plan = list(
+          list(variable = "AESEQ", type = "char", source_domain = "ae", source_columns = list("AESEQ"), derivation_rule = "Direct mapping from AE", depends_on = list("AESEQ"), confidence = "HIGH"),
+          list(variable = "ASTDT", type = "char", source_domain = "ae", source_columns = list("AESTDTC"), derivation_rule = "Direct mapping of adverse event start date", depends_on = list("AESTDTC"), confidence = "HIGH"),
+          list(variable = "TRTEMFL", type = "char", source_domain = "ae", source_columns = list("AESTDTC", "TRTSDT"), derivation_rule = "Flag Y when AE start date is on or after treatment start", depends_on = list("AESTDTC", "TRTSDT"), confidence = "MEDIUM")
+        ),
+        assumptions = list("TRTSDT is available from ADSL."),
+        open_questions = list()
+      )
+    )
+  )
+
+  return(list(derivation_plan = derivation_plan, r_code = r_code_str, risk_logs = risk_logs_list,
               token_info = list(input=0L, output=0L, total=0L)))
   }
 
@@ -592,7 +743,26 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption  = "请根据 ADaM 规格替换为实际推导逻辑后再执行")
   )
 
-  list(r_code = r_code_generic, risk_logs = risk_generic,
+  derivation_plan_generic <- list(
+    plan_version = "0.1-mock",
+    generated_by = "mock",
+    datasets = lapply(target_datasets, function(ds) {
+      list(
+        dataset = ds,
+        dataset_role = "analysis",
+        required_inputs = c("dm"),
+        join_plan = list(),
+        variable_plan = list(
+          list(variable = "USUBJID", type = "char", source_domain = "dm", source_columns = list("USUBJID"), derivation_rule = "Direct mapping from DM", depends_on = list("USUBJID"), confidence = "HIGH"),
+          list(variable = "STUDYID", type = "char", source_domain = "dm", source_columns = list("STUDYID"), derivation_rule = "Direct mapping from DM", depends_on = list("STUDYID"), confidence = "HIGH")
+        ),
+        assumptions = list("Mock generic skeleton uses DM as the only input domain."),
+        open_questions = list()
+      )
+    })
+  )
+
+  list(derivation_plan = derivation_plan_generic, r_code = r_code_generic, risk_logs = risk_generic,
        token_info = list(input=0L, output=0L, total=0L))
 }
 

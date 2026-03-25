@@ -51,6 +51,331 @@ adam_theme <- bs_theme(
       font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
       text-transform: uppercase; color: #8b949e; margin-bottom: 0.3rem;
     }
+    .sidebar-block {
+      margin-bottom: 1rem;
+    }
+    .sidebar-section-card {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+      padding: 0.55rem 0.75rem; margin-top: 0.45rem;
+    }
+    .sidebar-section-title {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
+    .sidebar-section-title .title-left {
+      display: flex; align-items: center; gap: 0.45rem;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #e6edf3;
+    }
+    .sidebar-section-body {
+      color: #8b949e; font-size: 0.74rem; line-height: 1.45;
+    }
+    .summary-banner {
+      background: linear-gradient(135deg, rgba(45,212,191,0.10), rgba(14,165,233,0.08));
+      border: 1px solid rgba(45,212,191,0.25);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      margin-bottom: 0.9rem;
+    }
+    .summary-banner.warn {
+      background: rgba(210,153,34,0.08);
+      border-color: rgba(210,153,34,0.28);
+    }
+    .summary-banner.error {
+      background: rgba(248,81,73,0.08);
+      border-color: rgba(248,81,73,0.30);
+    }
+    .summary-banner-title {
+      display: flex; align-items: center; gap: 0.5rem;
+      color: #e6edf3; font-weight: 700; font-size: 0.86rem;
+      margin-bottom: 0.35rem;
+    }
+    .summary-banner-text {
+      color: #8b949e; font-size: 0.78rem; line-height: 1.55;
+    }
+    .context-strip {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+      padding: 0.6rem 0.8rem; margin-bottom: 0.8rem;
+    }
+    .context-strip-title {
+      color: #e6edf3; font-size: 0.76rem; font-weight: 700;
+      letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 0.35rem;
+    }
+    .context-strip-body {
+      color: #8b949e; font-size: 0.75rem; line-height: 1.5;
+    }
+    .workflow-overview-card {
+      background: linear-gradient(180deg, rgba(45,212,191,0.08), rgba(13,17,23,0.96));
+      border: 1px solid rgba(45,212,191,0.18);
+      border-radius: 8px;
+      padding: 0.8rem 0.85rem;
+      margin-bottom: 1rem;
+    }
+    .workflow-overview-title {
+      color: #e6edf3; font-size: 0.75rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.6rem;
+    }
+    .workflow-step-row {
+      display: flex; align-items: flex-start; gap: 0.55rem;
+      padding: 0.4rem 0;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .workflow-step-row:first-of-type { border-top: none; padding-top: 0; }
+    .workflow-step-dot {
+      width: 8px; height: 8px; border-radius: 50%; margin-top: 0.32rem; flex-shrink: 0;
+      background: #30363d;
+    }
+    .workflow-step-dot.active { background: #2dd4bf; box-shadow: 0 0 0 4px rgba(45,212,191,0.12); }
+    .workflow-step-dot.done { background: #3fb950; }
+    .workflow-step-dot.warn { background: #d29922; }
+    .workflow-step-copy { min-width: 0; }
+    .workflow-step-name { color: #e6edf3; font-size: 0.76rem; font-weight: 600; margin-bottom: 0.14rem; }
+    .workflow-step-desc { color: #8b949e; font-size: 0.72rem; line-height: 1.45; }
+    .workflow-details {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+      margin-bottom: 0.8rem; overflow: hidden;
+    }
+    .workflow-details > summary {
+      list-style: none; cursor: pointer; padding: 0.7rem 0.8rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.7rem;
+      color: #e6edf3; font-size: 0.78rem; font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .workflow-details > summary::-webkit-details-marker { display: none; }
+    .workflow-details > summary .summary-meta {
+      color: #8b949e; font-size: 0.68rem; font-weight: 500; letter-spacing: normal;
+    }
+    .workflow-details-body {
+      padding: 0 0.8rem 0.8rem 0.8rem;
+      border-top: 1px solid #21262d;
+    }
+    .hero-panel {
+      background: linear-gradient(135deg, rgba(45,212,191,0.14), rgba(14,165,233,0.08) 45%, rgba(13,17,23,0.96));
+      border: 1px solid rgba(45,212,191,0.18);
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+    }
+    .hero-kicker {
+      color: #2dd4bf; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; margin-bottom: 0.45rem;
+    }
+    .hero-title {
+      color: #e6edf3; font-family: 'Syne', sans-serif; font-size: 1.35rem;
+      line-height: 1.08; margin-bottom: 0.45rem;
+    }
+    .hero-text {
+      color: #9fb0c2; font-size: 0.84rem; line-height: 1.6; max-width: 860px;
+    }
+    .hero-meta {
+      display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.8rem;
+    }
+    .hero-pill {
+      display: inline-flex; align-items: center;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 999px; padding: 0.16rem 0.55rem;
+      color: #c9d1d9; font-size: 0.7rem; font-family: 'JetBrains Mono', monospace;
+    }
+    .metric-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem;
+    }
+    .metric-card {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+      padding: 0.75rem 0.85rem;
+    }
+    .metric-label {
+      color: #8b949e; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+      margin-bottom: 0.35rem;
+    }
+    .metric-value {
+      color: #e6edf3; font-size: 1.1rem; font-weight: 700; line-height: 1.1; margin-bottom: 0.22rem;
+    }
+    .metric-note {
+      color: #8b949e; font-size: 0.73rem; line-height: 1.5;
+    }
+    .workspace-card {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+      padding: 0.95rem 1rem;
+    }
+    .workspace-kicker {
+      color: #8b949e; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; margin-bottom: 0.35rem;
+    }
+    .workspace-title {
+      color: #e6edf3; font-size: 1rem; font-weight: 700; margin-bottom: 0.38rem;
+    }
+    .workspace-text {
+      color: #9fb0c2; font-size: 0.78rem; line-height: 1.6;
+    }
+    .workspace-actions {
+      display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.85rem;
+    }
+    .btn-ghost-workflow {
+      background: transparent; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; font-size: 0.76rem; font-weight: 600; padding: 0.45rem 0.8rem;
+    }
+    .btn-ghost-workflow:hover { border-color: #2dd4bf; color: #2dd4bf; }
+    .digest-list { display: flex; flex-direction: column; gap: 0.65rem; }
+    .digest-item {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+      padding: 0.72rem 0.85rem;
+    }
+    .digest-item-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.7rem;
+      margin-bottom: 0.28rem;
+    }
+    .digest-item-title {
+      color: #e6edf3; font-size: 0.8rem; font-weight: 700;
+    }
+    .digest-item-text {
+      color: #8b949e; font-size: 0.75rem; line-height: 1.5;
+    }
+    .detail-section-title {
+      color: #8b949e; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+      margin-bottom: 0.45rem;
+    }
+    .domain-upload-meta {
+      margin: 0 0 0.3rem 0;
+      font-size: 0.73rem;
+      color: #8b949e;
+      line-height: 1.45;
+    }
+    .input-next-step-card {
+      background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(14,165,233,0.05));
+      border: 1px solid rgba(45,212,191,0.22);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+    }
+    .input-next-step-title {
+      color: #e6edf3;
+      font-size: 0.86rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+    }
+    .input-next-step-text {
+      color: #8b949e;
+      font-size: 0.77rem;
+      line-height: 1.55;
+    }
+    .input-next-step-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+    }
+    .input-prep-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+      gap: 1rem;
+      align-items: stretch;
+    }
+    .input-prep-main-card,
+    .input-prep-side-card {
+      height: 100%;
+    }
+    .input-prep-main-card .card-body,
+    .input-prep-side-card .card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .input-section-block {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 0.85rem 0.9rem;
+    }
+    .input-section-title {
+      color: #e6edf3;
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.42rem;
+    }
+    .input-section-meta {
+      color: #8b949e;
+      font-size: 0.73rem;
+      line-height: 1.5;
+      margin-bottom: 0.7rem;
+    }
+    .sdtm-upload-region {
+      max-height: 430px;
+      overflow-y: auto;
+      padding-right: 0.2rem;
+    }
+    .sdtm-upload-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+    .sdtm-upload-card {
+      background: rgba(13,17,23,0.82);
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 0.7rem 0.75rem;
+      min-width: 0;
+    }
+    .sdtm-upload-card .form-group {
+      margin-bottom: 0;
+    }
+    .sdtm-upload-card .form-control[type='file'] {
+      margin-top: 0.35rem;
+    }
+    .input-side-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+      height: 100%;
+    }
+    .input-side-stack .input-next-step-card {
+      margin-top: auto;
+    }
+    .validation-mini-card {
+      background: var(--bs-secondary-bg);
+      border: 1px solid var(--bs-border-color);
+      border-left-width: 4px;
+      border-radius: 6px;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.76rem;
+    }
+    .validation-mini-card .dataset-name {
+      color: var(--bs-body-color);
+      font-weight: 700;
+    }
+    .validation-mini-card .dataset-meta {
+      margin-top: 0.25rem;
+      color: #8b949e;
+    }
+    .run-status-note {
+      font-size: 0.78rem;
+      color: #6e7681;
+      align-self: center;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      line-height: 1.5;
+    }
+    .detail-accordion {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+      margin-bottom: 0.85rem; overflow: hidden;
+    }
+    .detail-accordion > summary {
+      list-style: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.8rem;
+      padding: 0.8rem 0.95rem;
+      color: #e6edf3; font-size: 0.8rem; font-weight: 700;
+    }
+    .detail-accordion > summary::-webkit-details-marker { display: none; }
+    .detail-accordion-head {
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .detail-accordion-meta {
+      color: #8b949e; font-size: 0.7rem; font-weight: 500;
+    }
+    .detail-accordion-body {
+      border-top: 1px solid #21262d;
+      padding: 0.95rem;
+    }
 
     #btn_generate {
       background: linear-gradient(135deg, #2dd4bf 0%, #0ea5e9 100%);
@@ -116,6 +441,12 @@ adam_theme <- bs_theme(
     .badge-error-custom {
       background: rgba(248,81,73,0.15); color: #f85149;
       border: 1px solid rgba(248,81,73,0.35);
+      font-family: 'JetBrains Mono',monospace; font-size: 0.7rem;
+      padding: 2px 7px; border-radius: 4px;
+    }
+    .badge-pass-custom {
+      background: rgba(63,185,80,0.15); color: #3fb950;
+      border: 1px solid rgba(63,185,80,0.35);
       font-family: 'JetBrains Mono',monospace; font-size: 0.7rem;
       padding: 2px 7px; border-radius: 4px;
     }
@@ -237,6 +568,35 @@ adam_theme <- bs_theme(
       margin-top: 0.35rem; font-size: 0.7rem; color: #2dd4bf;
       cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
     }
+    .llm-tuning-section {
+      margin-top: 0.45rem; padding-top: 0.55rem; border-top: 1px solid #21262d;
+    }
+    .llm-status-card {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+      padding: 0.65rem 0.8rem; margin-top: 0.55rem;
+    }
+    .llm-status-title {
+      display: flex; align-items: center; gap: 0.45rem;
+      color: #e6edf3; font-size: 0.76rem; font-weight: 600;
+      margin-bottom: 0.48rem; letter-spacing: 0.04em;
+    }
+    .llm-chip-row {
+      display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.45rem;
+    }
+    .llm-chip {
+      display: inline-flex; align-items: center;
+      background: rgba(255,255,255,0.04); border: 1px solid #30363d;
+      border-radius: 999px; padding: 0.12rem 0.48rem;
+      color: #8b949e; font-size: 0.68rem; font-family: 'JetBrains Mono',monospace;
+    }
+    .llm-chip-primary {
+      background: rgba(45,212,191,0.12); color: #2dd4bf;
+      border-color: rgba(45,212,191,0.35);
+    }
+    .llm-status-meta {
+      color: #8b949e; font-size: 0.72rem; line-height: 1.5;
+      display: flex; flex-wrap: wrap; gap: 0.35rem;
+    }
 
     /* DT 深色 */
     .dataTables_wrapper,
@@ -337,7 +697,9 @@ adam_theme <- bs_theme(
 
     /* ── [新增] API 配置区域 ── */
     .api-config-section .form-control,
-    .api-config-section .form-select {
+    .api-config-section .form-select,
+    .api-config-section .selectize-input,
+    .api-config-section .selectize-dropdown {
       background: #0d1117 !important;
       border: 1px solid #30363d !important;
       color: #c9d1d9 !important;
@@ -345,8 +707,33 @@ adam_theme <- bs_theme(
       font-size: 0.8rem !important;
       padding: 0.35rem 0.6rem !important;
     }
+    .api-config-section .selectize-input input,
+    .api-config-section .selectize-input > div,
+    .api-config-section .selectize-input .item,
+    .api-config-section .selectize-input .active,
+    .api-config-section .selectize-control.single .selectize-input:after,
+    .api-config-section .selectize-input::placeholder,
+    .api-config-section .form-control::placeholder,
+    .api-config-section .selectize-dropdown .option,
+    .api-config-section .selectize-dropdown .optgroup-header,
+    .api-config-section select option {
+      color: #c9d1d9 !important;
+      background: #0d1117 !important;
+    }
+    .api-config-section input,
+    .api-config-section textarea,
+    .api-config-section select {
+      color: #c9d1d9 !important;
+      -webkit-text-fill-color: #c9d1d9 !important;
+      caret-color: #c9d1d9 !important;
+    }
+    .api-config-section .selectize-dropdown-content {
+      background: #0d1117 !important;
+      color: #c9d1d9 !important;
+    }
     .api-config-section .form-control:focus,
-    .api-config-section .form-select:focus {
+    .api-config-section .form-select:focus,
+    .api-config-section .selectize-input.focus {
       border-color: #2dd4bf !important;
       box-shadow: 0 0 0 2px rgba(45,212,191,0.15) !important;
     }
@@ -359,6 +746,45 @@ adam_theme <- bs_theme(
     .api-config-section .local-url-input {
       font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;
     }
+    .password-field-shell {
+      margin-bottom: 0.6rem;
+    }
+    .password-field-label {
+      display: block;
+      font-size: 0.7rem;
+      color: #8b949e;
+      margin-bottom: 0.2rem;
+    }
+    .password-field-wrap {
+      position: relative;
+    }
+    .password-field-wrap .form-control {
+      padding-right: 2.5rem !important;
+    }
+    .password-toggle-btn {
+      position: absolute;
+      top: 50%;
+      right: 0.45rem;
+      transform: translateY(-50%);
+      border: none;
+      background: transparent;
+      color: #8b949e;
+      width: 1.8rem;
+      height: 1.8rem;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+    }
+    .password-toggle-btn:hover {
+      color: #2dd4bf;
+      background: rgba(45,212,191,0.08);
+    }
+    .password-toggle-btn .icon-hide { display: none; }
+    .password-toggle-btn.is-visible .icon-show { display: none; }
+    .password-toggle-btn.is-visible .icon-hide { display: inline-flex; }
 
     /* ── 故障转移折叠区 ── */
     .failover-section {
@@ -435,6 +861,14 @@ adam_theme <- bs_theme(
       margin-left: auto; flex-shrink: 0; font-size: 0.85rem;
     }
     .theme-toggle-btn:hover { border-color: #2dd4bf; color: #2dd4bf; }
+    .top-action-btn {
+      background: transparent; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 6px; padding: 0.28rem 0.6rem; cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      font-size: 0.74rem; font-weight: 600; letter-spacing: 0.04em;
+      display: inline-flex; align-items: center; gap: 0.38rem;
+    }
+    .top-action-btn:hover { border-color: #2dd4bf; color: #2dd4bf; background: rgba(45,212,191,0.06); }
     .icon-light-mode { display: none; }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -452,6 +886,8 @@ adam_theme <- bs_theme(
     html.light-theme .icon-light-mode { display: inline; }
     html.light-theme .theme-toggle-btn { border-color: #d0d7de; color: #57606a; }
     html.light-theme .theme-toggle-btn:hover { border-color: #0d9488; color: #0d9488; }
+    html.light-theme .top-action-btn { border-color: #d0d7de; color: #57606a; background: #ffffff; }
+    html.light-theme .top-action-btn:hover { border-color: #0d9488; color: #0d9488; background: rgba(13,148,136,0.05); }
 
     /* 侧边栏 */
     html.light-theme .bslib-sidebar-layout > .sidebar {
@@ -462,6 +898,26 @@ adam_theme <- bs_theme(
     }
     html.light-theme .form-control[type='file']:hover { border-color: #0d9488; color: #24292f; }
     html.light-theme .upload-label { color: #57606a; }
+    html.light-theme .sidebar-section-card,
+    html.light-theme .context-strip {
+      background: #ffffff; border-color: #d0d7de;
+    }
+    html.light-theme .sidebar-section-title .title-left,
+    html.light-theme .summary-banner-title,
+    html.light-theme .context-strip-title { color: #24292f; }
+    html.light-theme .sidebar-section-body,
+    html.light-theme .context-strip-body,
+    html.light-theme .summary-banner-text { color: #57606a; }
+    html.light-theme .summary-banner {
+      background: linear-gradient(135deg, rgba(13,148,136,0.08), rgba(14,165,233,0.06));
+      border-color: rgba(13,148,136,0.25);
+    }
+    html.light-theme .summary-banner.warn {
+      background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.28);
+    }
+    html.light-theme .summary-banner.error {
+      background: rgba(248,81,73,0.08); border-color: rgba(248,81,73,0.28);
+    }
 
     /* 按钮 */
     html.light-theme #btn_clear_uploads { border-color: #d0d7de; color: #6e7681; }
@@ -510,6 +966,16 @@ adam_theme <- bs_theme(
     html.light-theme .spec-status-card { background: #ffffff; border-color: #d0d7de; }
     html.light-theme .spec-status-card .status-text { color: #57606a; }
     html.light-theme .spec-status-card .reopen-link { color: #0d9488; }
+    html.light-theme .llm-tuning-section { border-top-color: #d0d7de; }
+    html.light-theme .llm-status-card { background: #ffffff; border-color: #d0d7de; }
+    html.light-theme .llm-status-title { color: #24292f; }
+    html.light-theme .llm-chip {
+      background: #f6f8fa; border-color: #d0d7de; color: #57606a;
+    }
+    html.light-theme .llm-chip-primary {
+      background: rgba(13,148,136,0.08); border-color: rgba(13,148,136,0.25); color: #0d9488;
+    }
+    html.light-theme .llm-status-meta { color: #57606a; }
 
     /* DT 表格 */
     html.light-theme .dataTables_wrapper,
@@ -556,15 +1022,103 @@ adam_theme <- bs_theme(
 
     /* API 配置 */
     html.light-theme .api-config-section .form-control,
-    html.light-theme .api-config-section .form-select {
+    html.light-theme .api-config-section .form-select,
+    html.light-theme .api-config-section .selectize-input,
+    html.light-theme .api-config-section .selectize-dropdown {
       background: #ffffff !important; border-color: #d0d7de !important; color: #24292f !important;
     }
+    html.light-theme .api-config-section .selectize-input input,
+    html.light-theme .api-config-section .selectize-input > div,
+    html.light-theme .api-config-section .selectize-input .item,
+    html.light-theme .api-config-section .selectize-input .active,
+    html.light-theme .api-config-section .selectize-control.single .selectize-input:after,
+    html.light-theme .api-config-section .selectize-input::placeholder,
+    html.light-theme .api-config-section .form-control::placeholder,
+    html.light-theme .api-config-section .selectize-dropdown .option,
+    html.light-theme .api-config-section .selectize-dropdown .optgroup-header,
+    html.light-theme .api-config-section select option {
+      color: #24292f !important;
+      background: #ffffff !important;
+    }
+    html.light-theme .api-config-section input,
+    html.light-theme .api-config-section textarea,
+    html.light-theme .api-config-section select {
+      color: #24292f !important;
+      -webkit-text-fill-color: #24292f !important;
+      caret-color: #24292f !important;
+    }
+    html.light-theme .api-config-section .selectize-dropdown-content {
+      background: #ffffff !important;
+      color: #24292f !important;
+    }
     html.light-theme .api-config-section .form-control:focus,
-    html.light-theme .api-config-section .form-select:focus {
+    html.light-theme .api-config-section .form-select:focus,
+    html.light-theme .api-config-section .selectize-input.focus {
       border-color: #0d9488 !important; box-shadow: 0 0 0 2px rgba(13,148,136,0.15) !important;
     }
     html.light-theme .api-config-section label { color: #57606a !important; }
+    html.light-theme .password-field-label { color: #57606a !important; }
+    html.light-theme .password-toggle-btn { color: #57606a; }
+    html.light-theme .password-toggle-btn:hover {
+      color: #0d9488;
+      background: rgba(13,148,136,0.08);
+    }
     html.light-theme .failover-section { border-top-color: #d0d7de; }
+    html.light-theme .workflow-overview-card,
+    html.light-theme .hero-panel {
+      background: linear-gradient(135deg, rgba(13,148,136,0.08), rgba(255,255,255,0.96));
+      border-color: rgba(13,148,136,0.18);
+    }
+    html.light-theme .workflow-overview-title,
+    html.light-theme .workflow-step-name,
+    html.light-theme .workflow-details > summary,
+    html.light-theme .hero-title,
+    html.light-theme .metric-value,
+    html.light-theme .workspace-title,
+    html.light-theme .digest-item-title { color: #24292f; }
+    html.light-theme .workflow-step-desc,
+    html.light-theme .workflow-details > summary .summary-meta,
+    html.light-theme .hero-text,
+    html.light-theme .metric-note,
+    html.light-theme .workspace-text,
+    html.light-theme .digest-item-text,
+    html.light-theme .detail-section-title,
+    html.light-theme .domain-upload-meta,
+    html.light-theme .input-next-step-text,
+    html.light-theme .validation-mini-card .dataset-meta,
+    html.light-theme .run-status-note { color: #57606a; }
+    html.light-theme .workflow-details,
+    html.light-theme .metric-card,
+    html.light-theme .workspace-card,
+    html.light-theme .digest-item,
+    html.light-theme .detail-accordion { background: #ffffff; border-color: #d0d7de; }
+    html.light-theme .workflow-details-body { border-top-color: #d0d7de; }
+    html.light-theme .detail-accordion > summary { color: #24292f; }
+    html.light-theme .detail-accordion-meta { color: #57606a; }
+    html.light-theme .detail-accordion-body { border-top-color: #d0d7de; }
+    html.light-theme .input-next-step-card {
+      background: linear-gradient(135deg, rgba(13,148,136,0.08), rgba(255,255,255,0.96));
+      border-color: rgba(13,148,136,0.2);
+    }
+    html.light-theme .input-next-step-title { color: #24292f; }
+    html.light-theme .input-section-block,
+    html.light-theme .sdtm-upload-card {
+      background: #ffffff;
+      border-color: #d0d7de;
+    }
+    html.light-theme .input-section-title { color: #24292f; }
+    html.light-theme .input-section-meta { color: #57606a; }
+    html.light-theme .hero-pill {
+      background: #ffffff; border-color: #d0d7de; color: #57606a;
+    }
+    html.light-theme .btn-ghost-workflow { border-color: #d0d7de; color: #57606a; }
+    html.light-theme .btn-ghost-workflow:hover { border-color: #0d9488; color: #0d9488; }
+
+    @media (max-width: 991px) {
+      .input-prep-grid { grid-template-columns: 1fr; }
+      .sdtm-upload-grid { grid-template-columns: 1fr; }
+      .sdtm-upload-region { max-height: none; overflow: visible; }
+    }
   ")
 
 # =============================================================================
@@ -578,7 +1132,7 @@ ui <- page_sidebar(
   shinyjs::useShinyjs(),
 
   sidebar = sidebar(
-    width = 280, open = TRUE,
+    width = 320, open = TRUE,
 
     # ── 品牌栏 ───────────────────────────────────────────────────────────────
     tags$script(HTML("
@@ -586,6 +1140,17 @@ ui <- page_sidebar(
       function toggleAdamTheme() {
         var isLight = document.documentElement.classList.toggle('light-theme');
         Shiny.setInputValue('theme_is_light', isLight, {priority: 'event'});
+      }
+
+      function togglePasswordVisibility(targetId, buttonEl) {
+        var input = document.getElementById(targetId);
+        if (!input) return;
+        var visible = input.type === 'text';
+        input.type = visible ? 'password' : 'text';
+        if (buttonEl) {
+          if (visible) buttonEl.classList.remove('is-visible');
+          else buttonEl.classList.add('is-visible');
+        }
       }
 
       /* ── API 进度条 ── */
@@ -713,6 +1278,9 @@ ui <- page_sidebar(
     div(class = "brand-bar",
       div(class = "brand-icon", bs_icon("activity", size="1rem", color="#0d1117")),
       div(div(class="brand-title","ADaM Builder"), div(class="brand-sub","SDTM → ADaM  ·  AI-Assisted")),
+      actionButton("btn_open_ai_settings",
+        label = tagList(bs_icon("sliders", size = "0.78rem"), " AI 设置"),
+        class = "top-action-btn"),
       tags$button(
         class   = "theme-toggle-btn",
         title   = "切换明暗主题",
@@ -721,162 +1289,199 @@ ui <- page_sidebar(
         tags$span(class="icon-light-mode", "🌙")   # 浅色模式下显示（点击切换回深色）
       )
     ),
-
-    # ── [U-1] SDTM 上传（配置驱动，动态渲染）────────────────────────────────
-    div(class="upload-label", bs_icon("database",size="0.7rem"), " SDTM 数据集"),
-    # 域选择复选框（基础域 / 扩展域），由 server.R output$sdtm_domain_selector 渲染
-    uiOutput("sdtm_domain_selector"),
-    # 文件上传面板，依 rv$active_domains 动态生成，由 server.R output$sdtm_upload_panel 渲染
-    uiOutput("sdtm_upload_panel"),
-
-    # ── [新增] 已上传文件状态卡片 ──────────────────────────────────────────
-    uiOutput("uploaded_files_list"),
-
-    # ── [新增] 清空上传按钮 ────────────────────────────────────────────────
-    # 点击后通过 shinyjs::reset() 重置所有 fileInput，并清空后台状态
-    actionButton(
-      inputId = "btn_clear_uploads",
-      label   = tagList(bs_icon("trash3", size="0.72rem"), " 清空上传 (Clear Uploads)"),
-      class   = "btn-outline-secondary"
-    ),
-
-    hr(class="section-divider"),
-
-    # ── [修改 1] Specification 上传：.json → .csv ─────────────────────────────
-    # 改动点：
-    #   • bs_icon 从 file-earmark-code 改为 file-earmark-spreadsheet（表格图标）
-    #   • fileInput accept 从 ".json" 改为 ".csv"
-    #   • placeholder / hint-text 文字更新
-    div(class="upload-label",
-        bs_icon("file-earmark-spreadsheet", size="0.7rem"),   # [修改 1] 图标
-        " Analysis Specification"),
-
-    fileInput(
-      inputId     = "file_spec",
-      label       = NULL,
-      accept      = ".csv",
-      multiple    = TRUE,                                      # 支持同时上传多个 Spec CSV
-      placeholder = "ADaM Spec (.csv)"
-    ),
-    div(class="hint-text",
-        "可同时选择多个 CSV（如 ADSL Spec + ADAE Spec），AI 自动识别各文件的列结构"),
-
-    # ── [新增 2] Spec 解析状态卡片 ───────────────────────────────────────────
-    # 上传 CSV 后由 server 的 output$spec_parse_status 驱动渲染
-    # 状态：idle / parsing / ok(N 变量已确认) / warn(有低置信度映射) / error
-    uiOutput("spec_parse_status"),                             # [新增 2]
-
-    hr(class="section-divider"),
-
-    # ── LLM API 配置（动态面板，根据选中提供商切换内容）────────────────────
-    div(class = "upload-label",
-        bs_icon("key", size="0.7rem"), " LLM API 配置"),
-
-    uiOutput("api_config_panel"),
-
-    hr(class="section-divider"),
-
-    # ── 流水线进度 ───────────────────────────────────────────────────────────
-    div(class="upload-label", bs_icon("reception-4",size="0.7rem"), " 流水线状态"),
-    uiOutput("pipeline_steps"),
-
-    hr(class="section-divider"),
-
-    # ── 生成按钮 ─────────────────────────────────────────────────────────────
-    actionButton("btn_generate",
-      tagList(bs_icon("cpu",size="0.9rem"), " 生成 ADaM 与代码"),
-      class = "btn-primary"),
-    div(class="hint-text", style="text-align:center;margin-top:0.5rem;",
-        "需先完成 Spec 解析确认并填写 API Key")
+    uiOutput("sidebar_workflow_overview"),
+    uiOutput("llm_config_status"),
+    uiOutput("next_action_hint")
   ),
 
-  # ===========================================================================
-  # 主面板（三个 Tab — 与上一版本完全相同，无修改）
-  # ===========================================================================
   navset_tab(
     id = "main_tabs",
-
-    # Tab 1 ── 运行与风险日志
     nav_panel(
-      title = tagList(bs_icon("terminal"), " 运行与风险日志"),
-      value = "tab_logs",
-      layout_columns(col_widths=c(12), gap="1rem",
-        layout_columns(col_widths=c(3,3,3,3), gap="0.75rem",
-          value_box("ADSL 受试者数",  textOutput("vb_n_adsl",    inline=TRUE), showcase=bs_icon("people"),               theme="secondary", height="110px"),
-          value_box("AE 总记录数",    textOutput("vb_n_adae",    inline=TRUE), showcase=bs_icon("clipboard2-pulse"),     theme="secondary", height="110px"),
-          value_box("风险点识别",     textOutput("vb_n_risks",   inline=TRUE), showcase=bs_icon("exclamation-triangle"), theme="secondary", height="110px"),
-          value_box("LLM 状态",       textOutput("vb_llm_status",inline=TRUE), showcase=bs_icon("robot"),                theme="secondary", height="110px")
-        ),
-        card(
-          card_header(tagList(bs_icon("terminal-fill",size="0.75rem"),"  实时日志")),
-          div(id="adam-progress-wrap", style="display:none;",
-            div(id="adam-progress-header",
-              span(id="adam-progress-stage", "准备中..."),
-              span(id="adam-progress-pct",   "0%")
+      title = tagList(bs_icon("inboxes"), " 输入准备"),
+      value = "tab_input",
+      layout_columns(col_widths = c(12), gap = "1rem",
+        uiOutput("workflow_hero"),
+        div(class = "input-prep-grid",
+          card(
+            class = "input-prep-main-card",
+            card_header(tagList(bs_icon("database", size="0.75rem"), "  SDTM 输入范围与文件")),
+            uiOutput("sdtm_section_status"),
+            div(class = "input-section-block",
+              div(class = "input-section-title", "域范围"),
+              div(class = "input-section-meta", "核心域始终保留；可按分析需要启用其他域。上传区会仅展示当前启用域。"),
+              uiOutput("sdtm_domain_selector")
             ),
-            div(id="adam-progress-track",
-              div(id="adam-progress-fill")
-            ),
-            div(id="adam-progress-footer",
-              span(id="adam-progress-time",   ""),
-              span(id="adam-progress-tokens", "")
+            div(class = "input-section-block",
+              div(class = "input-section-title", "CSV 上传"),
+              div(class = "input-section-meta", "上传当前启用域对应的 SDTM CSV。域较多时，下方区域会保持在当前卡片内滚动，不再拉长整页布局。"),
+              div(class = "sdtm-upload-region",
+                uiOutput("sdtm_upload_panel")
+              )
             )
           ),
-          verbatimTextOutput("run_status")
+          card(
+            class = "input-prep-side-card",
+            card_header(tagList(bs_icon("file-earmark-spreadsheet", size="0.75rem"), "  Analysis Specification 与后续动作")),
+            div(class = "input-side-stack",
+              div(class = "input-section-block",
+                div(class = "input-section-title", "Analysis Specification"),
+                div(class = "input-section-meta", "可同时选择多个 Spec CSV。系统会自动解析列结构，并在确认后进入生成准备状态。"),
+                fileInput(
+                  inputId     = "file_spec",
+                  label       = NULL,
+                  accept      = ".csv",
+                  multiple    = TRUE,
+                  placeholder = "ADaM Spec (.csv)"
+                ),
+                uiOutput("spec_parse_status")
+              ),
+              uiOutput("input_next_step")
+            )
+          )
         ),
         card(
-          card_header(layout_columns(col_widths=c(8,4),
-            div(tagList(bs_icon("shield-exclamation",size="0.75rem"),"  LLM 自主推断风险点")),
-            div(style="text-align:right;",
-              selectInput("filter_risk_level",NULL,
-                choices=c("全部"="ALL","ERROR"="ERROR","WARNING"="WARNING","INFO"="INFO"),
-                selected="ALL",width="130px"))
-          )),
-          DTOutput("tbl_risk_logs"),
-          uiOutput("risk_logs_placeholder")
+          card_header(tagList(bs_icon("folder2-open", size="0.75rem"), "  已选文件")),
+          uiOutput("uploaded_files_list"),
+          div(style="height:0.85rem;"),
+          uiOutput("uploaded_preview_gallery"),
+          div(style="margin-top:0.8rem;text-align:right;",
+            actionButton(
+              inputId = "btn_clear_uploads",
+              label   = tagList(bs_icon("trash3", size="0.72rem"), " 清空上传"),
+              class   = "btn-outline-secondary"
+            )
+          )
         )
       )
     ),
-
-    # Tab 2 ── 代码审查与回档
     nav_panel(
-      title = tagList(bs_icon("code-slash"), " 代码审查与回档"),
-      value = "tab_code",
-      layout_columns(col_widths=c(12), gap="1rem",
+      title = tagList(bs_icon("stars"), " 生成与审阅"),
+      value = "tab_generate",
+      layout_columns(col_widths = c(12), gap = "1rem",
+        uiOutput("workflow_hero"),
+        layout_columns(col_widths = c(8,4), gap = "1rem",
+          card(
+            card_header(tagList(bs_icon("compass", size="0.75rem"), "  当前任务")),
+            uiOutput("current_step_workspace"),
+            uiOutput("code_context_summary"),
+            uiOutput("profile_context_summary"),
+            uiOutput("plan_context_summary")
+          ),
+          card(
+            card_header(tagList(bs_icon("sliders", size="0.75rem"), "  AI 与生成")),
+            uiOutput("llm_section_status"),
+            uiOutput("llm_config_status"),
+            actionButton("btn_open_ai_settings_inline",
+              label = tagList(bs_icon("sliders", size = "0.78rem"), " 打开 AI 设置"),
+              class = "btn-outline-secondary"),
+            div(style="height:0.65rem;"),
+            actionButton("btn_generate",
+              tagList(bs_icon("cpu",size="0.9rem"), " 生成 ADaM 与代码"),
+              class = "btn-primary"),
+            div(style="height:0.8rem;"),
+            uiOutput("run_code_status"),
+            div(style="height:0.5rem;"),
+            uiOutput("next_action_hint")
+          )
+        ),
         card(
-          style="background:rgba(45,212,191,0.06)!important;border:1px solid rgba(45,212,191,0.25)!important;padding:0.6rem 1rem;",
-          p(style="margin:0;font-size:0.8rem;color:#8b949e;",
-            bs_icon("info-circle",size="0.8rem",color="#2dd4bf"),
-            " 下方代码由 LLM 自动生成。",
-            tags$strong(style="color:#e6edf3;","请人工审阅后"),
-            "再点击「确认并运行代码」执行。")),
-        card(
-          card_header(layout_columns(col_widths=c(7,5),
-            div(tagList(bs_icon("file-earmark-code",size="0.75rem"),"  R 代码编辑器")),
-            div(style="text-align:right;display:flex;gap:0.5rem;justify-content:flex-end;",
-              actionButton("btn_reset_code",tagList(bs_icon("arrow-counterclockwise")," 重置"),
-                class="btn-sm btn-outline-secondary",style="font-size:0.75rem;padding:0.3rem 0.7rem;"),
-              textOutput("code_line_count",inline=TRUE)|>
-                tagAppendAttributes(style="font-size:0.72rem;color:#6e7681;align-self:center;font-family:'JetBrains Mono',monospace;"))
-          )),
-          aceEditor("code_editor",value="# 请先上传文件并点击「生成 ADaM 与代码」...",
+          card_header(tagList(bs_icon("file-earmark-code",size="0.75rem"),"  代码编辑器")),
+          aceEditor("code_editor",value="# 请先在“输入准备”完成文件上传，然后点击生成...",
             mode="r",theme="tomorrow_night",height="460px",fontSize=13,
             showLineNumbers=TRUE,highlightActiveLine=TRUE,
-            autoComplete="live",wordWrap=FALSE,readOnly=FALSE,debounce=500)
+            autoComplete="live",wordWrap=FALSE,readOnly=FALSE,debounce=500),
+          div(style="display:flex;justify-content:space-between;align-items:center;margin-top:0.85rem;gap:0.75rem;flex-wrap:wrap;",
+            textOutput("code_line_count",inline=TRUE) |>
+              tagAppendAttributes(style="font-size:0.72rem;color:#6e7681;font-family:'JetBrains Mono',monospace;"),
+            div(style="display:flex;gap:0.6rem;justify-content:flex-end;flex-wrap:wrap;",
+              actionButton("btn_reset_code",tagList(bs_icon("arrow-counterclockwise")," 重置"),
+                class="btn-sm btn-outline-secondary",style="font-size:0.75rem;padding:0.3rem 0.7rem;"),
+              actionButton("btn_run_code",tagList(bs_icon("play-circle-fill",size="1rem")," 确认并运行代码"))
+            )
+          )
         ),
-        layout_columns(col_widths=c(6,6), gap="0.75rem",
-          uiOutput("run_code_status"),
-          div(style="text-align:right;",
-            actionButton("btn_run_code",tagList(bs_icon("play-circle-fill",size="1rem"),"  确认并运行代码")))
+        tags$details(class="detail-accordion",
+          tags$summary(
+            div(class="detail-accordion-head", bs_icon("diagram-3", size="0.8rem"), "输入数据画像"),
+            span(class="detail-accordion-meta", "启动生成并完成 SDTM 读取后显示")
+          ),
+          div(class="detail-accordion-body",
+            DTOutput("tbl_sdtm_profile"),
+            uiOutput("sdtm_profile_placeholder")
+          )
+        ),
+        tags$details(class="detail-accordion",
+          tags$summary(
+            div(class="detail-accordion-head", bs_icon("bezier2", size="0.8rem"), "生成计划明细"),
+            span(class="detail-accordion-meta", "查看变量级 derivation plan")
+          ),
+          div(class="detail-accordion-body",
+            DTOutput("tbl_plan_variables"),
+            uiOutput("plan_variables_placeholder")
+          )
+        ),
+        tags$details(class="detail-accordion",
+          tags$summary(
+            div(class="detail-accordion-head", bs_icon("shield-exclamation", size="0.8rem"), "LLM 风险明细"),
+            span(class="detail-accordion-meta", "仅在需要时展开查看")
+          ),
+          div(class="detail-accordion-body",
+            div(style="max-width:160px;margin-left:auto;margin-bottom:0.75rem;",
+              selectInput("filter_risk_level",NULL,
+                choices=c("全部"="ALL","ERROR"="ERROR","WARNING"="WARNING","INFO"="INFO"),
+                selected="ALL",width="100%")
+            ),
+            DTOutput("tbl_risk_logs"),
+            uiOutput("risk_logs_placeholder")
+          )
+        ),
+        tags$details(class="detail-accordion",
+          tags$summary(
+            div(class="detail-accordion-head", bs_icon("clipboard2-check", size="0.8rem"), "结构与语义校验"),
+            span(class="detail-accordion-meta", "执行后查看结构、质量与 plan 对齐结果")
+          ),
+          div(class="detail-accordion-body",
+            uiOutput("validation_overview"),
+            div(style="max-width:160px;margin-left:auto;margin-bottom:0.75rem;margin-top:0.8rem;",
+              selectInput("filter_validation_level", NULL,
+                choices=c("全部"="ALL","ERROR"="ERROR","WARNING"="WARNING","INFO"="INFO"),
+                selected="ALL", width="100%")
+            ),
+            DTOutput("tbl_validation"),
+            uiOutput("validation_placeholder")
+          )
+        ),
+        tags$details(class="detail-accordion",
+          tags$summary(
+            div(class="detail-accordion-head", bs_icon("terminal-fill", size="0.8rem"), "运行日志"),
+            span(class="detail-accordion-meta", "查看完整执行与模型调用日志")
+          ),
+          div(class="detail-accordion-body",
+            uiOutput("pipeline_steps"),
+            div(style="height:0.7rem;"),
+            div(id="adam-progress-wrap", style="display:none;",
+              div(id="adam-progress-header",
+                span(id="adam-progress-stage", "准备中..."),
+                span(id="adam-progress-pct",   "0%")
+              ),
+              div(id="adam-progress-track",
+                div(id="adam-progress-fill")
+              ),
+              div(id="adam-progress-footer",
+                span(id="adam-progress-time",   ""),
+                span(id="adam-progress-tokens", "")
+              )
+            ),
+            div(style="margin-top:0.7rem;"),
+            verbatimTextOutput("run_status")
+          )
         )
       )
     ),
-
-    # Tab 3 ── 输出数据集（[U-2] 改为动态渲染，支持任意数量的 ADaM 数据集）
     nav_panel(
-      title = tagList(bs_icon("table"), " 输出数据集"),
+      title = tagList(bs_icon("table"), " 输出结果"),
       value = "tab_output",
-      # 标签页内容由 server.R output$output_dataset_tabs 动态生成
+      uiOutput("output_context_summary"),
       uiOutput("output_dataset_tabs")
     )
   )

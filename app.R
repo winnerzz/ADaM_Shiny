@@ -26,6 +26,7 @@ required_packages <- c(
   # ── 表格与编辑器 ─────────────────────────────────────────────────────────────
   "DT",          # 交互式数据表格（DataTables JS 封装）
   "shinyAce",    # 代码编辑器组件（Ace Editor，支持语法高亮）
+  "shinyjs",     # 前端状态控制（reset, runjs）
 
   # ── 数据处理 ─────────────────────────────────────────────────────────────────
   "dplyr",       # 数据框操作（mutate, filter, left_join 等）
@@ -36,7 +37,8 @@ required_packages <- c(
 
   # ── JSON 与 API ──────────────────────────────────────────────────────────────
   "jsonlite",    # JSON 解析与序列化（fromJSON, toJSON）
-  "httr2"        # 现代 HTTP 请求框架（供 llm_api.R 实际调用 API 时使用）
+  "httr2",       # 现代 HTTP 请求框架（供 llm_api.R 实际调用 API 时使用）
+  "digest"       # 生成稳定缓存键，用于复用相同 LLM 请求结果
 )
 
 # 找出尚未安装的包
@@ -78,6 +80,15 @@ message("  所有依赖包加载完成 ✔")
 #               summarize_sdtm(), strip_excel_apos(), dy_char() 等
 source("data_utils.R")
 
+# 结果校验模块：validate_adam_datasets()
+source("validation_utils.R")
+
+# Derivation Plan 模块：normalize_derivation_plan(), validate_plan_against_spec()
+source("derivation_plan_utils.R")
+
+# 代码静态检查模块：run_code_static_checks()
+source("code_static_checks.R")
+
 # LLM API 模块：call_llm_engine(), format_risk_logs()
 # 以及全局配置 MOCK_MODE, LLM_CONFIG, ACTIVE_PROVIDER
 source("llm_api.R")
@@ -91,7 +102,7 @@ source("server.R")
 # 域注册表：SDTM_DOMAIN_REGISTRY / DOMAIN_GROUP_LABELS / .get_required_domain_ids()
 source("domain_registry.R")
 
-message("  模块加载完成：data_utils ✔  llm_api ✔  ui ✔  server ✔  domain_registry ✔")
+message("  模块加载完成：data_utils ✔  validation_utils ✔  derivation_plan_utils ✔  code_static_checks ✔  llm_api ✔  ui ✔  server ✔  domain_registry ✔")
 message("  启动应用...")
 message("═══════════════════════════════════════════════")
 

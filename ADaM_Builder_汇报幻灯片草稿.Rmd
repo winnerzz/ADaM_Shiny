@@ -1,0 +1,461 @@
+---
+title: "ADaM Builder"
+subtitle: "基于 R Shiny 与 LLM 的 ADaM 辅助生成工作台"
+author: "内部技术汇报"
+date: "2026-03-25"
+output:
+  ioslides_presentation:
+    widescreen: true
+    smaller: false
+    incremental: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+<style>
+body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #1f2937;
+}
+
+h1, h2, h3 {
+  font-family: "Segoe UI Semibold", "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.title-slide {
+  background:
+    linear-gradient(135deg, rgba(11,18,32,0.96), rgba(19,78,74,0.90)),
+    linear-gradient(45deg, #0f172a, #111827);
+  color: #f8fafc !important;
+}
+
+.title-slide hgroup h1,
+.title-slide hgroup h2,
+.title-slide hgroup p {
+  color: #f8fafc !important;
+}
+
+.slide h2 {
+  color: #0f766e;
+  border-bottom: 3px solid #99f6e4;
+  padding-bottom: 0.22em;
+  margin-bottom: 0.8em;
+}
+
+.lead {
+  font-size: 1.2em;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.muted {
+  color: #6b7280;
+}
+
+.accent {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.hero-box {
+  background: linear-gradient(135deg, #ecfeff, #f8fafc);
+  border-left: 8px solid #14b8a6;
+  border-radius: 14px;
+  padding: 1em 1.1em;
+  margin: 0.8em 0 0.8em 0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 0.5em;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #dbe4ea;
+  border-radius: 14px;
+  padding: 0.95em 1em;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.card h3 {
+  margin-top: 0;
+  color: #0f172a;
+  font-size: 1.02em;
+}
+
+.mini {
+  font-size: 0.88em;
+  color: #475569;
+}
+
+.flow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  margin-top: 1em;
+}
+
+.step {
+  background: linear-gradient(180deg, #f8fafc, #eef6f6);
+  border: 1px solid #cbd5e1;
+  border-top: 5px solid #14b8a6;
+  border-radius: 12px;
+  padding: 0.7em 0.65em;
+  font-size: 0.85em;
+  text-align: center;
+  min-height: 110px;
+}
+
+.step strong {
+  display: block;
+  color: #0f172a;
+  margin-bottom: 0.35em;
+}
+
+.big-number {
+  font-size: 2.1em;
+  color: #0f766e;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 0.15em;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.18em 0.6em;
+  border-radius: 999px;
+  background: #ccfbf1;
+  color: #115e59;
+  font-size: 0.8em;
+  font-weight: 700;
+  margin-right: 0.35em;
+}
+
+.arch {
+  margin-top: 1em;
+}
+
+.arch-layer {
+  border-radius: 12px;
+  padding: 0.72em 0.9em;
+  margin-bottom: 10px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.l1 { background: linear-gradient(90deg, #ccfbf1, #ecfeff); border-left: 8px solid #14b8a6; }
+.l2 { background: linear-gradient(90deg, #dbeafe, #eff6ff); border-left: 8px solid #3b82f6; }
+.l3 { background: linear-gradient(90deg, #ede9fe, #f5f3ff); border-left: 8px solid #8b5cf6; }
+.l4 { background: linear-gradient(90deg, #fee2e2, #fff1f2); border-left: 8px solid #ef4444; }
+.l5 { background: linear-gradient(90deg, #fef3c7, #fffbeb); border-left: 8px solid #f59e0b; }
+
+.quote-box {
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 14px;
+  padding: 1em 1.1em;
+  line-height: 1.6;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+}
+
+table.compact {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+table.compact th, table.compact td {
+  border-bottom: 1px solid #dbe4ea;
+  padding: 0.55em 0.55em;
+  text-align: left;
+  vertical-align: top;
+}
+
+table.compact th {
+  background: #f0fdfa;
+  color: #134e4a;
+}
+
+ul li, ol li {
+  margin-bottom: 0.35em;
+}
+</style>
+
+## 我们在做什么
+
+<div class="hero-box">
+<div class="lead"><span class="accent">ADaM Builder</span> 不是单纯的代码生成器，而是一个把 <strong>SDTM 输入、Spec 解析、AI 生成、人工审核、结果输出</strong> 串成闭环的工作台。</div>
+</div>
+
+我们要解决的核心问题：
+
+- ADaM 构建依赖人工理解 Spec 和源数据结构，周期长
+- Spec 格式不统一，前处理成本高
+- AI 直接生成代码不可控，缺少审核和风险提示
+- 代码生成、执行与结果查看通常分散在多个工具中
+
+一句话总结：
+
+<div class="quote-box">
+把 “SDTM -> ADaM” 的实现过程，从零散的人工作业，收敛为一个可审阅、可执行、可展示的 AI 辅助流程。
+</div>
+
+## 为什么这个方案重要
+
+<div class="grid-2">
+<div class="card">
+<div class="big-number">1</div>
+<h3>提升效率</h3>
+把规格理解、代码生成、代码审阅和结果查看整合到一个工作流中，减少切换成本。
+</div>
+<div class="card">
+<div class="big-number">2</div>
+<h3>降低门槛</h3>
+用户可以直接上传 CSV 规格表，不需要先手工整理成固定 JSON。
+</div>
+<div class="card">
+<div class="big-number">3</div>
+<h3>提高可控性</h3>
+AI 输出不仅有代码，还有风险日志；代码执行前必须经过人工确认。
+</div>
+<div class="card">
+<div class="big-number">4</div>
+<h3>保留扩展性</h3>
+系统支持多模型提供商和本地推理，便于后续演进成平台能力。
+</div>
+</div>
+
+## 端到端流程
+
+<div class="flow">
+<div class="step"><strong>1. 上传 SDTM</strong>动态选择域并上传 CSV</div>
+<div class="step"><strong>2. 上传 Spec</strong>支持多个 Spec CSV 同时导入</div>
+<div class="step"><strong>3. 自动解析</strong>识别列结构、生成置信度和风险提示</div>
+<div class="step"><strong>4. 用户确认</strong>把解析结果固化为标准内部规格</div>
+<div class="step"><strong>5. AI 生成</strong>结合 Spec 和 SDTM 摘要生成 R 代码</div>
+<div class="step"><strong>6. 人工审阅</strong>查看风险日志，修改或回退代码</div>
+<div class="step"><strong>7. 执行输出</strong>提取 ADaM 数据集并下载结果</div>
+</div>
+
+<p class="mini">重点不是“自动生成一段代码”，而是把生成前确认和执行前确认都纳入流程。</p>
+
+## 系统架构
+
+<div class="arch">
+<div class="arch-layer l1">展示层：Shiny UI，负责上传、配置、代码编辑、风险展示和结果浏览</div>
+<div class="arch-layer l2">编排层：Server 响应式状态池，负责事件驱动和工作流推进</div>
+<div class="arch-layer l3">数据处理层：读取 SDTM、清洗日期字段、生成数据摘要</div>
+<div class="arch-layer l4">LLM 接入层：Prompt 构建、Provider 路由、JSON 解析、故障转移</div>
+<div class="arch-layer l5">配置驱动层：SDTM 域注册表、模型提供商注册表</div>
+</div>
+
+对应核心文件：
+
+- `app.R`：应用入口
+- `ui.R`：交互界面
+- `server.R`：主流程编排
+- `data_utils.R`：数据处理工具
+- `llm_api.R`：LLM 调用引擎
+- `domain_registry.R` / `provider_registry.R`：配置注册表
+
+## 关键技术点一：Spec 智能解析
+
+<div class="hero-box">
+系统允许用户直接上传 <strong>CSV 规格表</strong>，再自动转换成内部标准格式，而不是要求用户先准备严格 JSON。
+</div>
+
+解析链路包括：
+
+- 启发式列名匹配
+- LLM 对低置信字段做补全建议
+- 逐行检查 `source`、`derivation` 等关键字段缺失情况
+- 以解析报告形式展示：
+  - 列名映射
+  - 置信度
+  - 行级风险
+  - 前 3 行预览
+- 用户确认后，统一转换为标准内部对象
+
+价值在于：
+
+- 降低 Spec 接入成本
+- 把“自动解析”变成“可审核的半自动流程”
+
+## 关键技术点二：SDTM 数据处理不是直接丢给模型
+
+系统先对源数据做标准化，再送入 LLM：
+
+<table class="compact">
+<thead>
+<tr><th>处理环节</th><th>作用</th></tr>
+</thead>
+<tbody>
+<tr><td>统一字符型读取</td><td>避免自动类型推断影响临床数据语义</td></tr>
+<tr><td>清洗 `*DTC` 日期列</td><td>去除 Excel 导出时可能附加的前导单引号</td></tr>
+<tr><td>推断所需 SDTM 域</td><td>根据 Spec 中的 `source` 自动判断依赖哪些域</td></tr>
+<tr><td>生成数据摘要</td><td>向模型提供行数、列名和样本预览，而不是整表直传</td></tr>
+</tbody>
+</table>
+
+这里的关键思想是：
+
+<div class="quote-box">
+不是把原始全量数据直接交给模型，而是先做一次结构化压缩，形成 “规格 + 样本 + 摘要” 的可控上下文。
+</div>
+
+## 关键技术点三：LLM 不是自由输出，而是结构化协议
+
+模型输出被强约束为固定 JSON，只包含两个核心字段：
+
+- `r_code`
+- `risk_logs`
+
+`risk_logs` 中要求显式记录：
+
+- 风险级别
+- 变量名
+- 推断描述
+- 需要人工确认的假设
+
+这意味着系统并不是简单聊天式 AI，而是一个有明确输入输出协议的生成引擎。
+
+<div class="grid-2">
+<div class="card">
+<h3>输入给模型的内容</h3>
+<ul>
+<li>ADaM 变量规格</li>
+<li>各 SDTM 域前 5 行预览</li>
+<li>SDTM 数据摘要</li>
+</ul>
+</div>
+<div class="card">
+<h3>模型返回的内容</h3>
+<ul>
+<li>完整可运行的 R 代码</li>
+<li>结构化风险日志</li>
+</ul>
+</div>
+</div>
+
+## 关键技术点四：人工审核闭环
+
+系统刻意避免“AI 生成后直接执行”。
+
+在执行之前，用户会先看到：
+
+- 风险日志表
+- 可编辑代码
+- 原始版本回退能力
+
+然后才进入执行阶段。
+
+这样做的原因很明确：
+
+- ADaM 规则具有领域约束，不能完全依赖模型默认假设
+- 需要把 AI 的不确定性显式暴露给人工专家
+- 需要保留人工兜底和纠偏能力
+
+<div class="hero-box">
+项目的定位是 <strong>AI 辅助生成</strong>，不是 <strong>AI 全自动替代</strong>。
+</div>
+
+## 关键技术点五：受控执行与动态结果提取
+
+执行阶段采用独立环境：
+
+- 先把已上传的 SDTM 域注入执行环境
+- 预注入常用包函数
+- 屏蔽 `library()`、`require()`、`install.packages()`
+- 运行用户确认后的代码
+- 按目标数据集名称动态提取结果
+
+这样做的结果是：
+
+- 支持多个目标 ADaM 数据集，而不只固定 `ADSL` / `ADAE`
+- 让执行结果直接回流到 UI 展示和下载区域
+
+需要明确说明：
+
+- 这是“受控执行”
+- 但还不是严格意义上的安全沙箱
+
+## 关键技术点六：多模型与可扩展性
+
+当前系统已支持多类 Provider：
+
+<span class="pill">OpenAI</span>
+<span class="pill">Anthropic</span>
+<span class="pill">DeepSeek</span>
+<span class="pill">Kimi</span>
+<span class="pill">Qwen</span>
+<span class="pill">Ollama</span>
+<span class="pill">vLLM</span>
+
+同时具备：
+
+- 模型名前缀自动推断提供商
+- 云端与本地推理并存
+- 主提供商失败后切换备用提供商
+
+这说明系统设计上已经考虑到：
+
+- 供应商替换
+- 本地部署
+- 后续平台化扩展
+
+## 听众需要记住的三件事
+
+<div class="grid-2">
+<div class="card">
+<h3>第一：我们在做什么</h3>
+把 SDTM -> ADaM 的过程，做成一个可操作、可审核、可输出的 AI 辅助工作台。
+</div>
+<div class="card">
+<h3>第二：核心价值是什么</h3>
+不是单纯生成代码，而是把 Spec 解析、AI 推理、人工审核和结果输出纳入同一个闭环。
+</div>
+<div class="card">
+<h3>第三：技术上为什么成立</h3>
+因为系统采用了配置驱动、结构化输出协议、双重确认机制和动态结果承载。
+</div>
+<div class="card">
+<h3>第四：当前边界在哪</h3>
+更适合内部演示和辅助研发，后续仍需加强测试、审计和执行安全。
+</div>
+</div>
+
+## 当前边界与下一步方向
+
+当前边界：
+
+- 暂未看到自动化测试体系
+- 暂未看到审计留痕和任务持久化
+- 动态代码执行仍有安全边界问题
+- 更复杂 ADaM 场景下的稳定性还需业务验证
+
+下一步建议：
+
+1. 增加测试和结果校验机制
+2. 增加任务记录与审计留痕
+3. 强化执行环境隔离
+4. 沉淀高频 ADaM 规则模板
+
+## 结论
+
+<div class="quote-box">
+ADaM Builder 的核心价值，不是“AI 替人写代码”，而是把 AI 纳入一个 <strong>可控、可审查、可迭代</strong> 的数据编程工作流。
+</div>
+
+听众最终应抓住的重点：
+
+- 我们在做的是一个 ADaM 辅助生成工作台
+- 关键能力是 Spec 解析、结构化 AI 生成、人工审核和动态输出
+- 当前已经具备完整闭环雏形，下一步重点在测试、安全和产品化能力

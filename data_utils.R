@@ -188,6 +188,73 @@ summarize_sdtm <- function(sdtm_list) {
   paste(parts, collapse = "\n\n")
 }
 
+profile_sdtm_domains <- function(sdtm_list) {
+  lapply(names(sdtm_list), function(domain) {
+    df <- sdtm_list[[domain]]
+    cols <- names(df)
+    miss_rate <- vapply(df, function(x) mean(is.na(x) | trimws(as.character(x)) == ""), numeric(1))
+    top_missing <- names(sort(miss_rate, decreasing = TRUE))[seq_len(min(3, length(miss_rate)))]
+    top_missing <- top_missing[nzchar(top_missing)]
+    candidate_keys <- cols[vapply(cols, function(col) {
+      vals <- as.character(df[[col]])
+      vals <- vals[!(is.na(vals) | trimws(vals) == "")]
+      length(vals) > 0 && !anyDuplicated(vals)
+    }, logical(1))]
+    candidate_keys <- head(candidate_keys, 3)
+    date_cols <- cols[grepl("(DT|DTC|STDTC|ENDTC|ASTDT|AENDT)$", toupper(cols))]
+
+    list(
+      domain = domain,
+      rows = nrow(df),
+      cols = ncol(df),
+      column_names = cols,
+      candidate_keys = candidate_keys,
+      date_cols = date_cols,
+      top_missing = top_missing,
+      missing_rates = miss_rate
+    )
+  }) |> setNames(names(sdtm_list))
+}
+
+format_sdtm_profiles <- function(profiles) {
+  parts <- lapply(names(profiles), function(domain) {
+    p <- profiles[[domain]]
+    paste0(
+      "=== ", toupper(domain), " PROFILE ===\n",
+      "行数: ", p$rows, "\n",
+      "列数: ", p$cols, "\n",
+      "候选键: ", if (length(p$candidate_keys) > 0) paste(p$candidate_keys, collapse = ", ") else "无明显唯一键", "\n",
+      "日期列: ", if (length(p$date_cols) > 0) paste(p$date_cols, collapse = ", ") else "无", "\n",
+      "高缺失列: ", if (length(p$top_missing) > 0) paste(p$top_missing, collapse = ", ") else "无", "\n",
+      "列名: ", paste(p$column_names, collapse = ", ")
+    )
+  })
+  paste(parts, collapse = "\n\n")
+}
+
+flatten_sdtm_profiles <- function(profiles) {
+  if (length(profiles) == 0) {
+    return(data.frame(
+      domain = character(), rows = integer(), cols = integer(),
+      candidate_keys = character(), date_cols = character(), top_missing = character(),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  do.call(rbind, lapply(names(profiles), function(domain) {
+    p <- profiles[[domain]]
+    data.frame(
+      domain = toupper(domain),
+      rows = p$rows,
+      cols = p$cols,
+      candidate_keys = if (length(p$candidate_keys) > 0) paste(p$candidate_keys, collapse = ", ") else "—",
+      date_cols = if (length(p$date_cols) > 0) paste(p$date_cols, collapse = ", ") else "—",
+      top_missing = if (length(p$top_missing) > 0) paste(p$top_missing, collapse = ", ") else "—",
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
 # -----------------------------------------------------------------------------
 # 辅助函数：generate_spec_template()
 # 说明：如果尚无 JSON 规格文件，此函数可根据目标数据集名称自动生成一个

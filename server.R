@@ -21,6 +21,9 @@
 
 source("domain_registry.R",   local = TRUE)  # [S-1] SDTM 域注册表
 source("data_utils.R",        local = TRUE)
+source("validation_utils.R",  local = TRUE)
+source("derivation_plan_utils.R", local = TRUE)
+source("code_static_checks.R", local = TRUE)
 source("llm_api.R",           local = TRUE)
 source("provider_registry.R", local = TRUE)
 library(shinyjs)   # reset() 用于清空 fileInput
@@ -44,8 +47,13 @@ library(shinyjs)   # reset() 用于清空 fileInput
 }
 
 .badge_html <- function(level) {
-  css <- switch(level, "ERROR"="badge-error-custom", "WARNING"="badge-warning-custom", "badge-info-custom")
-  ico <- switch(level, "ERROR"="✖", "WARNING"="⚠", "ℹ")
+  css <- switch(level,
+    "ERROR"   = "badge-error-custom",
+    "WARNING" = "badge-warning-custom",
+    "PASS"    = "badge-pass-custom",
+    "badge-info-custom"
+  )
+  ico <- switch(level, "ERROR"="✖", "WARNING"="⚠", "PASS"="✔", "ℹ")
   sprintf('<span class="%s">%s %s</span>', css, ico, level)
 }
 
@@ -74,6 +82,158 @@ library(shinyjs)   # reset() 用于清空 fileInput
 }
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+.non_empty <- function(x) {
+  if (is.null(x)) return(NULL)
+  x <- trimws(x)
+  if (!nzchar(x)) return(NULL)
+  x
+}
+
+.sum_true <- function(x) {
+  if (length(x) == 0) return(0L)
+  sum(vapply(x, isTRUE, logical(1)))
+}
+
+.sum_int <- function(x, fn) {
+  if (length(x) == 0) return(0L)
+  sum(vapply(x, fn, integer(1)))
+}
+
+.split_specs_by_dataset <- function(specs) {
+  parsed_specs <- lapply(specs %||% list(), function(s) s$parsed %||% NULL)
+  parsed_specs <- Filter(Negate(is.null), parsed_specs)
+  if (length(parsed_specs) == 0) return(list())
+
+  out <- list()
+  for (spec in parsed_specs) {
+    ds_name <- tolower(trimws(spec$dataset %||% ""))
+    if (!nzchar(ds_name)) next
+    spec_vars <- spec$variables %||% data.frame(stringsAsFactors = FALSE)
+
+    if (is.null(out[[ds_name]])) {
+      out[[ds_name]] <- list(dataset = ds_name, variables = spec_vars)
+    } else {
+      out[[ds_name]]$variables <- dplyr::bind_rows(out[[ds_name]]$variables, spec_vars)
+    }
+  }
+
+  lapply(out, function(spec) {
+    vars <- spec$variables %||% data.frame(stringsAsFactors = FALSE)
+    if (is.data.frame(vars) && "variable" %in% names(vars) && nrow(vars) > 0) {
+      vars <- vars[!duplicated(toupper(trimws(as.character(vars$variable)))), , drop = FALSE]
+    }
+    spec$variables <- vars
+    spec
+  })
+}
+
+.merge_token_info <- function(results) {
+  toks <- lapply(results %||% list(), function(x) x$token_info %||% list())
+  list(
+    input = sum(vapply(toks, function(x) as.integer(x$input %||% 0L), integer(1))),
+    output = sum(vapply(toks, function(x) as.integer(x$output %||% 0L), integer(1))),
+    total = sum(vapply(toks, function(x) as.integer(x$total %||% 0L), integer(1)))
+  )
+}
+
+.compact_spec_payload <- function(spec) {
+  vars <- spec$variables %||% data.frame(stringsAsFactors = FALSE)
+  keep_cols <- intersect(c("variable", "type", "source", "derivation", "dataset"), names(vars))
+  if (length(keep_cols) > 0) {
+    vars <- vars[, keep_cols, drop = FALSE]
+  }
+  for (col in intersect(c("source", "derivation"), names(vars))) {
+    vars[[col]] <- substr(as.character(vars[[col]] %||% ""), 1L, if (col == "derivation") 220L else 120L)
+  }
+  list(dataset = spec$dataset %||% "unknown", variables = vars)
+}
+
+.compact_plan_payload <- function(plan) {
+  datasets <- plan$datasets %||% list()
+  list(
+    plan_version = plan$plan_version %||% "0.1-compact",
+    generated_by = plan$generated_by %||% "system-compact",
+    datasets = lapply(datasets, function(ds) {
+      list(
+        dataset = ds$dataset %||% "unknown",
+        dataset_role = ds$dataset_role %||% "analysis",
+        required_inputs = ds$required_inputs %||% character(0),
+        variable_plan = lapply(ds$variable_plan %||% list(), function(v) {
+          list(
+            variable = v$variable %||% "UNKNOWN",
+            type = v$type %||% "char",
+            source_domain = v$source_domain %||% NA_character_,
+            source_columns = v$source_columns %||% character(0),
+            derivation_rule = substr(v$derivation_rule %||% "Derived according to plan.", 1L, 220L)
+          )
+        })
+      )
+    })
+  )
+}
+
+.make_llm_cache_key <- function(dataset, payload_json, profile_summary, model, provider, prompt_profile) {
+  digest::digest(list(
+    dataset = dataset,
+    payload = payload_json,
+    profile = profile_summary,
+    model = model,
+    provider = provider,
+    mode = prompt_profile$mode %||% "balanced",
+    task = prompt_profile$task %||% "full_generation",
+    traceability = isTRUE(prompt_profile$traceability),
+    compact = isTRUE(prompt_profile$compact_mode)
+  ), algo = "xxhash64")
+}
+
+.llm_codegen_worker <- function(job) {
+  call_llm_engine_with_failover(
+    spec_json        = job$payload_json,
+    data_summary     = job$data_summary,
+    provider_key_map = job$provider_key_map,
+    failover_chain   = job$failover_chain,
+    sdtm_list        = job$sdtm_list,
+    base_url_map     = job$base_url_map,
+    target_datasets  = job$target_dataset,
+    prompt_profile   = job$prompt_profile
+  )
+}
+
+.run_llm_jobs <- function(jobs, project_dir) {
+  if (length(jobs) == 0) return(list())
+  if (length(jobs) == 1) {
+    out <- list(.llm_codegen_worker(jobs[[1]]))
+    names(out) <- names(jobs)
+    return(out)
+  }
+
+  cl <- tryCatch(parallel::makeCluster(min(length(jobs), 2L)), error = function(e) NULL)
+  if (is.null(cl)) {
+    out <- lapply(jobs, .llm_codegen_worker)
+    names(out) <- names(jobs)
+    return(out)
+  }
+  on.exit(try(parallel::stopCluster(cl), silent = TRUE), add = TRUE)
+
+  parallel::clusterExport(cl, varlist = c("project_dir"), envir = environment())
+  parallel::clusterEvalQ(cl, {
+    setwd(project_dir)
+    library(jsonlite)
+    library(httr2)
+    library(stringr)
+    source("provider_registry.R", local = TRUE)
+    source("llm_api.R", local = TRUE)
+    NULL
+  })
+  parallel::clusterExport(cl, varlist = c(".llm_codegen_worker"), envir = environment())
+  out <- tryCatch(parallel::parLapply(cl, jobs, .llm_codegen_worker), error = function(e) NULL)
+  if (is.null(out)) {
+    out <- lapply(jobs, .llm_codegen_worker)
+  }
+  names(out) <- names(jobs)
+  out
+}
 
 # =============================================================================
 # [新增 A] Spec CSV 智能解析辅助函数
@@ -453,7 +613,7 @@ library(shinyjs)   # reset() 用于清空 fileInput
 # -----------------------------------------------------------------------------
 .build_multi_parse_modal <- function(specs) {
   n_files    <- length(specs)
-  n_warn_tot <- sum(sapply(specs, function(s) s$step == "warn"))
+  n_warn_tot <- .sum_true(lapply(specs, function(s) s$step == "warn"))
 
   sections <- lapply(names(specs), function(fid) {
     s    <- specs[[fid]]
@@ -518,18 +678,30 @@ server <- function(input, output, session) {
   rv <- reactiveValues(
     # SDTM 数据
     sdtm          = NULL,
+    sdtm_profile  = NULL,
     # LLM 生成结果
     llm_result    = NULL,
+    llm_request_meta = NULL,
+    llm_cache     = list(),
+    derivation_plan = NULL,
+    derivation_plan_issues_df = NULL,
+    static_check_result = NULL,
+    session_api_key = NULL,
+    session_failover_api_key = NULL,
     risk_logs_df  = NULL,
     original_code = NULL,
     # ADaM 输出
     adsl          = NULL,
     adae          = NULL,
+    validation_result   = NULL,
+    validation_issues_df = NULL,
+    validation_stats_df  = NULL,
     # 流水线状态
     step_load     = "idle",
     step_llm      = "idle",
     step_review   = "idle",
     step_run      = "idle",
+    step_validate = "idle",
     # 日志
     log_lines     = character(0),
     # 运行代码状态
@@ -572,7 +744,8 @@ server <- function(input, output, session) {
     upload_time = Sys.time(),
     datapath    = fi$datapath,
     rows        = NA_integer_,
-    cols        = NA_integer_
+    cols        = NA_integer_,
+    preview     = NULL
   )
 
   .fmt_size <- function(b) {
@@ -580,6 +753,32 @@ server <- function(input, output, session) {
     if (b < 1024)    return(paste0(b, " B"))
     if (b < 1048576) return(paste0(round(b / 1024, 1), " KB"))
     paste0(round(b / 1048576, 1), " MB")
+  }
+
+  .workflow_snapshot <- function() {
+    req_domains <- .get_required_domain_ids()
+    active_domains <- rv$active_domains %||% names(SDTM_DOMAIN_REGISTRY)
+    n_uploaded <- .sum_true(lapply(rv$file_meta, Negate(is.null)))
+    n_required_ok <- .sum_true(lapply(req_domains, function(sid) !is.null(rv$file_meta[[sid]])))
+    n_active_ok <- .sum_true(lapply(active_domains, function(sid) !is.null(rv$file_meta[[sid]])))
+    model_sel <- input$llm_model %||% "gpt-4o"
+    prov <- .infer_provider(model_sel)
+    cfg <- tryCatch(.get_provider_cfg(prov), error = function(e) NULL)
+    api_key_val <- .non_empty(input$api_key %||% rv$session_api_key %||% "")
+    has_key <- isTRUE(MOCK_MODE) || is.null(cfg) || !isTRUE(cfg$needs_key) ||
+      !is.null(api_key_val)
+    list(
+      n_uploaded = n_uploaded,
+      n_required_ok = n_required_ok,
+      n_required = length(req_domains),
+      n_active_ok = n_active_ok,
+      n_active = length(active_domains),
+      has_specs = length(rv$specs) > 0,
+      spec_confirmed = isTRUE(rv$spec_confirmed),
+      has_key = has_key,
+      has_llm = !is.null(rv$llm_result),
+      has_output = length(rv$adam_datasets) > 0
+    )
   }
 
   # 从文件名生成安全 ID（去扩展名 + 非字母数字替换为下划线）
@@ -612,6 +811,7 @@ server <- function(input, output, session) {
           }, error=function(e) NA_integer_)
           meta$rows <- full_count
           meta$cols <- ncol(df_peek)
+          meta$preview <- utils::head(df_peek, 4)
         }
         rv$file_meta[[sid]] <- meta
       })
@@ -736,8 +936,9 @@ server <- function(input, output, session) {
     rv$spec_confirmed <- TRUE
     removeModal()
 
-    total_vars <- sum(sapply(rv$specs, function(s)
-      if (!is.null(s$parsed)) nrow(s$parsed$variables) else 0L))
+    total_vars <- .sum_int(rv$specs, function(s) {
+      if (!is.null(s$parsed)) nrow(s$parsed$variables) else 0L
+    })
     showNotification(
       tagList(tags$strong("Spec 解析已确认"),
               tags$br(),
@@ -766,8 +967,9 @@ server <- function(input, output, session) {
     if (step == "idle" && n_files == 0) return(NULL)
 
     cfg <- if (rv$spec_confirmed) {
-      total_vars <- sum(sapply(rv$specs, function(s)
-        if (!is.null(s$parsed)) nrow(s$parsed$variables) else 0L))
+      total_vars <- .sum_int(rv$specs, function(s) {
+        if (!is.null(s$parsed)) nrow(s$parsed$variables) else 0L
+      })
       list(dot="dot-ok",
            text=paste0("已确认 · ", n_files, " 个文件 · ",
                        total_vars, " 个变量"))
@@ -811,10 +1013,14 @@ server <- function(input, output, session) {
   observeEvent(input$btn_generate, {
 
     rv$adsl <- rv$adae <- rv$llm_result <- rv$risk_logs_df <- NULL
+    rv$sdtm_profile <- NULL
+    rv$llm_request_meta <- NULL
+    rv$derivation_plan <- rv$derivation_plan_issues_df <- rv$static_check_result <- NULL
+    rv$validation_result <- rv$validation_issues_df <- rv$validation_stats_df <- NULL
     rv$original_code <- rv$run_result_ok <- rv$run_result_err <- NULL
     rv$log_lines <- character(0)
     rv$step_load <- "running"
-    rv$step_llm  <- rv$step_review <- rv$step_run <- "idle"
+    rv$step_llm  <- rv$step_review <- rv$step_run <- rv$step_validate <- "idle"
 
     # ── [S-4] 校验：动态推断所需域 + spec_confirmed 检查 ──────────────────────
     needed_domains <- unique(c(
@@ -864,24 +1070,25 @@ server <- function(input, output, session) {
     }
 
     rv$sdtm      <- sdtm_data
+    rv$sdtm_profile <- profile_sdtm_domains(sdtm_data)
     rv$step_load <- "done"
     .append_log(paste0("SDTM 加载完成  ",
       paste(sapply(names(sdtm_data), function(sid)
         paste0(toupper(sid), "=", nrow(sdtm_data[[sid]]), "行")), collapse="  ")), icon="✔")
+    .append_log("已生成结构化 SDTM profile，用于 LLM 规划与输入画像展示。", icon="🧱")
 
     # ── [修改 G-2] 阶段 2：直接使用 rv$spec_parsed（原：load_spec_json()）──
-    .append_log("加载已确认的 Spec 解析结果...", icon="⬤")  # [修改 G-2]
-    # Combine all confirmed specs into a JSON array (one object per file)
-    spec_list     <- lapply(rv$specs, function(s) s$parsed)
-    spec_json_str <- jsonlite::toJSON(spec_list, pretty=TRUE, auto_unbox=TRUE)
-    total_vars    <- sum(sapply(spec_list, function(s)
-                      if (!is.null(s$variables)) nrow(s$variables) else 0L))
+    .append_log("加载已确认的 Spec 解析结果...", icon="⬤")
+    spec_map <- .split_specs_by_dataset(rv$specs)
+    total_vars <- .sum_int(spec_map, function(s) {
+      vars <- s$variables %||% NULL
+      if (!is.null(vars) && is.data.frame(vars)) nrow(vars) else 0L
+    })
     .append_log(sprintf("规格加载完成  %d 个数据集  共 %d 个变量",
-                        length(spec_list), total_vars), icon="✔")
+                        length(spec_map), total_vars), icon="✔")
 
-    # ── [S-4] 提取目标数据集列表（用于 LLM prompt 和结果提取）──────────────────
-    target_datasets <- tolower(unique(unlist(lapply(rv$specs, function(s)
-      if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
+    # ── [S-4] 提取目标数据集列表（用于分批 LLM prompt 和结果提取）──────────────
+    target_datasets <- names(spec_map)
     if (length(target_datasets) == 0) target_datasets <- c("adsl", "adae")
 
     # ── 阶段 3：调用 LLM 生成代码 ─────────────────────────────────────────────
@@ -892,7 +1099,12 @@ server <- function(input, output, session) {
     primary_prov <- .infer_provider(model_val)
     actual_model <- if (primary_prov %in% c("ollama", "vllm"))
                       trimws(input$local_model_name %||% "") else model_val
-    api_key_val  <- trimws(input$api_key %||% "")
+    api_key_val  <- .non_empty(input$api_key %||% rv$session_api_key %||% "") %||% ""
+    prompt_profile <- list(
+      mode         = input$llm_generation_mode %||% "balanced",
+      traceability = isTRUE(input$llm_traceability_mode),
+      preview_rows = suppressWarnings(as.integer(input$llm_preview_rows %||% 5L))
+    )
 
     # 云端提供商需要 Key；本地不需要
     prov_cfg <- .get_provider_cfg(primary_prov)
@@ -918,7 +1130,7 @@ server <- function(input, output, session) {
         !is.null(input$failover_provider_1) &&
         input$failover_provider_1 != "none") {
       fb <- input$failover_provider_1
-      provider_key_map[[fb]] <- trimws(input$failover_api_key_1 %||% "")
+      provider_key_map[[fb]] <- .non_empty(input$failover_api_key_1 %||% rv$session_failover_api_key %||% "") %||% ""
       failover_chain <- c(failover_chain,
                           list(list(provider = fb, model = .default_model(fb))))
     }
@@ -926,16 +1138,175 @@ server <- function(input, output, session) {
     .append_log("正在调用 LLM 引擎（",
                 if (MOCK_MODE) "模拟模式" else paste0(actual_model, " · ", primary_prov),
                 "）...", icon="⬤")
+    .append_log("生成策略：",
+                switch(prompt_profile$mode,
+                  "strict"   = "稳健优先",
+                  "adaptive" = "补全优先",
+                  "平衡模式"),
+                " / 追踪=",
+                if (isTRUE(prompt_profile$traceability)) "增强" else "标准",
+                " / 默认预览=",
+                prompt_profile$preview_rows,
+                "行",
+                icon="⚙")
+
+    profile_summary_txt <- format_sdtm_profiles(rv$sdtm_profile)
+    large_spec_threshold <- 18L
+    batch_results <- vector("list", length(target_datasets))
+    names(batch_results) <- target_datasets
+    compact_datasets <- character(0)
+    staged_datasets <- character(0)
+    cached_datasets <- character(0)
+    project_dir <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+    pending_jobs <- list()
+    pending_meta <- list()
 
     llm_res <- tryCatch({
-      call_llm_engine_with_failover(
-        spec_json        = spec_json_str,
-        data_summary     = summarize_sdtm(sdtm_data),
-        provider_key_map = provider_key_map,
-        failover_chain   = failover_chain,
-        sdtm_list        = sdtm_data,
-        base_url_map     = base_url_map,
-        target_datasets  = target_datasets   # [S-4]
+      for (ds in target_datasets) {
+        ds_spec <- spec_map[[ds]] %||% list(dataset = ds, variables = data.frame(stringsAsFactors = FALSE))
+        ds_spec <- .compact_spec_payload(ds_spec)
+        ds_vars <- ds_spec$variables %||% data.frame(stringsAsFactors = FALSE)
+        ds_var_n <- if (is.data.frame(ds_vars)) nrow(ds_vars) else 0L
+        prompt_profile_ds <- prompt_profile
+        sdtm_prompt_data <- sdtm_data
+        staged_mode <- FALSE
+
+        if (ds_var_n >= large_spec_threshold) {
+          prompt_profile_ds$preview_rows <- min(prompt_profile_ds$preview_rows %||% 5L, 3L)
+          prompt_profile_ds$compact_mode <- TRUE
+          prompt_profile_ds$request_timeout <- 180L
+          prompt_profile_ds$max_tokens <- 2000L
+          sdtm_prompt_data <- NULL
+          compact_datasets <- c(compact_datasets, ds)
+          staged_mode <- TRUE
+          staged_datasets <- c(staged_datasets, ds)
+          .append_log(sprintf("%s 规格较长（%d变量），已启用两段式压缩生成。", toupper(ds), ds_var_n), icon="⇢")
+        }
+
+        .append_log(sprintf("开始生成 %s（%d/%d，%d 个变量）...",
+                            toupper(ds),
+                            match(ds, target_datasets),
+                            length(target_datasets),
+                            ds_var_n), icon="⬤")
+
+        if (staged_mode) {
+          .append_log(sprintf("%s 第一步：使用系统计划（基于已确认 Spec）...", toupper(ds)), icon="⋯")
+          plan_norm <- normalize_derivation_plan(NULL, list(list(parsed = ds_spec)), ds)
+          plan_payload <- .compact_plan_payload(plan_norm)
+          code_profile <- prompt_profile_ds
+          code_profile$task <- "code_from_plan"
+          code_profile$request_timeout <- 240L
+          code_profile$max_tokens <- 2200L
+          payload_json <- jsonlite::toJSON(plan_payload, pretty = TRUE, auto_unbox = TRUE)
+          cache_key <- .make_llm_cache_key(ds, payload_json, profile_summary_txt, actual_model, primary_prov, code_profile)
+          if (!is.null(rv$llm_cache[[cache_key]])) {
+            batch_results[[ds]] <- list(
+              derivation_plan = plan_norm,
+              r_code = rv$llm_cache[[cache_key]]$r_code %||% "",
+              risk_logs = c(list(list(
+                level = "INFO",
+                variable = toupper(ds),
+                description = "命中会话级 LLM 缓存，已复用上次生成代码。",
+                assumption = "当前生成条件与上次一致；若已变更输入或模型，请重新生成。"
+              )), rv$llm_cache[[cache_key]]$risk_logs %||% list()),
+              token_info = list(input = 0L, output = 0L, total = 0L)
+            )
+            cached_datasets <- c(cached_datasets, ds)
+            .append_log(sprintf("%s 命中缓存，已跳过模型调用。", toupper(ds)), icon="⚡")
+          } else {
+            .append_log(sprintf("%s 第二步：基于 plan 生成代码...", toupper(ds)), icon="⋯")
+            pending_jobs[[ds]] <- list(
+              payload_json = payload_json,
+              data_summary = profile_summary_txt,
+              provider_key_map = provider_key_map,
+              failover_chain = failover_chain,
+              sdtm_list = NULL,
+              base_url_map = base_url_map,
+              target_dataset = ds,
+              prompt_profile = code_profile
+            )
+            pending_meta[[ds]] <- list(
+              cache_key = cache_key,
+              derivation_plan = plan_norm,
+              staged_mode = TRUE
+            )
+          }
+        } else {
+          ds_spec_json <- jsonlite::toJSON(list(ds_spec), pretty = TRUE, auto_unbox = TRUE)
+          cache_key <- .make_llm_cache_key(ds, ds_spec_json, profile_summary_txt, actual_model, primary_prov, prompt_profile_ds)
+          if (!is.null(rv$llm_cache[[cache_key]])) {
+            batch_results[[ds]] <- rv$llm_cache[[cache_key]]
+            cached_datasets <- c(cached_datasets, ds)
+            .append_log(sprintf("%s 命中缓存，已跳过模型调用。", toupper(ds)), icon="⚡")
+          } else {
+            pending_jobs[[ds]] <- list(
+              payload_json = ds_spec_json,
+              data_summary = profile_summary_txt,
+              provider_key_map = provider_key_map,
+              failover_chain = failover_chain,
+              sdtm_list = sdtm_prompt_data,
+              base_url_map = base_url_map,
+              target_dataset = ds,
+              prompt_profile = prompt_profile_ds
+            )
+            pending_meta[[ds]] <- list(
+              cache_key = cache_key,
+              derivation_plan = NULL,
+              staged_mode = FALSE
+            )
+          }
+        }
+      }
+
+      if (length(pending_jobs) > 0) {
+        if (length(pending_jobs) > 1) {
+          .append_log(sprintf("并行调用 %d 个数据集的代码生成任务...", length(pending_jobs)), icon="⇄")
+        }
+        pending_results <- .run_llm_jobs(pending_jobs, project_dir)
+        for (ds in names(pending_results)) {
+          res <- pending_results[[ds]]
+          meta_ds <- pending_meta[[ds]]
+          if (is.null(res)) {
+            stop(sprintf("%s 生成失败：未返回结果", toupper(ds)), call. = FALSE)
+          }
+          if (isTRUE(meta_ds$staged_mode)) {
+            batch_results[[ds]] <- list(
+              derivation_plan = meta_ds$derivation_plan,
+              r_code = res$r_code %||% "",
+              risk_logs = c(list(list(
+                level = "INFO",
+                variable = toupper(ds),
+                description = "长规格模式已直接采用系统计划，跳过模型 plan-only 阶段。",
+                assumption = "当前 derivation plan 主要来自已确认 Spec；复杂连接或业务规则需结合代码和风险日志复核。"
+              )), res$risk_logs %||% list()),
+              token_info = res$token_info %||% list(input = 0L, output = 0L, total = 0L)
+            )
+          } else {
+            batch_results[[ds]] <- res
+          }
+          rv$llm_cache[[meta_ds$cache_key]] <- batch_results[[ds]]
+          batch_tok <- batch_results[[ds]]$token_info %||% list(total = 0L)
+          .append_log(sprintf("%s 生成完成  代码=%d字符  token=%d",
+                              toupper(ds),
+                              nchar(batch_results[[ds]]$r_code %||% ""),
+                              batch_tok$total %||% 0L), icon="✔")
+        }
+      }
+
+      combined_plan <- list(
+        plan_version = "0.2-batched",
+        generated_by = "llm-batched",
+        datasets = unlist(lapply(batch_results, function(x) {
+          (x$derivation_plan %||% list(datasets = list()))$datasets %||% list()
+        }), recursive = FALSE, use.names = FALSE)
+      )
+
+      list(
+        derivation_plan = combined_plan,
+        r_code = paste(Filter(nzchar, vapply(batch_results, function(x) x$r_code %||% "", character(1))), collapse = "\n\n"),
+        risk_logs = unlist(lapply(batch_results, function(x) x$risk_logs %||% list()), recursive = FALSE, use.names = FALSE),
+        token_info = .merge_token_info(batch_results),
+        batch_results = batch_results
       )
     }, error = function(e) {
       rv$step_llm <- "error"
@@ -947,13 +1318,53 @@ server <- function(input, output, session) {
     if (is.null(llm_res)) return()
 
     rv$llm_result    <- llm_res
+    rv$derivation_plan <- normalize_derivation_plan(llm_res$derivation_plan %||% NULL, rv$specs, target_datasets)
+    rv$derivation_plan_issues_df <- validate_plan_against_spec(rv$derivation_plan, rv$specs)
+    rv$llm_request_meta <- list(
+      provider        = primary_prov,
+      provider_name   = prov_cfg$name %||% primary_prov,
+      model           = actual_model,
+      failover        = isTRUE(input$enable_failover) &&
+                        !is.null(input$failover_provider_1) &&
+                        input$failover_provider_1 != "none",
+      generation_mode = prompt_profile$mode,
+      traceability    = isTRUE(prompt_profile$traceability),
+      preview_rows    = prompt_profile$preview_rows,
+      batch_mode      = length(target_datasets) > 1,
+      batch_count     = length(target_datasets),
+      compact_datasets = unique(compact_datasets),
+      staged_datasets = unique(staged_datasets),
+      cached_datasets = unique(cached_datasets),
+      token_info      = llm_res$token_info %||% list(input=0L, output=0L, total=0L)
+    )
     rv$step_llm      <- "done"
     rv$risk_logs_df  <- .normalize_risk_logs(llm_res$risk_logs)
     rv$original_code <- llm_res$r_code
 
     n_risks <- if (!is.null(rv$risk_logs_df)) nrow(rv$risk_logs_df) else 0
+    plan_summary_df <- summarize_derivation_plan(rv$derivation_plan)
+    plan_ds_n <- nrow(plan_summary_df)
+    plan_var_n <- sum(plan_summary_df$variables %||% 0L)
     .append_log(sprintf("LLM 返回完成  代码长度=%d字符  风险点=%d条",
                         nchar(llm_res$r_code %||% ""), n_risks), icon="✔")
+    .append_log(sprintf("分批生成完成  %d 个数据集%s",
+                        length(target_datasets),
+                        if (length(compact_datasets) > 0) {
+                          paste0("；压缩上下文=", paste(toupper(unique(compact_datasets)), collapse = ", "))
+                        } else ""), icon="🧩")
+    if (length(staged_datasets) > 0) {
+      .append_log(sprintf("两段式生成已应用于：%s",
+                          paste(toupper(unique(staged_datasets)), collapse = ", ")), icon="⏱")
+    }
+    if (length(cached_datasets) > 0) {
+      .append_log(sprintf("缓存复用于：%s",
+                          paste(toupper(unique(cached_datasets)), collapse = ", ")), icon="⚡")
+    }
+    .append_log(sprintf("Derivation Plan 已生成  %d 个数据集  %d 个变量步骤",
+                        plan_ds_n, plan_var_n), icon="🧭")
+    if (!is.null(rv$derivation_plan_issues_df) && nrow(rv$derivation_plan_issues_df) > 0) {
+      .append_log(sprintf("Plan 与 Spec 存在 %d 条对齐提醒", nrow(rv$derivation_plan_issues_df)), icon="⚠")
+    }
     tok        <- llm_res$token_info %||% list(input=0L, output=0L, total=0L)
     shinyjs::runjs(sprintf(
       "adamProgress.complete('✔ LLM 生成完成，识别 %d 条风险点', %d, %d)",
@@ -962,12 +1373,12 @@ server <- function(input, output, session) {
 
     updateAceEditor(session, "code_editor", value=llm_res$r_code)
     rv$step_review <- "running"
-    .append_log("代码已填入编辑器，请切换至「代码审查与回档」Tab 检查。", icon="→")
+    .append_log("代码已填入编辑器，请切换至「生成与审阅」页检查。", icon="→")
 
-    nav_select(id = "main_tabs", selected = "tab_code", session = session)
+    nav_select(id = "main_tabs", selected = "tab_generate", session = session)
     showNotification(
       tagList(tags$strong("✔ LLM 生成完成"), tags$br(),
-              paste0("识别到 ", n_risks, " 条风险点，请审阅 Tab 2 中的代码")),
+              paste0("识别到 ", n_risks, " 条风险点，请继续在“生成与审阅”页检查代码")),
       type="message", duration=5)
   })
 
@@ -990,18 +1401,27 @@ server <- function(input, output, session) {
     rv$spec_confirmed <- FALSE
     rv$step_parse     <- "idle"
     rv$sdtm           <- NULL
+    rv$sdtm_profile   <- NULL
     rv$step_load      <- "idle"
 
     # [S-7] 清空多数据集容器
     rv$adam_datasets  <- list()
     rv$adsl           <- NULL
     rv$adae           <- NULL
+    rv$derivation_plan <- NULL
+    rv$derivation_plan_issues_df <- NULL
+    rv$static_check_result <- NULL
+    rv$validation_result   <- NULL
+    rv$validation_issues_df <- NULL
+    rv$validation_stats_df  <- NULL
     rv$llm_result     <- NULL
+    rv$llm_request_meta <- NULL
     rv$risk_logs_df   <- NULL
     rv$original_code  <- NULL
     rv$run_result_ok  <- NULL
     rv$run_result_err <- NULL
     rv$log_lines      <- character(0)
+    rv$step_validate  <- "idle"
 
     # ── 3. 重置 Ace 编辑器为初始提示文字 ────────────────────────────────────
     updateAceEditor(session, "code_editor",
@@ -1019,6 +1439,14 @@ server <- function(input, output, session) {
   # ===========================================================================
   # Output：API 配置面板（动态渲染，根据选中提供商切换内容）
   # ===========================================================================
+  observeEvent(input$api_key, {
+    rv$session_api_key <- .non_empty(input$api_key)
+  }, ignoreNULL = FALSE)
+
+  observeEvent(input$failover_api_key_1, {
+    rv$session_failover_api_key <- .non_empty(input$failover_api_key_1)
+  }, ignoreNULL = FALSE)
+
   output$api_config_panel <- renderUI({
     model_sel    <- input$llm_model %||% "gpt-4o"
     prov         <- .infer_provider(model_sel)
@@ -1041,11 +1469,49 @@ server <- function(input, output, session) {
         selected = model_sel
       ),
 
+      div(class = "llm-tuning-section",
+        div(class="hint-text", style="margin-top:-0.15rem;margin-bottom:0.45rem;",
+            "调节 AI 的推断保守性、风险追踪力度和上下文密度"),
+        selectInput("llm_generation_mode", "生成策略",
+          choices = c(
+            "平衡模式" = "balanced",
+            "稳健优先" = "strict",
+            "补全优先" = "adaptive"
+          ),
+          selected = input$llm_generation_mode %||% "balanced"
+        ),
+        checkboxInput("llm_traceability_mode", "强化风险追踪与代码可读性",
+                      value = isTRUE(input$llm_traceability_mode %||% TRUE)),
+        selectInput("llm_preview_rows", "每域样本预览",
+          choices = c("轻量 3 行" = 3, "标准 5 行" = 5, "详细 8 行" = 8),
+          selected = as.character(input$llm_preview_rows %||% 5)
+        )
+      ),
+
       # 云端提供商：API Key 输入框
       if (needs_key) {
         tagList(
-          passwordInput("api_key", paste0(prov_name, " API Key"), placeholder="sk-..."),
-          div(class="hint-text", "Key 仅存于当前会话内存，不会被持久化或传输给第三方")
+          div(class = "password-field-shell",
+            tags$label(`for` = "api_key", class = "password-field-label", paste0(prov_name, " API Key")),
+            div(class = "password-field-wrap",
+              tags$input(
+                id = "api_key",
+                type = "password",
+                class = "form-control",
+                value = rv$session_api_key %||% "",
+                placeholder = "sk-...",
+                autocomplete = "off"
+              ),
+              tags$button(
+                type = "button",
+                class = "password-toggle-btn",
+                onclick = "togglePasswordVisibility('api_key', this);",
+                tags$span(class = "icon-show", bs_icon("eye", size = "0.9rem")),
+                tags$span(class = "icon-hide", bs_icon("eye-slash", size = "0.9rem"))
+              )
+            )
+          ),
+          div(class="hint-text", "Key 仅保存在当前窗口会话内存中；关闭当前会话后不会保留。")
         )
       },
 
@@ -1074,9 +1540,181 @@ server <- function(input, output, session) {
               "DeepSeek"="deepseek","Kimi"="kimi","Qwen"="qwen"
             )
           ),
-          passwordInput("failover_api_key_1", "备用 API Key", placeholder="sk-...")
+          div(class = "password-field-shell",
+            tags$label(`for` = "failover_api_key_1", class = "password-field-label", "备用 API Key"),
+            div(class = "password-field-wrap",
+              tags$input(
+                id = "failover_api_key_1",
+                type = "password",
+                class = "form-control",
+                value = rv$session_failover_api_key %||% "",
+                placeholder = "sk-...",
+                autocomplete = "off"
+              ),
+              tags$button(
+                type = "button",
+                class = "password-toggle-btn",
+                onclick = "togglePasswordVisibility('failover_api_key_1', this);",
+                tags$span(class = "icon-show", bs_icon("eye", size = "0.9rem")),
+                tags$span(class = "icon-hide", bs_icon("eye-slash", size = "0.9rem"))
+              )
+            )
+          )
         )
       )
+    )
+  })
+
+  output$sdtm_section_status <- renderUI({
+    n_uploaded <- .sum_true(lapply(rv$file_meta, Negate(is.null)))
+    req_domains <- .get_required_domain_ids()
+    n_required_ok <- .sum_true(lapply(req_domains, function(sid) !is.null(rv$file_meta[[sid]])))
+    active_domains <- rv$active_domains %||% names(SDTM_DOMAIN_REGISTRY)
+    n_active_ok <- .sum_true(lapply(active_domains, function(sid) !is.null(rv$file_meta[[sid]])))
+    div(class="sidebar-section-card",
+      div(class="sidebar-section-title",
+        div(class="title-left", bs_icon("folder2-open", size="0.72rem"), "输入准备"),
+        HTML(.badge_html(if (n_required_ok == length(req_domains) && n_uploaded > 0) "PASS" else "INFO"))
+      ),
+      div(class="sidebar-section-body",
+        if (n_uploaded == 0) {
+          "请先上传必要 SDTM 输入文件。核心域未齐备时，系统不会进入生成。"
+        } else {
+          paste0(
+            "已上传 ", n_uploaded, " 个文件；核心域 ",
+            n_required_ok, "/", length(req_domains),
+            "；当前启用域 ", n_active_ok, "/", length(active_domains), "。"
+          )
+        }
+      )
+    )
+  })
+
+  output$llm_section_status <- renderUI({
+    model_sel <- input$llm_model %||% "gpt-4o"
+    prov      <- .infer_provider(model_sel)
+    cfg       <- tryCatch(.get_provider_cfg(prov), error=function(e) NULL)
+    has_key   <- is.null(cfg) || !isTRUE(cfg$needs_key) || !is.null(.non_empty(input$api_key %||% rv$session_api_key %||% ""))
+    div(class="sidebar-section-card",
+      div(class="sidebar-section-title",
+        div(class="title-left", bs_icon("stars", size="0.72rem"), "AI 策略"),
+        HTML(.badge_html(if (has_key) "PASS" else "WARNING"))
+      ),
+      div(class="sidebar-section-body",
+        paste0(
+          "当前模型：", model_sel, "；策略：",
+          switch(input$llm_generation_mode %||% "balanced",
+            "strict" = "稳健优先",
+            "adaptive" = "补全优先",
+            "平衡模式"
+          ),
+          if (!has_key) "。仍需填写 API Key 才能开始生成。" else "。"
+        )
+      )
+    )
+  })
+
+  output$next_action_hint <- renderUI({
+    hint <- if (length(rv$specs) == 0) {
+      "后续动作：上传 Analysis Spec CSV。"
+    } else if (!isTRUE(rv$spec_confirmed)) {
+      "后续动作：确认 Spec 解析结果。"
+    } else {
+      model_sel <- input$llm_model %||% "gpt-4o"
+      prov <- .infer_provider(model_sel)
+      cfg  <- tryCatch(.get_provider_cfg(prov), error=function(e) NULL)
+      has_key <- is.null(cfg) || !isTRUE(cfg$needs_key) || !is.null(.non_empty(input$api_key %||% rv$session_api_key %||% ""))
+      if (!has_key && !isTRUE(MOCK_MODE)) {
+        "后续动作：补充 API Key 或本地推理配置。"
+      } else {
+        "后续动作：进入“生成与审阅”页，并使用右侧控制区中的生成按钮启动本次生成。"
+      }
+    }
+    div(class="sidebar-section-card",
+      div(class="sidebar-section-title",
+        div(class="title-left", bs_icon("signpost-split", size="0.72rem"), "下一步"),
+        HTML(.badge_html("INFO"))
+      ),
+      div(class="sidebar-section-body", hint)
+    )
+  })
+
+  observeEvent(input$goto_tab, {
+    req(input$goto_tab)
+    nav_select("main_tabs", selected = input$goto_tab, session = session)
+  })
+
+  observeEvent(list(input$btn_open_ai_settings, input$btn_open_ai_settings_inline), {
+    showModal(
+      modalDialog(
+        title = tagList(bs_icon("sliders", size = "0.9rem", color = "#2dd4bf"), " AI 模型与接口设置"),
+        size = "l",
+        easyClose = TRUE,
+        div(style = "display:flex;flex-direction:column;gap:0.85rem;",
+          uiOutput("llm_config_status"),
+          uiOutput("api_config_panel")
+        ),
+        footer = modalButton("关闭")
+      )
+    )
+  })
+
+  output$llm_config_status <- renderUI({
+    model_sel <- input$llm_model %||% "gpt-4o"
+    prov      <- .infer_provider(model_sel)
+    cfg       <- tryCatch(.get_provider_cfg(prov), error=function(e) NULL)
+    needs_key <- is.null(cfg) || isTRUE(cfg$needs_key)
+    has_key   <- !needs_key || !is.null(.non_empty(input$api_key %||% rv$session_api_key %||% ""))
+    failover_on <- isTRUE(input$enable_failover) &&
+                   !is.null(input$failover_provider_1) &&
+                   input$failover_provider_1 != "none"
+    mode_label <- switch(input$llm_generation_mode %||% "balanced",
+      "strict"   = "稳健优先",
+      "adaptive" = "补全优先",
+      "平衡模式"
+    )
+    trace_label <- if (isTRUE(input$llm_traceability_mode %||% TRUE)) "增强追踪" else "标准追踪"
+    preview_label <- paste0(input$llm_preview_rows %||% 5, " 行预览")
+
+    tagList(
+      div(class="llm-status-card",
+        div(class="llm-status-title",
+          bs_icon("cpu", size="0.75rem"),
+          " 当前 AI 配置"
+        ),
+        div(class="llm-chip-row",
+          span(class="llm-chip llm-chip-primary", cfg$name %||% prov),
+          span(class="llm-chip", model_sel),
+          span(class="llm-chip", mode_label),
+          span(class="llm-chip", trace_label),
+          span(class="llm-chip", preview_label)
+        ),
+        div(class="llm-status-meta",
+          span(if (has_key) "Key 已就绪" else "缺少 Key"),
+          span("·"),
+          span(if (failover_on) paste0("故障转移：", input$failover_provider_1) else "故障转移：关闭"),
+          if (prov %in% c("ollama", "vllm")) tagList(
+            span("·"),
+            span(paste0("本地模型：", trimws(input$local_model_name %||% "未填写")))
+          )
+        )
+      ),
+      if (!is.null(rv$llm_request_meta)) {
+        tok <- rv$llm_request_meta$token_info %||% list(total=0L)
+        div(class="llm-status-card llm-last-run",
+          div(class="llm-status-title",
+            bs_icon("bar-chart-line", size="0.75rem"),
+            " 最近一次生成"
+          ),
+          div(class="llm-status-meta",
+            span(paste0(rv$llm_request_meta$provider_name, " / ", rv$llm_request_meta$model)),
+            span("·"),
+            span(paste0("Tokens: ", tok$total %||% 0L)),
+            span("·"),
+            span(paste0("风险点: ", nrow(rv$risk_logs_df %||% data.frame())))
+          )
+        )
+      }
     )
   })
 
@@ -1162,9 +1800,47 @@ server <- function(input, output, session) {
     }
 
     rv$step_run <- "running"
+    rv$step_validate <- "idle"
     rv$run_result_ok <- rv$run_result_err <- NULL
+    rv$static_check_result <- NULL
+    rv$validation_result <- rv$validation_issues_df <- rv$validation_stats_df <- NULL
     rv$adsl <- rv$adae <- NULL
     .append_log("开始执行用户确认的代码...", icon="▶")
+
+    expected_ds <- tolower(unique(unlist(lapply(rv$specs, function(s)
+      if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
+    if (length(expected_ds) == 0) expected_ds <- c("adsl", "adae")
+
+    static_check <- run_code_static_checks(
+      code_str = code_str,
+      expected_datasets = expected_ds,
+      allowed_packages = c("dplyr", "lubridate", "stringr", "tidyr", "readr", "haven", "purrr", "forcats", "janitor", "glue"),
+      available_inputs = names(rv$sdtm %||% list())
+    )
+    rv$static_check_result <- static_check
+    .append_log(
+      sprintf("静态检查完成  状态=%s  ERR=%d  WARN=%d",
+              static_check$summary$status,
+              static_check$summary$errors,
+              static_check$summary$warnings),
+      icon = if (static_check$summary$status == "ERROR") "✖" else if (static_check$summary$status == "WARNING") "⚠" else "✔"
+    )
+    if (static_check$summary$status == "ERROR") {
+      rv$step_run <- "error"
+      rv$run_result_err <- paste(
+        unique(head(static_check$issues$detail[static_check$issues$level == "ERROR"], 3)),
+        collapse = "；"
+      )
+      showNotification(
+        tagList(
+          tags$strong("✖ 静态检查未通过"),
+          tags$br(),
+          rv$run_result_err
+        ),
+        type = "error", duration = 10
+      )
+      return()
+    }
 
     # 预置包列表：核心5个 + 扩展5个（临床数据处理常用）
     needed_pkgs <- c(
@@ -1240,11 +1916,6 @@ server <- function(input, output, session) {
       return()
     }
 
-    # [S-6] 动态提取所有预期数据集
-    expected_ds <- tolower(unique(unlist(lapply(rv$specs, function(s)
-      if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
-    if (length(expected_ds) == 0) expected_ds <- c("adsl", "adae")
-
     extracted <- list()
     for (ds in expected_ds) {
       obj <- tryCatch(get(ds, envir=exec_env), error=function(e) NULL)
@@ -1266,19 +1937,85 @@ server <- function(input, output, session) {
     if ("adsl" %in% names(extracted)) rv$adsl <- extracted[["adsl"]]
     if ("adae" %in% names(extracted)) rv$adae <- extracted[["adae"]]
 
-    rv$step_run <- "done"; rv$step_review <- "done"
-    rv$run_result_ok <- paste(
+    rv$step_run <- "done"; rv$step_review <- "done"; rv$step_validate <- "running"
+    exec_summary <- paste(
       sapply(names(extracted), function(ds)
         sprintf("%s=%d×%d", toupper(ds), nrow(extracted[[ds]]), ncol(extracted[[ds]]))),
       collapse="  ")
-    .append_log(paste0("执行成功  ", rv$run_result_ok), icon="✔")
-    showNotification(
-      tagList(tags$strong("✔ ADaM 生成成功"), tags$br(),
-              paste(sapply(names(extracted), function(ds)
-                paste0(toupper(ds), ": ", nrow(extracted[[ds]]), "行")),
-                collapse="  ")),
-      type="message", duration=5)
-    nav_select(id = "main_tabs", selected = "tab_output", session = session)
+    .append_log(paste0("执行成功  ", exec_summary), icon="✔")
+    .append_log("开始校验 ADaM 输出结果...", icon="⬤")
+
+    validation_res <- tryCatch({
+      validate_adam_datasets(extracted, rv$specs, rv$derivation_plan)
+    }, error = function(e) {
+      rv$step_validate <- "error"
+      .append_log("结果校验失败：", conditionMessage(e), icon="✖")
+      showNotification(
+        tagList(tags$strong("⚠ 结果校验未完成"), tags$br(), conditionMessage(e)),
+        type="warning", duration=8)
+      NULL
+    })
+
+    if (!is.null(validation_res)) {
+      rv$validation_result    <- validation_res
+      rv$validation_issues_df <- validation_res$issues
+      rv$validation_stats_df  <- validation_res$dataset_stats
+
+      v_sum <- validation_res$summary
+      rv$step_validate <- switch(v_sum$status,
+        "ERROR"   = "error",
+        "WARNING" = "warn",
+        "done"
+      )
+
+      rv$run_result_ok <- paste0(
+        exec_summary,
+        "  |  校验: ",
+        v_sum$status,
+        " / ",
+        v_sum$errors, " ERR / ",
+        v_sum$warnings, " WARN"
+      )
+
+      .append_log(
+        sprintf("结果校验完成  状态=%s  数据集=%d  错误=%d  警告=%d",
+                v_sum$status, v_sum$datasets_total, v_sum$errors, v_sum$warnings),
+        icon = if (v_sum$status == "ERROR") "✖" else if (v_sum$status == "WARNING") "⚠" else "✔"
+      )
+
+      if (nrow(validation_res$issues) > 0) {
+        top_issues <- head(validation_res$issues, 3)
+        for (i in seq_len(nrow(top_issues))) {
+          .append_log(
+            sprintf("[%s] %s · %s：%s",
+                    top_issues$level[i], top_issues$dataset[i], top_issues$check[i], top_issues$detail[i]),
+            icon = "  "
+          )
+        }
+      }
+
+      notif_type <- if (v_sum$status == "ERROR") "warning" else "message"
+      showNotification(
+        tagList(
+          tags$strong(if (v_sum$status == "PASS") "✔ ADaM 生成并校验通过"
+                      else if (v_sum$status == "WARNING") "✔ ADaM 已生成，存在校验警告"
+                      else "⚠ ADaM 已生成，但校验发现错误"),
+          tags$br(),
+          paste0("错误 ", v_sum$errors, " 条；警告 ", v_sum$warnings, " 条")
+        ),
+        type = notif_type,
+        duration = 6
+      )
+    } else {
+      rv$run_result_ok <- exec_summary
+    }
+
+    nav_select(
+      id = "main_tabs",
+      selected = if (!is.null(validation_res) &&
+                       validation_res$summary$status %in% c("ERROR", "WARNING")) "tab_generate" else "tab_output",
+      session = session
+    )
   })
 
   # ===========================================================================
@@ -1292,7 +2029,8 @@ server <- function(input, output, session) {
       list(label="加载文件",   state=rv$step_load),
       list(label="LLM 推理",   state=rv$step_llm),
       list(label="人工审阅",   state=rv$step_review),
-      list(label="执行代码",   state=rv$step_run)
+      list(label="执行代码",   state=rv$step_run),
+      list(label="结果校验",   state=rv$step_validate)
     )
     tagList(lapply(steps, function(s) {
       dot_class <- paste("step-dot", switch(s$state,
@@ -1395,9 +2133,54 @@ server <- function(input, output, session) {
     )
   })
 
+  output$uploaded_preview_gallery <- renderUI({
+    metas <- rv$file_meta %||% list()
+    metas <- metas[rv$active_domains %||% names(metas)]
+    metas <- Filter(function(x) !is.null(x) && is.data.frame(x$preview) && nrow(x$preview) > 0, metas)
+    if (length(metas) == 0) return(NULL)
+
+    preview_cards <- lapply(names(metas), function(sid) {
+      meta <- metas[[sid]]
+      df_preview <- meta$preview
+      trunc_note <- if (ncol(df_preview) > 6) {
+        paste0("预览显示前 6 列，完整列数 ", ncol(df_preview), "。")
+      } else {
+        paste0("预览行数 ", nrow(df_preview), "。")
+      }
+      show_df <- df_preview[, seq_len(min(ncol(df_preview), 6)), drop = FALSE]
+      preview_rows <- apply(show_df, 1, function(r) {
+        tags$tr(lapply(as.character(r), tags$td))
+      })
+
+      div(class = "input-section-block",
+        div(class = "input-section-title", paste0(toupper(sid), " 样本预览")),
+        div(class = "input-section-meta", trunc_note),
+        div(class = "preview-scroll",
+          tags$table(class = "preview-table",
+            tags$thead(tags$tr(lapply(names(show_df), tags$th))),
+            tags$tbody(preview_rows)
+          )
+        )
+      )
+    })
+
+    div(style = "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0.85rem;",
+      tagList(preview_cards)
+    )
+  })
+
   output$run_status <- renderText({
     if (length(rv$log_lines)==0) return("# 等待操作... 上传文件后点击「生成 ADaM 与代码」开始")
     paste(rv$log_lines, collapse="\n")
+  })
+
+  output$run_log_teaser <- renderUI({
+    teaser <- if (length(rv$log_lines) == 0) {
+      "当前还没有执行日志。完成输入准备后，系统会在这里显示生成与执行的关键阶段。"
+    } else {
+      paste(utils::tail(rv$log_lines, 3), collapse = "  ")
+    }
+    div(class = "workspace-text", teaser)
   })
 
   output$vb_n_adsl    <- renderText(if(is.null(rv$adsl)) "—" else formatC(nrow(rv$adsl),big.mark=","))
@@ -1408,6 +2191,321 @@ server <- function(input, output, session) {
     if (n_e>0) paste0(nrow(rv$risk_logs_df)," (",n_e," ERR)") else as.character(nrow(rv$risk_logs_df))
   })
   output$vb_llm_status <- renderText(switch(rv$step_llm,"idle"="待机","running"="推理中","done"="完成","error"="失败","待机"))
+  output$vb_validation_status <- renderText({
+    if (is.null(rv$validation_result)) {
+      return(switch(rv$step_validate, "running" = "校验中", "error" = "失败", "—"))
+    }
+    switch(rv$validation_result$summary$status,
+      "PASS"    = "通过",
+      "WARNING" = "告警",
+      "ERROR"   = "失败",
+      "—"
+    )
+  })
+  output$vb_validation_errors <- renderText({
+    if (is.null(rv$validation_result)) return("—")
+    as.character(rv$validation_result$summary$errors %||% 0L)
+  })
+  output$vb_validation_warnings <- renderText({
+    if (is.null(rv$validation_result)) return("—")
+    as.character(rv$validation_result$summary$warnings %||% 0L)
+  })
+
+  output$sidebar_workflow_overview <- renderUI({
+    snap <- .workflow_snapshot()
+    stage_rows <- list(
+      list(
+        name = "输入准备",
+        state = if (snap$n_required_ok == snap$n_required && snap$has_specs) "done" else "active",
+        desc = paste0(
+          "核心域 ", snap$n_required_ok, "/", snap$n_required,
+          "；当前启用域 ", snap$n_active_ok, "/", snap$n_active,
+          "；Spec ", if (snap$has_specs) "已上传" else "待上传"
+        )
+      ),
+      list(
+        name = "AI 生成",
+        state = if (rv$step_llm == "running") "active" else if (snap$has_llm) "done" else if (snap$spec_confirmed && snap$has_key) "active" else "idle",
+        desc = if (snap$spec_confirmed && snap$has_key) "可以启动生成或继续查看本次模型配置" else "等待 Spec 确认与模型配置完成"
+      ),
+      list(
+        name = "人工审阅",
+        state = if (rv$step_review == "running") "active" else if (rv$step_run == "done") "done" else "idle",
+        desc = if (snap$has_llm) "生成完成后进入代码审阅阶段" else "尚未进入代码审阅"
+      ),
+      list(
+        name = "输出结果",
+        state = if (!is.null(rv$validation_result) && rv$validation_result$summary$status == "ERROR") "warn" else if (snap$has_output) "done" else "idle",
+        desc = if (snap$has_output) paste0("已生成 ", length(rv$adam_datasets), " 个数据集") else "执行代码后查看输出与校验"
+      )
+    )
+
+    div(class = "workflow-overview-card",
+      div(class = "workflow-overview-title", "工作流概览"),
+      lapply(stage_rows, function(x) {
+        dot_cls <- paste(
+          "workflow-step-dot",
+          switch(x$state, active = "active", done = "done", warn = "warn", "")
+        )
+        div(class = "workflow-step-row",
+          div(class = dot_cls),
+          div(class = "workflow-step-copy",
+            div(class = "workflow-step-name", x$name),
+            div(class = "workflow-step-desc", x$desc)
+          )
+        )
+      })
+    )
+  })
+
+  output$workflow_hero <- renderUI({
+    snap <- .workflow_snapshot()
+    title <- "当前阶段：输入准备与生成控制"
+    text <- "本工作台按“输入确认、AI 生成、人工审阅、结果输出”四个阶段推进。页面优先呈现当前阶段和下一项动作。"
+    pills <- list(
+      span(class = "hero-pill", paste0("SDTM 文件 ", snap$n_uploaded)),
+      span(class = "hero-pill", paste0("Spec ", if (snap$spec_confirmed) "已确认" else if (snap$has_specs) "待确认" else "未上传")),
+      span(class = "hero-pill", paste0("LLM ", switch(rv$step_llm, running = "生成中", done = "已完成", error = "失败", "待启动")))
+    )
+
+    if (rv$step_llm == "running") {
+      title <- "AI 正在生成代码与风险日志"
+      text <- "系统已进入核心推理阶段。当前最重要的是等待模型返回结构化结果，而不是查看下方的完整表格。"
+    } else if (!is.null(rv$llm_result) && length(rv$adam_datasets) == 0) {
+      title <- "代码已生成，下一步是人工审阅"
+      text <- "当前应该重点关注生成策略、风险点和代码是否符合业务预期，再决定是否执行。"
+      pills <- c(pills, span(class = "hero-pill", paste0("风险点 ", nrow(rv$risk_logs_df %||% data.frame()))))
+    } else if (length(rv$adam_datasets) > 0 && !is.null(rv$validation_result)) {
+      title <- if (rv$validation_result$summary$status == "PASS") "输出已生成，并通过结构与语义校验" else "输出已生成，但仍需关注风险与校验"
+      text <- paste0(
+        "本次共生成 ", length(rv$adam_datasets), " 个输出数据集。",
+        " 当前校验状态：", rv$validation_result$summary$status,
+        "；错误 ", rv$validation_result$summary$errors,
+        "；警告 ", rv$validation_result$summary$warnings, "。"
+      )
+      pills <- c(pills, span(class = "hero-pill", paste0("输出集 ", length(rv$adam_datasets))))
+    }
+
+    div(class = "hero-panel",
+      div(class = "hero-kicker", "ADaM Builder Workflow"),
+      div(class = "hero-title", title),
+      div(class = "hero-text", text),
+      div(class = "hero-meta", tagList(pills))
+    )
+  })
+
+  output$current_step_workspace <- renderUI({
+    snap <- .workflow_snapshot()
+    kicker <- "当前任务"
+    title <- "补齐输入与配置"
+    text <- "请先完成必需输入、Spec 确认和 AI 配置。满足条件后，再从右侧控制区启动生成。"
+    actions <- NULL
+
+    if (rv$step_llm == "running") {
+      title <- "等待 AI 完成生成"
+      text <- "模型调用进行中。建议先观察右侧流程进度，不必过早关注明细表格。"
+    } else if (!snap$has_specs || snap$n_required_ok < snap$n_required) {
+      title <- "输入条件尚未满足"
+      text <- paste0(
+        "核心域 ", snap$n_required_ok, "/", snap$n_required,
+        "；当前启用域 ", snap$n_active_ok, "/", snap$n_active,
+        "；Spec 状态：", if (snap$has_specs) "已上传，待确认" else "未上传。"
+      )
+    } else if (!snap$spec_confirmed) {
+      title <- "确认 Spec 解析结果"
+      text <- "当前输入已经接近齐备，但系统仍在等待你确认 Spec 解析结果后再生成。"
+    } else if (!snap$has_key) {
+      title <- "补充 AI 配置后即可生成"
+      text <- "Spec 已确认，下一步只差模型凭证或本地推理配置。"
+    } else if (!is.null(rv$llm_result) && length(rv$adam_datasets) == 0) {
+      title <- "进入代码审阅"
+      text <- "当前最重要的是阅读代码与风险摘要，确认逻辑后再执行。"
+      actions <- tags$button(
+        class = "btn-ghost-workflow",
+        onclick = "Shiny.setInputValue('goto_tab','tab_generate',{priority:'event'});",
+        "前往代码审阅"
+      )
+    } else if (length(rv$adam_datasets) > 0) {
+      title <- "查看输出与校验结果"
+      text <- "生成流程已经跑通。现在应该查看输出数据集，并根据校验结果判断是否需要回到代码页调整。"
+      actions <- tagList(
+        tags$button(
+          class = "btn-ghost-workflow",
+          onclick = "Shiny.setInputValue('goto_tab','tab_output',{priority:'event'});",
+          "查看输出数据集"
+        ),
+        tags$button(
+          class = "btn-ghost-workflow",
+          onclick = "Shiny.setInputValue('goto_tab','tab_generate',{priority:'event'});",
+          "返回代码审阅"
+        )
+      )
+    } else {
+      title <- "已满足生成条件"
+      text <- "当前输入与配置均已就绪。请使用右侧“AI 与生成”区域中的唯一生成按钮启动本次生成。"
+    }
+
+    card(
+      card_header(tagList(bs_icon("compass", size = "0.75rem"), " 当前任务区")),
+      div(class = "workspace-card",
+        div(class = "workspace-kicker", kicker),
+        div(class = "workspace-title", title),
+        div(class = "workspace-text", text),
+        if (!is.null(actions)) div(class = "workspace-actions", actions)
+      )
+    )
+  })
+
+  output$focus_metric_grid <- renderUI({
+    snap <- .workflow_snapshot()
+    metrics <- list(
+      list("输入进度", paste0(snap$n_required_ok, "/", snap$n_required), if (snap$n_uploaded > 0) paste0("共上传 ", snap$n_uploaded, " 个文件；启用域 ", snap$n_active_ok, "/", snap$n_active) else "必要输入文件尚未准备完成"),
+      list("Spec 状态", if (snap$spec_confirmed) "已确认" else if (snap$has_specs) "待确认" else "未上传", paste0(length(rv$specs), " 个文件进入当前流程")),
+      list("AI 状态", switch(rv$step_llm, idle = "待启动", running = "生成中", done = "已完成", error = "失败", "待启动"), paste0("模型：", rv$llm_request_meta$model %||% (input$llm_model %||% "gpt-4o"))),
+      list("输出结果", if (length(rv$adam_datasets) > 0) paste0(length(rv$adam_datasets), " 个") else "尚未输出", if (is.null(rv$validation_result)) "等待执行与校验" else paste0("校验：", rv$validation_result$summary$status))
+    )
+
+    div(class = "metric-grid",
+      lapply(metrics, function(x) {
+        div(class = "metric-card",
+          div(class = "metric-label", x[[1]]),
+          div(class = "metric-value", x[[2]]),
+          div(class = "metric-note", x[[3]])
+        )
+      })
+    )
+  })
+
+  output$priority_digest <- renderUI({
+    items <- list()
+
+    if (!is.null(rv$risk_logs_df)) {
+      top_risk <- rv$risk_logs_df[order(match(rv$risk_logs_df$level, c("ERROR", "WARNING", "INFO"))), , drop = FALSE]
+      top_risk <- head(top_risk, 2)
+      items[[length(items) + 1]] <- div(class = "digest-item",
+        div(class = "digest-item-head",
+          div(class = "digest-item-title", "LLM 风险摘要"),
+          HTML(.badge_html(if (any(rv$risk_logs_df$level == "ERROR")) "ERROR" else if (any(rv$risk_logs_df$level == "WARNING")) "WARNING" else "INFO"))
+        ),
+        div(class = "digest-item-text",
+          paste0("共识别 ", nrow(rv$risk_logs_df), " 条风险。重点关注：",
+                 paste(paste0(top_risk$variable, " - ", top_risk$description), collapse = "；"))
+        )
+      )
+    }
+
+    if (!is.null(rv$validation_result)) {
+      items[[length(items) + 1]] <- div(class = "digest-item",
+        div(class = "digest-item-head",
+          div(class = "digest-item-title", "结果校验摘要"),
+          HTML(.badge_html(rv$validation_result$summary$status))
+        ),
+        div(class = "digest-item-text",
+          paste0("错误 ", rv$validation_result$summary$errors,
+                 " 条；警告 ", rv$validation_result$summary$warnings,
+                 " 条。建议优先查看状态不是 PASS 的数据集。")
+        )
+      )
+    }
+
+    next_msg <- if (length(rv$adam_datasets) > 0) {
+      "当前最合理的动作是查看输出数据集，并对照校验结果决定是否回到代码页调整。"
+    } else if (!is.null(rv$llm_result)) {
+      "当前最合理的动作是进入代码审阅页，先看生成逻辑，再决定是否执行。"
+    } else {
+      "当前最合理的动作是先补齐左侧输入与 AI 配置，不必急着查看下方明细表。"
+    }
+    items[[length(items) + 1]] <- div(class = "digest-item",
+      div(class = "digest-item-head",
+        div(class = "digest-item-title", "建议关注点"),
+        HTML(.badge_html("INFO"))
+      ),
+      div(class = "digest-item-text", next_msg)
+    )
+
+    div(class = "digest-list", tagList(items))
+  })
+
+  output$input_next_step <- renderUI({
+    snap <- .workflow_snapshot()
+    title <- "后续动作"
+    text <- paste0(
+      "核心域 ", snap$n_required_ok, "/", snap$n_required,
+      "；当前启用域 ", snap$n_active_ok, "/", snap$n_active,
+      "。请按下述顺序完成当前阶段。"
+    )
+    actions <- NULL
+
+    if (!snap$has_specs) {
+      title <- "后续动作：上传 Analysis Specification"
+      text <- "请上传一个或多个 Spec CSV。系统会自动解析列映射，并在确认后进入生成阶段。"
+    } else if (!snap$spec_confirmed) {
+      title <- "后续动作：确认 Spec 解析结果"
+      text <- "Spec 已上传，但尚未确认。请先完成字段映射确认，生成按钮在此之前不会进入可执行状态。"
+    } else if (!snap$has_key) {
+      title <- "后续动作：补充 AI 设置"
+      text <- "输入已满足生成前提。请打开 AI 设置补充模型或接口凭证，随后在“生成与审阅”页启动生成。"
+      actions <- tags$button(
+        class = "btn-ghost-workflow",
+        onclick = "document.getElementById('btn_open_ai_settings').click();",
+        "打开 AI 设置"
+      )
+    } else {
+      title <- "后续动作：进入“生成与审阅”"
+      text <- "当前输入和 AI 配置均已就绪。请进入“生成与审阅”页，使用右侧控制区中的生成按钮启动本次生成。"
+      actions <- tagList(
+        tags$button(
+          class = "btn-ghost-workflow",
+          onclick = "Shiny.setInputValue('goto_tab','tab_generate',{priority:'event'});",
+          "进入生成与审阅"
+        ),
+        div(class = "hint-text", "进入下一页后，请使用右侧“AI 与生成”区域中的唯一生成按钮。")
+      )
+    }
+
+    div(class = "input-next-step-card",
+      div(class = "input-next-step-title", title),
+      div(class = "input-next-step-text", text),
+      if (!is.null(actions)) div(class = "input-next-step-actions", actions)
+    )
+  })
+
+  output$run_summary_banner <- renderUI({
+    cls <- "summary-banner"
+    title <- "当前处于准备阶段"
+    text <- "先完成 SDTM 与 Spec 上传，再配置 AI 并开始生成。"
+
+    if (rv$step_llm == "running") {
+      title <- "AI 正在生成代码"
+      text <- "系统正在构建 Prompt 并调用模型，完成后会自动进入代码审查阶段。"
+    } else if (rv$step_review == "running") {
+      title <- "代码已生成，等待人工审阅"
+      text <- paste0(
+        "当前应重点查看风险日志和生成代码。",
+        if (!is.null(rv$llm_request_meta)) paste0(" 本次模型：", rv$llm_request_meta$model, "。") else ""
+      )
+    } else if (rv$step_run == "done" && !is.null(rv$validation_result)) {
+      if (rv$validation_result$summary$status == "ERROR") {
+        cls <- "summary-banner error"
+        title <- "结果已生成，但校验发现错误"
+        text <- paste0("建议先在本页查看校验与风险，再决定是否继续使用输出结果。错误数：",
+                       rv$validation_result$summary$errors, "。")
+      } else if (rv$validation_result$summary$status == "WARNING") {
+        cls <- "summary-banner warn"
+        title <- "结果已生成，存在校验警告"
+        text <- paste0("输出已可查看，但仍建议先检查警告项。警告数：",
+                       rv$validation_result$summary$warnings, "。")
+      } else {
+        title <- "结果已生成并通过结构与语义校验"
+        text <- "可以继续查看输出数据集，也可以回到代码页审查本次生成逻辑。"
+      }
+    }
+
+    div(class=cls,
+      div(class="summary-banner-title", bs_icon("info-circle", size="0.8rem"), title),
+      div(class="summary-banner-text", text)
+    )
+  })
 
   filtered_risk_df <- reactive({
     df <- rv$risk_logs_df; if (is.null(df)) return(NULL)
@@ -1436,6 +2534,206 @@ server <- function(input, output, session) {
         if(input$filter_risk_level!="ALL") "尝试切换过滤条件为「全部」" else NULL)
   })
 
+  filtered_validation_df <- reactive({
+    df <- rv$validation_issues_df
+    if (is.null(df) || nrow(df) == 0) return(df)
+    lv <- input$filter_validation_level %||% "ALL"
+    if (lv != "ALL") df[df$level == lv, , drop = FALSE] else df
+  })
+
+  output$validation_overview <- renderUI({
+    stats_df <- rv$validation_stats_df
+    if (is.null(stats_df) || nrow(stats_df) == 0) return(NULL)
+
+    cards <- lapply(seq_len(nrow(stats_df)), function(i) {
+      row <- stats_df[i, , drop = FALSE]
+      status_color <- switch(row$status[[1]],
+        "PASS"    = "#3fb950",
+        "WARNING" = "#d29922",
+        "#f85149"
+      )
+      div(
+        class = "validation-mini-card",
+        style = paste0("border-left-color:", status_color, ";"),
+        div(style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;",
+          div(class = "dataset-name", row$dataset[[1]]),
+          HTML(.badge_html(row$status[[1]]))
+        ),
+        div(class = "dataset-meta",
+          sprintf("%s 行 × %s 列  |  %s ERR  |  %s WARN",
+                  formatC(row$rows[[1]], big.mark=","), row$cols[[1]],
+                  row$errors[[1]], row$warnings[[1]])
+        )
+      )
+    })
+
+    div(style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.6rem;",
+        tagList(cards))
+  })
+
+  output$tbl_validation <- renderDT({
+    df <- filtered_validation_df()
+    req(!is.null(df) && nrow(df) > 0)
+    df$level <- sapply(df$level, .badge_html)
+    names(df) <- c("数据集", "级别", "检查项", "问题说明", "建议动作")
+    datatable(
+      df, escape = FALSE, rownames = FALSE, selection = "none",
+      options = c(
+        .dt_options(page_length = 12),
+        list(columnDefs = list(
+          list(width = "90px", targets = 0),
+          list(width = "80px", targets = 1),
+          list(width = "120px", targets = 2),
+          list(className = "dt-left", targets = "_all")
+        ))
+      ),
+      class = "cell-border"
+    )
+  }, server = FALSE)
+
+  output$validation_placeholder <- renderUI({
+    df <- filtered_validation_df()
+    if (!is.null(df) && nrow(df) > 0) return(NULL)
+    if (is.null(rv$validation_result)) {
+      .placeholder_ui("clipboard2-check", "暂无结果校验",
+        "执行代码成功后，系统将在这里展示结构、质量与 plan 语义检查结果")
+    } else {
+      .placeholder_ui("clipboard2-check", "未发现匹配的校验问题",
+        if ((input$filter_validation_level %||% "ALL") != "ALL") "尝试切换过滤条件为「全部」" else "当前结果未发现问题")
+    }
+  })
+
+  output$tbl_sdtm_profile <- renderDT({
+    df <- flatten_sdtm_profiles(rv$sdtm_profile %||% list())
+    req(nrow(df) > 0)
+    names(df) <- c("域", "行数", "列数", "候选键", "日期列", "高缺失列")
+    datatable(
+      df, rownames = FALSE, selection = "none",
+      options = c(
+        .dt_options(page_length = 10),
+        list(columnDefs = list(list(className = "dt-left", targets = "_all")))
+      ),
+      class = "cell-border"
+    )
+  }, server = FALSE)
+
+  output$sdtm_profile_placeholder <- renderUI({
+    df <- flatten_sdtm_profiles(rv$sdtm_profile %||% list())
+    if (nrow(df) > 0) return(NULL)
+    .placeholder_ui("diagram-3", "暂无输入画像",
+      "启动生成后，系统会在读取 SDTM 文件时构建域级 profile，并在此处展示。")
+  })
+
+  output$tbl_plan_variables <- renderDT({
+    df <- flatten_derivation_plan(rv$derivation_plan %||% list(datasets = list()))
+    req(nrow(df) > 0)
+    names(df) <- c("数据集", "变量", "类型", "来源域", "来源列", "派生规则", "置信度")
+    datatable(
+      df, rownames = FALSE, selection = "none",
+      options = c(
+        .dt_options(page_length = 12),
+        list(columnDefs = list(
+          list(width = "90px", targets = 0),
+          list(width = "110px", targets = 1),
+          list(width = "80px", targets = 2),
+          list(width = "90px", targets = 3),
+          list(className = "dt-left", targets = "_all")
+        ))
+      ),
+      class = "cell-border"
+    )
+  }, server = FALSE)
+
+  output$plan_variables_placeholder <- renderUI({
+    df <- flatten_derivation_plan(rv$derivation_plan %||% list(datasets = list()))
+    if (nrow(df) > 0) return(NULL)
+    .placeholder_ui("bezier2", "暂无生成计划",
+      "完成 LLM 生成后，这里会展示变量级 derivation plan。")
+  })
+
+  output$code_context_summary <- renderUI({
+    meta <- rv$llm_request_meta
+    if (is.null(meta) && is.null(rv$llm_result)) return(NULL)
+    div(class="context-strip",
+      div(class="context-strip-title", "本次生成上下文"),
+      div(class="context-strip-body",
+        paste0(
+          "模型：", meta$model %||% "—",
+          "；提供商：", meta$provider_name %||% "—",
+          "；策略：", switch(meta$generation_mode %||% "balanced",
+            "strict" = "稳健优先",
+            "adaptive" = "补全优先",
+            "平衡模式"
+          ),
+          "；风险追踪：", if (isTRUE(meta$traceability)) "增强" else "标准",
+          "；风险点：", nrow(rv$risk_logs_df %||% data.frame()),
+          "。请结合风险日志检查代码是否符合当前 Spec 和业务预期。"
+        )
+      )
+    )
+  })
+
+  output$profile_context_summary <- renderUI({
+    profile_df <- flatten_sdtm_profiles(rv$sdtm_profile %||% list())
+    if (nrow(profile_df) == 0) return(NULL)
+    div(class="context-strip",
+      div(class="context-strip-title", "输入数据画像"),
+      div(class="context-strip-body",
+        paste0(
+          "当前已构建 ", nrow(profile_df), " 个 SDTM 域的结构化 profile：",
+          paste(profile_df$domain, collapse = ", "),
+          "。这些 profile 会作为 LLM 的主输入上下文，用于推断候选键、日期列和高缺失字段。"
+        )
+      )
+    )
+  })
+
+  output$plan_context_summary <- renderUI({
+    plan <- rv$derivation_plan
+    if (is.null(plan)) return(NULL)
+    plan_df <- summarize_derivation_plan(plan)
+    if (nrow(plan_df) == 0) return(NULL)
+
+    issue_note <- if (!is.null(rv$derivation_plan_issues_df) && nrow(rv$derivation_plan_issues_df) > 0) {
+      paste0("Plan/Spec 对齐提醒 ", nrow(rv$derivation_plan_issues_df), " 条。")
+    } else {
+      "Plan 已完成基础 Spec 对齐。"
+    }
+
+    div(class="context-strip",
+      div(class="context-strip-title", "生成计划摘要"),
+      div(class="context-strip-body",
+        paste0(
+          "本次已生成 derivation plan：",
+          paste(paste0(plan_df$dataset, "(", plan_df$variables, " vars)"), collapse = "；"),
+          "。", issue_note,
+          " 当前代码应被视为该 plan 的实现，而不是唯一事实来源。"
+        )
+      )
+    )
+  })
+
+  output$output_context_summary <- renderUI({
+    dsets <- rv$adam_datasets
+    if (length(dsets) == 0) return(NULL)
+    val <- rv$validation_result
+    val_text <- if (is.null(val)) {
+      "尚未执行结果校验。"
+    } else {
+      paste0("校验状态：", val$summary$status,
+             "；错误 ", val$summary$errors,
+             "；警告 ", val$summary$warnings, "。")
+    }
+    div(class="context-strip",
+      div(class="context-strip-title", "输出摘要"),
+      div(class="context-strip-body",
+        paste0("本次共生成 ", length(dsets), " 个数据集：",
+               paste(toupper(names(dsets)), collapse = ", "),
+               "。", val_text)
+      )
+    )
+  })
+
   output$code_line_count <- renderText({
     code <- input$code_editor %||% ""
     paste0(length(strsplit(code,"\n")[[1]]), " 行")
@@ -1448,10 +2746,15 @@ server <- function(input, output, session) {
     if (!is.null(rv$run_result_err))
       return(div(style="background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.3);border-radius:6px;padding:0.5rem 0.9rem;font-size:0.78rem;color:#f85149;font-family:'JetBrains Mono',monospace;word-break:break-all;",
                  bsicons::bs_icon("x-circle-fill",color="#f85149"), " ", rv$run_result_err))
+    if (!is.null(rv$static_check_result) && identical(rv$static_check_result$summary$status, "WARNING"))
+      return(div(class = "run-status-note",
+                 bsicons::bs_icon("exclamation-triangle"),
+                 paste0("静态检查发现 ", rv$static_check_result$summary$warnings,
+                        " 条警告。建议先审阅，再决定是否执行。")))
     if (rv$step_review=="running")
-      return(div(style="font-size:0.78rem;color:#8b949e;align-self:center;",
-                 bsicons::bs_icon("pencil-square",color="#8b949e"), " 请审阅上方代码，确认无误后点击右侧按钮执行"))
-    div(style="font-size:0.78rem;color:#6e7681;align-self:center;", "等待 LLM 生成代码...")
+      return(div(class = "run-status-note",
+                 bsicons::bs_icon("pencil-square"), " 请审阅上方代码，确认无误后点击右侧按钮执行"))
+    div(class = "run-status-note", "等待 LLM 生成代码...")
   })
 
   # ===========================================================================
@@ -1489,14 +2792,17 @@ server <- function(input, output, session) {
   # [S-8] 动态 UI：SDTM 文件上传面板（依 rv$active_domains 实时渲染）
   # ===========================================================================
   output$sdtm_upload_panel <- renderUI({
-    tagList(lapply(rv$active_domains, function(sid) {
-      d <- SDTM_DOMAIN_REGISTRY[[sid]]
-      div(
-        fileInput(paste0("file_", sid), NULL, accept=".csv",
-                  placeholder=d$placeholder),
-        div(class="hint-text", d$label)
-      )
-    }))
+    div(class = "sdtm-upload-grid",
+      lapply(rv$active_domains, function(sid) {
+        d <- SDTM_DOMAIN_REGISTRY[[sid]]
+        div(class = "sdtm-upload-card",
+          div(class = "upload-label", toupper(sid)),
+          div(class = "domain-upload-meta", d$label),
+          fileInput(paste0("file_", sid), NULL, accept=".csv",
+                    placeholder=d$placeholder)
+        )
+      })
+    )
   })
 
   # ===========================================================================
@@ -1548,7 +2854,7 @@ server <- function(input, output, session) {
         output[[paste0("tbl_", ds)]] <- renderDT({
           df <- rv$adam_datasets[[ds]]
           req(!is.null(df))
-          datatable(df, rownames=FALSE, selection="none", filter="top",
+          datatable(df, rownames=FALSE, selection="none",
                     options=.dt_options(scroll_x=TRUE, page_length=15), class="cell-border")
         }, server=TRUE)
         output[[paste0(ds, "_placeholder")]] <- renderUI({
