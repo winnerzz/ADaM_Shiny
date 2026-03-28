@@ -6,6 +6,24 @@
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
+.infer_key_columns <- function(dataset_name, col_names) {
+  ds <- tolower(trimws(dataset_name))
+  # Subject-level 数据集：USUBJID 唯一
+  if (ds == "adsl") return(intersect("USUBJID", col_names))
+  # Event-level 数据集：USUBJID + 序号列
+  seq_col <- intersect(c("AESEQ", "CMSEQ", "MHSEQ", "EXSEQ", "LBSEQ", "VSSEQ", "EGSEQ"), col_names)
+  if (length(seq_col) > 0 && "USUBJID" %in% col_names) {
+    return(c("USUBJID", seq_col[1]))
+  }
+  # 有 PARAMCD 的 BDS 数据集：USUBJID + PARAMCD + AVISIT (或 ADT)
+  if (all(c("USUBJID", "PARAMCD") %in% col_names)) {
+    visit_col <- intersect(c("AVISIT", "ADT", "AVISITN"), col_names)
+    if (length(visit_col) > 0) return(c("USUBJID", "PARAMCD", visit_col[1]))
+    return(c("USUBJID", "PARAMCD"))
+  }
+  character(0)
+}
+
 .missing_mask <- function(x) {
   if (is.factor(x)) x <- as.character(x)
   is.na(x) | trimws(as.character(x)) == ""
@@ -230,27 +248,16 @@
     }
   }
 
-  if (ds_key == "adsl" && "USUBJID" %in% names(df)) {
-    key_vals <- as.character(df$USUBJID)
-    dup_n <- sum(duplicated(key_vals[!.missing_mask(key_vals)]))
-    if (dup_n > 0) {
+  # 主键唯一性：基于数据集角色和可用列推断
+  key_cols <- .infer_key_columns(ds_key, names(df))
+  if (length(key_cols) > 0 && all(key_cols %in% names(df))) {
+    key_vals <- do.call(paste, c(df[key_cols], sep = "|"))
+    n_dup <- sum(duplicated(key_vals))
+    if (n_dup > 0) {
       issues <- .add_issue(
         issues, dataset_name, "ERROR", "主键唯一性",
-        sprintf("ADSL 中发现 %d 个重复的 USUBJID。", dup_n),
-        "检查聚合粒度与 join 后重复扩增问题。"
-      )
-    }
-  }
-
-  if (ds_key == "adae" && all(c("USUBJID", "AESEQ") %in% names(df))) {
-    key_vals <- paste(df$USUBJID, df$AESEQ, sep = "||")
-    valid <- !.missing_mask(df$USUBJID) & !.missing_mask(df$AESEQ)
-    dup_n <- sum(duplicated(key_vals[valid]))
-    if (dup_n > 0) {
-      issues <- .add_issue(
-        issues, dataset_name, "ERROR", "主键唯一性",
-        sprintf("ADAE 中发现 %d 个重复的 USUBJID + AESEQ 组合。", dup_n),
-        "检查 AE 明细粒度和关联逻辑。"
+        paste0("按 ", paste(key_cols, collapse = "+"), " 组合存在 ", n_dup, " 行重复。"),
+        "检查是否存在错误的重复行或 join 导致的行爆炸。"
       )
     }
   }

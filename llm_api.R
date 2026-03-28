@@ -61,7 +61,7 @@ MOCK_MODE <- FALSE   # ← 接入真实 API 时保持 FALSE
 #   base_url_map     — 命名列表，providerKey → 本地服务地址（本地推理使用）
 #   mock             — 逻辑型，TRUE 强制 Mock 模式
 #
-# 返回：list(derivation_plan = list(...), r_code = "...", risk_logs = list(...))
+# 返回：list(r_code = "...", risk_logs = list(...), token_info = list(...))
 # =============================================================================
 call_llm_engine_with_failover <- function(spec_json,
                                            data_summary,
@@ -78,7 +78,12 @@ call_llm_engine_with_failover <- function(spec_json,
 
   if (isTRUE(mock)) {
     message("[llm_api] Mock 模式 — 返回硬编码响应")
-  return(.mock_llm_response(target_datasets = target_datasets %||% c("adsl", "adae")))
+    return(.mock_llm_response(
+      target_datasets = target_datasets,
+      task       = prompt_profile$task %||% "full_generation",
+      mock_mode  = prompt_profile$mock_mode %||% "default",
+      spec_json  = spec_json
+    ))
   }
 
   prompts    <- .build_prompts(
@@ -225,7 +230,7 @@ call_llm_engine <- function(spec_json,
   )
 
   # ── 提取原始文本 + token 用量 ────────────────────────────────────────────────
-  resp_body   <- resp_body_json(resp)
+  resp_body   <- resp_body_json(resp, simplifyVector = FALSE)
   raw_content <- if (cfg$anthropic_style) {
     resp_body$content[[1]]$text
   } else {
@@ -249,6 +254,95 @@ call_llm_engine <- function(spec_json,
 }
 
 # =============================================================================
+# [L-0] Spec JSON → pipe-delimited table 压缩函数
+# 将 pretty-print JSON spec 转换为紧凑管道分隔格式，节省 prompt token
+#
+# 参数：
+#   spec_json   — 字符型，pretty-printed JSON 字符串
+#   fold_copied — 逻辑型，TRUE 时将 Copied 变量折叠为一行摘要
+#
+# 返回：字符型，管道分隔格式文本；JSON 解析失败时原样返回
+# =============================================================================
+.spec_to_pipe_table <- function(spec_json, fold_copied = FALSE) {
+  parsed <- tryCatch(
+    jsonlite::fromJSON(spec_json, simplifyVector = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(parsed)) return(spec_json)
+
+  # parsed 可能是命名列表 {adsl: {...}, adae: {...}} 或未命名数组 [{...}, {...}]
+  if (!is.list(parsed) || length(parsed) == 0) return(spec_json)
+
+  # 统一为命名列表：从 dataset 字段提取名称
+  if (is.null(names(parsed))) {
+    nms <- vapply(parsed, function(x) {
+      tolower(as.character(x$dataset %||% x$Dataset %||% "")[1])
+    }, character(1))
+    nms[nms == ""] <- paste0("ds_", seq_along(nms))[nms == ""]
+    names(parsed) <- nms
+  }
+  datasets <- parsed
+
+  sections <- character(0)
+  for (nm in names(datasets)) {
+    ds <- datasets[[nm]]
+    if (!is.list(ds)) next
+    vars <- ds$variables
+    if (is.null(vars) || length(vars) == 0) next
+
+    # 提取每个变量的字段
+    rows <- lapply(vars, function(v) {
+      src <- as.character(v$source %||% "")[1]
+      # 去除 "SDTM." 前缀
+      src <- sub("^SDTM\\.", "", src, ignore.case = TRUE)
+      list(
+        variable   = as.character(v$variable %||% "")[1],
+        type       = as.character(v$type %||% "")[1],
+        source     = src,
+        derivation = as.character(v$derivation %||% "")[1]
+      )
+    })
+
+    if (isTRUE(fold_copied)) {
+      # 分离 Copied 和 Derived 变量
+      is_copied <- vapply(rows, function(r) {
+        grepl("^copied$", trimws(r$type), ignore.case = TRUE)
+      }, logical(1))
+
+      copied_rows  <- rows[is_copied]
+      derived_rows <- rows[!is_copied]
+
+      lines <- character(0)
+      # 折叠 Copied 变量为一行
+      if (length(copied_rows) > 0) {
+        copied_parts <- vapply(copied_rows, function(r) {
+          paste0(r$variable, "<-", r$source)
+        }, character(1))
+        lines <- c(lines, paste0("COPIED: ", paste(copied_parts, collapse = ", ")))
+      }
+      # Derived 变量用管道表
+      if (length(derived_rows) > 0) {
+        lines <- c(lines, "variable|source|derivation")
+        for (r in derived_rows) {
+          lines <- c(lines, paste0(r$variable, "|", r$source, "|", r$derivation))
+        }
+      }
+      sections <- c(sections, paste0("### ", toupper(nm), "\n", paste(lines, collapse = "\n")))
+    } else {
+      # 不折叠：全部变量用管道表（不含 label 列）
+      lines <- "variable|type|source|derivation"
+      for (r in rows) {
+        lines <- c(lines, paste0(r$variable, "|", r$type, "|", r$source, "|", r$derivation))
+      }
+      sections <- c(sections, paste0("### ", toupper(nm), "\n", paste(lines, collapse = "\n")))
+    }
+  }
+
+  if (length(sections) == 0) return(spec_json)
+  paste(sections, collapse = "\n\n")
+}
+
+# =============================================================================
 # [L-1] Prompt 构建函数：.build_prompts()
 # 新增 target_datasets 参数，动态生成数据集输出指令（向后兼容）
 # =============================================================================
@@ -261,7 +355,7 @@ call_llm_engine <- function(spec_json,
     generation_mode <- "balanced"
   }
   task_mode <- tolower(trimws(prompt_profile$task %||% "full_generation"))
-  if (!task_mode %in% c("full_generation", "plan_only", "code_from_plan")) {
+  if (!task_mode %in% c("full_generation", "code_from_plan", "repair_code")) {
     task_mode <- "full_generation"
   }
   traceability_mode <- isTRUE(prompt_profile$traceability)
@@ -269,15 +363,20 @@ call_llm_engine <- function(spec_json,
   preview_rows_n    <- suppressWarnings(as.integer(prompt_profile$preview_rows %||% 5L))
   if (is.na(preview_rows_n) || preview_rows_n < 3L) preview_rows_n <- 3L
   if (preview_rows_n > 8L) preview_rows_n <- 8L
+  parsed_input      <- tryCatch(fromJSON(spec_json, simplifyVector = FALSE), error = function(e) NULL)
 
   # ── 推断目标数据集列表 ──────────────────────────────────────────────────────
   if (is.null(target_datasets) || length(target_datasets) == 0) {
-    # 尝试从 spec_json 解析 dataset 字段
-    parsed_spec <- tryCatch(
-      fromJSON(spec_json, simplifyVector = TRUE),
-      error = function(e) NULL
-    )
-    if (!is.null(parsed_spec)) {
+    # 尝试从输入 JSON 中提取 dataset 字段
+    parsed_spec <- tryCatch(fromJSON(spec_json, simplifyVector = TRUE), error = function(e) NULL)
+    if (!is.null(parsed_input) && is.list(parsed_input) && !is.null(parsed_input$target_datasets)) {
+      target_datasets <- tolower(as.character(unlist(parsed_input$target_datasets, use.names = FALSE)))
+    } else if (!is.null(parsed_input) && is.list(parsed_input) &&
+               !is.null(parsed_input$current_plan) && !is.null(parsed_input$current_plan$datasets)) {
+      target_datasets <- unique(tolower(vapply(parsed_input$current_plan$datasets, function(ds) {
+        as.character(ds$dataset %||% NA_character_)[1]
+      }, character(1))))
+    } else if (!is.null(parsed_spec)) {
       if (is.data.frame(parsed_spec)) {
         target_datasets <- unique(tolower(na.omit(parsed_spec$dataset)))
       } else if (!is.null(parsed_spec$dataset)) {
@@ -289,10 +388,11 @@ call_llm_engine <- function(spec_json,
       }
     }
     if (is.null(target_datasets) || length(target_datasets) == 0) {
-      target_datasets <- c("adsl", "adae")
+      stop("无法从输入中推断目标数据集。请确保 Spec 中包含 'dataset' 字段。")
     }
   }
   target_datasets <- tolower(trimws(target_datasets))
+  target_datasets <- unique(target_datasets[!is.na(target_datasets) & nzchar(target_datasets)])
 
   # ── 构建数据集输出指令（动态）──────────────────────────────────────────────
   ds_instruction <- if (identical(sort(target_datasets), sort(c("adsl", "adae")))) {
@@ -312,150 +412,310 @@ call_llm_engine <- function(spec_json,
     )
   }
 
+  # ── 按数据集独立拼装骨架片段 ──────────────────────────────────────────
+  skeleton_parts <- character(0)
+
+  # 辅助函数用法总是包含
+  skeleton_header <- paste0(
+    "# 以下函数已预注入执行环境，直接调用即可，禁止重新定义：\n",
+    "# parse_sdtm_date(x)              → Date 或 NA（向量化，自动剥离 Excel 单引号）\n",
+    "# study_day_chr(date_chr, ref_chr) → character Study Day（向量化）\n",
+    "# map_trt_num(TRT01A, trt_levels, start_at) → 按 Spec 编码（向量化）\n",
+    "# first_non_missing_chr(x, y, ...) → 首个非空 character（向量化）\n",
+    "# yn_flag(condition)               → 'Y'/'N'（向量化）\n",
+    "# derive_trtemfl(start, end, trtsdt, trtedt) → 'Y'/''（向量化，含边界检查）\n",
+    "# derive_relgr1(AEREL)             → 'RELATED'/'NOT RELATED'（向量化）\n\n"
+  )
+
+  if ("adsl" %in% target_datasets) {
+    skeleton_parts <- c(skeleton_parts, paste0(
+      "# ── ADSL ─────────────────────────────────────────────────────────\n",
+      "trt_levels <- sort(unique(na.omit(c(dm$ACTARM, dm$ARM))))\n",
+      "# 治疗日期可从 EX 汇总或 DM 直接派生，两种均合法，关键是必须经 parse_sdtm_date()\n",
+      "ex_summary <- ex |>\n",
+      "  group_by(USUBJID) |>\n",
+      "  summarise(NEX = n(), .groups='drop')\n",
+      "adsl <- dm |>\n",
+      "  left_join(ex_summary, by='USUBJID') |>\n",
+      "  mutate(\n",
+      "    TRT01A  = first_non_missing_chr(na_if(ACTARM,''), na_if(ARM,'')),\n",
+      "    TRT01AN = map_trt_num(TRT01A, trt_levels, start_at = 0L),\n",
+      "    TRTSDT  = parse_sdtm_date(RFXSTDTC),\n",
+      "    TRTEDT  = parse_sdtm_date(RFXENDTC),\n",
+      "    TRTEDY  = study_day_chr(format(TRTEDT,'%Y-%m-%d'), format(TRTSDT,'%Y-%m-%d')),\n",
+      "    SAFFL   = yn_flag(!is.na(TRTSDT) & NEX > 0)\n",
+      "    # ... 按 Spec 派生其余变量，最终 select() 仅保留 Spec 变量\n",
+      "  )\n\n"
+    ))
+  }
+
+  if ("adae" %in% target_datasets) {
+    skeleton_parts <- c(skeleton_parts, paste0(
+      "# ── ADAE ─────────────────────────────────────────────────────────\n",
+      "adae <- ae |>\n",
+      "  left_join(adsl |> select(USUBJID, TRTSDT, TRTEDT, TRT01A, TRT01AN, TRT01P, TRT01PN, SUBJID), by='USUBJID') |>\n",
+      "  mutate(\n",
+      "    ASTDT   = parse_sdtm_date(AESTDTC),\n",
+      "    ASTDY   = study_day_chr(AESTDTC, format(TRTSDT,'%Y-%m-%d')),\n",
+      "    TRTEMFL = yn_flag(ASTDT >= TRTSDT),  # 或 derive_trtemfl() 用于复杂边界\n",
+      "    RELGR1  = derive_relgr1(AEREL)\n",
+      "    # ... 按 Spec 派生其余变量，最终 select() 仅保留 Spec 变量\n",
+      "  )\n\n"
+    ))
+  }
+
+  # 对未识别的数据集给通用指导
+  other_ds <- setdiff(target_datasets, c("adsl", "adae"))
+  if (length(other_ds) > 0) {
+    skeleton_parts <- c(skeleton_parts, paste0(
+      "# ── 通用数据集骨架（", paste(toupper(other_ds), collapse = "/"), "）──────────\n",
+      "# 1. 从相关 SDTM 域读取源数据（如 lb, vs, cm 等）\n",
+      "# 2. left_join(adsl) 获取受试者级信息（如有依赖）\n",
+      "# 3. 所有日期用 parse_sdtm_date()，研究日用 study_day_chr()\n",
+      "# 4. 数值编码用 map_trt_num()，Y/N 标志用 yn_flag()\n",
+      "# 5. 管道末尾用 select() 仅保留 Spec 声明的变量（C7）\n",
+      "# 6. 最终对象名必须为小写数据集名（如 ", other_ds[1], "）\n",
+      "# ─────────────────────────────────────────────────────────────────\n\n"
+    ))
+  }
+
+  canonical_skeleton <- paste0(skeleton_header, paste(skeleton_parts, collapse = ""))
+
   system_prompt <- paste0(
-    "你是一位资深 CDISC ADaM 数据程序员，精通 R 语言（dplyr / lubridate / stringr）。\n",
-    switch(task_mode,
-      plan_only = "你的当前任务是先形成结构化 derivation plan，并仅返回最小占位代码，不要展开完整实现。\n\n",
-      code_from_plan = "你的当前任务是基于已提供的 derivation plan 生成紧凑、可直接运行的 R 代码，不要重新发散解释规格。请始终以“用户直接执行这段代码后，必须得到目标 ADaM 数据集”为第一目标。\n\n",
-      "你的任务不是直接自由写代码，而是先形成结构化 derivation plan，再基于该 plan 生成完整、可直接运行的 R 代码，将 SDTM 转换为 ADaM 数据集。\n\n"
-    ),
+    "你是一位资深 CDISC ADaM 数据程序员，精通 R 语言（dplyr / lubridate）。\n\n",
 
-    "【输出格式要求 - 严格执行】\n",
-    "你必须且只能返回一个合法的 JSON 对象，包含以下三个字段：\n",
-    "{\n",
-    '  "derivation_plan": {\n',
-    '    "plan_version": "版本号",\n',
-    '    "generated_by": "llm",\n',
-    '    "datasets": [\n',
-    '      {\n',
-    '        "dataset": "adsl",\n',
-    '        "dataset_role": "subject-level 或 event-level 或 analysis",\n',
-    '        "required_inputs": ["dm", "ex"],\n',
-    '        "join_plan": [],\n',
-    '        "variable_plan": [\n',
-    '          {\n',
-    '            "variable": "USUBJID",\n',
-    '            "label": "Unique Subject Identifier",\n',
-    '            "type": "char 或 num",\n',
-    '            "source_domain": "dm",\n',
-    '            "source_columns": ["USUBJID"],\n',
-    '            "derivation_rule": "直接映射或派生说明",\n',
-    '            "depends_on": ["USUBJID"],\n',
-    '            "confidence": "HIGH 或 MEDIUM 或 LOW"\n',
-    '          }\n',
-    '        ],\n',
-    '        "assumptions": ["需要人工确认的前提"],\n',
-    '        "open_questions": []\n',
-    '      }\n',
-    '    ]\n',
-    '  },\n',
-    '  "r_code": "完整可运行的 R 代码字符串（换行用 \\n 转义）",\n',
-    '  "risk_logs": [\n',
-    '    {\n',
-    '      "level": "WARNING 或 INFO 或 ERROR",\n',
-    '      "variable": "涉及的 ADaM 变量名",\n',
-    '      "description": "你做了什么推断或假设",\n',
-    '      "assumption": "该假设的前提条件和需要人工确认的内容"\n',
-    '    }\n',
-    '  ]\n',
-    "}\n\n",
+    # ── 硬约束（4 类）──────────────────────────────────────────────────────
+    "【硬约束】\n",
+    "R1. 输出：只返回合法 JSON，包含且仅包含两个字段：\n",
+    '    {"r_code":"完整可运行 R 代码（\\n 转义）","risk_logs":[{"level":"WARNING|INFO|ERROR","variable":"变量名","description":"推断内容","assumption":"需人工确认的前提"}]}\n',
+    "    不要在 JSON 之外输出任何文字或 Markdown 代码块标记。\n",
+    "R2. 语义：SDTM 域对象名为小写(dm/ex/ae)；变量必须可追溯到输入域或已派生变量；",
+    if (all(c("adsl", "adae") %in% target_datasets)) {
+      "先创建 adsl 再创建 adae；"
+    } else if (length(target_datasets) > 1) {
+      "被 left_join 的数据集必须先创建；"
+    } else { "" },
+    "同一 mutate() 内被依赖变量先定义。\n",
+    "R3. 稳健性：日期用 parse_sdtm_date()，研究日用 study_day_chr()，治疗编码用 map_trt_num()（禁止硬编码）；",
+    "向量化逻辑用 & / |，禁止 && / ||；所有辅助函数已预注入且向量化，禁止重新定义。\n",
+    "R4. 完整性：管道末尾 select() 仅保留 Spec 变量；代码可直接 eval()；",
+    paste0("必须能 ", paste(sprintf("get('%s')", target_datasets), collapse = " / "), " 提取结果。\n\n"),
 
+    # ── 代码规范 ───────────────────────────────────────────────────────────
     "【代码规范】\n",
-    "1. 可使用以下 R 包（已在运行环境中预加载）：\n",
-    "   dplyr、lubridate、stringr、tidyr、readr、haven、purrr、forcats、janitor、glue。\n",
-    "   代码中保留 library() 调用以保持可读性，仅限上述包。\n",
+    "1. 可用包（已预加载）：dplyr、lubridate、stringr、tidyr、readr、haven、purrr、forcats、janitor、glue、stats\n",
     ds_instruction,
-    "3. 日期变量使用字符型 YYYY-MM-DD 格式，",
-    "Study Day 按 CDISC 规范：(date - ref_date) + 1\n",
-    "4. derivation_plan 必须覆盖每个目标数据集，并尽量覆盖所有 Spec 变量\n",
-    "5. 对所有自主推断（如缺失值处理、类型转换假设）必须同时体现在 derivation_plan 和 risk_logs 中\n",
-    "6. 不要在 JSON 之外输出任何文字、注释或 Markdown 代码块标记\n",
-    "7. 你生成的代码是最终执行代码，而不是草稿。必须保证用户执行后能直接得到目标数据集对象。\n",
+    "3. 所有自主推断记入 risk_logs；只记录真实假设或 Spec 歧义\n",
     switch(task_mode,
-      plan_only = "8. 当前为 plan-only 模式：r_code 字段仅返回简短占位字符串，如 '# PLAN_ONLY_MODE'。\n",
-      code_from_plan = paste0(
-        "8. 当前为 code-from-plan 模式：优先复用输入 plan，输出代码要紧凑，不要附加多余示例。\n",
-        "9. 为减少输出长度，derivation_plan 字段只返回最小占位对象：",
-        '{"plan_version":"reuse-input","generated_by":"reuse-input","datasets":[]}', "。\n",
-        "10. 代码必须精简：不要输出冗长注释、不要重复声明同一逻辑、不要生成演示性样板。\n"
-      ),
+      code_from_plan  = "4. code-from-plan 模式：严格按输入 plan 生成代码，输出紧凑\n",
+      repair_code     = "4. repair-code 模式：基于输入的 current_code 修复缺失变量，返回完整修复后代码\n",
       ""
     ),
-    "\n【当前生成策略】\n",
+    "\n",
+
+    # ── 规范骨架（few-shot）───────────────────────────────────────────────
+    "【参考骨架 — 展示关键模式和函数用法，按 Spec 扩展为完整代码】\n",
+    canonical_skeleton,
+    "\n",
+
+    # ── 高频错误提示（recency position）──────────────────────────────────────
+    "【高频错误】\n",
+    "1. SDTM 日期直接赋原始字符串（如 TRTSDT=RFXSTDTC）→ 必须经 parse_sdtm_date()\n",
+    "2. mutate/filter 内使用 && / || → 改为向量化 & / |\n\n",
+
+    # ── 生成策略 ───────────────────────────────────────────────────────────
+    "【当前生成策略】",
     switch(generation_mode,
-      strict = paste0(
-        "- 策略：稳健优先\n",
-        "- 优先遵循 Spec 明示信息，减少隐式推断\n",
-        "- 若信息不足，宁可保守处理，也不要过度补全\n"
-      ),
-      adaptive = paste0(
-        "- 策略：补全优先\n",
-        "- 在合理前提下可主动补全缺失映射或派生逻辑\n",
-        "- 但必须把所有补全前提完整写入 risk_logs\n"
-      ),
-      paste0(
-        "- 策略：平衡模式\n",
-        "- 在可运行性、可读性和推断保守性之间保持平衡\n"
-      )
+      strict   = " 稳健优先：信息不足时保守处理，不过度补全\n",
+      adaptive = " 补全优先：可主动推断缺失映射，所有补全写入 risk_logs\n",
+      balanced = " 平衡模式：可运行性与保守性平衡\n",
+                 " 平衡模式：可运行性与保守性平衡\n"
     ),
-    if (traceability_mode) paste0(
-      "- 追踪要求：强化可追溯性，",
-      "关键变量尽量保持逻辑分段清晰，并在 risk_logs 中更完整记录假设与来源\n"
-    ) else "",
-    if (compact_mode) {
-      "- 上下文密度：压缩模式，仅提供结构化数据摘要，不附加原始样本预览；请优先保持 plan 和代码简洁。\n"
-    } else {
-      paste0("- 上下文密度：每个 SDTM 域提供前 ", preview_rows_n, " 行样本预览\n")
-    }
+    if (traceability_mode)
+      "强化追溯：关键变量保持逻辑分段清晰，risk_logs 完整记录假设来源\n"
+    else "",
+    if (compact_mode)
+      "上下文压缩模式：仅结构化摘要，无原始样本预览\n"
+    else
+      paste0("上下文：每域提供前 ", preview_rows_n, " 行样本预览\n")
   )
+
+  # ── pipe_format 压缩（默认 TRUE）──────────────────────────────────────────
+
+  use_pipe_format <- !isFALSE(prompt_profile$pipe_format)  # 默认 TRUE
+  fold_copied     <- isTRUE(prompt_profile$fold_copied)    # 默认 FALSE
+
+  spec_content <- if (isTRUE(use_pipe_format) && task_mode == "full_generation") {
+    .spec_to_pipe_table(spec_json, fold_copied = fold_copied)
+  } else {
+    spec_json
+  }
+
+  spec_format_label <- if (isTRUE(use_pipe_format) && task_mode == "full_generation") {
+    "\u7BA1\u9053\u5206\u9694\u683C\u5F0F"
+  } else {
+    "JSON \u683C\u5F0F"
+  }
 
   part_spec <- paste0(
     if (task_mode == "code_from_plan") {
-      "## 1. Derivation Plan（JSON 格式）\n"
+      paste0("## 1. Derivation Plan\uFF08", spec_format_label, "\uFF09\n")
+    } else if (task_mode == "repair_code") {
+      paste0("## 1. Repair Request\uFF08", spec_format_label, "\uFF09\n")
     } else {
-      "## 1. ADaM 变量规格（JSON 格式）\n"
+      paste0("## 1. ADaM \u53D8\u91CF\u89C4\u683C\uFF08", spec_format_label, "\uFF09\n")
     },
     if (task_mode == "code_from_plan") {
-      "以下是已经确认的 derivation plan。请严格按该 plan 生成代码，并尽量保持 derivation_plan 字段与输入一致：\n\n"
+      "\u4EE5\u4E0B\u662F\u5DF2\u7ECF\u786E\u8BA4\u7684 derivation plan\u3002\u8BF7\u4E25\u683C\u6309\u8BE5 plan \u751F\u6210\u4EE3\u7801\u3002\u8F93\u51FA JSON \u53EA\u5305\u542B r_code \u548C risk_logs \u4E24\u4E2A\u5B57\u6BB5\uFF1A\n\n"
+    } else if (task_mode == "repair_code") {
+      "\u4EE5\u4E0B\u662F\u4E00\u6B21\u7ED3\u6784\u5316\u4EE3\u7801\u4FEE\u590D\u8BF7\u6C42\uFF0C\u5305\u542B\u7F3A\u5931\u53D8\u91CF\u3001\u5F53\u524D derivation plan \u4E0E\u5F53\u524D\u4EE3\u7801\u3002\u8BF7\u4EC5\u4FEE\u590D\u7F3A\u5931\u53D8\u91CF\u76F8\u5173\u95EE\u9898\uFF0C\u5E76\u8FD4\u56DE\u5B8C\u6574\u4EE3\u7801\uFF1A\n\n"
     } else {
-      "以下是目标 ADaM 数据集的变量元数据，包含变量名、标签、类型、来源域和派生逻辑。你应先把这些信息整理为 derivation plan，再生成代码：\n\n"
+      "\u4EE5\u4E0B\u662F\u76EE\u6807 ADaM \u6570\u636E\u96C6\u7684\u53D8\u91CF\u5143\u6570\u636E\uFF0C\u5305\u542B\u53D8\u91CF\u540D\u3001\u7C7B\u578B\u3001\u6765\u6E90\u57DF\u548C\u6D3E\u751F\u903B\u8F91\u3002\u4F60\u5E94\u5148\u628A\u8FD9\u4E9B\u4FE1\u606F\u6574\u7406\u4E3A derivation plan\uFF0C\u518D\u751F\u6210\u4EE3\u7801\uFF1A\n\n"
     },
-    spec_json,
-    if (task_mode == "code_from_plan") {
-      "\n\n请牢记：用户会直接执行你输出的 r_code，因此最重要的是最终环境中能稳定得到目标数据集对象，而不是展示多种备选写法。"
+    spec_content,
+    if (task_mode %in% c("code_from_plan", "repair_code")) {
+      "\n\n\u8BF7\u7262\u8BB0\uFF1A\u7528\u6237\u4F1A\u76F4\u63A5\u6267\u884C\u4F60\u8F93\u51FA\u7684 r_code\uFF0C\u56E0\u6B64\u6700\u91CD\u8981\u7684\u662F\u6700\u7EC8\u73AF\u5883\u4E2D\u80FD\u7A33\u5B9A\u5F97\u5230\u76EE\u6807\u6570\u636E\u96C6\u5BF9\u8C61\uFF0C\u800C\u4E0D\u662F\u5C55\u793A\u591A\u79CD\u5907\u9009\u5199\u6CD5\u3002"
     } else {
       ""
     }
   )
 
+  # ── 动态变量清单：从 spec 中提取所有变量名，要求 LLM 不得遗漏 ──────────
+  part_varlist <- ""
+  {
+    parsed_for_vars <- parsed_input
+    var_by_ds <- list()
+    append_vars <- function(dataset_name, vars) {
+      ds_name <- toupper(trimws(as.character(dataset_name %||% "UNKNOWN")[1]))
+      vals <- as.character(unlist(vars, use.names = FALSE))
+      vals <- vals[!is.na(vals) & nzchar(trimws(vals))]
+      if (!nzchar(ds_name) || length(vals) == 0) return()
+      var_by_ds[[ds_name]] <<- unique(c(var_by_ds[[ds_name]], vals))
+    }
+    if (is.list(parsed_for_vars) && !is.null(parsed_for_vars)) {
+      if (!is.null(parsed_for_vars$missing_spec_rows) &&
+          (is.data.frame(parsed_for_vars$missing_spec_rows) || is.list(parsed_for_vars$missing_spec_rows))) {
+        msr <- parsed_for_vars$missing_spec_rows
+        if (is.data.frame(msr) && all(c("dataset", "variable") %in% names(msr))) {
+          for (ds in unique(msr$dataset)) {
+            append_vars(ds, msr$variable[msr$dataset == ds])
+          }
+        } else if (is.list(msr) && !is.null(msr$dataset) && !is.null(msr$variable)) {
+          for (ds in unique(unlist(msr$dataset, use.names = FALSE))) {
+            append_vars(ds, unlist(msr$variable[unlist(msr$dataset, use.names = FALSE) == ds], use.names = FALSE))
+          }
+        }
+      }
+      if (!is.null(parsed_for_vars$current_plan) && is.list(parsed_for_vars$current_plan$datasets)) {
+        for (ds in parsed_for_vars$current_plan$datasets) {
+          vars <- vapply(ds$variable_plan %||% list(), function(v) {
+            as.character(v$variable %||% "")[1]
+          }, character(1))
+          append_vars(ds$dataset %||% "UNKNOWN", vars)
+        }
+      }
+      # spec_json 结构可能是: [{dataset:"adsl", variables:[{variable:"X",...},...]}]
+      # 或扁平结构: [{dataset:"adsl", variable:"X",...}, ...]
+      items <- if (!is.null(names(parsed_for_vars))) list(parsed_for_vars) else parsed_for_vars
+      for (item in items) {
+        if (!is.list(item)) next
+        vs <- NULL
+        if (is.list(item$variables) && length(item$variables) > 0) {
+          # 两种结构：[{variable:"X",...}, ...] 或 {variable:["X","Y",...], type:[...]}
+          first <- item$variables[[1]]
+          if (is.list(first) && !is.null(first$variable)) {
+            vs <- vapply(item$variables, function(v) as.character(v$variable %||% "")[1], character(1))
+          } else if (!is.null(item$variables$variable)) {
+            vs <- vapply(item$variables$variable, as.character, character(1))
+          }
+        } else if (!is.null(item$variable)) {
+          vs <- as.character(item$variable)
+        }
+        if (!is.null(vs)) {
+          append_vars(item$dataset %||% "UNKNOWN", vs)
+        }
+      }
+    }
+    # 仅在 repair_code 模式下生成变量清单（full_generation 模式下 spec 已包含完整变量列表，无需重复）
+    if (task_mode == "repair_code" && length(var_by_ds) > 0) {
+      lines <- vapply(names(var_by_ds), function(d) {
+        paste0(d, ": ", paste(var_by_ds[[d]], collapse = ", "))
+      }, character(1))
+      part_varlist <- paste0(
+        "\n\n【必须生成的变量 - 不可遗漏】\n",
+        paste(lines, collapse = "\n"), "\n",
+        "你的 r_code 必须在最终数据集中包含且仅包含上述变量（通过末尾 select() 实现）。\n",
+        "遗漏变量会触发自动修复重试；多余变量不符合 ADaM 规范。\n"
+      )
+    }
+  }
+
+  part_repair_context <- ""
+  if (identical(task_mode, "repair_code") && is.list(parsed_input)) {
+    missing_vars <- unique(as.character(unlist(parsed_input$missing_variables %||% character(0), use.names = FALSE)))
+    affected_ds  <- unique(as.character(unlist(parsed_input$affected_datasets %||% character(0), use.names = FALSE)))
+    current_code <- as.character(parsed_input$current_code %||% "")[1]
+    instructions <- as.character(unlist(parsed_input$instructions %||% character(0), use.names = FALSE))
+
+    repair_lines <- c()
+    if (length(affected_ds) > 0) {
+      repair_lines <- c(repair_lines, paste0("受影响数据集：", paste(toupper(affected_ds), collapse = ", ")))
+    }
+    if (length(missing_vars) > 0) {
+      repair_lines <- c(repair_lines, paste0("缺失变量：", paste(missing_vars, collapse = ", ")))
+    }
+    if (length(instructions) > 0) {
+      repair_lines <- c(repair_lines, paste0("修复要求：", paste(instructions, collapse = "；")))
+    }
+
+    part_repair_context <- paste0(
+      if (length(repair_lines) > 0) {
+        paste0("\n\n## 2. Repair Focus\n", paste(repair_lines, collapse = "\n"))
+      } else {
+        ""
+      },
+      if (nzchar(trimws(current_code))) {
+        paste0("\n\n## 3. Current Code\n```r\n", current_code, "\n```")
+      } else {
+        ""
+      }
+    )
+  }
+
   part_preview <- ""
   if (!is.null(sdtm_list)) {
+    preview_rows_eff <- if (compact_mode) 0L else preview_rows_n
     domain_previews <- lapply(names(sdtm_list), function(domain) {
       df <- sdtm_list[[domain]]
       if (is.null(df) || nrow(df) == 0) return(NULL)
-      preview_rows <- head(df, preview_rows_n)
-      csv_lines    <- c(
-        paste(names(preview_rows), collapse = ","),
-        apply(preview_rows, 1, function(r) {
-          paste(ifelse(is.na(r), "", r), collapse = ",")
-        })
-      )
-      paste0(
-        "### ", toupper(domain), " 域（前", nrow(preview_rows), "行）\n",
-        "列数：", ncol(df), "  总行数：", nrow(df), "\n",
-        "```csv\n",
-        paste(csv_lines, collapse = "\n"),
-        "\n```"
-      )
+      col_line <- paste(names(df), collapse = ", ")
+      if (preview_rows_eff == 0L) {
+        # 0-row 模式：仅列名清单（节省 token）
+        paste0("### ", toupper(domain), "  [", ncol(df), " cols / ", nrow(df), " rows]\n",
+               "Columns: ", col_line)
+      } else {
+        preview_rows <- head(df, preview_rows_eff)
+        csv_lines <- c(
+          paste(names(preview_rows), collapse = ","),
+          apply(preview_rows, 1, function(r) {
+            paste(ifelse(is.na(r), "", r), collapse = ",")
+          })
+        )
+        paste0(
+          "### ", toupper(domain), "  [", ncol(df), " cols / ", nrow(df), " rows]\n",
+          "```csv\n", paste(csv_lines, collapse = "\n"), "\n```"
+        )
+      }
     })
     domain_previews <- Filter(Negate(is.null), domain_previews)
     if (length(domain_previews) > 0) {
-      part_preview <- paste0(
-        "\n\n## 2. SDTM 源数据结构（各域前", preview_rows_n, "行）\n",
-        "以下是上传的 SDTM 数据的实际列名和样本数据，",
-        "请据此推断字段映射关系：\n\n",
-        paste(domain_previews, collapse = "\n\n")
-      )
+      header <- if (preview_rows_eff == 0L) {
+        "\n\n## 2. SDTM 源数据列清单\n"
+      } else {
+        paste0("\n\n## 2. SDTM 源数据结构（各域前", preview_rows_eff, "行）\n",
+               "以下是上传的 SDTM 数据的实际列名和样本数据，请据此推断字段映射关系：\n\n")
+      }
+      part_preview <- paste0(header, paste(domain_previews, collapse = "\n\n"))
     }
   }
 
@@ -464,7 +724,7 @@ call_llm_engine <- function(spec_json,
     data_summary
   )
 
-  list(system = system_prompt, user = paste0(part_spec, part_preview, part_summary))
+  list(system = system_prompt, user = paste0(part_spec, part_varlist, part_repair_context, part_preview, part_summary))
 }
 
 # =============================================================================
@@ -502,6 +762,31 @@ call_llm_engine <- function(spec_json,
       )
     }
   )
+
+  # fromJSON 在输入为 JSON 字符串 "..." 或数组 [...] 时返回原子向量/列表
+  # 而非预期的命名列表——此时 parsed$r_code 会抛出 "$ operator is invalid"
+  if (!is.list(parsed) || is.null(names(parsed))) {
+    recovered <- FALSE
+    if (is.character(parsed) && length(parsed) == 1) {
+      # LLM 有时把整个 JSON 包在外层引号里，fromJSON 返回内层字符串
+      inner <- trimws(parsed)
+      # 去除转义引号（如 \" → "）并重新解析
+      inner <- gsub('\\\\"', '"', inner, fixed = FALSE)
+      if (grepl("^\\{", inner)) {
+        parsed2 <- tryCatch(fromJSON(inner, simplifyVector = FALSE), error = function(e) NULL)
+        if (is.list(parsed2) && !is.null(names(parsed2))) {
+          parsed <- parsed2
+          recovered <- TRUE
+        }
+      }
+    }
+    if (!recovered) {
+      stop(
+        "LLM 返回的 JSON 结构不符合预期（非 object）。\n",
+        "类型：", class(parsed)[1], "  前200字符：", substr(clean, 1, 200)
+      )
+    }
+  }
 
   if (is.null(parsed$r_code)) {
     stop(
@@ -582,79 +867,66 @@ call_llm_engine <- function(spec_json,
 # [L-2] Mock 响应：.mock_llm_response()
 # 新增 target_datasets 参数：adsl+adae 时返回原有硬编码响应；否则生成通用骨架
 # =============================================================================
-.mock_llm_response <- function(target_datasets = c("adsl", "adae")) {
+.mock_llm_response <- function(target_datasets = c("adsl", "adae"),
+                               task       = "full_generation",
+                               mock_mode  = "default",
+                               spec_json  = NULL) {
+
+  # ── repair_demo 模式：第一次故意缺变量，repair 时返回修复版 ──────────
+  if (mock_mode == "repair_demo") {
+    if (task == "full_generation") {
+      return(.mock_repair_demo_initial(target_datasets))
+    }
+    if (task == "repair_code") {
+      return(.mock_repair_demo_fixed(target_datasets, spec_json))
+    }
+  }
 
   # 向后兼容：adsl + adae 时返回原有硬编码响应
   if (identical(sort(tolower(target_datasets)), sort(c("adsl", "adae")))) {
 
   r_code_str <- '
 # ============================================================
-# [LLM 生成] ADSL + ADAE 构建代码（Mock 响应）
-# ⚠️ 请在执行前人工审阅下方 risk_logs 中的风险提示
+# [LLM Mock] ADSL + ADAE 构建代码 — 遵循执行契约
 # ============================================================
-library(dplyr)
-library(lubridate)
 
 # ── ADSL ──────────────────────────────────────────────────────
-trt_num_map <- c("Placebo" = "0", "Test Drug" = "1")
+trt_levels <- sort(unique(na.omit(c(dm$ACTARM, dm$ARM))))
 
 ex_summary <- ex |>
   group_by(USUBJID) |>
   summarise(
+    TRTSDT = min(parse_sdtm_date(EXSTDTC), na.rm = TRUE),
+    TRTEDT = max(parse_sdtm_date(EXENDTC), na.rm = TRUE),
     NEX    = n(),
-    TRTSDT = min(EXSTDTC, na.rm = TRUE),
-    TRTEDT = max(EXENDTC, na.rm = TRUE),
     .groups = "drop"
   )
 
 adsl <- dm |>
   left_join(ex_summary, by = "USUBJID") |>
   mutate(
-    TRT01P  = ARM,
-    TRT01A  = ACTARM,
-    TRT01PN = unname(trt_num_map[TRT01P]),
-    TRT01AN = unname(trt_num_map[TRT01A]),
-    TRTSDT  = if_else(!is.na(TRTSDT), TRTSDT, RFXSTDTC),
-    TRTEDT  = if_else(!is.na(TRTEDT), TRTEDT, RFXENDTC),
-    TRTEDY  = if_else(
-      !is.na(TRTEDT) & !is.na(TRTSDT),
-      as.character(as.integer(ymd(TRTEDT) - ymd(TRTSDT)) + 1L),
-      NA_character_
-    ),
-    NEX    = coalesce(NEX, 0L),
-    SAFFL  = if_else(NEX > 0, "Y", "N"),
-    ITTFL  = "Y"
-  ) |>
-  transmute(
-    STUDYID, USUBJID, SUBJID, SITEID, COUNTRY,
-    AGE, AGEU, SEX, RACE, ETHNIC,
-    TRT01P, TRT01PN, TRT01A, TRT01AN,
-    TRTSDT, TRTEDT, TRTEDY,
-    DTHFL, SAFFL, ITTFL
-  ) |>
-  arrange(USUBJID)
+    TRT01P  = first_non_missing_chr(na_if(ARM, "")),
+    TRT01A  = first_non_missing_chr(na_if(ACTARM, ""), na_if(ARM, "")),
+    TRT01PN = map_trt_num(TRT01P, trt_levels, start_at = 0L),
+    TRT01AN = map_trt_num(TRT01A, trt_levels, start_at = 0L),
+    TRTSDT  = coalesce(TRTSDT, parse_sdtm_date(RFXSTDTC)),
+    TRTEDT  = coalesce(TRTEDT, parse_sdtm_date(RFXENDTC)),
+    TRTEDY  = study_day_chr(format(TRTEDT, "%Y-%m-%d"), format(TRTSDT, "%Y-%m-%d")),
+    SAFFL   = yn_flag(!is.na(TRTSDT) & NEX > 0),
+    ITTFL   = "Y"
+  )
 
 # ── ADAE ──────────────────────────────────────────────────────
 adae <- ae |>
-  left_join(adsl |> select(USUBJID, TRT01P, TRT01PN, TRT01A, TRT01AN, TRTSDT),
-            by = "USUBJID") |>
+  left_join(adsl |> select(USUBJID, TRTSDT, TRTEDT, TRT01A, TRT01AN), by = "USUBJID") |>
   mutate(
-    ASTDT   = AESTDTC,
-    AENDT   = AEENDTC,
-    ASTDY   = if_else(!is.na(ASTDT) & !is.na(TRTSDT),
-                      as.character(as.integer(ymd(ASTDT) - ymd(TRTSDT)) + 1L),
-                      NA_character_),
-    TRTEMFL = if_else(!is.na(ASTDT) & !is.na(TRTSDT) & ymd(ASTDT) >= ymd(TRTSDT),
-                      "Y", "N"),
-    RELGR1  = if_else(AEREL %in% c("RELATED","POSSIBLY RELATED"),
-                      "RELATED", "NOT RELATED")
-  ) |>
-  transmute(
-    STUDYID, USUBJID, AESEQ, TRT01A, TRT01AN,
-    AETERM, AEDECOD, ASTDT, AENDT, ASTDY,
-    AESEV, AEREL, RELGR1, AESER, TRTEMFL
-  ) |>
-  arrange(USUBJID, suppressWarnings(as.integer(AESEQ)))
+    ASTDT   = parse_sdtm_date(AESTDTC),
+    AENDT   = parse_sdtm_date(AEENDTC),
+    ASTDY   = study_day_chr(AESTDTC, format(TRTSDT, "%Y-%m-%d")),
+    TRTEMFL = derive_trtemfl(AESTDTC, AEENDTC,
+                              format(TRTSDT, "%Y-%m-%d"), format(TRTEDT, "%Y-%m-%d")),
+    RELGR1  = derive_relgr1(AEREL)
+  )
 
 message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), "行")
 '
@@ -667,44 +939,11 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          description="优先取 EX 域给药日期，无 EX 记录时回退至 DM.RFXSTDTC/RFXENDTC",
          assumption="若两域日期存在系统性差异，请以方案规定来源为准"),
     list(level="INFO", variable="TRT01PN/TRT01AN",
-         description="治疗编号硬编码：Placebo=0, Test Drug=1",
-         assumption="若存在其他治疗臂，请更新 trt_num_map")
+         description="治疗编号由 map_trt_num() 自动从 SDTM 实际值派生",
+         assumption="若存在非标准治疗臂名称，请核实映射结果")
   )
 
-  derivation_plan <- list(
-    plan_version = "0.1-mock",
-    generated_by = "mock",
-    datasets = list(
-      list(
-        dataset = "adsl",
-        dataset_role = "subject-level",
-        required_inputs = c("dm", "ex"),
-        join_plan = list(list(type = "left_join", left = "dm", right = "ex_summary", by = "USUBJID")),
-        variable_plan = list(
-          list(variable = "USUBJID", type = "char", source_domain = "dm", source_columns = list("USUBJID"), derivation_rule = "Direct mapping from DM", depends_on = list("USUBJID"), confidence = "HIGH"),
-          list(variable = "TRT01P", type = "char", source_domain = "dm", source_columns = list("ARM"), derivation_rule = "Direct mapping from ARM", depends_on = list("ARM"), confidence = "HIGH"),
-          list(variable = "TRTSDT", type = "char", source_domain = "ex", source_columns = list("EXSTDTC", "RFXSTDTC"), derivation_rule = "Prefer EX min start date, fallback to DM reference start date", depends_on = list("EXSTDTC", "RFXSTDTC"), confidence = "MEDIUM")
-        ),
-        assumptions = list("EX domain available for treatment date summarization."),
-        open_questions = list()
-      ),
-      list(
-        dataset = "adae",
-        dataset_role = "event-level",
-        required_inputs = c("ae", "adsl"),
-        join_plan = list(list(type = "left_join", left = "ae", right = "adsl", by = "USUBJID")),
-        variable_plan = list(
-          list(variable = "AESEQ", type = "char", source_domain = "ae", source_columns = list("AESEQ"), derivation_rule = "Direct mapping from AE", depends_on = list("AESEQ"), confidence = "HIGH"),
-          list(variable = "ASTDT", type = "char", source_domain = "ae", source_columns = list("AESTDTC"), derivation_rule = "Direct mapping of adverse event start date", depends_on = list("AESTDTC"), confidence = "HIGH"),
-          list(variable = "TRTEMFL", type = "char", source_domain = "ae", source_columns = list("AESTDTC", "TRTSDT"), derivation_rule = "Flag Y when AE start date is on or after treatment start", depends_on = list("AESTDTC", "TRTSDT"), confidence = "MEDIUM")
-        ),
-        assumptions = list("TRTSDT is available from ADSL."),
-        open_questions = list()
-      )
-    )
-  )
-
-  return(list(derivation_plan = derivation_plan, r_code = r_code_str, risk_logs = risk_logs_list,
+  return(list(r_code = r_code_str, risk_logs = risk_logs_list,
               token_info = list(input=0L, output=0L, total=0L)))
   }
 
@@ -743,27 +982,119 @@ message("Mock 代码执行完毕  ADSL=", nrow(adsl), "行  ADAE=", nrow(adae), 
          assumption  = "请根据 ADaM 规格替换为实际推导逻辑后再执行")
   )
 
-  derivation_plan_generic <- list(
-    plan_version = "0.1-mock",
-    generated_by = "mock",
-    datasets = lapply(target_datasets, function(ds) {
-      list(
-        dataset = ds,
-        dataset_role = "analysis",
-        required_inputs = c("dm"),
-        join_plan = list(),
-        variable_plan = list(
-          list(variable = "USUBJID", type = "char", source_domain = "dm", source_columns = list("USUBJID"), derivation_rule = "Direct mapping from DM", depends_on = list("USUBJID"), confidence = "HIGH"),
-          list(variable = "STUDYID", type = "char", source_domain = "dm", source_columns = list("STUDYID"), derivation_rule = "Direct mapping from DM", depends_on = list("STUDYID"), confidence = "HIGH")
-        ),
-        assumptions = list("Mock generic skeleton uses DM as the only input domain."),
-        open_questions = list()
-      )
-    })
+  list(r_code = r_code_generic, risk_logs = risk_generic,
+       token_info = list(input=0L, output=0L, total=0L))
+}
+
+# =============================================================================
+# Mock repair_demo helpers
+# =============================================================================
+.mock_repair_demo_initial <- function(target_datasets) {
+  # 故意缺少 RANDDT, EOTDT, EOTDY, EOTSTT, EOSDT, EOSSTT, DTHDT (ADSL)
+  # 及 SUBJID, TRT01P, TRT01PN, ASEV, ASEVN, RELGR1N, ATOXGR, ATOXGRN (ADAE)
+  r_code <- '
+# [Mock repair_demo - initial] 故意缺少部分变量
+trt_levels <- sort(unique(na.omit(c(dm$ACTARM, dm$ARM))))
+ex_summary <- ex |>
+  group_by(USUBJID) |>
+  summarise(NEX = n(), .groups = "drop")
+
+adsl <- dm |>
+  left_join(ex_summary, by = "USUBJID") |>
+  mutate(
+    TRT01P  = first_non_missing_chr(na_if(ARM, "")),
+    TRT01A  = first_non_missing_chr(na_if(ACTARM, ""), na_if(ARM, "")),
+    TRT01PN = map_trt_num(TRT01P, trt_levels, start_at = 0L),
+    TRT01AN = map_trt_num(TRT01A, trt_levels, start_at = 0L),
+    TRTSDT  = parse_sdtm_date(RFXSTDTC),
+    TRTEDT  = parse_sdtm_date(RFXENDTC),
+    TRTEDY  = study_day_chr(format(TRTEDT, "%Y-%m-%d"), format(TRTSDT, "%Y-%m-%d")),
+    SAFFL   = yn_flag(!is.na(TRTSDT) & NEX > 0),
+    ITTFL   = "Y"
   )
 
-  list(derivation_plan = derivation_plan_generic, r_code = r_code_generic, risk_logs = risk_generic,
-       token_info = list(input=0L, output=0L, total=0L))
+adae <- ae |>
+  left_join(adsl |> select(USUBJID, TRTSDT, TRTEDT, TRT01A, TRT01AN), by = "USUBJID") |>
+  mutate(
+    ASTDT   = parse_sdtm_date(AESTDTC),
+    AENDT   = parse_sdtm_date(AEENDTC),
+    ASTDY   = study_day_chr(AESTDTC, format(TRTSDT, "%Y-%m-%d")),
+    AENDY   = study_day_chr(AEENDTC, format(TRTSDT, "%Y-%m-%d")),
+    TRTEMFL = derive_trtemfl(AESTDTC, AEENDTC,
+                              format(TRTSDT, "%Y-%m-%d"), format(TRTEDT, "%Y-%m-%d")),
+    RELGR1  = derive_relgr1(AEREL)
+  )
+message("[repair_demo] initial: ADSL=", nrow(adsl), " ADAE=", nrow(adae))
+'
+  list(
+    r_code = r_code,
+    risk_logs = list(
+      list(level = "WARNING", variable = "ADSL",
+           description = "RANDDT/EOTDT/EOTDY/EOTSTT/EOSDT/EOSSTT/DTHDT 未派生",
+           assumption = "故意缺少以演示修复流程")
+    ),
+    token_info = list(input = 0L, output = 0L, total = 0L)
+  )
+}
+
+.mock_repair_demo_fixed <- function(target_datasets, spec_json) {
+  # 补齐所有缺失变量
+  r_code <- '
+# [Mock repair_demo - fixed] 补齐所有缺失变量
+trt_levels <- sort(unique(na.omit(c(dm$ACTARM, dm$ARM))))
+ex_summary <- ex |>
+  group_by(USUBJID) |>
+  summarise(NEX = n(), .groups = "drop")
+
+adsl <- dm |>
+  left_join(ex_summary, by = "USUBJID") |>
+  mutate(
+    TRT01P  = first_non_missing_chr(na_if(ARM, "")),
+    TRT01A  = first_non_missing_chr(na_if(ACTARM, ""), na_if(ARM, "")),
+    TRT01PN = map_trt_num(TRT01P, trt_levels, start_at = 0L),
+    TRT01AN = map_trt_num(TRT01A, trt_levels, start_at = 0L),
+    TRTSDT  = parse_sdtm_date(RFXSTDTC),
+    TRTEDT  = parse_sdtm_date(RFXENDTC),
+    TRTEDY  = study_day_chr(format(TRTEDT, "%Y-%m-%d"), format(TRTSDT, "%Y-%m-%d")),
+    RANDDT  = parse_sdtm_date(RFSTDTC),
+    EOTDT   = TRTEDT,
+    EOTDY   = study_day_chr(format(EOTDT, "%Y-%m-%d"), format(TRTSDT, "%Y-%m-%d")),
+    EOTSTT  = ifelse(!is.na(TRTEDT), "COMPLETED", "ONGOING"),
+    EOSDT   = parse_sdtm_date(RFENDTC),
+    EOSSTT  = ifelse(DTHFL == "Y", "DISCONTINUED", "COMPLETED"),
+    DTHDT   = parse_sdtm_date(DTHDTC),
+    SAFFL   = yn_flag(!is.na(TRTSDT) & NEX > 0),
+    ITTFL   = "Y"
+  )
+
+adae <- ae |>
+  left_join(adsl |> select(USUBJID, SUBJID, TRTSDT, TRTEDT,
+                           TRT01A, TRT01AN, TRT01P, TRT01PN), by = "USUBJID") |>
+  mutate(
+    ASTDT   = parse_sdtm_date(AESTDTC),
+    AENDT   = parse_sdtm_date(AEENDTC),
+    ASTDY   = study_day_chr(AESTDTC, format(TRTSDT, "%Y-%m-%d")),
+    AENDY   = study_day_chr(AEENDTC, format(TRTSDT, "%Y-%m-%d")),
+    ASEV    = AESEV,
+    ASEVN   = as.character(match(toupper(AESEV), c("MILD", "MODERATE", "SEVERE"))),
+    TRTEMFL = derive_trtemfl(AESTDTC, AEENDTC,
+                              format(TRTSDT, "%Y-%m-%d"), format(TRTEDT, "%Y-%m-%d")),
+    RELGR1  = derive_relgr1(AEREL),
+    RELGR1N = ifelse(RELGR1 == "RELATED", "1", "0"),
+    ATOXGR  = AETOXGR,
+    ATOXGRN = AETOXGR
+  )
+message("[repair_demo] fixed: ADSL=", nrow(adsl), " ADAE=", nrow(adae))
+'
+  list(
+    r_code = r_code,
+    risk_logs = list(
+      list(level = "INFO", variable = "ALL",
+           description = "修复版本已补齐所有缺失变量",
+           assumption = "repair_demo 模式硬编码修复")
+    ),
+    token_info = list(input = 0L, output = 0L, total = 0L)
+  )
 }
 
 # =============================================================================

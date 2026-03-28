@@ -139,12 +139,13 @@ library(shinyjs)   # reset() 用于清空 fileInput
 
 .compact_spec_payload <- function(spec) {
   vars <- spec$variables %||% data.frame(stringsAsFactors = FALSE)
-  keep_cols <- intersect(c("variable", "type", "source", "derivation", "dataset"), names(vars))
+  keep_cols <- intersect(c("variable", "label", "type", "source", "derivation", "dataset"), names(vars))
   if (length(keep_cols) > 0) {
     vars <- vars[, keep_cols, drop = FALSE]
   }
-  for (col in intersect(c("source", "derivation"), names(vars))) {
-    vars[[col]] <- substr(as.character(vars[[col]] %||% ""), 1L, if (col == "derivation") 220L else 120L)
+  trunc_limits <- c(derivation = 500L, source = 250L, label = 80L)
+  for (col in intersect(names(trunc_limits), names(vars))) {
+    vars[[col]] <- substr(as.character(vars[[col]] %||% ""), 1L, trunc_limits[[col]])
   }
   list(dataset = spec$dataset %||% "unknown", variables = vars)
 }
@@ -165,11 +166,107 @@ library(shinyjs)   # reset() 用于清空 fileInput
             type = v$type %||% "char",
             source_domain = v$source_domain %||% NA_character_,
             source_columns = v$source_columns %||% character(0),
-            derivation_rule = substr(v$derivation_rule %||% "Derived according to plan.", 1L, 220L)
+            derivation_rule = substr(v$derivation_rule %||% "Derived according to plan.", 1L, 500L)
           )
         })
       )
     })
+  )
+}
+
+.build_repair_request_payload <- function(current_code,
+                                          missing_variables,
+                                          missing_spec_rows,
+                                          derivation_plan,
+                                          specs,
+                                          target_datasets) {
+  base_plan <- derivation_plan
+  if (is.null(base_plan) || !is.list(base_plan)) {
+    base_plan <- normalize_derivation_plan(NULL, specs, target_datasets)
+  }
+
+  affected_ds <- character(0)
+  if (is.data.frame(missing_spec_rows) && "dataset" %in% names(missing_spec_rows)) {
+    affected_ds <- unique(tolower(trimws(as.character(stats::na.omit(missing_spec_rows$dataset)))))
+  }
+  if (length(affected_ds) == 0) {
+    plan_hits <- Filter(function(ds) {
+      vars <- vapply(ds$variable_plan %||% list(), function(v) {
+        trimws(as.character(v$variable %||% ""))
+      }, character(1))
+      any(vars %in% missing_variables)
+    }, base_plan$datasets %||% list())
+    affected_ds <- unique(tolower(vapply(plan_hits, function(ds) ds$dataset %||% "", character(1))))
+  }
+  if (length(affected_ds) == 0) affected_ds <- tolower(target_datasets %||% character(0))
+
+  plan_subset <- Filter(function(ds) {
+    tolower(ds$dataset %||% "") %in% affected_ds
+  }, base_plan$datasets %||% list())
+  if (length(plan_subset) == 0) {
+    plan_subset <- base_plan$datasets %||% list()
+  }
+
+  compact_plan <- .compact_plan_payload(list(
+    plan_version = base_plan$plan_version %||% "0.1-repair",
+    generated_by = "repair-request",
+    datasets = plan_subset
+  ))
+
+  list(
+    request_type = "repair_missing_variables",
+    target_datasets = unique(tolower(target_datasets %||% character(0))),
+    affected_datasets = unique(affected_ds),
+    missing_variables = unique(missing_variables[nzchar(missing_variables)]),
+    missing_spec_rows = if (is.data.frame(missing_spec_rows)) missing_spec_rows else data.frame(stringsAsFactors = FALSE),
+    current_plan = compact_plan,
+    current_code = current_code,
+    instructions = c(
+      "在现有代码基础上补全缺失变量，返回完整修复后代码而不是补丁。",
+      "保留现有已正确的数据集与变量，不要删除非缺失变量。",
+      "如缺失变量依赖前置变量，确保其定义顺序与依赖顺序正确。"
+    )
+  )
+}
+
+# =============================================================================
+# .collect_repair_candidates() — 从校验结果中提取可修复问题
+# =============================================================================
+.collect_repair_candidates <- function(validation_res, repairable_checks, specs) {
+  if (is.null(validation_res) || is.null(validation_res$issues) || nrow(validation_res$issues) == 0) {
+    return(list(triggered = FALSE))
+  }
+  hit <- validation_res$issues[validation_res$issues$check %in% repairable_checks, , drop = FALSE]
+  if (nrow(hit) == 0) return(list(triggered = FALSE))
+
+  # 提取缺失变量名
+  missing_vars <- character(0)
+  for (ri in seq_len(nrow(hit))) {
+    vars_text <- sub("^.*\uff1a", "", hit$detail[ri])  # 截取"："后的部分
+    missing_vars <- c(missing_vars, trimws(strsplit(vars_text, ",\\s*")[[1]]))
+  }
+  missing_vars <- unique(missing_vars[nzchar(missing_vars)])
+
+  # 收集 Spec 行
+  missing_spec_rows <- do.call(rbind, lapply(specs, function(s) {
+    if (is.null(s$parsed) || is.null(s$parsed$variables)) return(NULL)
+    s$parsed$variables[s$parsed$variables$variable %in% missing_vars, , drop = FALSE]
+  }))
+
+  # 受影响数据集
+  affected_ds <- unique(tolower(trimws(hit$dataset)))
+
+  # 签名：用于收敛检测（排序后连接）
+  signature <- paste(sort(unique(c(hit$check, missing_vars))), collapse = "|")
+
+  list(
+    triggered        = TRUE,
+    issues_df        = hit,
+    repairable_checks = unique(hit$check),
+    missing_variables = missing_vars,
+    missing_spec_rows = missing_spec_rows,
+    affected_datasets = affected_ds,
+    signature        = signature
   )
 }
 
@@ -330,7 +427,9 @@ library(shinyjs)   # reset() 用于清空 fileInput
 #         llm_suggestions — LLM 对 LOW 置信度字段的补全建议（字符向量）
 #       )
 # -----------------------------------------------------------------------------
-.call_llm_spec_parser <- function(df, col_map) {
+# model_sel: 当前会话选择的模型名（如 "gpt-4o"、"claude-sonnet-4-5"）
+# api_key:   当前会话的 API Key（rv$session_api_key）
+.call_llm_spec_parser <- function(df, col_map, model_sel = "gpt-4o", api_key = "") {
 
   if (isTRUE(MOCK_MODE)) {
     # ── Mock 模式：直接使用启发式结果，并对 LOW 字段模拟 LLM 建议 ──────────
@@ -365,14 +464,29 @@ library(shinyjs)   # reset() 用于清空 fileInput
     ))
 
   } else {
-    # ── 真实 API 模式（接入 LLM 时启用）────────────────────────────────────
-    # 构造给 LLM 的 Prompt
+    # ── 真实 API 模式：使用当前会话选定的提供商 ─────────────────────────────
+    prov     <- tryCatch(.infer_provider(model_sel), error = function(e) "openai")
+    prov_cfg <- tryCatch(.get_provider_cfg(prov),    error = function(e) PROVIDER_REGISTRY[["openai"]])
+
+    # 回退：无 API Key 时使用启发式结果
+    if (!nzchar(trimws(api_key %||% ""))) {
+      prov_name <- prov_cfg$name %||% toupper(prov)
+      return(list(
+        column_mapping  = sapply(col_map, function(x) x$matched_col %||% NA_character_),
+        confidence      = sapply(col_map, function(x) x$confidence),
+        llm_suggestions = sprintf(
+          "未配置 %s API Key，已使用启发式匹配（跳过 LLM 补全）。如需 LLM 补全，请在左侧面板输入 Key。",
+          prov_name
+        )
+      ))
+    }
+
+    # 构造消息
     header_str  <- paste(names(df), collapse=", ")
     preview_str <- paste(
       apply(head(df, 5), 1, function(r) paste(r, collapse=" | ")),
       collapse="\n"
     )
-
     system_msg <- paste0(
       "你是 ADaM 数据标准专家。给定一个 CSV 文件的列名和前几行数据，",
       "识别哪一列对应以下标准字段：variable, label, type, source, derivation, dataset。\n",
@@ -381,41 +495,76 @@ library(shinyjs)   # reset() 用于清空 fileInput
       '  "confidence": {"variable":"HIGH|MEDIUM|LOW",...},',
       '  "llm_suggestions": ["说明1","说明2"] }'
     )
-    user_msg <- paste0(
-      "CSV 列名：", header_str, "\n",
-      "前5行数据：\n", preview_str
-    )
+    user_msg <- paste0("CSV 列名：", header_str, "\n前5行数据：\n", preview_str)
 
-    # httr2 请求（使用 provider_registry，默认 openai）
-    prov_cfg <- PROVIDER_REGISTRY[["openai"]]
-    api_key  <- Sys.getenv(prov_cfg$api_key_env, "")
-    if (nchar(api_key) == 0) {
-      # 回退：若无环境变量 Key，使用启发式结果
-      return(list(
-        column_mapping  = sapply(col_map, function(x) x$matched_col %||% NA_character_),
-        confidence      = sapply(col_map, function(x) x$confidence),
-        llm_suggestions = "未配置 OPENAI_API_KEY 环境变量，已使用启发式匹配（跳过 LLM 补全）"
-      ))
+    # 按提供商类型构造请求（Anthropic 使用不同的认证头和请求体格式）
+    actual_model <- if (prov %in% c("ollama","vllm")) {
+      trimws(model_sel)  # 本地推理直接用输入名
+    } else {
+      model_sel
     }
 
-    resp <- httr2::request(prov_cfg$base_url) |>
-      httr2::req_headers("Authorization"=paste("Bearer",api_key),
-                         "Content-Type"="application/json") |>
-      httr2::req_body_json(list(
-        model    = "gpt-4o",
-        messages = list(list(role="system",content=system_msg),
-                        list(role="user",  content=user_msg)),
-        temperature     = 0.0,
-        response_format = list(type="json_object")
-      )) |>
+    req <- httr2::request(prov_cfg$base_url) |>
       httr2::req_timeout(60) |>
-      httr2::req_retry(max_tries=3) |>
-      httr2::req_perform()
+      httr2::req_retry(max_tries = 3)
 
-    raw      <- httr2::resp_body_json(resp)
-    raw_text <- raw$choices[[1]]$message$content
-    clean    <- stringr::str_replace_all(raw_text, "^```json\\s*|\\s*```$", "")
-    jsonlite::fromJSON(clean, simplifyVector=TRUE)
+    if (identical(prov, "anthropic")) {
+      # Anthropic: x-api-key header + max_tokens, 不支持 response_format
+      req <- req |>
+        httr2::req_headers(
+          "x-api-key"         = api_key,
+          "anthropic-version" = "2023-06-01",
+          "Content-Type"      = "application/json"
+        ) |>
+        httr2::req_body_json(list(
+          model      = actual_model,
+          max_tokens = 1024L,
+          system     = system_msg,
+          messages   = list(list(role = "user", content = user_msg)),
+          temperature = 0.0
+        ))
+    } else {
+      # OpenAI-compatible (OpenAI, DeepSeek, Kimi, Qwen, Ollama, vLLM)
+      req <- req |>
+        httr2::req_headers(
+          "Authorization" = paste("Bearer", api_key),
+          "Content-Type"  = "application/json"
+        ) |>
+        httr2::req_body_json(list(
+          model       = actual_model,
+          messages    = list(list(role = "system", content = system_msg),
+                             list(role = "user",   content = user_msg)),
+          temperature     = 0.0,
+          response_format = list(type = "json_object")
+        ))
+    }
+
+    resp <- req |> httr2::req_perform()
+
+    # 解析响应（OpenAI-compatible 和 Anthropic 响应结构不同）
+    raw <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+    raw_text <- if (identical(prov, "anthropic")) {
+      raw$content[[1]]$text
+    } else {
+      raw$choices[[1]]$message$content
+    }
+    clean  <- stringr::str_replace_all(raw_text %||% "", "^```json\\s*|\\s*```$", "")
+    result <- jsonlite::fromJSON(clean, simplifyVector = TRUE)
+
+    # 确保 column_mapping / confidence 始终为命名字符向量（LLM 可能返回含 null 的 list）
+    .to_named_chr <- function(x) {
+      if (is.null(x)) return(character(0))
+      nms  <- names(x)
+      vals <- vapply(seq_along(x), function(i) {
+        v <- x[[i]]
+        if (is.null(v) || (length(v) == 1 && is.na(v))) NA_character_ else as.character(v[1])
+      }, character(1))
+      if (!is.null(nms)) names(vals) <- nms
+      vals
+    }
+    result$column_mapping <- .to_named_chr(result$column_mapping)
+    result$confidence     <- .to_named_chr(result$confidence)
+    result
   }
 }
 
@@ -433,9 +582,10 @@ library(shinyjs)   # reset() 用于清空 fileInput
   risks <- list()
 
   # 获取实际列名（可能为 NA 表示未匹配到）
-  var_col    <- column_mapping["variable"]
-  deriv_col  <- column_mapping["derivation"]
-  source_col <- column_mapping["source"]
+  # 用 [[]] 而非 [] 确保返回标量字符，兼容 named character vector 和 named list
+  var_col    <- as.character(column_mapping[["variable"]]   %||% NA_character_)
+  deriv_col  <- as.character(column_mapping[["derivation"]] %||% NA_character_)
+  source_col <- as.character(column_mapping[["source"]]     %||% NA_character_)
 
   var_values <- if (!is.na(var_col) && var_col %in% names(df))
                   df[[var_col]] else rep("?", nrow(df))
@@ -690,6 +840,27 @@ server <- function(input, output, session) {
     session_failover_api_key = NULL,
     risk_logs_df  = NULL,
     original_code = NULL,
+    llm_config = NULL,        # 保存 LLM 调用参数供 repair loop 复用
+    # ── 自动修复状态 ──────────────────────────────────────────────────────
+    repair_state = list(
+      status         = "idle",          # idle|running|done|warn|error
+      trigger        = NULL,            # "auto"|"manual"
+      attempts       = 0L,
+      max_attempts   = 2L,
+      repairable_checks = c(
+        "\u7f3a\u5931\u53d8\u91cf",     # 缺失变量
+        "Plan \u8986\u76d6",            # Plan 覆盖
+        "\u7c7b\u578b\u4e00\u81f4\u6027", # 类型一致性
+        "Plan \u7c7b\u578b\u4e00\u81f4\u6027", # Plan 类型一致性
+        "\u65e5\u671f\u683c\u5f0f"      # 日期格式
+      ),
+      last_signature = NULL,            # 用于收敛检测
+      last_missing   = character(0),
+      affected_datasets = character(0),
+      history        = list(),          # 每次尝试的记录
+      final_reason   = NULL,            # 终止原因
+      accepted_code  = NULL             # 修复成功时的代码
+    ),
     # ADaM 输出
     adsl          = NULL,
     adae          = NULL,
@@ -702,6 +873,7 @@ server <- function(input, output, session) {
     step_review   = "idle",
     step_run      = "idle",
     step_validate = "idle",
+    step_repair   = "idle",
     # 日志
     log_lines     = character(0),
     # 运行代码状态
@@ -861,7 +1033,11 @@ server <- function(input, output, session) {
 
       col_map      <- .heuristic_col_match(names(df))
       parse_result <- tryCatch(
-        .call_llm_spec_parser(df, col_map),
+        .call_llm_spec_parser(
+          df, col_map,
+          model_sel = input$llm_model %||% "gpt-4o",
+          api_key   = .non_empty(input$api_key %||% rv$session_api_key %||% "") %||% ""
+        ),
         error = function(e) list(
           column_mapping  = sapply(col_map, function(x) x$matched_col %||% NA_character_),
           confidence      = sapply(col_map, function(x) x$confidence),
@@ -1020,7 +1196,12 @@ server <- function(input, output, session) {
     rv$original_code <- rv$run_result_ok <- rv$run_result_err <- NULL
     rv$log_lines <- character(0)
     rv$step_load <- "running"
-    rv$step_llm  <- rv$step_review <- rv$step_run <- rv$step_validate <- "idle"
+    rv$step_llm  <- rv$step_review <- rv$step_run <- rv$step_validate <- rv$step_repair <- "idle"
+    rv$repair_state <- modifyList(rv$repair_state, list(
+      status = "idle", trigger = NULL, attempts = 0L, history = list(),
+      last_signature = NULL, last_missing = character(0),
+      affected_datasets = character(0), final_reason = NULL, accepted_code = NULL
+    ))
 
     # ── [S-4] 校验：动态推断所需域 + spec_confirmed 检查 ──────────────────────
     needed_domains <- unique(c(
@@ -1089,7 +1270,13 @@ server <- function(input, output, session) {
 
     # ── [S-4] 提取目标数据集列表（用于分批 LLM prompt 和结果提取）──────────────
     target_datasets <- names(spec_map)
-    if (length(target_datasets) == 0) target_datasets <- c("adsl", "adae")
+    if (length(target_datasets) == 0) {
+      rv$step_llm <- "error"
+      .append_log("无法从已确认 Spec 中推断目标数据集名。请检查 Spec 中是否包含 Dataset 列。", icon="✖")
+      showNotification("无法推断目标数据集，请检查 Spec 文件", type="error", duration=8)
+      shinyjs::runjs("adamProgress.error('✖ 无法推断目标数据集')")
+      return()
+    }
 
     # ── 阶段 3：调用 LLM 生成代码 ─────────────────────────────────────────────
     rv$step_llm <- "running"
@@ -1124,7 +1311,6 @@ server <- function(input, output, session) {
                           setNames(list(trimws(input$local_base_url %||% "")), primary_prov)
                         else list()
     failover_chain   <- list(list(provider = primary_prov, model = actual_model))
-
     # 故障转移备用链路
     if (isTRUE(input$enable_failover) &&
         !is.null(input$failover_provider_1) &&
@@ -1134,6 +1320,12 @@ server <- function(input, output, session) {
       failover_chain <- c(failover_chain,
                           list(list(provider = fb, model = .default_model(fb))))
     }
+    # 保存最终 LLM 配置供 repair loop 复用
+    rv$llm_config <- list(
+      provider_key_map = provider_key_map,
+      base_url_map     = base_url_map,
+      failover_chain   = failover_chain
+    )
 
     .append_log("正在调用 LLM 引擎（",
                 if (MOCK_MODE) "模拟模式" else paste0(actual_model, " · ", primary_prov),
@@ -1151,7 +1343,7 @@ server <- function(input, output, session) {
                 icon="⚙")
 
     profile_summary_txt <- format_sdtm_profiles(rv$sdtm_profile)
-    large_spec_threshold <- 18L
+    large_spec_threshold <- 200L
     batch_results <- vector("list", length(target_datasets))
     names(batch_results) <- target_datasets
     compact_datasets <- character(0)
@@ -1269,6 +1461,14 @@ server <- function(input, output, session) {
           if (is.null(res)) {
             stop(sprintf("%s 生成失败：未返回结果", toupper(ds)), call. = FALSE)
           }
+          # 防御：确保 res 是命名列表（非原子向量）
+          if (!is.list(res) || is.null(names(res))) {
+            stop(sprintf(
+              "%s 生成返回非预期结构（类型=%s，长度=%d）。前100字符：%s",
+              toupper(ds), class(res)[1], length(res),
+              substr(paste(as.character(res), collapse = " "), 1, 100)
+            ), call. = FALSE)
+          }
           if (isTRUE(meta_ds$staged_mode)) {
             batch_results[[ds]] <- list(
               derivation_plan = meta_ds$derivation_plan,
@@ -1310,9 +1510,18 @@ server <- function(input, output, session) {
       )
     }, error = function(e) {
       rv$step_llm <- "error"
-      .append_log("LLM 调用失败：", conditionMessage(e), icon="✖")
+      err_detail <- conditionMessage(e)
+      # 附加调用栈信息帮助定位
+      calls <- sys.calls()
+      if (length(calls) > 2) {
+        call_str <- paste(utils::tail(vapply(calls, function(c) {
+          deparse(c, width.cutoff = 80L)[1]
+        }, character(1)), 5), collapse = " -> ")
+        err_detail <- paste0(err_detail, "\n[call stack] ", call_str)
+      }
+      .append_log("LLM 调用失败：", err_detail, icon="✖")
       showNotification(paste0("LLM 错误：", conditionMessage(e)), type="error", duration=8)
-      shinyjs::runjs("adamProgress.error('✖ API 调用失败')")
+      shinyjs::runjs("adamProgress.error('\\u2716 API \\u8C03\\u7528\\u5931\\u8D25')")
       NULL
     })
     if (is.null(llm_res)) return()
@@ -1422,6 +1631,12 @@ server <- function(input, output, session) {
     rv$run_result_err <- NULL
     rv$log_lines      <- character(0)
     rv$step_validate  <- "idle"
+    rv$step_repair    <- "idle"
+    rv$repair_state   <- modifyList(rv$repair_state, list(
+      status = "idle", trigger = NULL, attempts = 0L, history = list(),
+      last_signature = NULL, last_missing = character(0),
+      affected_datasets = character(0), final_reason = NULL, accepted_code = NULL
+    ))
 
     # ── 3. 重置 Ace 编辑器为初始提示文字 ────────────────────────────────────
     updateAceEditor(session, "code_editor",
@@ -1777,6 +1992,24 @@ server <- function(input, output, session) {
   })
 
   # ===========================================================================
+  # Observer：手动重试修复
+  # ===========================================================================
+  observeEvent(input$btn_retry_repair, {
+    if (is.null(rv$validation_result) || is.null(rv$llm_config)) {
+      showNotification("\u65e0\u6cd5\u91cd\u8bd5\uff1a\u7f3a\u5c11\u6821\u9a8c\u7ed3\u679c\u6216 LLM \u914d\u7f6e", type = "warning", duration = 4)
+      return()
+    }
+    # 重置 repair state 但保留 max_attempts
+    rv$repair_state <- modifyList(rv$repair_state, list(
+      status = "idle", trigger = NULL, attempts = 0L, history = list(),
+      last_signature = NULL, last_missing = character(0),
+      affected_datasets = character(0), final_reason = NULL, accepted_code = NULL
+    ))
+    # 触发 btn_run_code 以重新走完执行+校验+修复流程
+    shinyjs::click("btn_run_code")
+  })
+
+  # ===========================================================================
   # Observer：主题切换 → 同步 Ace 编辑器配色
   # ===========================================================================
   observeEvent(input$theme_is_light, {
@@ -1801,6 +2034,12 @@ server <- function(input, output, session) {
 
     rv$step_run <- "running"
     rv$step_validate <- "idle"
+    rv$step_repair   <- "idle"
+    rv$repair_state  <- modifyList(rv$repair_state, list(
+      status = "idle", trigger = NULL, attempts = 0L, history = list(),
+      last_signature = NULL, last_missing = character(0),
+      affected_datasets = character(0), final_reason = NULL, accepted_code = NULL
+    ))
     rv$run_result_ok <- rv$run_result_err <- NULL
     rv$static_check_result <- NULL
     rv$validation_result <- rv$validation_issues_df <- rv$validation_stats_df <- NULL
@@ -1809,13 +2048,18 @@ server <- function(input, output, session) {
 
     expected_ds <- tolower(unique(unlist(lapply(rv$specs, function(s)
       if (!is.null(s$parsed)) s$parsed$dataset else NULL))))
-    if (length(expected_ds) == 0) expected_ds <- c("adsl", "adae")
+    if (length(expected_ds) == 0) {
+      showNotification("无法从 Spec 推断目标数据集名，请检查 Spec", type="error", duration=6)
+      return()
+    }
 
     static_check <- run_code_static_checks(
-      code_str = code_str,
+      code_str          = code_str,
       expected_datasets = expected_ds,
-      allowed_packages = c("dplyr", "lubridate", "stringr", "tidyr", "readr", "haven", "purrr", "forcats", "janitor", "glue"),
-      available_inputs = names(rv$sdtm %||% list())
+      allowed_packages  = c("dplyr", "lubridate", "stringr", "tidyr", "readr",
+                            "haven", "purrr", "forcats", "janitor", "glue", "stats"),
+      available_inputs  = names(rv$sdtm %||% list()),
+      available_columns = lapply(rv$sdtm %||% list(), names)
     )
     rv$static_check_result <- static_check
     .append_log(
@@ -1842,55 +2086,56 @@ server <- function(input, output, session) {
       return()
     }
 
-    # 预置包列表：核心5个 + 扩展5个（临床数据处理常用）
+    # ── 自动修正高确信度问题（如 && → &）────────────────────────────────────
+    code_str <- sanitize_llm_code(code_str)
+
+    # ── 两层沙箱结构：exec_parent 持有注入函数+屏蔽存根，exec_env 持有数据和生成代码产物
+    # parent=baseenv() 确保生成代码无法访问 Shiny 会话状态（API Key、reactiveValues 等）
+    # 预置包列表：核心 + 扩展 + stats（na.omit / complete.cases / setNames 等常用函数）
     needed_pkgs <- c(
       "dplyr", "lubridate", "stringr", "tidyr", "readr",   # 核心
-      "haven", "purrr", "forcats", "janitor", "glue"        # 扩展
+      "haven", "purrr", "forcats", "janitor", "glue",       # 扩展
+      "stats"                                               # base R 统计：na.omit, complete.cases, setNames 等
     )
 
-    exec_env <- new.env(parent=baseenv())
-    # [S-5] 动态注入所有已加载的 SDTM 域（替换原来的固定 dm/ex/ae 赋值）
-    for (sid in names(rv$sdtm)) assign(sid, rv$sdtm[[sid]], envir=exec_env)
+    exec_parent <- new.env(parent = baseenv(), hash = TRUE)
 
-    # 注入预置包
+    # 注入预置包到 exec_parent
     for (pkg in needed_pkgs) {
-      if (requireNamespace(pkg, quietly=TRUE)) {
+      if (requireNamespace(pkg, quietly = TRUE)) {
         for (fn in getNamespaceExports(pkg)) {
-          tryCatch(assign(fn, getExportedValue(pkg,fn), envir=exec_env), error=function(e) NULL)
+          tryCatch(assign(fn, getExportedValue(pkg, fn), envir = exec_parent), error = function(e) NULL)
         }
       }
     }
-
-    # 动态注入：扫描生成代码中额外的 library()/require() 调用
-    extra_pkgs <- unique(c(
-      regmatches(code_str, gregexpr("(?<=library\\()\\w+(?=\\))", code_str, perl=TRUE))[[1]],
-      regmatches(code_str, gregexpr("(?<=require\\()\\w+(?=\\))", code_str, perl=TRUE))[[1]]
-    ))
-    extra_pkgs <- setdiff(extra_pkgs, needed_pkgs)
-    failed_pkgs <- character(0)
-    for (pkg in extra_pkgs) {
-      if (requireNamespace(pkg, quietly=TRUE)) {
-        for (fn in getNamespaceExports(pkg))
-          tryCatch(assign(fn, getExportedValue(pkg, fn), envir=exec_env), error=function(e) NULL)
-        .append_log("动态注入额外包：", pkg, icon="📦")
-      } else {
-        failed_pkgs <- c(failed_pkgs, pkg)
-      }
-    }
-    if (length(failed_pkgs) > 0) {
-      warn_msg <- paste0("以下包未安装，相关函数调用将失败：",
-                         paste(failed_pkgs, collapse=", "))
-      .append_log(warn_msg, icon="⚠")
-      showNotification(warn_msg, type="warning", duration=8)
+    # utils：仅注入最常用的两个函数，避免引入过多 utils 内部状态
+    for (fn in c("head", "tail")) {
+      tryCatch(assign(fn, getExportedValue("utils", fn), envir = exec_parent), error = function(e) NULL)
     }
 
-    exec_env$strip_excel_apos <- strip_excel_apos
-    exec_env$dy_char          <- dy_char
-    # 屏蔽生成代码中的 library()/require()/install.packages() 调用
-    # exec_env parent=baseenv()，utils 包函数不可见；包函数已通过预注入+动态注入处理
-    exec_env$library  <- function(...) invisible(NULL)
-    exec_env$require  <- function(...) invisible(TRUE)
-    assign("install.packages", function(...) invisible(NULL), envir=exec_env)
+    # ADaM 辅助函数注入到 exec_parent（消除 LLM 高频 bug）
+    exec_parent$strip_excel_apos      <- strip_excel_apos
+    exec_parent$dy_char               <- dy_char
+    exec_parent$parse_sdtm_date       <- parse_sdtm_date
+    exec_parent$study_day_chr         <- study_day_chr
+    exec_parent$map_trt_num           <- map_trt_num
+    exec_parent$yn_flag               <- function(test, missing = "N") {
+      if (length(test) == 1L && !is.na(test))
+        warning("yn_flag() received length-1 input \u2014 possible && misuse producing scalar result")
+      yn_flag(test, missing)
+    }
+    exec_parent$first_non_missing_chr <- first_non_missing_chr
+    exec_parent$derive_trtemfl        <- derive_trtemfl
+    exec_parent$derive_relgr1         <- derive_relgr1
+    # 屏蔽存根放在 exec_parent，防止生成代码在 exec_env 层覆盖它们
+    exec_parent$library          <- function(...) invisible(NULL)
+    exec_parent$require          <- function(...) invisible(TRUE)
+    assign("install.packages", function(...) invisible(NULL), envir = exec_parent)
+
+    # exec_env：生成代码在此运行；SDTM 数据也注入到此层（隔离于函数层）
+    exec_env <- new.env(parent = exec_parent, hash = TRUE)
+    # [S-5] 动态注入所有已加载的 SDTM 域
+    for (sid in names(rv$sdtm)) assign(sid, rv$sdtm[[sid]], envir = exec_env)
 
     exec_result <- tryCatch({
       withCallingHandlers(
@@ -1917,8 +2162,21 @@ server <- function(input, output, session) {
     }
 
     extracted <- list()
+    env_names <- ls(exec_env)
     for (ds in expected_ds) {
-      obj <- tryCatch(get(ds, envir=exec_env), error=function(e) NULL)
+      obj <- NULL
+      if (exists(ds, envir = exec_env, inherits = FALSE)) {
+        obj <- get(ds, envir = exec_env)
+      } else {
+        candidates <- env_names[tolower(env_names) == ds]
+        if (length(candidates) == 1L) {
+          obj <- get(candidates[1L], envir = exec_env)
+          .append_log(paste0("自动匹配大小写：", candidates[1L], " -> ", ds), icon="⚠")
+        } else if (length(candidates) > 1L) {
+          .append_log(paste0("错误：环境中存在多个匹配 '", ds, "' 的对象：",
+                             paste(candidates, collapse = ", ")), icon="✖")
+        }
+      }
       if (is.data.frame(obj)) extracted[[ds]] <- obj
     }
 
@@ -1930,6 +2188,24 @@ server <- function(input, output, session) {
       showNotification(tagList(tags$strong("✖ 结果提取失败"), tags$br(), err_msg),
                        type="error", duration=8)
       return()
+    }
+
+    # ── [S-C7] 防御性列裁剪：仅保留 Spec 声明的变量 ───────────────────────
+    spec_map_local <- tryCatch(.split_specs_by_dataset(rv$specs), error = function(e) list())
+    for (ds in names(extracted)) {
+      ds_spec <- spec_map_local[[ds]]
+      if (!is.null(ds_spec) && is.data.frame(ds_spec$variables) && "variable" %in% names(ds_spec$variables)) {
+        spec_vars <- toupper(trimws(as.character(ds_spec$variables$variable)))
+        actual_vars <- names(extracted[[ds]])
+        keep <- actual_vars[toupper(actual_vars) %in% spec_vars]
+        if (length(keep) > 0 && length(keep) < length(actual_vars)) {
+          dropped <- setdiff(actual_vars, keep)
+          .append_log(sprintf("[C7] %s: 裁剪 %d 个多余列: %s",
+                              toupper(ds), length(dropped), paste(head(dropped, 8), collapse=", ")),
+                      icon="⚡")
+          extracted[[ds]] <- extracted[[ds]][, keep, drop = FALSE]
+        }
+      }
     }
 
     rv$adam_datasets <- extracted
@@ -1955,6 +2231,221 @@ server <- function(input, output, session) {
         type="warning", duration=8)
       NULL
     })
+
+    # ── Repair Loop：迭代修复（最多 max_attempts 次，含收敛检测）──────────────
+    candidate <- .collect_repair_candidates(validation_res, rv$repair_state$repairable_checks, rv$specs)
+
+    if (candidate$triggered && !is.null(rv$llm_config)) {
+      rv$step_repair <- "running"
+      rv$repair_state$status  <- "running"
+      rv$repair_state$trigger <- "auto"
+      rv$repair_state$last_missing <- candidate$missing_variables
+      rv$repair_state$affected_datasets <- candidate$affected_datasets
+      rv$repair_state$last_signature <- candidate$signature
+
+      .append_log(sprintf(
+        "\u68c0\u6d4b\u5230 %d \u4e2a\u53ef\u4fee\u590d\u95ee\u9898\uff08%s\uff09\uff0c\u5f00\u59cb\u81ea\u52a8\u4fee\u590d\uff08\u6700\u591a %d \u6b21\uff09...",
+        nrow(candidate$issues_df),
+        paste(unique(candidate$repairable_checks), collapse = "/"),
+        rv$repair_state$max_attempts
+      ), icon = "\u21bb")
+
+      repair_current_code <- code_str
+      repair_candidate    <- candidate
+
+      for (attempt in seq_len(rv$repair_state$max_attempts)) {
+        rv$repair_state$attempts <- attempt
+        .append_log(sprintf("\u4fee\u590d\u5c1d\u8bd5 %d/%d ...", attempt, rv$repair_state$max_attempts), icon = "\u21bb")
+
+        # 构建 payload
+        repair_payload <- .build_repair_request_payload(
+          current_code      = repair_current_code,
+          missing_variables = repair_candidate$missing_variables,
+          missing_spec_rows = repair_candidate$missing_spec_rows,
+          derivation_plan   = rv$derivation_plan,
+          specs             = rv$specs,
+          target_datasets   = expected_ds
+        )
+
+        # 调用 LLM
+        repair_res <- tryCatch({
+          cfg <- rv$llm_config
+          call_llm_engine_with_failover(
+            spec_json        = repair_payload,
+            data_summary     = format_sdtm_profiles(rv$sdtm_profile %||% list()),
+            provider_key_map = cfg$provider_key_map,
+            failover_chain   = cfg$failover_chain,
+            base_url_map     = cfg$base_url_map,
+            target_datasets  = expected_ds,
+            prompt_profile   = list(mode = "strict", task = "repair_code", max_tokens = 4000L)
+          )
+        }, error = function(e) {
+          .append_log(paste0("\u4fee\u590d\u8c03\u7528\u5931\u8d25\uff1a", conditionMessage(e)), icon = "\u2716")
+          NULL
+        })
+
+        attempt_record <- list(attempt = attempt, status = "unknown")
+
+        if (is.null(repair_res) || !nzchar(repair_res$r_code %||% "")) {
+          attempt_record$status <- "llm_failed"
+          rv$repair_state$history[[attempt]] <- attempt_record
+          rv$repair_state$final_reason <- "llm_failed"
+          break
+        }
+
+        repaired_code <- sanitize_llm_code(repair_res$r_code)
+        .append_log(sprintf("\u4fee\u590d\u4ee3\u7801\u5df2\u751f\u6210\uff08%d \u5b57\u7b26\uff09\uff0c\u9759\u6001\u68c0\u67e5...", nchar(repaired_code)), icon = "\u21bb")
+
+        # 静态检查
+        repair_static <- run_code_static_checks(
+          code_str          = repaired_code,
+          expected_datasets = expected_ds,
+          allowed_packages  = c("dplyr", "lubridate", "stringr", "tidyr", "readr",
+                                "haven", "purrr", "forcats", "janitor", "glue", "stats"),
+          available_inputs  = names(rv$sdtm %||% list()),
+          available_columns = lapply(rv$sdtm %||% list(), names)
+        )
+        attempt_record$static_status <- repair_static$summary$status
+
+        if (repair_static$summary$status == "ERROR") {
+          .append_log(paste0("\u4fee\u590d\u4ee3\u7801\u672a\u901a\u8fc7\u9759\u6001\u68c0\u67e5\uff1a",
+            paste(head(repair_static$issues$detail[repair_static$issues$level == "ERROR"], 2), collapse = "\uff1b")),
+            icon = "\u2716")
+          attempt_record$status <- "static_failed"
+          rv$repair_state$history[[attempt]] <- attempt_record
+          rv$repair_state$final_reason <- "static_failed"
+          break
+        }
+
+        # 沙箱执行
+        .append_log("\u4fee\u590d\u4ee3\u7801\u9759\u6001\u68c0\u67e5\u901a\u8fc7\uff0c\u91cd\u65b0\u6267\u884c...", icon = "\u21bb")
+        exec_env2 <- new.env(parent = exec_parent, hash = TRUE)
+        for (sid in names(rv$sdtm)) assign(sid, rv$sdtm[[sid]], envir = exec_env2)
+        exec_result2 <- tryCatch({
+          withCallingHandlers(
+            eval(parse(text = repaired_code), envir = exec_env2),
+            message = function(m) invokeRestart("muffleMessage"),
+            warning = function(w) invokeRestart("muffleWarning")
+          )
+          "ok"
+        }, error = function(e) conditionMessage(e))
+        attempt_record$exec_status <- exec_result2
+
+        if (exec_result2 != "ok") {
+          .append_log(paste0("\u4fee\u590d\u4ee3\u7801\u6267\u884c\u5931\u8d25\uff1a", exec_result2), icon = "\u2716")
+          attempt_record$status <- "exec_failed"
+          rv$repair_state$history[[attempt]] <- attempt_record
+          rv$repair_state$final_reason <- "exec_failed"
+          break
+        }
+
+        # 提取数据集
+        extracted2 <- list()
+        env_names2 <- ls(exec_env2)
+        for (ds in expected_ds) {
+          obj <- NULL
+          if (exists(ds, envir = exec_env2, inherits = FALSE)) {
+            obj <- get(ds, envir = exec_env2)
+          } else {
+            cands <- env_names2[tolower(env_names2) == ds]
+            if (length(cands) == 1L) obj <- get(cands[1L], envir = exec_env2)
+          }
+          if (is.data.frame(obj)) extracted2[[ds]] <- obj
+        }
+
+        # 重新校验
+        validation2 <- tryCatch(
+          validate_adam_datasets(extracted2, rv$specs, rv$derivation_plan),
+          error = function(e) NULL
+        )
+        attempt_record$validation_status <- validation2$summary$status %||% "error"
+
+        # 收敛检测
+        candidate2 <- .collect_repair_candidates(validation2, rv$repair_state$repairable_checks, rv$specs)
+        converged  <- identical(repair_candidate$signature, candidate2$signature)
+        improved   <- !converged || !candidate2$triggered
+        attempt_record$improved  <- improved
+        attempt_record$signature <- candidate2$signature %||% ""
+        attempt_record$status    <- "completed"
+        rv$repair_state$history[[attempt]] <- attempt_record
+
+        if (!candidate2$triggered) {
+          # 修复成功：所有可修复问题已解决
+          extracted <- extracted2
+          code_str  <- repaired_code
+          rv$original_code <- repaired_code
+          rv$repair_state$accepted_code <- repaired_code
+          updateAceEditor(session, "code_editor", value = repaired_code)
+          rv$adam_datasets <- extracted
+          if ("adsl" %in% names(extracted)) rv$adsl <- extracted[["adsl"]]
+          if ("adae" %in% names(extracted)) rv$adae <- extracted[["adae"]]
+          validation_res <- validation2
+          rv$repair_state$status <- "done"
+          rv$repair_state$final_reason <- "resolved"
+          .append_log(sprintf("\u81ea\u52a8\u4fee\u590d\u6210\u529f\uff08\u7b2c %d \u6b21\u5c1d\u8bd5\uff09", attempt), icon = "\u2714")
+          break
+        }
+
+        if (converged) {
+          # 无进展：签名未变，停止
+          rv$repair_state$final_reason <- "no_progress"
+          .append_log("\u4fee\u590d\u672a\u4ea7\u751f\u8fdb\u5c55\uff08\u95ee\u9898\u7b7e\u540d\u672a\u53d8\uff09\uff0c\u505c\u6b62\u4fee\u590d", icon = "\u26a0")
+          # 仍然采纳改进（可能有部分进展）
+          if (length(extracted2) > 0) {
+            extracted <- extracted2
+            code_str  <- repaired_code
+            rv$original_code <- repaired_code
+            rv$repair_state$accepted_code <- repaired_code
+            updateAceEditor(session, "code_editor", value = repaired_code)
+            rv$adam_datasets <- extracted
+            if ("adsl" %in% names(extracted)) rv$adsl <- extracted[["adsl"]]
+            if ("adae" %in% names(extracted)) rv$adae <- extracted[["adae"]]
+            validation_res <- validation2
+          }
+          break
+        }
+
+        # 有进展但仍有问题 → 继续下一轮
+        .append_log(sprintf(
+          "\u7b2c %d \u6b21\u4fee\u590d\u6709\u8fdb\u5c55\uff08%d \u2192 %d \u4e2a\u95ee\u9898\uff09\uff0c\u7ee7\u7eed...",
+          attempt, nrow(repair_candidate$issues_df), nrow(candidate2$issues_df)
+        ), icon = "\u21bb")
+        repair_current_code <- repaired_code
+        repair_candidate    <- candidate2
+        # 采纳当前进展
+        extracted <- extracted2
+        code_str  <- repaired_code
+        rv$original_code <- repaired_code
+        rv$repair_state$accepted_code <- repaired_code
+        updateAceEditor(session, "code_editor", value = repaired_code)
+        rv$adam_datasets <- extracted
+        if ("adsl" %in% names(extracted)) rv$adsl <- extracted[["adsl"]]
+        if ("adae" %in% names(extracted)) rv$adae <- extracted[["adae"]]
+        validation_res <- validation2
+        rv$repair_state$last_signature <- candidate2$signature
+      }
+
+      # 如果循环因 max_attempts 自然结束
+      if (is.null(rv$repair_state$final_reason)) {
+        rv$repair_state$final_reason <- "max_attempts"
+        .append_log(sprintf("\u5df2\u8fbe\u6700\u5927\u4fee\u590d\u6b21\u6570\uff08%d\uff09", rv$repair_state$max_attempts), icon = "\u26a0")
+      }
+
+      # 设置最终 step 状态
+      rv$step_repair <- switch(rv$repair_state$final_reason,
+        "resolved"    = "done",
+        "no_progress" = "warn",
+        "warn"
+      )
+      if (rv$repair_state$status == "running") {
+        rv$repair_state$status <- if (rv$repair_state$final_reason == "resolved") "done" else "warn"
+      }
+    } else if (!is.null(validation_res)) {
+      # 未触发修复
+      rv$step_repair <- "done"
+      rv$repair_state$status <- "idle"
+      rv$repair_state$final_reason <- "not_needed"
+    }
 
     if (!is.null(validation_res)) {
       rv$validation_result    <- validation_res
@@ -2024,13 +2515,19 @@ server <- function(input, output, session) {
 
   # 流水线进度（[修改 G-附] 新增「解析 Spec」阶段）
   output$pipeline_steps <- renderUI({
+    repair_label <- if (rv$repair_state$attempts > 0L) {
+      sprintf("\u81ea\u52a8\u4fee\u590d(%d/%d)", rv$repair_state$attempts, rv$repair_state$max_attempts)
+    } else {
+      "\u81ea\u52a8\u4fee\u590d"
+    }
     steps <- list(
-      list(label="解析 Spec",  state=rv$step_parse),   # [新增]
-      list(label="加载文件",   state=rv$step_load),
-      list(label="LLM 推理",   state=rv$step_llm),
-      list(label="人工审阅",   state=rv$step_review),
-      list(label="执行代码",   state=rv$step_run),
-      list(label="结果校验",   state=rv$step_validate)
+      list(label="\u89e3\u6790 Spec",  state=rv$step_parse),
+      list(label="\u52a0\u8f7d\u6587\u4ef6",   state=rv$step_load),
+      list(label="LLM \u63a8\u7406",   state=rv$step_llm),
+      list(label="\u4eba\u5de5\u5ba1\u9605",   state=rv$step_review),
+      list(label="\u6267\u884c\u4ee3\u7801",   state=rv$step_run),
+      list(label="\u7ed3\u679c\u6821\u9a8c",   state=rv$step_validate),
+      list(label=repair_label, state=rv$step_repair)
     )
     tagList(lapply(steps, function(s) {
       dot_class <- paste("step-dot", switch(s$state,
@@ -2539,6 +3036,67 @@ server <- function(input, output, session) {
     if (is.null(df) || nrow(df) == 0) return(df)
     lv <- input$filter_validation_level %||% "ALL"
     if (lv != "ALL") df[df$level == lv, , drop = FALSE] else df
+  })
+
+  # ── 修复摘要卡片 ─────────────────────────────────────────────────────────
+  output$repair_summary_card <- renderUI({
+    rs <- rv$repair_state
+    if (rs$status == "idle" || (rs$attempts == 0L && rs$final_reason == "not_needed")) return(NULL)
+
+    status_color <- switch(rs$status,
+      "done"  = "#3fb950",
+      "warn"  = "#d29922",
+      "error" = "#f85149",
+      "#8b949e"
+    )
+    status_label <- switch(rs$status,
+      "done"    = "\u4fee\u590d\u6210\u529f",
+      "warn"    = "\u90e8\u5206\u4fee\u590d",
+      "error"   = "\u4fee\u590d\u5931\u8d25",
+      "running" = "\u4fee\u590d\u4e2d...",
+      "\u672a\u89e6\u53d1"
+    )
+    reason_label <- switch(rs$final_reason %||% "",
+      "resolved"     = "\u6240\u6709\u53ef\u4fee\u590d\u95ee\u9898\u5df2\u89e3\u51b3",
+      "no_progress"  = "\u4fee\u590d\u672a\u4ea7\u751f\u8fdb\u5c55\uff0c\u5df2\u505c\u6b62",
+      "max_attempts" = sprintf("\u5df2\u8fbe\u6700\u5927\u5c1d\u8bd5\u6b21\u6570(%d)", rs$max_attempts),
+      "llm_failed"   = "LLM \u8c03\u7528\u5931\u8d25",
+      "static_failed"= "\u4fee\u590d\u4ee3\u7801\u672a\u901a\u8fc7\u9759\u6001\u68c0\u67e5",
+      "exec_failed"  = "\u4fee\u590d\u4ee3\u7801\u6267\u884c\u5931\u8d25",
+      ""
+    )
+
+    items <- tagList(
+      tags$div(style = paste0("display:inline-block;padding:2px 8px;border-radius:4px;",
+        "background:", status_color, ";color:#fff;font-weight:600;font-size:0.85rem;"),
+        status_label
+      ),
+      tags$span(style="margin-left:0.5rem;color:#8b949e;font-size:0.85rem;",
+        sprintf("\u89e6\u53d1: %s | \u5c1d\u8bd5: %d/%d",
+                rs$trigger %||% "auto", rs$attempts, rs$max_attempts)
+      ),
+      if (nzchar(reason_label)) tags$div(style="margin-top:4px;font-size:0.85rem;color:#8b949e;", reason_label),
+      if (length(rs$last_missing) > 0) tags$div(
+        style = "margin-top:4px;font-size:0.8rem;color:#8b949e;",
+        sprintf("\u7f3a\u5931\u53d8\u91cf: %s%s",
+                paste(head(rs$last_missing, 8), collapse = ", "),
+                if (length(rs$last_missing) > 8) sprintf(" (+%d)", length(rs$last_missing) - 8) else "")
+      ),
+      if (rs$status %in% c("warn", "error")) {
+        actionButton("btn_retry_repair", "\u624b\u52a8\u91cd\u8bd5\u4fee\u590d",
+          class = "btn-sm btn-outline-warning", style = "margin-top:6px;")
+      }
+    )
+
+    div(
+      class = "repair-summary-card",
+      style = paste0("border-left:3px solid ", status_color,
+        ";padding:8px 12px;margin-bottom:0.6rem;border-radius:4px;",
+        "background:var(--bs-tertiary-bg, #161b22);"),
+      tags$div(style = "font-weight:600;font-size:0.9rem;margin-bottom:4px;",
+        "\u81ea\u52a8\u4fee\u590d"),
+      items
+    )
   })
 
   output$validation_overview <- renderUI({

@@ -15,12 +15,36 @@
   unique(trimws(as.character(unlist(x, use.names = FALSE))))
 }
 
+# Known SDTM domain 2-letter codes (CDISC standard)
+.SDTM_DOMAINS <- c(
+  "dm","ex","ae","lb","cm","vs","mh","ds","pr","su",
+  "qs","tu","rs","tr","fa","ho","dd","eg","ie","mb",
+  "mi","ms","pc","pp","sc","sm","sr","ss","ec","ag",
+  "ce","cv","dd","ml","nv","oe","re","rp","ur"
+)
+
+.infer_dataset_role <- function(ds) {
+  ds_lc <- tolower(trimws(ds))
+  # CDISC ADaM 标准数据集角色推断
+  if (ds_lc == "adsl") return("subject-level")
+  if (ds_lc %in% c("adae", "adcm", "admh")) return("event-level")
+  if (ds_lc %in% c("adtte", "adttte")) return("time-to-event")
+  if (ds_lc %in% c("adlb", "advs", "adeg")) return("findings")
+  if (grepl("^ad", ds_lc)) return("analysis")
+  "analysis"
+}
+
 .guess_source_domain <- function(source_text) {
-  txt <- tolower(.nz_chr(source_text, ""))
+  txt <- tolower(trimws(as.character(source_text %||% "")))
   if (!nzchar(txt)) return(NA_character_)
+  # 跨 ADaM 数据集引用
+  adam_refs <- regmatches(txt, gregexpr("\\bad[a-z]{1,4}\\b", txt, perl = TRUE))[[1]]
+  adam_refs <- unique(adam_refs[nchar(adam_refs) >= 4])  # 至少 4 字符避免误匹配
+  if (length(adam_refs) > 0) return(adam_refs[1])
+  # Extract 2-letter tokens and match against known SDTM domain whitelist only
   hits <- regmatches(txt, gregexpr("\\b[a-z]{2}\\b", txt, perl = TRUE))[[1]]
-  hits <- unique(hits)
-  if (length(hits) == 0) return(NA_character_)
+  hits <- intersect(unique(hits), .SDTM_DOMAINS)
+  if (length(hits) == 0) return(NA_character_)  # intra-dataset ADaM or unknown
   hits[1]
 }
 
@@ -48,7 +72,13 @@ build_fallback_derivation_plan <- function(specs, target_datasets = NULL) {
   if (is.null(target_datasets) || length(target_datasets) == 0) {
     target_datasets <- unique(tolower(unlist(lapply(parsed_specs, function(s) s$dataset %||% character(0)))))
   }
-  if (length(target_datasets) == 0) target_datasets <- c("adsl", "adae")
+  if (length(target_datasets) == 0) {
+    warning("[derivation_plan] 未能推断目标数据集，将使用已解析 Spec 中的数据集名。")
+    target_datasets <- unique(tolower(unlist(lapply(parsed_specs, function(s) s$dataset %||% character(0)))))
+    if (length(target_datasets) == 0) {
+      stop("无法推断目标数据集且 Spec 中无 dataset 字段。")
+    }
+  }
 
   datasets <- lapply(target_datasets, function(ds) {
     match_idx <- which(vapply(parsed_specs, function(s) identical(tolower(s$dataset %||% ""), ds), logical(1)))
@@ -58,7 +88,7 @@ build_fallback_derivation_plan <- function(specs, target_datasets = NULL) {
 
     list(
       dataset = ds,
-      dataset_role = if (ds == "adsl") "subject-level" else if (ds == "adae") "event-level" else "analysis",
+      dataset_role = .infer_dataset_role(ds),
       required_inputs = input_domains,
       join_plan = list(),
       variable_plan = variable_plan,

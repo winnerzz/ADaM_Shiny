@@ -255,6 +255,131 @@ flatten_sdtm_profiles <- function(profiles) {
   }))
 }
 
+# =============================================================================
+# ADaM 代码生成辅助函数（供 LLM 生成代码调用，同时注入到 exec_env）
+# 目的：将高频易错模式从 Prompt 责任转移到运行时 API，消除系统性 bug
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# parse_sdtm_date()
+# 说明：SDTM 日期字符串的唯一合法解析入口。
+#       先清除 Excel 前置单引号，再调用 ymd()，空串返回 NA（Date 类型）。
+# 参数：x — 字符型向量（SDTM *DTC 列）
+# 返回：Date 类型向量，NA-safe
+# -----------------------------------------------------------------------------
+parse_sdtm_date <- function(x) {
+  x <- strip_excel_apos(x)
+  x <- ifelse(is.na(x) | trimws(x) == "", NA_character_, x)
+  lubridate::ymd(x, quiet = TRUE)
+}
+
+# -----------------------------------------------------------------------------
+# study_day_chr()
+# 说明：CDISC 研究日的唯一合法计算入口（向量化版 dy_char）。
+#       Study Day = (date - ref) + 1，任一输入为 NA 返回 NA_character_。
+#       两个参数均接受字符型或 Date 类型。
+# 参数：date_chr — 目标日期（字符 YYYY-MM-DD 或 Date）
+#       ref_chr  — 参考日期（字符 YYYY-MM-DD 或 Date）
+# 返回：字符型向量
+# -----------------------------------------------------------------------------
+study_day_chr <- function(date_chr, ref_chr) {
+  d <- if (inherits(date_chr, "Date")) date_chr else parse_sdtm_date(date_chr)
+  r <- if (inherits(ref_chr,  "Date")) ref_chr  else parse_sdtm_date(ref_chr)
+  vapply(seq_along(d), function(i) dy_char(d[i], r[i]), character(1))
+}
+
+# -----------------------------------------------------------------------------
+# map_trt_num()
+# 说明：数据驱动的治疗数值编码，避免硬编码研究特定名称。
+#       按治疗名称的字母序排列，分配 start_at 起始的连续整数；空缺映射到 NA。
+# 重要：调用方必须显式指定 start_at 和 levels_vec 以匹配 Spec 编码约定。
+#       CDISC 常见约定是 Placebo=0（start_at=0L），但不同研究可能不同，
+#       请务必参照具体 Spec 的编码定义来设置参数。
+# 参数：trt_char  — 字符型治疗名称向量
+#       levels_vec — 可选：自定义排序的治疗名称向量；NULL 时自动排序
+#       start_at  — 起始编号（默认 1L）
+# 返回：整数型向量
+# -----------------------------------------------------------------------------
+map_trt_num <- function(trt_char, levels_vec = NULL, start_at = 1L) {
+  if (is.null(levels_vec))
+    levels_vec <- sort(unique(stats::na.omit(trimws(trt_char))))
+  out <- match(trimws(trt_char), levels_vec)
+  ifelse(is.na(out), NA_integer_, as.integer(out) + as.integer(start_at) - 1L)
+}
+
+# -----------------------------------------------------------------------------
+# yn_flag()
+# 说明：通用 Y/N 标志位生成器，NA-safe。
+# 参数：test    — 逻辑型向量
+#       missing — NA 时返回的值，默认 "N"
+# 返回：字符型向量（"Y" / "N" / missing值）
+# -----------------------------------------------------------------------------
+yn_flag <- function(test, missing = "N") {
+  ifelse(is.na(test), missing, ifelse(as.logical(test), "Y", "N"))
+}
+
+# -----------------------------------------------------------------------------
+# first_non_missing_chr()
+# 说明：从多个字符型向量中逐元素取第一个非 NA 非空值。
+#       用于 TRT01A = first_non_missing_chr(ACTARM, ARM) 等 fallback 场景。
+# 参数：... — 任意数量字符型向量（等长）
+# 返回：字符型向量
+# -----------------------------------------------------------------------------
+first_non_missing_chr <- function(...) {
+  xs <- list(...)
+  n  <- max(vapply(xs, length, integer(1)))
+  xs <- lapply(xs, function(x) { length(x) <- n; x })
+  out <- rep(NA_character_, n)
+  for (x in xs) {
+    take <- is.na(out) & !is.na(x) & trimws(x) != ""
+    out[take] <- x[take]
+  }
+  out
+}
+
+# -----------------------------------------------------------------------------
+# derive_trtemfl()
+# 说明：Treatment-Emergent AE 标志位（TRTEMFL）标准推导。
+#       TRTEMFL = "Y" 当且仅当 AE 开始日期 >= 治疗开始日期。
+#       任一关键日期缺失时返回 NA_character_（不做强假设）。
+# 参数：start_chr  — AE 开始日期字符向量（AESTDTC）
+#       end_chr    — AE 结束日期字符向量（可选，用于延续性判断）
+#       trtsdt_chr — 治疗开始日期字符向量（TRTSDT）
+#       trtedt_chr — 治疗结束日期字符向量（可选，TRTEDT）
+# 返回：字符型向量 "Y" / "N" / NA
+# -----------------------------------------------------------------------------
+derive_trtemfl <- function(start_chr, end_chr = NA_character_,
+                           trtsdt_chr, trtedt_chr = NA_character_) {
+  astdt  <- parse_sdtm_date(start_chr)
+  aendt  <- parse_sdtm_date(end_chr)
+  trtsdt <- parse_sdtm_date(trtsdt_chr)
+  trtedt <- parse_sdtm_date(trtedt_chr)
+  out    <- rep(NA_character_, length(astdt))
+  can    <- !is.na(astdt) & !is.na(trtsdt)
+  upper_ok <- is.na(trtedt) | astdt <= trtedt | (!is.na(aendt) & aendt >= trtsdt)
+  out[can]  <- ifelse(astdt[can] >= trtsdt[can] & upper_ok[can], "Y", "N")
+  out
+}
+
+# -----------------------------------------------------------------------------
+# derive_relgr1()
+# 说明：因果关系二元分组（RELGR1）标准推导。
+#       默认将 "RELATED" 和 "POSSIBLY RELATED" 归为 "RELATED"，其余归为 "NOT RELATED"。
+# 参数：x               — 字符型 AEREL 向量
+#       related_values  — 视为相关的原始值（不区分大小写）
+#       yes_label       — 相关组标签
+#       no_label        — 不相关组标签
+# 返回：字符型向量，NA-safe
+# -----------------------------------------------------------------------------
+derive_relgr1 <- function(x,
+                           related_values = c("RELATED", "POSSIBLY RELATED"),
+                           yes_label = "RELATED",
+                           no_label  = "NOT RELATED") {
+  z <- toupper(trimws(x))
+  ifelse(is.na(z) | z == "", NA_character_,
+         ifelse(z %in% toupper(related_values), yes_label, no_label))
+}
+
 # -----------------------------------------------------------------------------
 # 辅助函数：generate_spec_template()
 # 说明：如果尚无 JSON 规格文件，此函数可根据目标数据集名称自动生成一个

@@ -1441,6 +1441,7 @@ ui <- page_sidebar(
             span(class="detail-accordion-meta", "执行后查看结构、质量与 plan 对齐结果")
           ),
           div(class="detail-accordion-body",
+            uiOutput("repair_summary_card"),
             uiOutput("validation_overview"),
             div(style="max-width:160px;margin-left:auto;margin-bottom:0.75rem;margin-top:0.8rem;",
               selectInput("filter_validation_level", NULL,

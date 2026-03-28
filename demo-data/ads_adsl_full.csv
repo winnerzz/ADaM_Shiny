@@ -1,0 +1,28 @@
+Dataset,Variable,Label,Type,Source,Derivation
+ADSL,STUDYID,Study Identifier,Copied,SDTM.DM.STUDYID,Copied from source
+ADSL,USUBJID,Unique Subject Identifier,Copied,SDTM.DM.USUBJID,Copied from source
+ADSL,SUBJID,Subject Identifier for the Study,Copied,SDTM.DM.SUBJID,Copied from source
+ADSL,SITEID,Study Site Identifier,Copied,SDTM.DM.SITEID,Copied from source
+ADSL,COUNTRY,Country,Copied,SDTM.DM.COUNTRY,Copied from source
+ADSL,AGE,Age,Copied,SDTM.DM.AGE,Copied from source
+ADSL,AGEU,Age Units,Copied,SDTM.DM.AGEU,Copied from source
+ADSL,SEX,Sex,Copied,SDTM.DM.SEX,Copied from source
+ADSL,RACE,Race,Copied,SDTM.DM.RACE,Copied from source
+ADSL,ETHNIC,Ethnicity,Copied,SDTM.DM.ETHNIC,Copied from source
+ADSL,TRT01P,Planned Treatment for Period 01,Derived,SDTM.DM.ARM,TRT01P = ARM
+ADSL,TRT01PN,Planned Treatment for Period 01 (N),Derived,,"TRT01PN = numeric code for TRT01P (Placebo=0, Test Drug=1) stored as character"
+ADSL,TRT01A,Actual Treatment for Period 01,Derived,SDTM.DM.ACTARM,TRT01A = ACTARM
+ADSL,TRT01AN,Actual Treatment for Period 01 (N),Derived,,"TRT01AN = numeric code for TRT01A (Placebo=0, Test Drug=1) stored as character"
+ADSL,RANDDT,Randomization/Reference Start Date,Derived,SDTM.DM.RFSTDTC,RANDDT = RFSTDTC (character ISO date)
+ADSL,TRTSDT,Treatment Start Date,Derived,SDTM.DM.RFXSTDTC,TRTSDT = RFXSTDTC (first dose date)
+ADSL,TRTEDT,Treatment End Date,Derived,SDTM.DM.RFXENDTC,TRTEDT = RFXENDTC (last dose date)
+ADSL,TRTEDY,Treatment End Study Day,Derived,,TRTEDY = (TRTEDT - TRTSDT) + 1 (days; character)
+ADSL,EOTDT,End of Treatment Date,Derived,Derived from TRTSDT/TRTEDT,EOTDT = TRTEDT
+ADSL,EOTDY,End of Treatment Study Day,Derived,,EOTDY = (EOTDT - TRTSDT) + 1 (days; character)
+ADSL,EOTSTT,End of Treatment Status,Derived,,EOTSTT = 'COMPLETED' if TRTEDT not missing else 'ONGOING'
+ADSL,EOSDT,End of Study Date,Derived,SDTM.DM.RFENDTC,EOSDT = RFENDTC
+ADSL,EOSSTT,End of Study Status,Derived,,EOSSTT = 'DISCONTINUED' if DTHFL='Y' else 'COMPLETED'
+ADSL,DTHFL,Death Flag,Copied,SDTM.DM.DTHFL,Copied from source
+ADSL,DTHDT,Death Date,Derived,SDTM.DM.DTHDTC,DTHDT = DTHDTC (character ISO date)
+ADSL,SAFFL,Safety Population Flag,Derived,SDTM.EX (record count),SAFFL = 'Y' if subject has >=1 EX record else 'N'
+ADSL,ITTFL,Intent-to-Treat Population Flag,Derived,Study design (all randomized),ITTFL = 'Y' for all randomized subjects (toy study)
