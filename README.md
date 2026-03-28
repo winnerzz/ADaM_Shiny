@@ -1,8 +1,8 @@
 # ADaM_Shiny — 临床数据自动化 ADaM 生成平台
 
-> ⚗️ **当前分支：`experimental-v2`（第二代实验性开发分支）**
+> ⚗️ **当前分支：`experimental-v3`（第三代实验性开发分支）**
 >
-> 本分支在第一代实验分支（`ADaM_Shiny_experimental`）基础上进一步迭代，引入了更灵活的模型配置机制与增强的 UI 默认值管理。代码处于持续迭代状态，可能存在不稳定因素。如需稳定版本，请切换至 `main` 分支。
+> 本分支在第二代实验分支（`experimental-v2`）基础上继续迭代，重点增强了端到端可验证性（`tests/`）、校验后自动修复链路，以及更完整的 Derivation Plan / Spec 一致性处理。代码仍处于实验阶段，如需稳定版本请切换至 `main` 分支。
 
 > 基于 R Shiny + 大语言模型（LLM）的 CDISC ADaM 数据集自动生成工具
 
@@ -10,12 +10,12 @@
 
 ## 实验性分支说明
 
-`experimental-v2` 是继 `ADaM_Shiny_experimental` 之后的第二代实验性扩展分支，主要用于：
+`experimental-v3` 是继 `experimental-v2` 之后的第三代实验性扩展分支，主要用于：
 
-- 🧪 **前沿模型接入**：持续跟进最新 LLM 模型（如 Kimi K2.5），在稳定验证后同步至主分支
-- 🔬 **UI 默认值优化**：将模型默认值的管理从 `llm_api.R` Provider 配置层迁移至 `server.R` 动态响应层，使 UI 模型建议与 Provider 底层配置解耦
-- 🛠️ **兼容性增强**：允许用户在不修改 Provider 配置的情况下，通过 UI 输入框覆盖模型名称
-- 📐 **架构预研**：验证"Provider 配置稳定 + UI 默认值灵活"的分层配置模式，收集反馈后再合入主分支
+- ✅ **端到端回归能力补齐**：新增 `tests/test_e2e_pipeline.R` 与 `tests/test_static_checks.R`，可独立跑通“读入→生成→执行→校验”
+- ♻️ **校验后自动修复增强**：在 `server.R` 中增加基于校验结果提取缺失变量并回灌 LLM 的修复流程（而非仅一次性生成）
+- 🧩 **Plan/Spec 对齐更严格**：`validation_utils.R` 与 `derivation_plan_utils.R` 增强了 plan 覆盖、角色推断与缺失场景兜底
+- 🗂️ **样例数据结构标准化**：新增 `demo-data/` 目录，便于测试脚本和应用共用同一组基准数据
 
 > ⚠️ **注意**：本分支功能尚未经过全面回归测试，不建议在生产/验证环境中直接使用。
 
@@ -25,9 +25,10 @@
 
 ```
 main（稳定版，长期维护）
-  └── ADaM_Shiny_experimental（第一代实验分支，已归档）
-        └── experimental-v2（本分支，第二代实验分支）
-              └── → main（验证稳定后合入主分支）
+  └── ADaM_Shiny_experimental（v1：首次实验化重构）
+        └── experimental-v2（v2：引入验证层与静态检查）
+              └── experimental-v3（本分支：测试与自动修复增强）
+                    └── → main（验证稳定后合入主分支）
 ```
 
 实验分支的定位是"功能孵化器"——在此验证架构变更和新模型后，经过充分回归测试再合并回 `main`。
@@ -36,37 +37,34 @@ main（稳定版，长期维护）
 
 ## 与各分支的主要差异
 
-| 特性 | `main`（稳定版） | `ADaM_Shiny_experimental`（v1 实验） | `experimental-v2`（本分支） |
-|------|-----------------|--------------------------------------|------------------------------|
-| Kimi LLM_PROVIDERS 模型 | `moonshot-v1-8k` | `kimi-k2.5` | `moonshot-v1-8k`（Provider 配置保持稳定） |
-| UI 切换 Provider 时默认填充模型 | `moonshot-v1-8k` | `kimi-k2.5` | **`kimi-k2.5`**（由 `server.R` 动态注入） |
-| 模型默认值管理层 | `llm_api.R` | `llm_api.R` | **`server.R`**（解耦 UI 默认与 Provider 配置） |
-| 分支状态 | 稳定，已验证 | 实验性，已归档 | 实验性，持续迭代 |
+| 维度 | `main`（稳定版） | `ADaM_Shiny_experimental`（v1 实验） | `experimental-v2`（v2 实验） | `experimental-v3`（本分支） |
+|------|-----------------|--------------------------------------|-------------------------------|------------------------------|
+| Spec 解析流程 | 直接读入后进入生成 | 新增启发式列名识别 + 解析确认 Modal | 完整多文件解析状态机（`step_parse` / `spec_confirmed`） | 延续 v2，并允许解析阶段使用当前会话模型/API Key 辅助识别 |
+| 生成前质量闸门 | 基本输入检查 | 有基础前置检查 | 新增 `run_code_static_checks()` + Derivation Plan 对齐检查 | 在 v2 基础上继续强化，校验结果可触发自动修复循环 |
+| 执行与隔离 | 共享执行环境，按 ADSL→ADAE 顺序 | 改为更严格隔离环境（`baseenv()` + 预注入函数） | 延续隔离执行，并引入阶段化流水线状态追踪 | 延续并增强“生成→校验→修复→再校验”闭环 |
+| 结果校验能力 | 以预览为主 | 初步增强 | 引入 `validation_utils.R`（结构、主键、日期、Plan 覆盖） | 校验逻辑进一步细化（Plan 映射收集、更明确的缺失/额外变量语义） |
+| 自动化测试 | 无 | 无 | 无（以手工验证为主） | **新增 `tests/`：E2E 管线测试 + 静态检查测试** |
+| 示例数据组织 | `demo/` | 部分分支未保留完整 demo | 主要依赖交互上传 | **新增 `demo-data/` 用于脚本化回归与可复现实验** |
+| 分支状态 | 稳定，已验证 | 实验性，已归档 | 实验性，持续迭代 | 实验性，面向合并前验证 |
 
-### 核心架构变化说明
+### 核心架构变化说明（重点不是仅 LLM API）
 
-**v1 实验分支**的做法是直接修改 `llm_api.R` 中 `LLM_PROVIDERS` 的 `model` 字段，但这会使 Provider 底层配置与 UI 展示逻辑耦合，不利于后续维护。
+分支功能演进的关键在于“**生成前后控制链路**”不断补齐，而不只是 Provider 调用方式变化：
 
-**experimental-v2** 将 UI 模型默认值移至 `server.R` 的 `observeEvent(input$llm_provider)` 回调中集中管理：
+1. **main**：上传 → 生成 → 执行 → 预览（流程最短，闸门最少）
+2. **v1 (`ADaM_Shiny_experimental`)**：加入 Spec 解析识别与确认环节，避免“列名猜错直接入模”
+3. **v2 (`experimental-v2`)**：加入静态检查、Derivation Plan 规范化、输出校验，形成“可解释可追踪”的中间层
+4. **v3 (`experimental-v3`)**：在 v2 基础上补齐自动化测试和“校验失败→自动修复→再校验”闭环，提高回归稳定性
 
 ```r
-# server.R — 切换 Provider 时自动更新 UI 模型输入框（实际代码）
-observeEvent(input$llm_provider, {
-  defaults <- list(
-    kimi     = "kimi-k2.5",    # UI 建议值，可被用户覆盖
-    deepseek = "deepseek-chat",
-    openai   = "gpt-4",
-    qwen     = "qwen-plus"
-  )
-  val <- defaults[[input$llm_provider]]
-  updateTextInput(session, "model_name",
-                  value = if (is.null(val)) "" else val)
-})
+# experimental-v3（server.R）示意：从校验结果中抽取可修复问题并驱动修复轮次
+repair <- .collect_repair_candidates(validation_res, repairable_checks, specs)
+if (isTRUE(repair$triggered)) {
+  # 构造修复提示并回灌 LLM，随后重新执行与校验
+}
 ```
 
-> 注：以上为 `server.R` 的实际代码。`defaults` 列表仅在用户切换 Provider 时才会执行，开销可忽略不计。
-
-这样 `llm_api.R` 中的 `LLM_PROVIDERS$model` 作为"回退默认值"保持稳定，而 UI 展示的默认模型名称则由 `server.R` 灵活控制，两者职责分离。
+> 上述差异均来自跨分支代码行为对比（`server.R` / `validation_utils.R` / `derivation_plan_utils.R` / `code_static_checks.R` / `tests/`），而非仅模型路由配置。
 
 ---
 
@@ -94,13 +92,18 @@ observeEvent(input$llm_provider, {
 
 ```
 ADaM_Shiny/
-├── app.R           # 入口文件：安装依赖、加载模块、启动 Shiny 应用
-├── ui.R            # UI 定义（bslib 页面布局，侧边栏 + 多 Tab 主面板）
-├── server.R        # 服务器逻辑（响应式状态管理、LLM 调用流水线、代码执行）
-│                   #   ↑ experimental-v2 新增：在此集中管理 UI 模型默认值
-├── llm_api.R       # LLM API 路由模块（多 Provider 支持，OpenAI 兼容格式）
-├── data_utils.R    # 数据工具函数（SDTM 加载、Spec 解析、Study Day 计算等）
-└── demo/           # 示例数据
+├── app.R                   # 入口文件：安装依赖、加载模块、启动 Shiny 应用
+├── ui.R                    # UI 定义（解析状态、流水线状态、结果展示）
+├── server.R                # 服务端主流程（解析→生成→静态检查→执行→校验→修复）
+├── llm_api.R               # LLM 路由与故障转移链
+├── provider_registry.R     # Provider 配置注册表（含本地/云端提供商）
+├── data_utils.R            # 数据工具函数（SDTM 读取、域推断、摘要）
+├── code_static_checks.R    # 代码静态检查
+├── validation_utils.R      # 输出数据集质量校验
+├── derivation_plan_utils.R # Derivation Plan 标准化与一致性检查
+├── domain_registry.R       # SDTM 域注册及分组
+├── demo-data/              # v3 示例数据（供测试脚本/回归复现）
+└── tests/                  # v3 新增测试脚本（E2E + 静态检查）
     ├── dm.csv              # SDTM DM 域示例
     ├── ex.csv              # SDTM EX 域示例
     ├── ae.csv              # SDTM AE 域示例
@@ -147,7 +150,7 @@ Rscript app.R
 
 ## 支持的 LLM 提供商
 
-| 提供商 | 标识符 | experimental-v2 UI 默认模型 | Provider 配置回退模型 |
+| 提供商 | 标识符 | experimental-v3 UI 默认模型 | Provider 配置回退模型 |
 |--------|--------|----------------------------|----------------------|
 | Kimi (Moonshot AI) | `kimi` | `kimi-k2.5` ⚗️ | `moonshot-v1-8k` |
 | DeepSeek | `deepseek` | `deepseek-chat` | `deepseek-chat` |
@@ -164,26 +167,28 @@ Rscript app.R
 
 ### 1. 分层模型默认值管理
 
-`experimental-v2` 的核心架构改进在于将模型默认值管理分为两层：
+`experimental-v3` 继承了 v2 的“分层默认值”设计，同时将重点放在“可验证、可回归、可修复”的工程链路：
 
 | 层级 | 文件 | 职责 | 修改场景 |
 |------|------|------|---------|
 | **UI 展示层** | `server.R` | 控制 Provider 切换时界面显示的推荐模型名 | 更换推荐模型、A/B 测试不同模型 |
 | **Provider 配置层** | `llm_api.R` | 作为 API 请求的回退默认值，保持稳定 | 新增/删除 Provider |
+| **质量控制层** | `code_static_checks.R` + `validation_utils.R` | 生成前后风险识别与质量判定 | 增加规则、降低执行风险 |
+| **回归保障层** | `tests/` | E2E + 静态检查脚本化验证 | 分支合并前回归 |
 
 这种解耦使得：
 - 可以在不修改 `llm_api.R` 的情况下，随时调整 UI 推荐的模型名称
 - Provider 的 API 端点配置保持稳定，降低引入 API 兼容性问题的风险
 
-### 2. Kimi K2.5 推荐接入
+### 2. 自动修复与回归测试增强
 
-本分支将 Kimi 的 UI 推荐模型从 `moonshot-v1-8k` 更新为 **`kimi-k2.5`**。
+除模型推荐值策略外，v3 更关键的是把“失败后怎么办”系统化：
 
-**背景**：Kimi K2.5 是 Moonshot AI 发布的新一代大语言模型，在代码生成、逻辑推理方面相比 `moonshot-v1-8k` 有显著提升，预期可以生成更高质量的 ADaM R 转化代码。
+- 当校验发现缺失变量/Plan 覆盖问题时，可提取问题签名并驱动下一轮修复生成
+- 新增 `tests/test_e2e_pipeline.R`，可在 Mock 或真实 API 模式下复现实验流程
+- 新增 `tests/test_static_checks.R`，用于验证静态检查器对高风险模式的识别
 
-**启用方式**：在"AI 引擎配置"面板中选择 **Kimi (Moonshot AI)**，模型名称栏默认已填入 `kimi-k2.5`，直接输入 API Key 即可使用。
-
-**如需切换回旧模型**：在模型名称输入框中手动将 `kimi-k2.5` 改为 `moonshot-v1-8k` 或其他 Kimi 支持的模型名称。
+这部分能力直接影响“能否稳定回归”，也是 v3 与前序分支最核心的差异。
 
 ---
 
@@ -191,8 +196,8 @@ Rscript app.R
 
 如果你希望在本实验分支基础上贡献新功能或模型适配，请：
 
-1. 基于 `experimental-v2` 分支创建你的功能分支
-2. **新增 Provider**：在 `llm_api.R` 的 `LLM_PROVIDERS` 列表中添加新条目（需兼容 OpenAI Chat Completion API 格式），并在 `server.R` 的 `defaults` 列表中添加对应 UI 默认模型名称，以及在 `ui.R` 的 `selectInput` 中添加显示名称与标识符
+1. 基于 `experimental-v3` 分支创建你的功能分支
+2. **新增 Provider**：在 `provider_registry.R` 注册 Provider 配置，并在 `llm_api.R` 路由逻辑中确认兼容（如 OpenAI-compatible 或 Anthropic 格式）；同时在 `ui.R` 的模型选项与 `server.R` 的默认映射中补齐对应项
 3. **调整模型推荐值**：直接修改 `server.R` 中 `defaults` 列表对应的模型名称，无需改动 `llm_api.R`
 4. 通过 Pull Request 提交，并附上实验结果与测试截图
 
