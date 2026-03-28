@@ -13,7 +13,7 @@
 `experimental-v3` 是继 `experimental-v2` 之后的第三代实验性扩展分支，主要用于：
 
 - ✅ **端到端回归能力补齐**：新增 `tests/test_e2e_pipeline.R` 与 `tests/test_static_checks.R`，可独立跑通“读入→生成→执行→校验”
-- ♻️ **校验后自动修复增强**：在 `server.R` 中增加基于校验结果提取缺失变量并回灌 LLM 的修复流程（而非仅一次性生成）
+- ♻️ **校验后自动修复增强**：在 `server.R` 中增加基于校验结果提取缺失变量并回灌 LLM 的修复流程（带轮次/收敛终止条件，而非无限循环）
 - 🧩 **Plan/Spec 对齐更严格**：`validation_utils.R` 与 `derivation_plan_utils.R` 增强了 plan 覆盖、角色推断与缺失场景兜底
 - 🗂️ **样例数据结构标准化**：新增 `demo-data/` 目录，便于测试脚本和应用共用同一组基准数据
 
@@ -39,15 +39,15 @@ main（稳定版，长期维护）
 
 | 维度 | `main`（稳定版） | `ADaM_Shiny_experimental`（v1 实验） | `experimental-v2`（v2 实验） | `experimental-v3`（本分支） |
 |------|-----------------|--------------------------------------|-------------------------------|------------------------------|
-| Spec 解析流程 | 直接读入后进入生成 | 新增启发式列名识别 + 解析确认 Modal | 完整多文件解析状态机（`step_parse` / `spec_confirmed`） | 延续 v2，并允许解析阶段使用当前会话模型/API Key 辅助识别 |
-| 生成前质量闸门 | 基本输入检查 | 有基础前置检查 | 新增 `run_code_static_checks()` + Derivation Plan 对齐检查 | 在 v2 基础上继续强化，校验结果可触发自动修复循环 |
+| Spec 解析流程 | 直接读入后进入生成 | 新增启发式列名识别 + 解析确认 Modal | 完整多文件解析状态机（`step_parse` / `spec_confirmed`） | 延续 v2，并增加会话级 LLM 辅助字段映射 |
+| 生成前质量闸门 | 基本输入检查 | 基础参数与输入完整性检查 | 新增 `run_code_static_checks()` + Derivation Plan 对齐检查 | 在 v2 基础上继续强化，校验结果可触发自动修复循环 |
 | 执行与隔离 | 共享执行环境，按 ADSL→ADAE 顺序 | 改为更严格隔离环境（`baseenv()` + 预注入函数） | 延续隔离执行，并引入阶段化流水线状态追踪 | 延续并增强“生成→校验→修复→再校验”闭环 |
 | 结果校验能力 | 以预览为主 | 初步增强 | 引入 `validation_utils.R`（结构、主键、日期、Plan 覆盖） | 校验逻辑进一步细化（Plan 映射收集、更明确的缺失/额外变量语义） |
 | 自动化测试 | 无 | 无 | 无（以手工验证为主） | **新增 `tests/`：E2E 管线测试 + 静态检查测试** |
 | 示例数据组织 | `demo/` | 部分分支未保留完整 demo | 主要依赖交互上传 | **新增 `demo-data/` 用于脚本化回归与可复现实验** |
 | 分支状态 | 稳定，已验证 | 实验性，已归档 | 实验性，持续迭代 | 实验性，面向合并前验证 |
 
-### 核心架构变化说明（重点不是仅 LLM API）
+### 核心架构变化说明
 
 分支功能演进的关键在于“**生成前后控制链路**”不断补齐，而不只是 Provider 调用方式变化：
 
@@ -57,10 +57,10 @@ main（稳定版，长期维护）
 4. **v3 (`experimental-v3`)**：在 v2 基础上补齐自动化测试和“校验失败→自动修复→再校验”闭环，提高回归稳定性
 
 ```r
-# experimental-v3（server.R）示意：从校验结果中抽取可修复问题并驱动修复轮次
+# experimental-v3（server.R）伪代码示意：从校验结果中抽取可修复问题并驱动修复轮次
 repair <- .collect_repair_candidates(validation_res, repairable_checks, specs)
 if (isTRUE(repair$triggered)) {
-  # 构造修复提示并回灌 LLM，随后重新执行与校验
+  # 构造修复提示并回灌 LLM，随后重新执行与校验（达到最大修复轮次或问题签名不再变化时终止）
 }
 ```
 
@@ -103,12 +103,12 @@ ADaM_Shiny/
 ├── derivation_plan_utils.R # Derivation Plan 标准化与一致性检查
 ├── domain_registry.R       # SDTM 域注册及分组
 ├── demo-data/              # v3 示例数据（供测试脚本/回归复现）
+│   ├── dm.csv              # SDTM DM 域示例
+│   ├── ex.csv              # SDTM EX 域示例
+│   ├── ae.csv              # SDTM AE 域示例
+│   ├── ads_adsl_full.csv   # ADSL Specification 示例
+│   └── ads_adae_full.csv   # ADAE Specification 示例
 └── tests/                  # v3 新增测试脚本（E2E + 静态检查）
-    ├── dm.csv              # SDTM DM 域示例
-    ├── ex.csv              # SDTM EX 域示例
-    ├── ae.csv              # SDTM AE 域示例
-    ├── ads_adsl_full.csv   # ADSL Specification 示例
-    └── ads_adae_full.csv   # ADAE Specification 示例
 ```
 
 ---
@@ -144,7 +144,7 @@ Rscript app.R
 4. **生成数据集**：点击"🚀 生成 ADaM 与代码"按钮，等待 LLM 生成并执行 R 代码
 5. **预览与下载**：在主面板的各 Tab 中查看生成的代码、执行日志、数据集预览，并下载结果文件
 
-> 💡 **提示**：`demo/` 目录中提供了完整的示例数据，可直接用于快速体验。
+> 💡 **提示**：`experimental-v3` 使用 `demo-data/` 目录作为示例数据；`main` 分支仍使用 `demo/`。切换分支时请同步调整示例数据路径。
 
 ---
 
