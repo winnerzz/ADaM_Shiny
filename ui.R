@@ -29,9 +29,14 @@ adam_theme <- bs_theme(
   info          = "#58a6ff",
   border_radius = "6px",
   font_scale    = 0.95,
-  base_font    = font_google("DM Sans",        wght = "300;400;500;600"),
-  heading_font = font_google("Syne",           wght = "600;700;800"),
-  code_font    = font_google("JetBrains Mono", wght = "400;500")
+  # [VPS 部署] 移除 font_google()：Google Fonts CDN 在中国大陆不可达，改用系统字体
+  # 如需恢复原始字体，可在有 Google 网络的环境取消注释：
+  # base_font    = font_google("DM Sans",        wght = "300;400;500;600"),
+  # heading_font = font_google("Syne",           wght = "600;700;800"),
+  # code_font    = font_google("JetBrains Mono", wght = "400;500")
+  base_font    = font_collection("system-ui", "-apple-system", "Segoe UI", "sans-serif"),
+  heading_font = font_collection("system-ui", "-apple-system", "Segoe UI", "sans-serif"),
+  code_font    = font_collection("ui-monospace", "Consolas", "monospace")
 ) |>
   bs_add_rules("
     body { letter-spacing: 0.01em; background-color: #0d1117; }
