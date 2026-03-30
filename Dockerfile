@@ -20,22 +20,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
-# 安装 renv，用于恢复精确的 R 包版本
+# 独立高优先级 R 库路径
+#
+# rocker/shiny:4.3 基础镜像预装了旧版包（如 rlang 1.1.3），与 renv.lock 要求
+# 的版本（rlang 1.1.7）冲突，导致 readr 等包加载时报 namespace 版本错误。
+#
+# 解决方案：将 renv.lock 中的包安装到独立目录 /srv/R_libs，并通过
+# R_LIBS_USER 环境变量让 R 在所有其他路径之前搜索该目录。这样 renv.lock
+# 的精确版本始终优先于基础镜像预装包。
 # =============================================================================
-RUN R -e "install.packages('renv', repos = 'https://cloud.r-project.org')"
+ENV R_LIBS_USER=/srv/R_libs
+
+RUN mkdir -p /srv/R_libs \
+    && R -e "install.packages('renv', repos = 'https://cloud.r-project.org', lib = '/srv/R_libs')"
 
 # =============================================================================
 # 利用 Docker 层缓存：先只复制 lockfile，renv::restore() 后再复制其余代码
-# 这样只有在 renv.lock 变化时才重新安装包（避免每次代码改动都重装）
 # =============================================================================
 WORKDIR /srv/shiny-server/adam
 
 COPY renv.lock .
 
-# 将所有包安装到系统 R library（/usr/local/lib/R/library）
-# 避免 renv 项目级 library 在 Shiny Server 启动时未激活导致包找不到
 RUN R -e "renv::restore(prompt = FALSE, \
-      library = '/usr/local/lib/R/library', \
+      library = '/srv/R_libs', \
       repos   = c(CRAN = 'https://cloud.r-project.org'))"
 
 # =============================================================================
