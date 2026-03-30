@@ -32,7 +32,11 @@ WORKDIR /srv/shiny-server/adam
 
 COPY renv.lock .
 
-RUN R -e "renv::restore(prompt = FALSE, repos = c(CRAN = 'https://cloud.r-project.org'))"
+# 将所有包安装到系统 R library（/usr/local/lib/R/library）
+# 避免 renv 项目级 library 在 Shiny Server 启动时未激活导致包找不到
+RUN R -e "renv::restore(prompt = FALSE, \
+      library = '/usr/local/lib/R/library', \
+      repos   = c(CRAN = 'https://cloud.r-project.org'))"
 
 # =============================================================================
 # 复制应用代码（在包安装完成后，最大化缓存命中）
