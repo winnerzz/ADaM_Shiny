@@ -32,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV R_LIBS_USER=/srv/R_libs
 
 RUN mkdir -p /srv/R_libs \
-    && R -e "install.packages('renv', repos = 'https://cloud.r-project.org', lib = '/srv/R_libs')"
+    && R -e "install.packages('renv', repos = 'https://cloud.r-project.org', lib = '/srv/R_libs')" \
+    && echo '.libPaths(c("/srv/R_libs", .libPaths()))' >> /etc/R/Rprofile.site
 
 # =============================================================================
 # 利用 Docker 层缓存：先只复制 lockfile，renv::restore() 后再复制其余代码
