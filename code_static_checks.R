@@ -40,7 +40,10 @@ run_code_static_checks <- function(code_str,
     list("危险调用", "(?i)\\b(system|shell|shell\\.exec)\\s*\\(", "移除系统命令调用。"),
     list("文件写入", "(?i)\\b(write\\.(csv|table)|saveRDS|save|sink)\\s*\\(", "移除文件写入或重定向行为。"),
     list("外部脚本", "(?i)\\bsource\\s*\\(", "避免在生成代码中再 source 外部脚本。"),
-    list("安装依赖", "(?i)\\binstall\\.packages\\s*\\(", "依赖应由应用环境预装，不在生成代码中安装。")
+    list("安装依赖", "(?i)\\binstall\\.packages\\s*\\(", "依赖应由应用环境预装，不在生成代码中安装。"),
+    # VPS 部署安全加固：检测网络访问调用（已在沙箱中屏蔽，此处提前告警）
+    list("网络访问", "(?i)\\b(httr2|curl|request|req_perform|download\\.file|GET|POST)\\s*[:(]", "代码执行环境中禁止网络访问，请移除相关调用。"),
+    list("环境变量读取", "(?i)\\bSys\\.getenv\\s*\\(", "代码执行环境中禁止读取环境变量（可能包含 API Key），请移除。")
   )
   for (rule in banned_patterns) {
     if (grepl(rule[[2]], code_str, perl = TRUE)) {

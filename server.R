@@ -2132,6 +2132,34 @@ server <- function(input, output, session) {
     exec_parent$require          <- function(...) invisible(TRUE)
     assign("install.packages", function(...) invisible(NULL), envir = exec_parent)
 
+    # ── 加强沙箱隔离（VPS 部署安全加固）──────────────────────────────────────────
+    # 屏蔽网络访问：防止生成代码向外部服务器发送数据或读取资源
+    local({
+      .block_net <- function(...) stop("\u5B89\u5168\u5C4F\u853D\uFF1A\u4EE3\u7801\u6267\u884C\u73AF\u5883\u4E2D\u7981\u6B62\u7F51\u7EDC\u8BBF\u95EE")
+      assign("request",        .block_net, envir = exec_parent)
+      assign("req_perform",    .block_net, envir = exec_parent)
+      assign("req_get",        .block_net, envir = exec_parent)
+      assign("GET",            .block_net, envir = exec_parent)
+      assign("POST",           .block_net, envir = exec_parent)
+      assign("download.file",  .block_net, envir = exec_parent)
+      assign("url",            .block_net, envir = exec_parent)
+    })
+    # 屏蔽文件系统写入：防止生成代码覆盖服务器文件（stop 而非静默，便于排障）
+    .block_write <- function(...) stop("\u5B89\u5168\u5C4F\u853D\uFF1A\u4EE3\u7801\u6267\u884C\u73AF\u5883\u4E2D\u7981\u6B62\u6587\u4EF6\u5199\u5165")
+    exec_parent$write.csv  <- .block_write
+    exec_parent$write_csv  <- .block_write
+    exec_parent$saveRDS    <- .block_write
+    exec_parent$save       <- .block_write
+    exec_parent$sink       <- .block_write
+    # 屏蔽环境变量访问：防止生成代码读取服务器 API Key 等敏感信息
+    exec_parent$Sys.getenv <- function(...) ""
+    exec_parent$Sys.setenv <- function(...) invisible(FALSE)
+    # 注：上述屏蔽仅对未加命名空间的符号有效（如 write.csv(...)）。
+    # 通过 base::Sys.getenv()、utils::download.file() 等显式命名空间调用可绕过。
+    # 已在 code_static_checks.R 中加入静态检查规则作为补充防线。
+    # 该沙箱适用于内部受信任用户场景，不能视为对匿名用户的完整安全边界。
+    # ── 沙箱加固结束 ──────────────────────────────────────────────────────────────
+
     # exec_env：生成代码在此运行；SDTM 数据也注入到此层（隔离于函数层）
     exec_env <- new.env(parent = exec_parent, hash = TRUE)
     # [S-5] 动态注入所有已加载的 SDTM 域

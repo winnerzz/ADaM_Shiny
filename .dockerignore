@@ -1,0 +1,18 @@
+# Git
+.git
+.gitignore
+
+# rsconnect 部署元数据（shinyapps.io 配置，VPS 不需要）
+rsconnect/
+
+# 开发工具
+.claude/
+*.Rproj
+.Rproj.user/
+
+# 编辑器缓存
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

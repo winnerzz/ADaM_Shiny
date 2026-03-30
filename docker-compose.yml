@@ -1,0 +1,54 @@
+version: "3.9"
+
+# =============================================================================
+# ADaM Builder — Docker Compose 部署配置
+# 使用方式：
+#   docker compose build        # 构建镜像（首次或代码更新后）
+#   docker compose up -d        # 后台启动
+#   docker compose logs -f      # 查看实时日志
+#   docker compose down         # 停止
+# =============================================================================
+
+services:
+  shiny:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adam-builder:latest
+    container_name: adam-builder
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:3838:3838"  # 只暴露到本机，由 Nginx 反代转发；禁止直接对外
+
+    environment:
+      # API Key 由用户在 UI 中自行输入，此处保留占位注释。
+      # 如需统一配置服务器级别的默认 Key，取消以下注释：
+      # OPENAI_API_KEY: ""
+      # ANTHROPIC_API_KEY: ""
+      # DEEPSEEK_API_KEY: ""
+
+      # R 语言区域设置
+      LANG: "en_US.UTF-8"
+      LC_ALL: "en_US.UTF-8"
+
+    volumes:
+      # 持久化 Shiny Server 日志（容器重启后保留）
+      - shiny_logs:/var/log/shiny-server
+
+    # 资源限制（根据 VPS 规格调整）
+    # 单个会话"生成代码"时最多：1 主进程 + 2 parallel workers
+    # 推荐：4 核 CPU + 8GB 内存（支持 2-3 个并发用户）
+    mem_limit: 6g
+    cpus: "2.0"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3838"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # R 包加载需要一点时间
+
+volumes:
+  shiny_logs:
+    driver: local

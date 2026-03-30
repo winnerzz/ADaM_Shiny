@@ -46,20 +46,12 @@ missing_pkgs <- required_packages[
   !sapply(required_packages, requireNamespace, quietly = TRUE)
 ]
 
-# 如有缺失，批量安装
-if (length(missing_pkgs) > 0) {
-  message("═══════════════════════════════════════════════")
-  message("  正在安装缺失的 R 包，首次运行可能需要几分钟...")
-  message("  待安装：", paste(missing_pkgs, collapse = ", "))
-  message("═══════════════════════════════════════════════")
-  install.packages(
-    missing_pkgs,
-    repos     = "https://cran.rstudio.com/",
-    quiet     = TRUE,
-    dependencies = TRUE   # 同时安装依赖包
-  )
-  message("  包安装完成 ✔")
-}
+# [VPS 部署注意] 包安装由 Dockerfile 中 renv::restore() 完成，启动时不再自动安装。
+# 如本地开发环境缺包，请手动执行 renv::restore() 或取消注释以下代码块：
+# if (length(missing_pkgs) > 0) {
+#   install.packages(missing_pkgs, repos = "https://cran.rstudio.com/",
+#                    quiet = TRUE, dependencies = TRUE)
+# }
 
 # 加载所有包（suppressPackageStartupMessages 屏蔽启动信息，保持控制台整洁）
 invisible(
@@ -129,8 +121,7 @@ shinyApp(
 
   # options：控制应用行为
   options = list(
-    host        = "127.0.0.1",  # 仅本机访问（开发阶段）；部署时改为 "0.0.0.0"
-    port        = 3838,         # 固定端口，便于书签收藏；也可删除此行让 Shiny 自动分配
-    launch.browser = TRUE       # 自动在默认浏览器中打开
+    host = "0.0.0.0",  # 绑定所有网络接口（VPS/Docker 部署必须）
+    port = 3838         # 固定端口，与 Dockerfile EXPOSE 及 Nginx 反代保持一致
   )
 )
