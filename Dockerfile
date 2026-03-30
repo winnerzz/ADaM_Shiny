@@ -20,31 +20,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
-# 独立高优先级 R 库路径
-#
-# rocker/shiny:4.3 基础镜像预装了旧版包（如 rlang 1.1.3），与 renv.lock 要求
-# 的版本（rlang 1.1.7）冲突，导致 readr 等包加载时报 namespace 版本错误。
-#
-# 解决方案：将 renv.lock 中的包安装到独立目录 /srv/R_libs，并通过
-# R_LIBS_USER 环境变量让 R 在所有其他路径之前搜索该目录。这样 renv.lock
-# 的精确版本始终优先于基础镜像预装包。
+# 安装 renv
 # =============================================================================
-ENV R_LIBS_USER=/srv/R_libs
-
-RUN mkdir -p /srv/R_libs \
-    && R -e "install.packages('renv', repos = 'https://cloud.r-project.org', lib = '/srv/R_libs')" \
-    && echo '.libPaths(c("/srv/R_libs", .libPaths()))' >> /etc/R/Rprofile.site
+RUN R -q -e "install.packages('renv', repos = 'https://cloud.r-project.org')"
 
 # =============================================================================
-# 利用 Docker 层缓存：先只复制 lockfile，renv::restore() 后再复制其余代码
+# 将 renv.lock 中所有包直接安装到 site-library（第一优先级）
+#
+# rocker/shiny:4.3 基础镜像在 site-library 预装了旧版包（如 rlang 1.1.3），
+# 与 renv.lock 要求的版本冲突。
+#
+# 解决方案：直接 restore 到 /usr/local/lib/R/site-library，覆盖旧版本。
+# site-library 本来就是 .libPaths()[1]，无需依赖 R_LIBS_USER 或 Rprofile.site。
 # =============================================================================
 WORKDIR /srv/shiny-server/adam
 
 COPY renv.lock .
 
-RUN R -e "renv::restore(prompt = FALSE, \
-      library = '/srv/R_libs', \
-      repos   = c(CRAN = 'https://cloud.r-project.org'))"
+RUN R -q -e "renv::consent(provided = TRUE); \
+      renv::restore( \
+        prompt  = FALSE, \
+        library = '/usr/local/lib/R/site-library', \
+        repos   = c(CRAN = 'https://cloud.r-project.org') \
+      )" \
+ && R -q -e "stopifnot(as.character(packageVersion('rlang')) == '1.1.7')"
 
 # =============================================================================
 # 复制应用代码（在包安装完成后，最大化缓存命中）
