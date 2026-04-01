@@ -13,25 +13,6 @@
 
 auth_server <- function(input, output, session, current_user) {
 
-  # ── 切换登录 / 注册面板 ──────────────────────────────────────────────────────
-  observeEvent(input$auth_panel_switch, {
-    if (input$auth_panel_switch == "register") {
-      shinyjs::hide("auth-panel-login")
-      shinyjs::show("auth-panel-register")
-      shinyjs::hide("auth-switch-to-register")
-      shinyjs::show("auth-switch-to-login")
-      # 清空登录错误提示
-      output$auth_login_msg <- renderUI(NULL)
-    } else {
-      shinyjs::show("auth-panel-login")
-      shinyjs::hide("auth-panel-register")
-      shinyjs::show("auth-switch-to-register")
-      shinyjs::hide("auth-switch-to-login")
-      # 清空注册错误提示
-      output$auth_reg_msg <- renderUI(NULL)
-    }
-  }, ignoreInit = TRUE)
-
   # ── 登录处理 ─────────────────────────────────────────────────────────────────
   output$auth_login_msg <- renderUI(NULL)
 
@@ -115,14 +96,9 @@ auth_server <- function(input, output, session, current_user) {
   # ── 登出处理 ─────────────────────────────────────────────────────────────────
   observeEvent(input$btn_logout, {
     current_user(NULL)
-    # 清空表单
+    # 清空表单（modal 重新弹出时也会重置，此处做双重保障）
     updateTextInput(session, "auth_username", value = "")
     updateTextInput(session, "auth_password", value = "")
-    # 重置为登录面板
-    shinyjs::show("auth-panel-login")
-    shinyjs::hide("auth-panel-register")
-    shinyjs::show("auth-switch-to-register")
-    shinyjs::hide("auth-switch-to-login")
     output$auth_login_msg <- renderUI(NULL)
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 

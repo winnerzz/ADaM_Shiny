@@ -1884,6 +1884,9 @@ server <- function(input, output, session) {
   })
 
   observeEvent(list(input$btn_open_ai_settings, input$btn_open_ai_settings_inline), {
+    # 只在按钮真正被点击（值 > 0）时弹出，避免 tab 初始化时 NULL→0 误触发
+    req(max(input$btn_open_ai_settings %||% 0L,
+            input$btn_open_ai_settings_inline %||% 0L) > 0)
     showModal(
       modalDialog(
         title = tagList(bs_icon("sliders", size = "0.9rem", color = "#2dd4bf"), " AI 模型与接口设置"),
