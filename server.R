@@ -837,6 +837,15 @@ server <- function(input, output, session) {
   # 启动认证服务（登录/注册/登出 观察者均在此注册）
   auth_server(input, output, session, current_user)
 
+  # 主内容区：未登录显示登录面板，登录后显示主 Tabs
+  output$main_content_area <- renderUI({
+    if (is.null(current_user())) {
+      auth_login_panel_ui()
+    } else {
+      main_tabs_ui()
+    }
+  })
+
   # ===========================================================================
   # 响应式状态池
   # ===========================================================================
