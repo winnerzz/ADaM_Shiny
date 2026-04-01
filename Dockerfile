@@ -71,12 +71,15 @@ RUN chown -R shiny:shiny /srv/shiny-server/adam \
     && mkdir -p /var/log/shiny-server \
     && chown -R shiny:shiny /var/log/shiny-server
 
+# 启动时修正 named volume 的属主，避免 auth/users.db 初始化阶段因权限问题断开
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
+
 # 覆盖默认 Shiny Server 配置，适配单应用 + 长超时场景
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
 EXPOSE 3838
 
-# 由 root 启动 shiny-server，再按 shiny-server.conf 中的 run_as shiny
-# 派生应用进程。这样对挂载卷的权限兼容性更好，避免会话初始化时因
-# auth/users.db 无法创建或写入而直接 disconnected。
-CMD ["/usr/bin/shiny-server"]
+# 由 root 运行入口脚本，先修正挂载卷权限，再按 shiny-server.conf 中的
+# run_as shiny 派生应用进程。
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
