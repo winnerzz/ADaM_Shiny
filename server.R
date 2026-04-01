@@ -26,8 +26,8 @@ source("derivation_plan_utils.R", local = TRUE)
 source("code_static_checks.R", local = TRUE)
 source("llm_api.R",           local = TRUE)
 source("provider_registry.R", local = TRUE)
-source("auth_db.R",           local = TRUE)  # [Auth] 用户数据库操作
-source("auth_server.R",       local = TRUE)  # [Auth] 认证服务端逻辑
+source("auth_db.R",           local = FALSE) # [Auth] 用户数据库操作（全局，供 server() 内调用）
+source("auth_server.R",       local = FALSE) # [Auth] 认证服务端逻辑（全局，供 server() 内调用）
 library(shinyjs)   # reset() 用于清空 fileInput
 
 # =============================================================================
