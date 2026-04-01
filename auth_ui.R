@@ -77,6 +77,28 @@ auth_overlay_ui <- function() {
       .auth-msg-error   { background: rgba(248,81,73,0.12); color: #f85149; border: 1px solid rgba(248,81,73,0.28); }
       .auth-msg-success { background: rgba(63,185,80,0.12);  color: #3fb950; border: 1px solid rgba(63,185,80,0.28); }
       .auth-divider { height: 1px; background: #21262d; margin: 0.5rem 0 0.85rem; }
+
+      /* 确保覆盖层及其内容始终可交互 */
+      #auth-overlay-wrap, #auth-overlay-wrap * { pointer-events: auto !important; }
+    ")),
+
+    # 将覆盖层移到 document.body，脱离 bslib 容器的 stacking context
+    # bslib 的 page_sidebar 主内容区可能有 CSS transform/contain，
+    # 导致 position:fixed 子元素的 pointer-events 和键盘输入被拦截
+    tags$script(HTML("
+      (function() {
+        function moveAuthOverlay() {
+          var el = document.getElementById('auth-overlay-wrap');
+          if (el && el.parentElement !== document.body) {
+            document.body.appendChild(el);
+          }
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', moveAuthOverlay);
+        } else {
+          moveAuthOverlay();
+        }
+      })();
     ")),
 
     div(id = "auth-overlay-wrap",
