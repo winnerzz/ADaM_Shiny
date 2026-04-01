@@ -53,7 +53,8 @@ auth_server <- function(input, output, session, current_user) {
         div(class = "auth-msg auth-msg-error", result$msg)
       )
     } else {
-      # 登录成功：更新用户状态（main_content_area 的 renderUI 会自动切换界面）
+      # 登录成功：隐藏覆盖层，设置用户状态
+      shinyjs::hide("auth-overlay-wrap")
       current_user(result$user)
     }
   })
@@ -108,6 +109,7 @@ auth_server <- function(input, output, session, current_user) {
       )
       login_result <- auth_db_verify_user(username, password)
       if (login_result$ok) {
+        shinyjs::hide("auth-overlay-wrap")
         current_user(login_result$user)
       }
     }
@@ -125,7 +127,8 @@ auth_server <- function(input, output, session, current_user) {
     shinyjs::show("auth-switch-to-register")
     shinyjs::hide("auth-switch-to-login")
     output$auth_login_msg <- renderUI(NULL)
-    # current_user(NULL) 已触发 renderUI 自动切回登录面板，无需手动操作
+    # 显示覆盖层
+    shinyjs::show("auth-overlay-wrap")
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
   # ── 侧边栏用户信息徽标 ───────────────────────────────────────────────────────

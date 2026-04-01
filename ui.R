@@ -1141,6 +1141,9 @@ ui <- page_sidebar(
   # [新增] shinyjs 初始化，必须在 UI 顶层调用一次
   shinyjs::useShinyjs(),
 
+  # 用户认证覆盖层
+  auth_overlay_ui(),
+
   sidebar = sidebar(
     width = 320, open = TRUE,
 
@@ -1307,13 +1310,7 @@ ui <- page_sidebar(
     uiOutput("next_action_hint")
   ),
 
-  uiOutput("main_content_area")
-)
-
-# =============================================================================
-# 主内容 Tabs（由 server.R 在登录后通过 renderUI 调用）
-# =============================================================================
-main_tabs_ui <- function() navset_tab(
+  navset_tab(
     id = "main_tabs",
     nav_panel(
       title = tagList(bs_icon("inboxes"), " 输入准备"),
@@ -1505,3 +1502,4 @@ main_tabs_ui <- function() navset_tab(
       uiOutput("output_dataset_tabs")
     )
   )
+)
