@@ -11,6 +11,10 @@
 #   list(id, username, display_name, role)  — 已登录用户信息
 # =============================================================================
 
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
+}
+
 auth_server <- function(input, output, session, current_user) {
 
   # ── 登录处理 ─────────────────────────────────────────────────────────────────
