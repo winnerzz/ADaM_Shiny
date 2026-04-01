@@ -26,6 +26,8 @@ source("derivation_plan_utils.R", local = TRUE)
 source("code_static_checks.R", local = TRUE)
 source("llm_api.R",           local = TRUE)
 source("provider_registry.R", local = TRUE)
+source("auth_db.R",           local = TRUE)  # [Auth] 用户数据库操作
+source("auth_server.R",       local = TRUE)  # [Auth] 认证服务端逻辑
 library(shinyjs)   # reset() 用于清空 fileInput
 
 # =============================================================================
@@ -821,6 +823,19 @@ library(shinyjs)   # reset() 用于清空 fileInput
 # server 函数主体
 # =============================================================================
 server <- function(input, output, session) {
+
+  # ===========================================================================
+  # [Auth] 用户认证初始化
+  # ===========================================================================
+
+  # 初始化数据库（建表 + 首次创建管理员账号）
+  auth_db_init()
+
+  # 当前登录用户（NULL = 未登录）
+  current_user <- reactiveVal(NULL)
+
+  # 启动认证服务（登录/注册/登出 观察者均在此注册）
+  auth_server(input, output, session, current_user)
 
   # ===========================================================================
   # 响应式状态池

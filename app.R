@@ -38,7 +38,12 @@ required_packages <- c(
   # ── JSON 与 API ──────────────────────────────────────────────────────────────
   "jsonlite",    # JSON 解析与序列化（fromJSON, toJSON）
   "httr2",       # 现代 HTTP 请求框架（供 llm_api.R 实际调用 API 时使用）
-  "digest"       # 生成稳定缓存键，用于复用相同 LLM 请求结果
+  "digest",      # 生成稳定缓存键，用于复用相同 LLM 请求结果
+
+  # ── 用户认证 ─────────────────────────────────────────────────────────────────
+  "DBI",         # 数据库接口（统一 API，供 RSQLite 使用）
+  "RSQLite",     # SQLite 驱动（本地用户数据库）
+  "sodium"       # libsodium 密码哈希（argon2id，安全存储用户密码）
 )
 
 # 找出尚未安装的包
@@ -84,6 +89,9 @@ source("code_static_checks.R")
 # LLM API 模块：call_llm_engine(), format_risk_logs()
 # 以及全局配置 MOCK_MODE, LLM_CONFIG, ACTIVE_PROVIDER
 source("llm_api.R")
+
+# 认证 UI 模块：auth_overlay_ui() / auth_user_badge_ui()（需在 ui.R 前 source）
+source("auth_ui.R")
 
 # UI 定义：生成 ui 对象（page_sidebar + 三个 Tab）
 source("ui.R")

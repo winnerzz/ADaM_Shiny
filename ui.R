@@ -1136,8 +1136,14 @@ ui <- page_sidebar(
   # [新增] shinyjs 初始化，必须在 UI 顶层调用一次
   shinyjs::useShinyjs(),
 
+  # [新增] 用户认证覆盖层（position:fixed z-index:9999，遮盖主界面直至登录成功）
+  auth_overlay_ui(),
+
   sidebar = sidebar(
     width = 320, open = TRUE,
+
+    # ── 用户信息徽标（登录后显示，登出按钮） ────────────────────────────────
+    uiOutput("auth_user_badge"),
 
     # ── 品牌栏 ───────────────────────────────────────────────────────────────
     tags$script(HTML("

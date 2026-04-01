@@ -32,9 +32,16 @@ services:
       LANG: "en_US.UTF-8"
       LC_ALL: "en_US.UTF-8"
 
+      # 认证数据库路径（容器内），通过 named volume 持久化
+      AUTH_DB_PATH: "/srv/shiny-server/adam/auth/users.db"
+      # 首次启动自动创建的管理员密码（强烈建议首次登录后立即修改）
+      # ADMIN_PASSWORD: "Admin@ADaM2024!"
+
     volumes:
       # 持久化 Shiny Server 日志（容器重启后保留）
       - shiny_logs:/var/log/shiny-server
+      # 持久化用户数据库（容器重建后用户数据不丢失）
+      - auth_data:/srv/shiny-server/adam/auth
 
     # 资源限制（根据 VPS 规格调整）
     # 单个会话"生成代码"时最多：1 主进程 + 2 parallel workers
@@ -51,4 +58,6 @@ services:
 
 volumes:
   shiny_logs:
+    driver: local
+  auth_data:
     driver: local
