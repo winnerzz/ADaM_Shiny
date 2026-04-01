@@ -12,9 +12,7 @@
 #   auth_db_list_users()     — 列出所有用户（管理员用）
 # =============================================================================
 
-library(DBI)
-library(RSQLite)
-library(sodium)
+# 依赖包由 app.R 统一加载（DBI、RSQLite、sodium）
 
 # ── 数据库路径（通过环境变量覆盖，便于 Docker 挂载） ─────────────────────────
 AUTH_DB_PATH <- Sys.getenv(

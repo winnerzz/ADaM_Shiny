@@ -46,6 +46,18 @@ RUN R -q -e "renv::consent(provided = TRUE); \
  && R -q -e "stopifnot(as.character(packageVersion('rlang')) == '1.1.7')"
 
 # =============================================================================
+# 安装认证所需包（DBI / RSQLite / sodium）
+# 这三个包不在 renv.lock 顶层，单独安装到 site-library
+# sodium 依赖 libsodium 系统库（rocker/shiny 基础镜像已包含）
+# =============================================================================
+RUN R -q -e "install.packages( \
+      c('DBI', 'RSQLite', 'sodium'), \
+      repos   = 'https://cloud.r-project.org', \
+      lib     = '/usr/local/lib/R/site-library', \
+      quiet   = TRUE \
+    )"
+
+# =============================================================================
 # 复制应用代码（在包安装完成后，最大化缓存命中）
 # =============================================================================
 COPY . .
