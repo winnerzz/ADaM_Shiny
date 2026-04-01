@@ -43,7 +43,7 @@ auth_db_init <- function() {
 .auth_con <- function() DBI::dbConnect(RSQLite::SQLite(), AUTH_DB_PATH)
 
 .auth_insert_user <- function(con, username, password, display_name, email, role) {
-  pw_hash <- sodium::password_store(chartr("", "", password))
+  pw_hash <- sodium::password_store(password)
   DBI::dbExecute(
     con,
     "INSERT INTO users (username, password_hash, display_name, email, role) VALUES (?, ?, ?, ?, ?)",
@@ -52,44 +52,54 @@ auth_db_init <- function() {
 }
 
 auth_db_create_user <- function(username, password, display_name = "", email = "", role = "user") {
-  con <- .auth_con()
-  on.exit(DBI::dbDisconnect(con))
-  existing <- DBI::dbGetQuery(
-    con,
-    "SELECT COUNT(*) AS n FROM users WHERE username = ?",
-    params = list(username)
-  )$n
-  if (existing > 0) return(list(ok = FALSE, msg = "该用户名已被注册，请换一个"))
   tryCatch({
+    con <- .auth_con()
+    on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+    existing <- DBI::dbGetQuery(
+      con,
+      "SELECT COUNT(*) AS n FROM users WHERE username = ?",
+      params = list(username)
+    )$n
+    if (existing > 0) return(list(ok = FALSE, msg = "该用户名已被注册，请换一个"))
+
     .auth_insert_user(con, username, password, display_name, email, role)
     list(ok = TRUE, msg = "注册成功")
-  }, error = function(e) list(ok = FALSE, msg = paste0("注册失败：", conditionMessage(e))))
+    }, error = function(e) list(ok = FALSE, msg = paste0("注册失败：", conditionMessage(e))))
 }
 
 auth_db_verify_user <- function(username, password) {
-  con <- .auth_con()
-  on.exit(DBI::dbDisconnect(con))
-  row <- DBI::dbGetQuery(
-    con,
-    "SELECT id, password_hash, display_name, role, is_active FROM users WHERE username = ?",
-    params = list(username)
-  )
-  if (nrow(row) == 0) return(list(ok = FALSE, msg = "用户名或密码错误"))
-  if (row$is_active[1] == 0) return(list(ok = FALSE, msg = "账号已被禁用，请联系管理员"))
-  ok <- tryCatch(sodium::password_verify(row$password_hash[1], password), error = function(e) FALSE)
-  if (!ok) return(list(ok = FALSE, msg = "用户名或密码错误"))
-  DBI::dbExecute(
-    con,
-    "UPDATE users SET last_login = datetime('now','localtime') WHERE username = ?",
-    params = list(username)
-  )
-  list(
-    ok = TRUE,
-    msg = "登录成功",
-    user = list(
-      id = row$id[1], username = username, display_name = row$display_name[1], role = row$role[1]
+  tryCatch({
+    con <- .auth_con()
+    on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+    row <- DBI::dbGetQuery(
+      con,
+      "SELECT id, password_hash, display_name, role, is_active FROM users WHERE username = ?",
+      params = list(username)
     )
-  )
+    if (nrow(row) == 0) return(list(ok = FALSE, msg = "用户名或密码错误"))
+    if (row$is_active[1] == 0) return(list(ok = FALSE, msg = "账号已被禁用，请联系管理员"))
+
+    ok <- tryCatch(sodium::password_verify(row$password_hash[1], password), error = function(e) FALSE)
+    if (!ok) return(list(ok = FALSE, msg = "用户名或密码错误"))
+
+    DBI::dbExecute(
+      con,
+      "UPDATE users SET last_login = datetime('now','localtime') WHERE username = ?",
+      params = list(username)
+    )
+
+    list(
+      ok = TRUE,
+      msg = "登录成功",
+      user = list(
+        id = row$id[1], username = username, display_name = row$display_name[1], role = row$role[1]
+      )
+    )
+  }, error = function(e) {
+    list(ok = FALSE, msg = paste0("登录失败：", conditionMessage(e)))
+  })
 }
 
 auth_db_list_users <- function() {

@@ -42,55 +42,66 @@ auth_server <- function(input, output, session, current_user) {
   output$auth_reg_msg <- renderUI(NULL)
 
   observeEvent(input$btn_register, {
-    username     <- trimws(input$reg_username     %||% "")
-    display_name <- trimws(input$reg_display_name %||% "")
-    email        <- trimws(input$reg_email        %||% "")
-    password     <- input$reg_password  %||% ""
-    password2    <- input$reg_password2 %||% ""
+    tryCatch({
+      username     <- trimws(input$reg_username     %||% "")
+      display_name <- trimws(input$reg_display_name %||% "")
+      email        <- trimws(input$reg_email        %||% "")
+      password     <- input$reg_password  %||% ""
+      password2    <- input$reg_password2 %||% ""
 
-    # 校验
-    if (!grepl("^[a-zA-Z0-9_]{4,20}$", username)) {
+      # 校验
+      if (!grepl("^[a-zA-Z0-9_]{4,20}$", username)) {
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-error",
+              "用户名须为 4-20 位，仅限字母、数字、下划线")
+        )
+        return()
+      }
+      if (!nzchar(display_name)) {
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-error", "请填写显示名称")
+        )
+        return()
+      }
+      if (nchar(password) < 8) {
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-error", "密码长度至少 8 位")
+        )
+        return()
+      }
+      if (password != password2) {
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-error", "两次输入的密码不一致")
+        )
+        return()
+      }
+
+      result <- auth_db_create_user(username, password, display_name, email)
+
+      if (!result$ok) {
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-error", result$msg)
+        )
+      } else {
+        # 注册成功后自动登录
+        output$auth_reg_msg <- renderUI(
+          div(class = "auth-msg auth-msg-success", "注册成功！正在登录...")
+        )
+        login_result <- auth_db_verify_user(username, password)
+        if (login_result$ok) {
+          current_user(login_result$user)
+        } else {
+          output$auth_reg_msg <- renderUI(
+            div(class = "auth-msg auth-msg-error", login_result$msg)
+          )
+        }
+      }
+    }, error = function(e) {
       output$auth_reg_msg <- renderUI(
         div(class = "auth-msg auth-msg-error",
-            "用户名须为 4-20 位，仅限字母、数字、下划线")
+            paste0("注册流程异常：", conditionMessage(e)))
       )
-      return()
-    }
-    if (!nzchar(display_name)) {
-      output$auth_reg_msg <- renderUI(
-        div(class = "auth-msg auth-msg-error", "请填写显示名称")
-      )
-      return()
-    }
-    if (nchar(password) < 8) {
-      output$auth_reg_msg <- renderUI(
-        div(class = "auth-msg auth-msg-error", "密码长度至少 8 位")
-      )
-      return()
-    }
-    if (password != password2) {
-      output$auth_reg_msg <- renderUI(
-        div(class = "auth-msg auth-msg-error", "两次输入的密码不一致")
-      )
-      return()
-    }
-
-    result <- auth_db_create_user(username, password, display_name, email)
-
-    if (!result$ok) {
-      output$auth_reg_msg <- renderUI(
-        div(class = "auth-msg auth-msg-error", result$msg)
-      )
-    } else {
-      # 注册成功后自动登录
-      output$auth_reg_msg <- renderUI(
-        div(class = "auth-msg auth-msg-success", "注册成功！正在登录...")
-      )
-      login_result <- auth_db_verify_user(username, password)
-      if (login_result$ok) {
-        current_user(login_result$user)
-      }
-    }
+    })
   })
 
   # ── 登出处理 ─────────────────────────────────────────────────────────────────
