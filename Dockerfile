@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libcurl4-openssl-dev \
     libxml2-dev \
+    libsodium-dev \
     libfontconfig1-dev \
     libharfbuzz-dev \
     libfribidi-dev \
@@ -16,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtiff5-dev \
     libjpeg-dev \
     libgit2-dev \
+    pkg-config \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
