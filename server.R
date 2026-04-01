@@ -837,6 +837,15 @@ server <- function(input, output, session) {
   # 启动认证服务（登录/注册/登出 观察者均在此注册）
   auth_server(input, output, session, current_user)
 
+  # 模态框生命周期：current_user 为 NULL 时显示登录模态框，登录后关闭
+  observeEvent(current_user(), {
+    if (is.null(current_user())) {
+      showModal(auth_modal_ui())
+    } else {
+      removeModal()
+    }
+  }, ignoreNULL = FALSE, ignoreInit = FALSE)
+
   # ===========================================================================
   # 响应式状态池
   # ===========================================================================
