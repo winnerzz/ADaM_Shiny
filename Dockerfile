@@ -76,7 +76,7 @@ COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
 EXPOSE 3838
 
-# 以非 root 用户运行（安全实践）
-USER shiny
-
+# 由 root 启动 shiny-server，再按 shiny-server.conf 中的 run_as shiny
+# 派生应用进程。这样对挂载卷的权限兼容性更好，避免会话初始化时因
+# auth/users.db 无法创建或写入而直接 disconnected。
 CMD ["/usr/bin/shiny-server"]
