@@ -22,12 +22,13 @@ Update rule:
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 1 - Product and data contracts |
-| Current branch observed | `experimental-v3` |
+| Current phase | Phase 2 - State model |
+| Original Shiny worktree branch | `experimental-v3` |
+| Active worktree branch | `LangGraph` |
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 0 complete; ready for product and data contracts |
+| Current implementation status | Phase 1 complete; ready for state model design |
 | Last roadmap update | 2026-05-21 |
 
 Known workspace notes:
@@ -60,7 +61,7 @@ Phase 0  Engineering foundation
 | Phase | Goal | Main Outputs | Exit Criteria | Status |
 |---|---|---|---|---|
 | 0. Engineering foundation | Create a safe project base for the LangGraph build | branch/worktree decision, `CODEX.md`, roadmap, initial docs | New work can proceed without damaging the Shiny prototype | complete |
-| 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | not started |
+| 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | complete |
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | not started |
 | 3. LangGraph skeleton | Prove main graph and dataset subgraph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | not started |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | not started |
@@ -289,8 +290,41 @@ Likely MVP scope:
 Expected outputs:
 
 - `docs/product_contract.md`
+- `docs/input_contract.md`
+- `docs/output_contract.md`
+- `docs/spec_draft_contract.md`
 - `docs/data_governance.md`
 - `studies/_template/`
+
+Completed work:
+
+- Added `docs/product_contract.md`.
+- Added `docs/input_contract.md`.
+- Added `docs/output_contract.md`.
+- Added `docs/spec_draft_contract.md`.
+- Added `docs/data_governance.md`.
+- Updated `studies/_template/README.md`.
+- Added `studies/_template/runs/.gitkeep`.
+
+Decisions recorded:
+
+- First real end-to-end target is `ADSL`.
+- First supported formats are `csv` and `sas7bdat`.
+- If spec is missing, generate a draft spec from evidence instead of inventing
+  one from model memory.
+- Draft spec evidence priority now separates derivation-intent evidence from
+  output-shape evidence. Existing spec, legacy SAS, SAP/protocol/TFL shells, and
+  define.xml should carry derivation intent before reference ADaM values.
+- Current processed demo data may use `demo_rich_context` for LLM calls only
+  when the study/run explicitly declares `data_classification = processed_demo`
+  and `external_api_allowed = true`.
+- Unknown or real clinical data defaults to `metadata_only`.
+- Canonical generated outputs live under `studies/{study_id}/runs/{run_id}/`.
+- `adsl_approved_spec.json` must contain approval metadata or an explicit
+  `demo_only_no_review` bypass; it must not be a silent copy of draft spec.
+- `.sas7bdat` is treated as a data table readable by R packages.
+- `.sas` programs are text evidence in the MVP and are not executed by the R
+  sandbox.
 
 Exit criteria:
 
@@ -299,7 +333,99 @@ Exit criteria:
 
 Status:
 
-`not started`
+`complete`
+
+## Phase 1 Handoff Record - 2026-05-21
+
+Date:
+
+2026-05-21
+
+Phase:
+
+Phase 1 - Product and data contracts
+
+Status:
+
+`complete`
+
+What changed:
+
+- Converted product-scope discussion into repository documents.
+- Defined ADSL as the first real dataset target.
+- Defined `csv` and `sas7bdat` as first supported formats.
+- Defined how draft specs can be generated when formal specs are missing.
+- Defined LLM exposure modes and accepted `demo_rich_context` for current demo
+  development only with explicit run configuration.
+- Sub-agents reviewed the contracts for handoff consistency and clinical-data
+  product risk.
+- Fixed high-priority review findings around exposure defaults, canonical output
+  paths, approval gate, evidence priority, and ADSL MVP scope.
+- User reviewed and accepted the remaining Phase 1 decisions:
+  - ADSL first-version minimal variable boundary is enough.
+  - Spec-draft evidence priority is accepted.
+  - `full_data_allowed` responsibility model is accepted.
+  - Phase 1 may be completed.
+- Added SAS boundary clarification:
+  - `.sas7bdat` files are data tables readable through R packages.
+  - `.sas` files are code/text evidence and are not executed by the R sandbox in
+    the MVP.
+
+Files changed:
+
+- `docs/product_contract.md`
+- `docs/input_contract.md`
+- `docs/output_contract.md`
+- `docs/spec_draft_contract.md`
+- `docs/data_governance.md`
+- `studies/_template/README.md`
+- `studies/_template/runs/.gitkeep`
+- `studies/_template/legacy_code/.gitkeep`
+- `docs/phase1_review_temp.html`
+- `docs/langgraph_execution_roadmap.md`
+
+Commands run:
+
+- `git status --short --branch`
+- `rg --files`
+- sub-agent review for documentation consistency
+- sub-agent review for clinical-data/ADaM product risk
+- user review of Phase 1 decisions
+
+Verification result:
+
+- Files were created in the clean `LangGraph` worktree.
+- No code implementation was added in Phase 1 yet.
+- Two sub-agent reviews completed and identified contract-level issues.
+- Findings were addressed in the contract documents before commit.
+- User approved Phase 1 completion.
+
+Decisions made:
+
+- Spec can be missing, but generated draft spec must carry evidence,
+  confidence, assumptions, and review flags.
+- Reference ADaM is useful for output shape and comparison, but should not drive
+  derivation intent by itself.
+- Demo data can expose richer context to external APIs during the MVP build only
+  when explicitly classified and allowed.
+- `full_data_allowed` remains available for user-approved debugging sessions;
+  the approving user is responsible for that exposure decision and the run must
+  record it in audit.
+- Exposure mode remains explicit and auditable.
+- Canonical run artifacts belong under `runs/{run_id}`.
+- Approved spec requires approval metadata or explicit demo bypass.
+- R sandbox reads `.sas7bdat` data but does not execute `.sas` programs in the
+  MVP.
+
+Open issues:
+
+- Exact ADSL MVP variable schema still needs to be represented in Phase 2 state
+  model or a Phase 2 fixture.
+
+Recommended next action:
+
+- Begin Phase 2 by defining `StudyState`, `DatasetState`, artifact references,
+  approval records, evidence records, and LLM exposure mode fields.
 
 ## Phase 2 - State Model
 
@@ -428,6 +554,8 @@ Planned work:
 
 - Read SDTM DM/EX and relevant inputs.
 - Draft or load a spec-equivalent contract.
+- Review high-risk variables or record explicit demo-only bypass.
+- Produce `adsl_approved_spec.json` with approval metadata.
 - Generate R code through the isolated LLM interface.
 - Execute through R sandbox.
 - Validate output structure and key variables.

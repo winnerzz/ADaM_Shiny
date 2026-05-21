@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 1 审核页 - ADaM Agent Studio</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5f6c7b;
+      --line: #d9e1ea;
+      --blue: #2563eb;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --purple: #6d28d9;
+      --code: #111827;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.65;
+    }
+
+    header {
+      background: #0f172a;
+      color: white;
+      padding: 34px 24px 28px;
+    }
+
+    header .wrap, main {
+      max-width: 1160px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #cbd5e1;
+      max-width: 920px;
+      font-size: 16px;
+    }
+
+    main {
+      padding: 24px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 22px;
+      margin: 18px 0;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 17px;
+    }
+
+    p { margin: 8px 0; }
+
+    ul, ol {
+      padding-left: 22px;
+      margin: 10px 0;
+    }
+
+    li { margin: 6px 0; }
+
+    code {
+      font-family: "Cascadia Mono", Consolas, monospace;
+      background: #eef2f7;
+      border: 1px solid #d8e0ea;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 14px 0;
+      padding: 14px;
+      border-radius: 8px;
+      overflow: auto;
+      background: var(--code);
+      color: #e5e7eb;
+      line-height: 1.55;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 15px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #f1f5f9; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: #eff6ff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 14px 0;
+    }
+
+    .ok {
+      border-left-color: var(--green);
+      background: #f0fdf4;
+    }
+
+    .warn {
+      border-left-color: var(--amber);
+      background: #fff7ed;
+    }
+
+    .risk {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: white;
+      font-size: 13px;
+      margin: 2px 4px 2px 0;
+    }
+
+    .muted { color: var(--muted); }
+    .check { color: var(--green); font-weight: 700; }
+    .review { color: var(--amber); font-weight: 700; }
+
+    @media (max-width: 820px) {
+      .grid { grid-template-columns: 1fr; }
+      section { padding: 18px; }
+      h1 { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Phase 1 审核页</h1>
+      <p class="subtitle">
+        这是 ADaM Agent Studio 的 Phase 1 合同审核材料。目标是让你快速确认：第一版产品吃什么、吐什么、spec 缺失时怎么生成 draft、哪些数据可以发给 LLM、哪些边界需要后续再定。
+      </p>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. 当前审核对象</h2>
+      <p>这些文件是这次需要你审核的 Phase 1 合同文档：</p>
+      <ul>
+        <li><code>docs/product_contract.md</code>：产品范围和 MVP 边界</li>
+        <li><code>docs/input_contract.md</code>：输入文件和 study 文件夹结构</li>
+        <li><code>docs/output_contract.md</code>：输出文件、run 目录、audit manifest</li>
+        <li><code>docs/spec_draft_contract.md</code>：没有 spec 时如何生成 draft spec</li>
+        <li><code>docs/data_governance.md</code>：LLM 数据暴露模式</li>
+        <li><code>studies/_template/README.md</code>：测试 study 模板说明</li>
+        <li><code>docs/langgraph_execution_roadmap.md</code>：Phase 1 交接记录</li>
+      </ul>
+      <div class="callout">
+        这个 HTML 是临时审核页。真正要提交的是上面这些合同文档，不是这个页面本身。
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 已经达成的核心决策</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>决策</th>
+            <th>当前版本</th>
+            <th>是否还需你确认</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>第一版真实闭环</td>
+            <td>只做 <code>ADSL</code>，不一开始做全部 ADaM。</td>
+            <td><span class="check">基本已确认</span></td>
+          </tr>
+          <tr>
+            <td>第一版输入格式</td>
+            <td>先支持 <code>csv</code> 和 <code>sas7bdat</code>。</td>
+            <td><span class="check">基本已确认</span></td>
+          </tr>
+          <tr>
+            <td>Spec 缺失</td>
+            <td>允许缺失，但系统只能生成 evidence-based draft spec，不能伪装成正式 spec。</td>
+            <td><span class="check">方向已确认</span></td>
+          </tr>
+          <tr>
+            <td>Demo 数据发给外部 API</td>
+            <td>当前 processed demo 可用 <code>demo_rich_context</code>。如进入 <code>full_data_allowed</code>，用户明确批准即用户负责，并写入 audit。</td>
+            <td><span class="check">按你的口径保留</span></td>
+          </tr>
+          <tr>
+            <td>真实/未知临床数据</td>
+            <td>默认 <code>metadata_only</code>，除非 run 配置明确升级。</td>
+            <td><span class="check">建议保留</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>3. MVP 产品边界</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>第一版做什么</h3>
+          <ul>
+            <li>本地 study 文件夹输入。</li>
+            <li>读取 SDTM <code>DM</code> 和 <code>EX</code>。</li>
+            <li>可选读取 ADSL spec。</li>
+            <li>可选读取 reference ADSL。</li>
+            <li>可选读取 define.xml。</li>
+            <li>可选读取 legacy ADSL SAS 程序。</li>
+            <li>生成 ADSL lineage、draft spec、approved spec、R code、output、validation、audit。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>第一版不做什么</h3>
+          <ul>
+            <li>不一次生成所有 ADaM。</li>
+            <li>不做完整 P21 验证。</li>
+            <li>不做完整 CDISC RAG 系统。</li>
+            <li>不做生产级用户权限。</li>
+            <li>不做完整 UI。</li>
+            <li>不宣称 regulatory-grade validation。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. Study 文件夹结构</h2>
+      <p>当前合同规定，输入和 run 输出分开。canonical 输出只放在每次 run 目录里。</p>
+      <pre><code>studies/
+  {study_id}/
+    input_sdtm/
+      dm.csv 或 dm.sas7bdat
+      ex.csv 或 ex.sas7bdat
+    input_define/
+      define.xml
+    input_spec/
+      adsl_spec.csv 或 adsl_spec.json
+    reference_adam/
+      adsl.csv 或 adsl.sas7bdat
+    legacy_code/
+      ADSL.sas
+    runs/
+      {run_id}/
+        lineage/
+        specs/
+        code/
+        outputs/
+        validation/
+        compare/
+        audit/</code></pre>
+      <div class="callout ok">
+        已修正：顶层 <code>outputs/</code> 和 <code>audit/</code> 不再作为 canonical 输出目录，避免和 <code>runs/{run_id}</code> 冲突。
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 没有 Spec 时如何生成 Draft Spec</h2>
+      <p>核心原则：<strong>Reference ADaM 可以帮助发现目标变量，也可以验证候选推导逻辑，但不能单独决定推导逻辑。</strong></p>
+      <table>
+        <thead>
+          <tr>
+            <th>证据优先级</th>
+            <th>证据</th>
+            <th>主要用途</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Existing ADaM spec</td><td>变量、标签、类型、推导逻辑</td></tr>
+          <tr><td>2</td><td>Legacy SAS AD program</td><td>推导逻辑、join 顺序、过滤条件、边界情况</td></tr>
+          <tr><td>3</td><td>SAP / protocol / TFL shells</td><td>分析人群、endpoint、窗口期、治疗期定义</td></tr>
+          <tr><td>4</td><td>define.xml</td><td>metadata、label、codelist、dataset 定义</td></tr>
+          <tr><td>5</td><td>Reference ADaM dataset</td><td>目标变量形态、类型、取值模式、最终比较对象</td></tr>
+          <tr><td>6</td><td>SDTM profiles</td><td>可用源变量、日期范围、缺失、key</td></tr>
+          <tr><td>7</td><td>CDISC IG</td><td>标准变量和通用约定</td></tr>
+          <tr><td>8</td><td>Company standards</td><td>公司内部实现习惯</td></tr>
+          <tr><td>9</td><td>Built-in templates</td><td>弱证据时的常见 ADSL starter pattern</td></tr>
+        </tbody>
+      </table>
+      <div class="callout warn">
+        需要你接受的关键判断：Reference ADSL 如果和某个候选规则算出来一致，可以提高置信度；但如果没有 spec、legacy code、SAP/protocol 或 define.xml 支撑，复杂变量仍然要人工 review。
+      </div>
+    </section>
+
+    <section>
+      <h2>6. ADSL 第一版最小边界</h2>
+      <p>第一版不是完整 submission-ready ADSL，而是最小可验证骨架。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>变量/逻辑</th>
+            <th>来源</th>
+            <th>自动化态度</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>USUBJID</code></td>
+            <td><code>DM.USUBJID</code></td>
+            <td>高置信度，通常可 silent pass。</td>
+          </tr>
+          <tr>
+            <td>人口学变量，例如 AGE/SEX/RACE</td>
+            <td><code>DM</code></td>
+            <td>直接映射可 silent pass，派生或重编码需记录。</td>
+          </tr>
+          <tr>
+            <td>治疗标签/治疗组</td>
+            <td><code>DM</code> 或 study evidence</td>
+            <td>如果 ARM/ACTARM 逻辑不清楚，需要 review。</td>
+          </tr>
+          <tr>
+            <td><code>TRTSDT</code></td>
+            <td><code>min(EX.EXSTDTC)</code> 候选规则</td>
+            <td>可以 draft，但如果 study 规则不同要 review。</td>
+          </tr>
+          <tr>
+            <td><code>TRTEDT</code></td>
+            <td><code>max(EX.EXENDTC)</code> 或 <code>max(EX.EXSTDTC)</code></td>
+            <td>EXENDTC 缺失时需要标注假设。</td>
+          </tr>
+          <tr>
+            <td><code>SAFFL</code></td>
+            <td>是否存在 EX 记录</td>
+            <td>demo 可用简单规则；正式规则需要 SAP/spec 支撑。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>这些暂不自动强推：<code>ITTFL</code>、<code>EFFFL</code>、baseline flags、analysis periods、endpoint-related flags、复杂 visit/window 逻辑。</p>
+    </section>
+
+    <section>
+      <h2>7. Approved Spec 审批边界</h2>
+      <p>子 agent 指出一个风险：如果没有审批记录，<code>adsl_approved_spec.json</code> 可能只是 draft spec 的复制品。现在合同已修正。</p>
+      <pre><code>{
+  "approval_mode": "human | silent_pass | demo_only_no_review",
+  "approved_by": "user id, system rule, or demo config",
+  "approved_at": "ISO-8601 timestamp",
+  "reviewed_variables": ["USUBJID", "TRTSDT"],
+  "unresolved_assumptions": [],
+  "source_draft_spec_hash": "sha256:..."
+}</code></pre>
+      <div class="callout ok">
+        代码生成必须基于 <code>approved_spec</code>。如果没有人工 review，也必须写明是 <code>silent_pass</code> 或 <code>demo_only_no_review</code>。
+      </div>
+    </section>
+
+    <section>
+      <h2>8. LLM 数据暴露模式</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>能发给 LLM 什么</th>
+            <th>当前口径</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>metadata_only</code></td>
+            <td>变量名、类型、label、缺失率、unique 摘要、日期范围。</td>
+            <td>真实/未知临床数据默认模式。</td>
+          </tr>
+          <tr>
+            <td><code>demo_rich_context</code></td>
+            <td>metadata + 样例行 + 变量分布 + reference ADSL 样例。</td>
+            <td>当前 processed demo 可用，但必须 run config 显式声明。</td>
+          </tr>
+          <tr>
+            <td><code>full_data_allowed</code></td>
+            <td>更大数据片段或小表全量。</td>
+            <td>保留用户批准调试模式；用户批准即用户负责，必须写入 audit。</td>
+          </tr>
+        </tbody>
+      </table>
+      <pre><code>demo_rich_context requires:
+  data_classification = processed_demo
+  external_api_allowed = true</code></pre>
+    </section>
+
+    <section>
+      <h2>9. 子 Agent 审查后已修正的问题</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>问题</th>
+            <th>处理结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LLM exposure 默认值容易误用</td>
+            <td>改为真实/未知数据默认 <code>metadata_only</code>，demo rich 需要显式配置。</td>
+          </tr>
+          <tr>
+            <td>输出路径双轨冲突</td>
+            <td>统一 canonical path 到 <code>runs/{run_id}</code>。</td>
+          </tr>
+          <tr>
+            <td><code>approved_spec</code> 边界不闭合</td>
+            <td>要求审批元数据或 demo bypass。</td>
+          </tr>
+          <tr>
+            <td>Reference ADaM 证据优先级过高</td>
+            <td>降为 output shape / comparison evidence，不能单独决定推导逻辑。</td>
+          </tr>
+          <tr>
+            <td>ADSL MVP 过宽</td>
+            <td>补充最小骨架边界，复杂变量不自动强推。</td>
+          </tr>
+          <tr>
+            <td>audit manifest 字段不足</td>
+            <td>补充 spec/lineage/code hash、R 环境、sandbox、decision link 等字段。</td>
+          </tr>
+          <tr>
+            <td><code>legacy_code/</code> 重要但不在模板</td>
+            <td>已加入 study template。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>10. 仍需你审核确认的点</h2>
+      <ol>
+        <li>
+          <strong>ADSL 最小变量集合是否够用：</strong>
+          当前建议从 USUBJID、人口学变量、治疗标签、TRTSDT、TRTEDT、SAFFL 开始。
+        </li>
+        <li>
+          <strong>Spec 缺失时的证据优先级是否接受：</strong>
+          legacy SAS / SAP / protocol / define.xml 优先于 reference ADaM 的推导解释。
+        </li>
+        <li>
+          <strong>full_data_allowed 责任口径是否接受：</strong>
+          用户批准调试时可以更宽松外发，但必须进入 audit。
+        </li>
+        <li>
+          <strong>是否允许 Phase 1 完成并提交：</strong>
+          如果同意，下一步提交 <code>docs: add phase 1 product contracts</code>。
+        </li>
+      </ol>
+      <h3>SAS 边界补充</h3>
+      <ul>
+        <li><code>.sas7bdat</code> 是 SAS 数据表，R sandbox 可以通过 R 包读取。</li>
+        <li><code>.sas</code> 是 SAS 程序。MVP 中只作为文本证据用于 lineage/spec drafting，不由 R sandbox 直接执行。</li>
+        <li>未来如果要直接执行 SAS 程序，需要单独集成 SAS runtime 或做 SAS-to-R 转译。</li>
+      </ul>
+      <div class="callout risk">
+        如果你想更快进入 Phase 2，可以先接受当前 Phase 1 合同，把 ADSL 精确变量清单留到 Phase 2 state model 或 Phase 1.5 里继续细化。
+      </div>
+    </section>
+
+    <section>
+      <h2>11. 审核后下一步</h2>
+      <p>如果你确认当前合同可以接受，我会做三件事：</p>
+      <ol>
+        <li>把 Phase 1 标记为 complete。</li>
+        <li>提交并 push 当前文档变更。</li>
+        <li>进入 Phase 2：设计 <code>StudyState</code> 和 <code>DatasetState</code>。</li>
+      </ol>
+      <p class="muted">当前 HTML 文件仅供审核。正式合同以 Markdown 文档为准。</p>
+    </section>
+  </main>
+</body>
+</html>
