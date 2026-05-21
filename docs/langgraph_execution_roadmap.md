@@ -22,12 +22,12 @@ Update rule:
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 0 - Engineering foundation |
+| Current phase | Phase 1 - Product and data contracts |
 | Current branch observed | `experimental-v3` |
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Architecture foundation and empty project skeleton created |
+| Current implementation status | Phase 0 complete; ready for product and data contracts |
 | Last roadmap update | 2026-05-21 |
 
 Known workspace notes:
@@ -59,7 +59,7 @@ Phase 0  Engineering foundation
 
 | Phase | Goal | Main Outputs | Exit Criteria | Status |
 |---|---|---|---|---|
-| 0. Engineering foundation | Create a safe project base for the LangGraph build | branch/worktree decision, `CODEX.md`, roadmap, initial docs | New work can proceed without damaging the Shiny prototype | in progress |
+| 0. Engineering foundation | Create a safe project base for the LangGraph build | branch/worktree decision, `CODEX.md`, roadmap, initial docs | New work can proceed without damaging the Shiny prototype | complete |
 | 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | not started |
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | not started |
 | 3. LangGraph skeleton | Prove main graph and dataset subgraph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | not started |
@@ -162,14 +162,14 @@ Current blockers or risks:
 - The original Shiny prototype worktree is not clean, but it is isolated from
   the new `LangGraph` worktree.
 - `LangGraph` is checked out in the separate worktree.
-- Remote push to GitHub previously failed because of network connectivity.
+- Remote push now succeeds; `LangGraph` tracks `origin/LangGraph`.
 - `demo-data/PSY201/` is untracked and may be user-supplied data; do not delete
   or move it without explicit confirmation.
 
 Recommended next action:
 
-Commit the architecture starting point in the clean `LangGraph` worktree, then
-push `LangGraph` when GitHub connectivity allows.
+Begin Phase 1 by writing the MVP input/output contract and study folder
+convention.
 
 Phase 0 exit criteria:
 
@@ -181,7 +181,7 @@ Phase 0 exit criteria:
 
 Phase 0 status:
 
-`in progress - ready to commit`
+`complete`
 
 ## Phase 0 Handoff Record - 2026-05-21
 
@@ -195,7 +195,7 @@ Phase 0 - Engineering foundation
 
 Status:
 
-`in progress - ready to commit`
+`complete`
 
 What changed:
 
@@ -204,6 +204,8 @@ What changed:
 - Kept the existing Shiny prototype worktree on `experimental-v3`.
 - Added Codex project guidance and architecture docs to the LangGraph worktree.
 - Created the first new-project skeleton for future LangGraph development.
+- Committed the architecture starting point.
+- Pushed `LangGraph` to GitHub and set upstream tracking.
 
 Files changed:
 
@@ -227,6 +229,9 @@ Commands run:
 - `git ls-tree -r --name-only LangGraph`
 - `git worktree add ..\ADaM_Shiny_LangGraph LangGraph`
 - `rg --files`
+- `git add CODEX.md README.md docs references src studies tests`
+- `git commit -m "chore: add LangGraph architecture foundation"`
+- `git push -u origin LangGraph`
 
 Verification result:
 
@@ -234,6 +239,10 @@ Verification result:
 - The new worktree contains only the new architecture docs and skeleton.
 - The old Shiny prototype worktree still has its previous local changes and was
   not modified by branch switching.
+- Latest local and remote branch:
+  `1d92c71 chore: add LangGraph architecture foundation`.
+- `git status --short --branch` in the LangGraph worktree was clean after the
+  architecture commit.
 
 Decisions made:
 
@@ -245,13 +254,11 @@ Decisions made:
 
 Open issues:
 
-- Remote push has not been retried in this phase.
 - Phase 1 product/data contracts are not started.
 
 Recommended next action:
 
-- Commit this architecture starting point.
-- Then begin Phase 1 by writing the MVP input/output contract and study folder
+- Begin Phase 1 by writing the MVP input/output contract and study folder
   convention.
 
 ## Phase 1 - Product and Data Contracts
