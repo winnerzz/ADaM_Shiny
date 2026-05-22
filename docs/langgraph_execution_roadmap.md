@@ -28,8 +28,8 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 1 complete; ready for state model design |
-| Last roadmap update | 2026-05-21 |
+| Current implementation status | Phase 2 complete; ready for Phase 3 LangGraph skeleton |
+| Last roadmap update | 2026-05-22 |
 
 Known workspace notes:
 
@@ -62,7 +62,7 @@ Phase 0  Engineering foundation
 |---|---|---|---|---|
 | 0. Engineering foundation | Create a safe project base for the LangGraph build | branch/worktree decision, `CODEX.md`, roadmap, initial docs | New work can proceed without damaging the Shiny prototype | complete |
 | 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | complete |
-| 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | not started |
+| 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | complete |
 | 3. LangGraph skeleton | Prove main graph and dataset subgraph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | not started |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | not started |
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | not started |
@@ -444,20 +444,149 @@ Planned work:
 
 Expected outputs:
 
+- `docs/state_model.md`
 - `src/adam_agent/schemas/study_state.py`
 - `src/adam_agent/schemas/dataset_state.py`
 - `src/adam_agent/schemas/artifacts.py`
 - `src/adam_agent/schemas/audit.py`
 - state example fixtures under `tests/fixtures/`
 
+Completed work:
+
+- Added first draft of `docs/state_model.md`.
+- Defined proposed `StudyState`.
+- Defined proposed `DatasetState`.
+- Defined supporting state objects:
+  - `ArtifactRef`
+  - `EvidenceRecord`
+  - `ApprovalRecord`
+  - `LLMExposureConfig`
+  - `LLMCallRecord`
+  - `RouteDecision`
+  - `FailureRecord`
+- Captured Phase 1 decisions in state form:
+  - reference ADaM is output-shape/validation evidence, not sole derivation
+    logic
+  - `.sas7bdat` is data and `.sas` is text evidence in the MVP
+  - `full_data_allowed` is allowed for user-approved debugging sessions and must
+    be audited
+  - dataset retry counts must be isolated in `DatasetState`
+- Implemented Pydantic v2 schema modules:
+  - `src/adam_agent/schemas/base.py`
+  - `src/adam_agent/schemas/artifacts.py`
+  - `src/adam_agent/schemas/evidence.py`
+  - `src/adam_agent/schemas/approval.py`
+  - `src/adam_agent/schemas/llm.py`
+  - `src/adam_agent/schemas/routing.py`
+  - `src/adam_agent/schemas/specs.py`
+  - `src/adam_agent/schemas/states.py`
+- Added `pyproject.toml` with the package and Pydantic dependency declaration.
+- Added minimal ADSL fixtures:
+  - `tests/fixtures/study_state_adsl_minimal.json`
+  - `tests/fixtures/dataset_state_adsl_minimal.json`
+- Added `tests/test_state_schemas.py`.
+- Verified JSON round-trip, strict extra-field rejection, dataset retry isolation,
+  LLM exposure validation, LLM call policy validation, artifact role/SAS boundary
+  checks, spec variable evidence/approval checks, and reference ADaM evidence
+  guard.
+
 Exit criteria:
 
 - Per-dataset repair attempts and decisions cannot leak into another dataset.
 - Large files are represented by path/hash, not embedded in state.
+- State objects are JSON-serializable.
+- Minimal fixtures exist for an ADSL run.
 
 Status:
 
-`not started`
+`complete`
+
+## Phase 2 Handoff Record - 2026-05-22
+
+Date:
+
+2026-05-22
+
+Phase:
+
+Phase 2 - State model
+
+Status:
+
+`complete`
+
+What changed:
+
+- Started Phase 2 with a documentation-first state model.
+- Added `docs/state_model.md`.
+- Implemented Pydantic v2 schema modules after user asked to start writing.
+- Added minimal JSON fixtures and standard-library tests.
+
+Files changed:
+
+- `docs/state_model.md`
+- `docs/langgraph_execution_roadmap.md`
+- `src/adam_agent/schemas/base.py`
+- `src/adam_agent/schemas/artifacts.py`
+- `src/adam_agent/schemas/evidence.py`
+- `src/adam_agent/schemas/approval.py`
+- `src/adam_agent/schemas/llm.py`
+- `src/adam_agent/schemas/routing.py`
+- `src/adam_agent/schemas/specs.py`
+- `src/adam_agent/schemas/states.py`
+- `src/adam_agent/schemas/__init__.py`
+- `pyproject.toml`
+- `tests/fixtures/study_state_adsl_minimal.json`
+- `tests/fixtures/dataset_state_adsl_minimal.json`
+- `tests/test_state_schemas.py`
+
+Commands run:
+
+- `git status --short --branch`
+- `rg --files`
+- `Get-Content -Raw docs\langgraph_execution_roadmap.md`
+- `python --version`
+- `python -c "import pydantic; print(pydantic.__version__)"`
+- `python -c "import pytest; print(pytest.__version__)"`
+- `python -m unittest discover -s tests -p "test_*.py"`
+
+Verification result:
+
+- Worktree was clean before Phase 2 draft work.
+- Python version observed: `3.14.4`.
+- Pydantic version observed: `2.13.2`.
+- `pytest` was not installed, so tests use standard-library `unittest`.
+- Test result after schema hardening: `Ran 12 tests ... OK`.
+
+Decisions made:
+
+- Start Phase 2 with a reviewable state contract before coding schema classes.
+- Keep large tables and reports out of state and behind `ArtifactRef`.
+- Keep repair attempts, failures, route decisions, approvals, and evidence inside
+  each dataset state.
+- Use Pydantic v2 for checkpoint/API/audit-facing schemas.
+- Keep `RouteDecision` and `FailureRecord` lightweight in the first
+  implementation.
+- Add minimal `SpecVariable` and `SpecDocument` schemas so draft/approved specs
+  are not arbitrary dicts.
+- Add `DatasetResultSummary` so `StudyState` cannot accidentally embed full
+  dataset state.
+- Use UTC timestamps for schema defaults.
+- Keep dataset-level LLM exposure as a snapshot/narrowing of study-level policy;
+  dataset subgraphs must not silently escalate exposure mode.
+
+Open issues:
+
+- Future graph implementation must confirm these schemas work with LangGraph
+  checkpointing.
+- Optional editable-install verification can be run if packaging behavior needs
+  to be checked before Phase 3:
+  `python -m pip install -e .`
+
+Recommended next action:
+
+- Begin Phase 3 by building a minimal LangGraph main graph and dataset subgraph
+  skeleton around these state objects.
 
 ## Phase 3 - LangGraph Skeleton
 

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "adam-agent-studio"
+version = "0.1.0"
+description = "LangGraph-based ADaM Agent Studio architecture prototype"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2,<3"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adam_agent"]
+

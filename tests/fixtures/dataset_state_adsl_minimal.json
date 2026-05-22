@@ -1,0 +1,167 @@
+{
+  "study_id": "PSY201",
+  "run_id": "20260522_001",
+  "dataset": "ADSL",
+  "dataset_role": "subject_level",
+  "status": "running",
+  "input_domains": ["DM", "EX"],
+  "input_artifacts": [
+    {
+      "artifact_id": "art_dm_csv_001",
+      "kind": "input_sdtm",
+      "path": "studies/PSY201/input_sdtm/dm.csv",
+      "sha256": null,
+      "dataset": "DM",
+      "format": "csv",
+      "role": "source",
+      "created_at": "2026-05-22T00:00:00+08:00",
+      "metadata": {
+        "rows": 3,
+        "columns": 4,
+        "column_names": ["STUDYID", "USUBJID", "AGE", "SEX"]
+      }
+    },
+    {
+      "artifact_id": "art_ex_csv_001",
+      "kind": "input_sdtm",
+      "path": "studies/PSY201/input_sdtm/ex.csv",
+      "sha256": null,
+      "dataset": "EX",
+      "format": "csv",
+      "role": "source",
+      "created_at": "2026-05-22T00:00:00+08:00",
+      "metadata": {
+        "rows": 6,
+        "columns": 3,
+        "column_names": ["USUBJID", "EXSTDTC", "EXENDTC"]
+      }
+    }
+  ],
+  "reference_artifacts": [],
+  "lineage": {
+    "variables": {
+      "USUBJID": {
+        "sources": ["DM.USUBJID"]
+      },
+      "TRTSDT": {
+        "sources": ["EX.EXSTDTC"]
+      }
+    }
+  },
+  "draft_spec": {
+    "dataset": "ADSL",
+    "status": "draft",
+    "variables": [
+      {
+        "variable": "USUBJID",
+        "label": "Unique Subject Identifier",
+        "type": "character",
+        "source_domains": ["DM"],
+        "source_variables": ["USUBJID"],
+        "derivation": "Direct mapping from DM.USUBJID",
+        "evidence_ids": ["ev_adsl_usubjid_001"],
+        "approval_ids": [],
+        "confidence": 0.98,
+        "review_required": false,
+        "review_reasons": [],
+        "risk_level": "low",
+        "approval_status": "draft",
+        "assumptions": []
+      },
+      {
+        "variable": "TRTSDT",
+        "label": "Date of First Exposure to Treatment",
+        "type": "date",
+        "source_domains": ["EX"],
+        "source_variables": ["EXSTDTC"],
+        "derivation": "Minimum non-missing EX.EXSTDTC per USUBJID",
+        "evidence_ids": ["ev_adsl_trtsdt_001"],
+        "approval_ids": [],
+        "confidence": 0.82,
+        "review_required": true,
+        "review_reasons": ["Treatment date derivation should be reviewed"],
+        "risk_level": "high",
+        "approval_status": "draft",
+        "assumptions": []
+      }
+    ],
+    "source_spec_artifact_id": null,
+    "created_at": "2026-05-22T00:00:00+08:00",
+    "updated_at": "2026-05-22T00:00:00+08:00"
+  },
+  "approved_spec": null,
+  "evidence_records": [
+    {
+      "evidence_id": "ev_adsl_usubjid_001",
+      "dataset": "ADSL",
+      "variable": "USUBJID",
+      "source_type": "sdtm_profile",
+      "source_ref": "DM.USUBJID",
+      "artifact_id": "art_dm_csv_001",
+      "summary": "DM.USUBJID exists and is the subject identifier",
+      "supports": ["source_variable", "derivation_logic"],
+      "confidence_delta": 0.4,
+      "created_at": "2026-05-22T00:00:00+08:00"
+    },
+    {
+      "evidence_id": "ev_adsl_trtsdt_001",
+      "dataset": "ADSL",
+      "variable": "TRTSDT",
+      "source_type": "sdtm_profile",
+      "source_ref": "EX.EXSTDTC",
+      "artifact_id": "art_ex_csv_001",
+      "summary": "EX.EXSTDTC exists and is date-like",
+      "supports": ["source_variable", "derivation_candidate"],
+      "confidence_delta": 0.2,
+      "created_at": "2026-05-22T00:00:00+08:00"
+    }
+  ],
+  "approval_records": [
+    {
+      "approval_id": "appr_adsl_usubjid_001",
+      "dataset": "ADSL",
+      "reviewed_variables": ["USUBJID"],
+      "approval_mode": "silent_pass",
+      "approved_by": "system_rule",
+      "approved_at": "2026-05-22T00:00:00+08:00",
+      "source_draft_spec_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "unresolved_assumptions": [],
+      "rule_id": "direct_mapping_low_risk_v1",
+      "notes": "Direct identifier mapping from DM"
+    }
+  ],
+  "generated_code": "",
+  "code_artifact": null,
+  "output_artifacts": [],
+  "validation_summary": {},
+  "compare_summary": {},
+  "llm_exposure": {
+    "mode": "demo_rich_context",
+    "data_classification": "processed_demo",
+    "external_api_allowed": true,
+    "approved_by": "user",
+    "approval_note": "User accepts responsibility for this debugging run",
+    "sample_rows_per_dataset": 20,
+    "max_unique_values_per_variable": 30,
+    "max_subject_summaries": 20,
+    "include_reference_rows": true,
+    "created_at": "2026-05-22T00:00:00+08:00"
+  },
+  "llm_calls": [],
+  "route_decisions": [
+    {
+      "decision_id": "route_adsl_trtsdt_001",
+      "node": "route_spec_risk",
+      "dataset": "ADSL",
+      "decision": "human_review",
+      "reason": "TRTSDT uses a derivation candidate that should be reviewed",
+      "confidence": 0.82,
+      "created_at": "2026-05-22T00:00:00+08:00"
+    }
+  ],
+  "failures": [],
+  "repair_attempts": 0,
+  "max_repair_attempts": 3,
+  "created_at": "2026-05-22T00:00:00+08:00",
+  "updated_at": "2026-05-22T00:00:00+08:00"
+}
