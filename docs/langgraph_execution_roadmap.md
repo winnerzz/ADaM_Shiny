@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 2 complete; ready for Phase 3 LangGraph skeleton |
+| Current implementation status | Phase 3 complete; ready for Phase 4 tool layer MVP |
 | Last roadmap update | 2026-05-22 |
 
 Known workspace notes:
@@ -63,7 +63,7 @@ Phase 0  Engineering foundation
 | 0. Engineering foundation | Create a safe project base for the LangGraph build | branch/worktree decision, `CODEX.md`, roadmap, initial docs | New work can proceed without damaging the Shiny prototype | complete |
 | 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | complete |
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | complete |
-| 3. LangGraph skeleton | Prove main graph and dataset subgraph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | not started |
+| 3. LangGraph skeleton | Prove main graph and dataset graph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | complete |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | not started |
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | not started |
 | 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | not started |
@@ -596,10 +596,11 @@ Prove that the graph architecture runs before adding real ADaM logic.
 
 Planned work:
 
+- Add bounded `langgraph` dependency and verify local import/API behavior.
 - Implement stub `StudyGraph`.
 - Implement stub `DatasetGraph`.
-- Add checkpointing.
-- Add dataset dispatch and reduce behavior.
+- Add checkpointing through the parent graph.
+- Add dependency-aware dataset dispatch and reduce behavior.
 - Add one risk-based routing branch.
 - Add smoke tests.
 
@@ -615,8 +616,9 @@ Minimal target flow:
 ```text
 scan_study_inputs
   -> build_dataset_dependency_graph
-  -> dispatch DatasetGraph(ADSL)
-  -> dispatch DatasetGraph(ADAE)
+  -> run DatasetGraph(ADSL)
+  -> if ADSL succeeds, dispatch downstream DatasetGraph(ADAE)
+  -> if ADSL fails, mark downstream blocked
   -> reduce_dataset_results
   -> write audit manifest
 ```
@@ -624,13 +626,93 @@ scan_study_inputs
 Exit criteria:
 
 - The graph can run locally with stub datasets.
+- ADSL runs before downstream datasets in the MVP skeleton.
+- ADSL failure marks downstream datasets blocked/skipped.
 - ADSL and ADAE state objects are separate.
 - A checkpoint is created.
 - An audit manifest is written.
 
 Status:
 
-`not started`
+`complete`
+
+## Phase 3 Handoff Record - 2026-05-22
+
+Date:
+
+2026-05-22
+
+Phase:
+
+Phase 3 - LangGraph skeleton
+
+Status:
+
+`complete`
+
+What changed:
+
+- Added Phase 3 design and review documents.
+- Added `langgraph>=0.6,<1` dependency and installed local editable package for
+  implementation verification.
+- Implemented runtime graph state with `StudyGraphState` and
+  `DatasetGraphState`.
+- Implemented dataset-level stub graph.
+- Implemented study-level graph with ADSL foundation-first behavior.
+- Implemented downstream dataset dispatch through `Send`.
+- Added reducer-backed dataset result collection.
+- Added study-level checkpoint smoke coverage with `InMemorySaver`.
+- Added blocked-downstream behavior when ADSL fails.
+- Added automatic ADSL foundation insertion for downstream-only requests.
+- Added max repair attempt routing guard for code/spec repair stubs.
+- Added study-level audit manifest stub represented as an `ArtifactRef`.
+
+Files changed:
+
+- `docs/phase3_design.md`
+- `docs/phase3_review_temp.html`
+- `docs/langgraph_execution_roadmap.md`
+- `docs/state_model.md`
+- `pyproject.toml`
+- `src/adam_agent/graph/state.py`
+- `src/adam_agent/graph/routing.py`
+- `src/adam_agent/graph/dataset_graph.py`
+- `src/adam_agent/graph/study_graph.py`
+- `tests/test_graph_smoke.py`
+
+Commands run:
+
+- `python -m pip install -e .`
+- `python -m unittest discover -s tests -p "test_*.py"`
+- `python -m unittest tests.test_graph_smoke -v`
+
+Verification result:
+
+- LangGraph installed version observed through pip resolution: `0.6.11`.
+- Full test suite result after graph implementation hardening: `Ran 20 tests ... OK`.
+- Graph smoke test result after hardening: `Ran 8 tests ... OK`.
+
+Decisions made:
+
+- Treat ADSL as the MVP foundation dataset.
+- Dispatch downstream datasets only after ADSL succeeds.
+- Automatically include ADSL when a downstream-only request is made.
+- Mark downstream datasets `blocked_by_adsl` when ADSL fails.
+- Keep dataset identity in state and audit artifacts, not in `checkpoint_ns`.
+- Let the parent study graph own the checkpointer; Phase 3 verifies study-level
+  checkpoint history, not nested subgraph checkpoint inheritance.
+- Keep Phase 3 runtime state thin and separate from Phase 2 Pydantic schemas.
+
+Open issues:
+
+- Phase 3 still uses stub lineage/spec/code/sandbox logic.
+- Production persistence is not implemented.
+- Real LLM and R sandbox tool interfaces belong to Phase 4/5.
+
+Recommended next action:
+
+- Begin Phase 4 by adding deterministic tool interfaces around artifacts,
+  study input reading, LLM calls, and R sandbox execution stubs.
 
 ## Phase 4 - Tool Layer MVP
 

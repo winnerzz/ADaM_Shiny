@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 3 设计审核页</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5f6c7b;
+      --line: #d9e1ea;
+      --blue: #2563eb;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --code: #111827;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.65;
+    }
+
+    header {
+      background: #102033;
+      color: white;
+      padding: 34px 24px 28px;
+    }
+
+    header .wrap, main {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #d8e2ee;
+      max-width: 900px;
+    }
+
+    main { padding: 24px; }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 22px;
+      margin: 18px 0;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 17px;
+    }
+
+    p { margin: 8px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    code {
+      background: #eef2f7;
+      color: var(--code);
+      border-radius: 5px;
+      padding: 2px 5px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #eef2f7;
+      font-weight: 700;
+    }
+
+    .ok { border-left: 5px solid var(--green); }
+    .warn { border-left: 5px solid var(--amber); }
+    .info { border-left: 5px solid var(--blue); }
+    .risk { border-left: 5px solid var(--red); }
+
+    .callout {
+      background: #f8fafc;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 12px 0;
+    }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+    }
+
+    .green { background: var(--green); }
+    .amber { background: var(--amber); }
+    .red { background: var(--red); }
+    .blue { background: var(--blue); }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Phase 3 LangGraph Skeleton 设计审核页</h1>
+      <p class="subtitle">
+        这一页把 Phase 3 的核心设计、三个子 agent 审查意见、已完成实现、测试结果和最终收口状态集中展示。
+      </p>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. Phase 3 一句话目标</h2>
+      <p>
+        已做一个可运行的 LangGraph 空骨架：StudyGraph 负责编排多个 ADaM dataset，DatasetGraph 负责单个 dataset 的 stub 流程。
+      </p>
+      <p>
+        这个阶段不做真实 LLM、R 沙盒、SDTM 解析或真实 ADSL 生成。
+      </p>
+    </section>
+
+    <section>
+      <h2>2. 最终认可的业务流程</h2>
+      <pre><code>StudyGraph
+  -> plan dependency order
+  -> run ADSL first
+  -> if ADSL succeeds:
+       dispatch ADAE / ADLB / ADCM as downstream tasks
+  -> if ADSL fails:
+       mark downstream datasets as blocked
+  -> collect dataset-level summaries
+  -> write study-level audit manifest stub</code></pre>
+      <div class="callout ok">
+        关键修正：ADSL 不是和 ADAE 平级并行。ADSL 是 MVP 的 foundation dataset，下游 dataset 只能在 ADSL 成功后分发。
+      </div>
+    </section>
+
+    <section>
+      <h2>3. 三个子 Agent 审查结论</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>审查角色</th>
+            <th>主要意见</th>
+            <th>我的判断</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LangGraph 架构审查</td>
+            <td>StateGraph、subgraph、Send、thread_id、避免混用静态边和动态路由的理解基本准确。需要明确父图管理 checkpointer，dataset id 不要写死到 checkpoint_ns。</td>
+            <td><span class="badge green">采纳</span></td>
+          </tr>
+          <tr>
+            <td>临床 ADaM 流程审查</td>
+            <td>不能把 ADSL 和 ADAE 当成完全平级任务。ADSL 应先行；ADSL 失败时下游应 blocked/skipped。</td>
+            <td><span class="badge green">采纳</span></td>
+          </tr>
+          <tr>
+            <td>工程落地审查</td>
+            <td>缺少 langgraph 依赖；Phase 2 state_model 里的 checkpoint_ns 建议与 Phase 3 设计冲突；需要明确 StudyGraphState/DatasetGraphState 和 reducer。</td>
+            <td><span class="badge green">采纳</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. 已经修正的点</h2>
+      <ul>
+        <li>把 Phase 3 流程改成 ADSL 先行，下游 dataset 后分发。</li>
+        <li>修复只请求下游 dataset 时绕过 ADSL 的漏洞：例如只请求 <code>ADAE</code> 时会自动补入 <code>ADSL</code> foundation task。</li>
+        <li>新增 ADSL 失败时下游 <code>blocked_by_adsl</code> 的测试目标。</li>
+        <li>明确 <code>checkpoint_ns</code> 是 LangGraph 内部命名空间，不是业务 dataset id。</li>
+        <li>修正 <code>docs/state_model.md</code> 中旧的 <code>checkpoint_ns = "{dataset}"</code> 建议。</li>
+        <li>在 <code>pyproject.toml</code> 中加入 <code>langgraph>=0.6,&lt;1</code> 依赖。</li>
+        <li>明确 runtime state 命名为 <code>StudyGraphState</code> 和 <code>DatasetGraphState</code>。</li>
+        <li>要求 <code>dataset_results</code> 使用 reducer，避免并行结果互相覆盖。</li>
+        <li>明确当前 Phase 3 验证的是 study-level checkpoint history，不宣称已经验证嵌套 subgraph checkpoint 继承。</li>
+        <li>给 code/spec repair route 加入 <code>max_repair_attempts</code> 上限保护。</li>
+        <li>roadmap 已改为 Phase 3 skeleton implemented and tests passing。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>5. 你需要审核什么</h2>
+      <ol>
+        <li>是否接受 ADSL 作为 MVP foundation dataset。</li>
+        <li>是否接受 ADSL 成功后再分发 ADAE/ADLB/ADCM。</li>
+        <li>是否接受 Phase 3 暂时只做 stub，不接真实 LLM/R/SDTM。</li>
+        <li>当前 graph skeleton 和 smoke tests 已接受，Phase 3 进入提交收口。</li>
+      </ol>
+      <div class="callout info">
+        当前实现已经覆盖业务依赖、状态隔离、study-level checkpoint、reducer、审计 stub 和测试边界。Phase 3 已审核通过。
+      </div>
+    </section>
+
+    <section>
+      <h2>6. 已完成编码范围</h2>
+      <ul>
+        <li><code>src/adam_agent/graph/state.py</code>：定义 StudyGraphState / DatasetGraphState 和 reducer。</li>
+        <li><code>src/adam_agent/graph/dataset_graph.py</code>：实现单 dataset stub 子图。</li>
+        <li><code>src/adam_agent/graph/study_graph.py</code>：实现 ADSL 先行、下游 Send、reduce、audit stub。</li>
+        <li><code>tests/test_graph_smoke.py</code>：验证流程、隔离、checkpoint、blocked_by_adsl、reducer。</li>
+      </ul>
+      <p class="muted">正式设计文档见 <code>docs/phase3_design.md</code>。</p>
+    </section>
+
+    <section>
+      <h2>7. 测试结果</h2>
+      <pre><code>python -m unittest discover -s tests -p "test_*.py"
+Ran 20 tests ... OK
+
+python -m unittest tests.test_graph_smoke -v
+Ran 8 tests ... OK</code></pre>
+      <p>
+        测试覆盖：ADSL 先行、只请求 ADAE 时自动补 ADSL、ADAE 下游分发、ADAE 一次 repair 后成功、ADSL 失败时下游 blocked、study-level checkpoint history、三个 dataset reducer 保留多个结果、repair 上限保护。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

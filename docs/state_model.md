@@ -218,15 +218,17 @@ need their own retry count, failure records, and approval records.
 study-level policy. A dataset subgraph must not silently escalate exposure mode
 beyond the study-level `LLMExposureConfig`.
 
-Checkpoint namespace suggestion for Phase 3:
+Checkpoint configuration note for Phase 3:
 
 ```text
 thread_id = "{study_id}:{run_id}"
-checkpoint_ns = "{dataset}" for dataset subgraphs
 ```
 
-This keeps ADSL, ADAE, and other dataset subgraphs isolated while still tying
-them to the same study run.
+Do not use the business dataset name as a manually assigned `checkpoint_ns`.
+In LangGraph, `checkpoint_ns` is an execution namespace managed by the graph and
+subgraph runtime. Dataset identity should live in `DatasetState.dataset`,
+artifact references, and audit records. This keeps the business model separate
+from LangGraph internals.
 
 ## SpecVariable and SpecDocument
 

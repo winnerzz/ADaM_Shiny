@@ -1,0 +1,75 @@
+"""Runtime state for Phase 3 LangGraph skeletons."""
+
+from __future__ import annotations
+
+import operator
+from typing import Annotated, Literal, TypedDict
+
+from adam_agent.schemas.artifacts import ArtifactRef
+from adam_agent.schemas.states import DatasetResultSummary
+
+
+GraphRunStatus = Literal["pending", "running", "blocked", "completed", "failed"]
+StubScenario = Literal["success", "code_error_then_success", "spec_error_then_success", "fail_adsl"]
+DatasetRoute = Literal["continue", "human_review", "repair_code", "revise_spec", "success", "fail"]
+
+
+class DatasetTask(TypedDict, total=False):
+    """Minimal payload sent from StudyGraph to one DatasetGraph run."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    stub_scenario: StubScenario
+    dependency_status: str
+    max_repair_attempts: int
+
+
+class BlockedDataset(TypedDict):
+    """Study-level record for a dataset skipped because a dependency failed."""
+
+    dataset: str
+    reason: str
+    blocked_by: str
+
+
+class DatasetGraphState(TypedDict, total=False):
+    """In-flight state for one dataset subgraph."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    stub_scenario: StubScenario
+    dependency_status: str
+    status: GraphRunStatus
+    repair_attempts: int
+    max_repair_attempts: int
+    route: DatasetRoute
+    failure_type: str | None
+    lineage_ready: bool
+    draft_spec_ready: bool
+    human_review_required: bool
+    generated_code: str
+    sandbox_runs: int
+    summary: DatasetResultSummary
+    audit_artifacts: Annotated[list[ArtifactRef], operator.add]
+
+
+class StudyGraphState(TypedDict, total=False):
+    """In-flight state for the study-level graph."""
+
+    study_id: str
+    run_id: str
+    status: GraphRunStatus
+    target_datasets: list[str]
+    stub_scenarios: dict[str, StubScenario]
+    dependency_graph: dict[str, list[str]]
+    foundation_datasets: list[str]
+    downstream_datasets: list[str]
+    dataset_tasks: list[DatasetTask]
+    downstream_tasks: list[DatasetTask]
+    dataset_results: Annotated[list[DatasetResultSummary], operator.add]
+    blocked_datasets: Annotated[list[BlockedDataset], operator.add]
+    audit_artifacts: Annotated[list[ArtifactRef], operator.add]
+    audit_manifest: ArtifactRef
+    route: Literal["foundation_ready", "foundation_failed"]
