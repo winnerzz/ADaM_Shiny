@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 6 started; ADSL failure diagnosis and failure report artifacts implemented |
+| Current implementation status | Phase 7 started; explicit study-level dataset dependency planning implemented |
 | Last roadmap update | 2026-05-23 |
 
 Known workspace notes:
@@ -67,7 +67,7 @@ Phase 0  Engineering foundation
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | complete |
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | in progress |
 | 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | in progress |
-| 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | not started |
+| 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | in progress |
 | 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | not started |
 | 9. Standards and production hardening | Add reference standards and production controls | CDISC/P21 tools, provider expansion, security/deployment strategy | System is extensible beyond demo data | not started |
 
@@ -1039,7 +1039,64 @@ Exit criteria:
 
 Status:
 
-`not started`
+`in progress`
+
+Phase 7.1 design notes:
+
+- Added `docs/phase7_design.md`.
+- Scoped Phase 7.1 to dependency orchestration, not real ADAE/ADCM generation.
+- Recorded that `ADSL` is an MVP foundation default, not a production clinical
+  derivation rule.
+- Recorded future evidence priority for dependency decisions:
+  approved spec, legacy SAS, define.xml, study notes, MVP fallback, human
+  decision.
+
+Phase 7.1 implementation notes:
+
+- Added `src/adam_agent/graph/dependencies.py`.
+- Added explicit `DatasetDependencyPlan`.
+- Added MVP fallback evidence marker:
+  `phase7_mvp_fallback_adsl_foundation`.
+- Added per-dataset dependency decisions with source, confidence,
+  review-required flag, and reason.
+- Common downstream fallback dependencies such as `ADAE -> ADSL` are still
+  marked review-required.
+- Unknown `AD*` datasets are low-confidence fallback dependencies and require
+  review.
+- Non-AD targets such as `LB` are marked unsupported instead of being sent
+  through the dataset stub and shown as completed.
+- StudyGraph now records:
+  - `requested_datasets`
+  - `target_datasets`
+  - `auto_added_datasets`
+  - `foundation_datasets`
+  - `downstream_datasets`
+  - `unsupported_datasets`
+  - `dataset_dependencies`
+  - `dependency_decisions`
+  - `dependency_graph`
+  - `dependency_evidence`
+- Study-level audit stub metadata now records requested datasets, auto-added
+  datasets, dependency map, and dependency evidence.
+- Downstream-only requests such as `["ADAE"]` auto-add `ADSL`.
+- Multiple downstream requests such as `["ADAE", "ADCM"]` auto-add `ADSL` only
+  once.
+
+Verification so far:
+
+```text
+python -m unittest discover -s tests -p "test_*.py"
+Ran 60 tests ... OK
+```
+
+Open issues:
+
+- Dependencies are still fallback defaults, not inferred from spec/SAS/define.
+- The fallback is not a complete ADaM dependency graph and must not be treated
+  as production evidence.
+- Downstream datasets still use stubs unless a later phase implements real
+  dataset loops.
+- No true parallel execution optimization yet beyond LangGraph send structure.
 
 ## Phase 8 - Product UI and Audit Workflow
 

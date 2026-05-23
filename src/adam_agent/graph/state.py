@@ -75,11 +75,17 @@ class StudyGraphState(TypedDict, total=False):
     run_id: str
     status: GraphRunStatus
     target_datasets: list[str]
+    requested_datasets: list[str]
+    auto_added_datasets: list[str]
+    unsupported_datasets: list[str]
     stub_scenarios: dict[str, StubScenario]
     execution_mode: str
     study_dir: str
     rscript_path: str
     dependency_graph: dict[str, list[str]]
+    dataset_dependencies: dict[str, list[str]]
+    dependency_decisions: list[dict[str, object]]
+    dependency_evidence: str
     foundation_datasets: list[str]
     downstream_datasets: list[str]
     dataset_tasks: list[DatasetTask]

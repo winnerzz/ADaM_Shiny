@@ -5,13 +5,11 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.graph.dataset_graph import compile_dataset_graph
+from adam_agent.graph.dependencies import plan_dataset_dependencies
 from adam_agent.graph.routing import route_after_foundation
 from adam_agent.graph.state import DatasetGraphState, DatasetTask, StudyGraphState
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.states import DatasetResultSummary
-
-
-FOUNDATION_DATASETS = ["ADSL"]
 
 
 def initialize_study(state: StudyGraphState) -> StudyGraphState:
@@ -28,40 +26,56 @@ def initialize_study(state: StudyGraphState) -> StudyGraphState:
 def plan_datasets(state: StudyGraphState) -> StudyGraphState:
     """Create the MVP dependency plan."""
 
-    targets = state.get("target_datasets") or ["ADSL", "ADAE"]
-    if any(dataset not in FOUNDATION_DATASETS for dataset in targets) and "ADSL" not in targets:
-        targets = ["ADSL", *targets]
-
-    foundation = [dataset for dataset in targets if dataset in FOUNDATION_DATASETS]
-
-    downstream = [dataset for dataset in targets if dataset not in foundation]
-    if not downstream and len(targets) == 1 and targets[0] == "ADSL":
-        downstream = []
-
-    dependency_graph = {"ADSL": downstream}
+    plan = plan_dataset_dependencies(state.get("target_datasets"))
     scenarios = state.get("stub_scenarios", {})
 
     foundation_tasks = [
         _make_dataset_task(state, dataset, scenarios.get(dataset, "success"), "foundation")
-        for dataset in foundation
+        for dataset in plan.foundation_datasets
     ]
     downstream_tasks = [
         _make_dataset_task(
             state,
             dataset,
             scenarios.get(dataset, "code_error_then_success" if dataset == "ADAE" else "success"),
-            "depends_on_adsl",
+            "depends_on_adsl" if plan.dependencies.get(dataset) == ["ADSL"] else "no_dependency",
         )
-        for dataset in downstream
+        for dataset in plan.downstream_datasets
+    ]
+    unsupported_results = [
+        DatasetResultSummary(
+            dataset=dataset,
+            status="failed",
+            validation_status="unsupported_dataset",
+            compare_status="not_run_stub",
+            failure_ids=["unsupported_dataset"],
+        )
+        for dataset in plan.unsupported_datasets
+    ]
+    unsupported_blocked = [
+        {
+            "dataset": dataset,
+            "reason": "unsupported_dataset",
+            "blocked_by": "study_planner",
+        }
+        for dataset in plan.unsupported_datasets
     ]
 
     return {
-        "target_datasets": targets,
-        "foundation_datasets": foundation,
-        "downstream_datasets": downstream,
-        "dependency_graph": dependency_graph,
+        "requested_datasets": plan.requested_datasets,
+        "target_datasets": plan.target_datasets,
+        "auto_added_datasets": plan.auto_added_datasets,
+        "unsupported_datasets": plan.unsupported_datasets,
+        "foundation_datasets": plan.foundation_datasets,
+        "downstream_datasets": plan.downstream_datasets,
+        "dependency_graph": plan.dependency_graph,
+        "dataset_dependencies": plan.dependencies,
+        "dependency_decisions": [decision.as_dict() for decision in plan.decisions],
+        "dependency_evidence": plan.evidence,
         "dataset_tasks": foundation_tasks,
         "downstream_tasks": downstream_tasks,
+        "dataset_results": unsupported_results,
+        "blocked_datasets": unsupported_blocked,
     }
 
 
@@ -147,7 +161,13 @@ def write_audit_manifest_stub(state: StudyGraphState) -> StudyGraphState:
         role="audit",
         metadata={
             "stub": True,
+            "requested_datasets": state.get("requested_datasets", []),
+            "auto_added_datasets": state.get("auto_added_datasets", []),
+            "unsupported_datasets": state.get("unsupported_datasets", []),
             "datasets": [result.dataset for result in state.get("dataset_results", [])],
+            "dataset_dependencies": state.get("dataset_dependencies", {}),
+            "dependency_decisions": state.get("dependency_decisions", []),
+            "dependency_evidence": state.get("dependency_evidence", ""),
             "blocked_datasets": state.get("blocked_datasets", []),
         },
     )
