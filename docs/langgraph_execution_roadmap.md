@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 4 complete; ready for Phase 5 single-dataset ADSL loop |
+| Current implementation status | Phase 5 started; ADSL starter spec, R template, local R runner boundary, and validator implemented |
 | Last roadmap update | 2026-05-23 |
 
 Known workspace notes:
@@ -65,7 +65,7 @@ Phase 0  Engineering foundation
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | complete |
 | 3. LangGraph skeleton | Prove main graph and dataset graph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | complete |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | complete |
-| 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | not started |
+| 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | in progress |
 | 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | not started |
 | 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | not started |
 | 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | not started |
@@ -872,7 +872,71 @@ Exit criteria:
 
 Status:
 
-`not started`
+`in progress`
+
+Phase 5 design notes:
+
+- Added `docs/phase5_design.md`.
+- Confirmed that Phase 5 starter variables are MVP candidates for a runnable
+  ADSL loop, not production default ADaM rules.
+- Clarified that treatment dates and population flags such as `TRTSDT`,
+  `TRTEDT`, and `SAFFL` must be review-required unless supported by stronger
+  study evidence or explicit human/demo approval.
+- Started with CSV execution, then added `.sas7bdat` support on the R runtime
+  path through `haven::read_sas()`. Python still does not profile `.sas7bdat`
+  contents in Phase 5.
+- Recommended deterministic R generation before real LLM code generation.
+
+Phase 5 implementation notes:
+
+- Added ADSL-specific helper package under `src/adam_agent/adsl/`.
+- Added starter ADSL spec builder that creates `SpecDocument` and
+  `EvidenceRecord` objects from DM/EX profiles.
+- Added demo-only approval helper that records
+  `demo_only_no_review` and explicitly says starter rules are not
+  production-approved.
+- Added deterministic base-R template renderer for `build_adsl.R`.
+- Updated the generated CSV reader to keep all columns as character so
+  identifiers such as `USUBJID = 01` are not silently converted to `1`.
+- Added minimal ADSL CSV validator for required columns, `USUBJID` uniqueness,
+  treatment date order, and `SAFFL` value shape.
+- Added `LocalRRunner` behind the existing R runner boundary. It reports a
+  structured failure when `Rscript` is unavailable instead of pretending success.
+- Current environment check: `Rscript` is available at
+  `C:\Dev\R-4.5.2\bin\Rscript.exe`.
+- Added a real local R smoke test using that `Rscript.exe`: synthetic DM/EX are
+  rendered into `build_adsl.R`, executed locally, and the generated `adsl.csv`
+  passes the minimal validator.
+- Added a `.sas7bdat` smoke test that creates synthetic DM/EX with R
+  `haven::write_sas()`, then runs the same Phase 5 ADSL loop. This verifies the
+  current product direction: R reads `.sas7bdat`; Python only orchestrates and
+  records artifacts.
+- Tightened `.sas7bdat` profiling after sub-agent review: Phase 5 now runs a
+  short R/haven profile script before spec drafting so missing date columns do
+  not create fake `TRTSDT` or `TRTEDT` evidence.
+- Added `run_adsl_minimal()` service in `src/adam_agent/adsl/runner.py`.
+  It scans a study folder, profiles DM/EX, drafts and demo-approves the starter
+  spec, writes `build_adsl.R`, executes local R, validates `adsl.csv`, writes a
+  skipped compare report, and writes the run manifest.
+- Added an end-to-end service test that verifies the run creates:
+  draft spec, approved spec, approval record, generated R code, `adsl.csv`,
+  validation report, compare report, and audit manifest.
+- Wired the Phase 5 ADSL minimal service into `DatasetGraph` behind the explicit
+  execution mode `real_adsl_minimal`.
+- `StudyGraph` now passes `execution_mode`, `study_dir`, and `rscript_path` into
+  dataset tasks while preserving the default stub behavior.
+- Added a graph-level real ADSL smoke test: `StudyGraph` can run ADSL as the
+  foundation dataset through the real Phase 5 service and returns a completed
+  `DatasetResultSummary` with `validation_status = pass`.
+- Added a small local CLI entry point:
+  `python -m adam_agent.cli run-adsl-minimal --study-dir ... --run-id ... --rscript-path ...`.
+  The CLI returns a JSON summary with run status, validation status, run folder,
+  and manifest path.
+- Added structured failure handling for real ADSL graph/CLI paths, so expected
+  missing-input failures return `status = failed` instead of raising through the
+  caller.
+- Full test suite after Phase 5 starter implementation:
+  `Ran 46 tests ... OK`.
 
 ## Phase 6 - Failure Diagnosis and Rollback
 

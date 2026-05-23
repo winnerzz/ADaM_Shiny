@@ -41,7 +41,10 @@ class SDTMReader:
                 path=str(source_path.as_posix()),
                 format="sas7bdat",
                 status="not_implemented_yet",
-                message="sas7bdat profiling is not implemented in Phase 4",
+                message=(
+                    "sas7bdat Python profiling is not implemented; "
+                    "Phase 5 R runtime can read sas7bdat through haven."
+                ),
             )
         return DatasetProfile(
             dataset=dataset_name,

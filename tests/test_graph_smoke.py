@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import sys
 import unittest
+import uuid
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
 
 ROOT = Path(__file__).resolve().parents[1]
+TMP_ROOT = ROOT / ".tmp_tests"
+LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 
 try:
     from adam_agent.graph.dataset_graph import compile_dataset_graph
@@ -21,6 +24,13 @@ except ModuleNotFoundError:
     from adam_agent.graph.dataset_graph import compile_dataset_graph
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
+
+
+def _workspace_dir(name: str) -> Path:
+    TMP_ROOT.mkdir(parents=True, exist_ok=True)
+    path = TMP_ROOT / f"{name}_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
 
 
 class GraphSmokeTests(unittest.TestCase):
@@ -47,6 +57,47 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["audit_manifest"].kind, "audit_manifest")
         self.assertIn("ADSL", result["audit_manifest"].metadata["datasets"])
         self.assertIn("ADAE", result["audit_manifest"].metadata["datasets"])
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_study_graph_can_run_real_adsl_minimal_foundation(self) -> None:
+        study_dir = _workspace_dir("graph_real_adsl") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        for folder in ["reference_adam", "input_spec", "input_define", "legacy_code", "runs"]:
+            (study_dir / folder).mkdir()
+        (input_dir / "dm.csv").write_text(
+            "STUDYID,USUBJID,AGE,SEX,ARM\nS1,01,34,F,Test Drug\nS1,02,41,M,Placebo\n",
+            encoding="utf-8",
+        )
+        (input_dir / "ex.csv").write_text(
+            "USUBJID,EXSTDTC,EXENDTC\n01,2024-01-01,2024-01-05\n",
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_graph_real_adsl",
+                "target_datasets": ["ADSL"],
+                "execution_mode": "real_adsl_minimal",
+                "study_dir": str(study_dir),
+                "rscript_path": str(LOCAL_RSCRIPT),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        adsl_summary = summaries["ADSL"]
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(adsl_summary.status, "completed")
+        self.assertEqual(adsl_summary.validation_status, "pass")
+        self.assertEqual(adsl_summary.compare_status, "skipped")
+        self.assertEqual(adsl_summary.output_artifact_ids, ["adsl_output_csv"])
+        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "outputs" / "adsl.csv").exists())
+        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "manifest.json").exists())
 
     def test_dataset_state_isolation_across_stub_runs(self) -> None:
         dataset_graph = compile_dataset_graph()
@@ -76,6 +127,29 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adae["repair_attempts"], 1)
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
+
+    def test_real_adsl_dataset_graph_returns_structured_failure_for_missing_inputs(self) -> None:
+        study_dir = _workspace_dir("graph_real_adsl_missing") / "PSY201"
+        study_dir.mkdir(parents=True)
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_graph_real_adsl_missing",
+                "dataset": "ADSL",
+                "execution_mode": "real_adsl_minimal",
+                "study_dir": str(study_dir),
+                "rscript_path": str(LOCAL_RSCRIPT),
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"].status, "failed")
+        self.assertEqual(result["summary"].validation_status, "not_run")
+        self.assertEqual(result["summary"].failure_ids, ["failure_adsl_real_minimal"])
+        self.assertIn("requires input_sdtm/dm.csv or .sas7bdat", result["real_run_error"])
 
     def test_adsl_failure_blocks_downstream_without_running_it(self) -> None:
         graph = compile_study_graph()

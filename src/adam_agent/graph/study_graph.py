@@ -170,6 +170,9 @@ def _make_dataset_task(
         "stub_scenario": scenario,
         "dependency_status": dependency_status,
         "max_repair_attempts": 3,
+        "execution_mode": state.get("execution_mode", "stub"),
+        "study_dir": state.get("study_dir", ""),
+        "rscript_path": state.get("rscript_path", ""),
     }
 
 

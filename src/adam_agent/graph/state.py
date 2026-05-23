@@ -23,6 +23,9 @@ class DatasetTask(TypedDict, total=False):
     stub_scenario: StubScenario
     dependency_status: str
     max_repair_attempts: int
+    execution_mode: str
+    study_dir: str
+    rscript_path: str
 
 
 class BlockedDataset(TypedDict):
@@ -51,6 +54,13 @@ class DatasetGraphState(TypedDict, total=False):
     human_review_required: bool
     generated_code: str
     sandbox_runs: int
+    execution_mode: str
+    study_dir: str
+    rscript_path: str
+    real_run_completed: bool
+    real_run_error: str
+    real_run_artifacts: dict[str, ArtifactRef]
+    real_validation_status: str
     summary: DatasetResultSummary
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
 
@@ -63,6 +73,9 @@ class StudyGraphState(TypedDict, total=False):
     status: GraphRunStatus
     target_datasets: list[str]
     stub_scenarios: dict[str, StubScenario]
+    execution_mode: str
+    study_dir: str
+    rscript_path: str
     dependency_graph: dict[str, list[str]]
     foundation_datasets: list[str]
     downstream_datasets: list[str]

@@ -104,18 +104,26 @@ This is the minimum promise. Anything stronger requires later validation work.
 The first ADSL loop is intentionally narrow.
 
 It should produce a minimal, evidence-backed ADSL skeleton, not a complete
-submission-ready ADSL. The minimum variable set should be decided before Phase 5,
-but the likely first set is:
+submission-ready ADSL. The starter variables below are an MVP implementation
+target for the current demo-style ADSL loop. They are not production defaults
+and must not be presented as universal ADaM rules:
 
-- subject identifier: `USUBJID`
+- subject identifier, normally `USUBJID`, when present in `DM`
+- direct demographic mappings from `DM` when present and clearly labeled
 - treatment assignment or treatment label from `DM` when available
-- actual treatment start date from `EX`
-- actual treatment end date from `EX`
-- a simple safety flag derived from exposure presence
+- candidate actual treatment start date from `EX`
+- candidate actual treatment end date from `EX`
+- candidate demo/MVP safety flag derived from exposure presence
 
 Anything involving baseline windows, analysis periods, complex population flags,
 efficacy endpoints, or study-specific visit logic is outside the first real loop
 unless a strong spec, legacy SAS program, or human decision supplies the rule.
+
+Treatment dates and population flags must be treated as review-required
+derivation candidates unless supported by a study spec, SAP/protocol, legacy
+program, define.xml, or explicit human approval. For example, `SAFFL = has any
+EX record` is acceptable as a demo/MVP candidate, but it is not a production
+safety-population rule.
 
 ## Non-Negotiable Boundaries
 

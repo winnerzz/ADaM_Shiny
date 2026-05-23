@@ -6,6 +6,85 @@ These rules are adapted from the referenced Karpathy-style coding guidance:
 think before coding, keep changes simple, edit surgically, and make every task
 verifiable. This project adds stricter clinical-data and auditability constraints.
 
+Source guidance:
+
+- https://github.com/multica-ai/andrej-karpathy-skills/blob/main/CLAUDE.md
+
+## 0. General Coding Guardrails
+
+Use the referenced Karpathy-style guidance as one of the operating baselines for
+this project. The goal is to reduce common LLM coding mistakes: assuming too
+much, adding speculative complexity, touching unrelated files, and claiming
+success without verification.
+
+### 0.1 Think Before Coding
+
+Before implementing:
+
+- State material assumptions when they affect the design.
+- If a request has multiple plausible meanings, surface the tradeoff instead of
+  silently choosing one.
+- Ask a concise question when missing context would make the implementation
+  risky.
+- Push back on complexity that does not serve the current milestone.
+
+In this ADaM project, this especially applies to clinical rules. Do not silently
+turn demo logic, starter variables, or reference-output patterns into production
+derivation rules.
+
+### 0.2 Simplicity First
+
+Write the smallest implementation that satisfies the current phase goal.
+
+- Do not add features beyond the current phase.
+- Do not create abstractions for one-off code.
+- Do not add configurability merely because it might be useful later.
+- If a simpler deterministic tool can verify the architecture, use it before
+  involving a real LLM provider.
+
+For this project, prefer:
+
+- deterministic templates before provider-dependent code generation
+- focused validators before broad compliance claims
+- explicit artifact manifests before complex persistence layers
+
+### 0.3 Surgical Changes
+
+Every changed line should trace back to the user's current request or the active
+phase objective.
+
+- Touch only the files needed for the task.
+- Match the surrounding style.
+- Do not refactor neighboring code just because it could be cleaner.
+- Do not delete pre-existing dead code unless asked.
+- Clean up only imports, variables, or helpers made obsolete by your own change.
+
+If unrelated issues are found, mention them separately and keep moving on the
+requested work.
+
+### 0.4 Goal-Driven Execution
+
+Turn implementation requests into verifiable goals.
+
+For multi-step work, define:
+
+```text
+1. change to make
+2. check that proves it
+3. next integration point
+```
+
+Examples for this project:
+
+- "Add a runner" means: add the runner, add a structured failure path, run a
+  focused test.
+- "Run ADSL" means: produce `adsl.csv`, write validation/audit artifacts, and
+  verify the generated files exist.
+- "Connect to Graph" means: preserve existing stub behavior, add a real-mode
+  test, and run the full test suite.
+
+Do not report success without a file, command, test, or explicit limitation.
+
 ## 1. Product Direction
 
 This repository currently contains a Shiny ADaM Builder prototype and early

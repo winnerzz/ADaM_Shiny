@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
+from adam_agent.adsl.runner import run_adsl_minimal
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
 from adam_agent.schemas.artifacts import ArtifactRef
@@ -14,6 +15,9 @@ from adam_agent.schemas.states import DatasetResultSummary
 def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Initialize one dataset run."""
 
+    if state.get("dataset") == "ADSL" and state.get("execution_mode") == "real_adsl_minimal":
+        return run_adsl_minimal_node(state)
+
     return {
         "status": "running",
         "repair_attempts": state.get("repair_attempts", 0),
@@ -22,21 +26,71 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
+def run_adsl_minimal_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Run the real Phase 5 ADSL minimal service from the dataset graph."""
+
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": "execution_mode=real_adsl_minimal requires study_dir",
+        }
+
+    try:
+        result = run_adsl_minimal(
+            study_dir,
+            run_id=state["run_id"],
+            rscript_path=state.get("rscript_path") or None,
+            study_id=state["study_id"],
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": str(exc),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+    return {
+        "status": result.status,
+        "failure_type": None if result.status == "completed" else "sandbox_error",
+        "route": "success" if result.status == "completed" else "fail",
+        "real_run_completed": result.status == "completed",
+        "real_run_error": "" if result.status == "completed" else result.r_result.stderr,
+        "real_run_artifacts": result.artifacts,
+        "real_validation_status": result.validation_report["status"],
+        "audit_artifacts": [result.manifest],
+        "sandbox_runs": 1,
+    }
+
+
 def draft_lineage_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend lineage was drafted."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {}
     return {"lineage_ready": True}
 
 
 def draft_spec_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend a draft spec was produced."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {}
     return {"draft_spec_ready": True}
 
 
 def route_risk_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Flag higher-risk datasets for a stub human review path."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {"human_review_required": False, "route": state.get("route", "success")}
     return {
         "human_review_required": state.get("dataset") != "ADSL",
         "route": "human_review" if state.get("dataset") != "ADSL" else "continue",
@@ -52,6 +106,8 @@ def human_review_stub(state: DatasetGraphState) -> DatasetGraphState:
 def generate_code_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend R code was generated."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {}
     dataset = state["dataset"]
     return {"generated_code": f"# stub generated code for {dataset}"}
 
@@ -59,6 +115,8 @@ def generate_code_stub(state: DatasetGraphState) -> DatasetGraphState:
 def run_sandbox_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend code ran in the R sandbox."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {}
     sandbox_runs = state.get("sandbox_runs", 0) + 1
     scenario = state.get("stub_scenario", "success")
 
@@ -127,6 +185,9 @@ def revise_spec_stub(state: DatasetGraphState) -> DatasetGraphState:
 def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Create the dataset-level summary returned to the study graph."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return summarize_real_adsl_minimal(state)
+
     status = "failed" if state.get("failure_type") else "completed"
     dataset = state["dataset"]
     failure_ids: list[str] = []
@@ -167,6 +228,33 @@ def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
         "status": status,
         "summary": summary,
         "audit_artifacts": [audit_artifact],
+    }
+
+
+def summarize_real_adsl_minimal(state: DatasetGraphState) -> DatasetGraphState:
+    """Create a DatasetResultSummary for the real Phase 5 ADSL service."""
+
+    status = "completed" if state.get("real_run_completed") else "failed"
+    artifacts = state.get("real_run_artifacts", {})
+    output_artifact_ids = []
+    if "output_adsl" in artifacts:
+        output_artifact_ids.append(artifacts["output_adsl"].artifact_id)
+    failure_ids = []
+    if status == "failed":
+        failure_ids = ["failure_adsl_real_minimal"]
+
+    summary = DatasetResultSummary(
+        dataset="ADSL",
+        status=status,
+        output_artifact_ids=output_artifact_ids,
+        audit_artifact_id=state.get("audit_artifacts", [None])[-1].artifact_id if state.get("audit_artifacts") else None,
+        validation_status=state.get("real_validation_status", "unknown"),
+        compare_status="skipped",
+        failure_ids=failure_ids,
+    )
+    return {
+        "status": status,
+        "summary": summary,
     }
 
 

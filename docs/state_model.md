@@ -595,9 +595,18 @@ For the first ADSL loop, `DatasetState` must be able to represent:
 - treatment assignment or treatment label from `DM` when available
 - candidate `TRTSDT`
 - candidate `TRTEDT`
-- simple exposure-derived `SAFFL`
+- candidate demo/MVP exposure-derived `SAFFL`
 
-These should carry evidence and review status.
+These are starter variables for the first runnable ADSL loop. They are not
+production default ADaM rules. Each variable should carry evidence and review
+status.
+
+Treatment dates and population flags should default to `review_required = true`
+when they are inferred from SDTM profile patterns, reference ADaM values, or a
+built-in starter template without stronger study evidence. A simple
+exposure-derived `SAFFL` is a demo/MVP candidate only; production safety
+population logic must come from a spec, SAP/protocol, legacy program, define.xml,
+or explicit human approval.
 
 Do not force these into automatic approval without stronger evidence:
 
