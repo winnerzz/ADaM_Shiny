@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 5 started; ADSL starter spec, R template, local R runner boundary, and validator implemented |
+| Current implementation status | Phase 6 started; ADSL failure diagnosis and failure report artifacts implemented |
 | Last roadmap update | 2026-05-23 |
 
 Known workspace notes:
@@ -66,7 +66,7 @@ Phase 0  Engineering foundation
 | 3. LangGraph skeleton | Prove main graph and dataset graph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | complete |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | complete |
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | in progress |
-| 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | not started |
+| 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | in progress |
 | 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | not started |
 | 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | not started |
 | 9. Standards and production hardening | Add reference standards and production controls | CDISC/P21 tools, provider expansion, security/deployment strategy | System is extensible beyond demo data | not started |
@@ -960,7 +960,64 @@ Exit criteria:
 
 Status:
 
-`not started`
+`in progress`
+
+Phase 6 design notes:
+
+- Added `docs/phase6_design.md`.
+- Scoped Phase 6 MVP to failure diagnosis and recommended routing, not real
+  automatic repair.
+- Defined the first failure report artifact:
+  `runs/{run_id}/diagnostics/adsl_failure_report.json`.
+- Kept the failure report as `kind = tool_log`, `role = audit` to avoid schema
+  churn before a dedicated failure-report artifact kind is needed.
+
+Phase 6 implementation notes:
+
+- Added `src/adam_agent/adsl/diagnostics.py`.
+- Implemented `diagnose_adsl_failure()` to classify:
+  - missing required input
+  - unsupported or unreadable `.sas7bdat` profile path
+  - source-variable/spec-style R errors
+  - R runtime failures
+  - validation failures
+  - key integrity failures requiring human review
+- Implemented `write_failure_report()`.
+- Failure ids are root-cause-specific, for example
+  `failure_adsl_missing_required_input`, so later retry/repair history can
+  distinguish different failure causes.
+- Wired diagnosis into `run_adsl_minimal()`:
+  - missing DM/EX now returns a structured failed result and writes
+    `adsl_failure_report.json`
+  - profile failures now write a failure report
+  - R or validation failures now write a failure report and register it in the
+    manifest
+- Added `failure_record` to `AdslRunResult`.
+- Updated CLI JSON output to include `failure_id`, `failure_type`, and
+  `recommended_route`.
+- Updated real ADSL graph state to carry `failure_records` and
+  `recommended_route`.
+- Updated real ADSL graph summary to use the diagnosis `failure_id`.
+- Ensured failed real ADSL runs summarize directly after diagnosis instead of
+  passing through stub `repair_code` or `revise_spec` nodes.
+- Manifest and CLI output now include `failure_id`, `failure_type`,
+  `root_cause`, and `recommended_route`.
+- Updated `docs/output_contract.md` to include `diagnostics/`.
+
+Verification:
+
+```text
+python -m unittest discover -s tests -p "test_*.py"
+Ran 54 tests ... OK
+```
+
+Open issues:
+
+- Phase 6 still does not implement real `repair_code` or `revise_spec` nodes
+  for the real ADSL path.
+- Recommended routes are recorded and surfaced, but the real path does not yet
+  loop backward based on them.
+- Human review is represented as a route, not a UI checkpoint.
 
 ## Phase 7 - Multi-Dataset Study Orchestration
 

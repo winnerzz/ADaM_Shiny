@@ -55,16 +55,21 @@ def run_adsl_minimal_node(state: DatasetGraphState) -> DatasetGraphState:
             "real_run_error": str(exc),
             "real_run_artifacts": {},
             "real_validation_status": "not_run",
+            "failure_records": [],
+            "recommended_route": "fail",
             "sandbox_runs": 0,
         }
+    failure_records = [result.failure_record] if result.failure_record else []
     return {
         "status": result.status,
-        "failure_type": None if result.status == "completed" else "sandbox_error",
+        "failure_type": None if result.status == "completed" else (result.failure_record.failure_type if result.failure_record else "sandbox_error"),
         "route": "success" if result.status == "completed" else "fail",
         "real_run_completed": result.status == "completed",
-        "real_run_error": "" if result.status == "completed" else result.r_result.stderr,
+        "real_run_error": "" if result.status == "completed" else (result.failure_record.message if result.failure_record else result.r_result.stderr),
         "real_run_artifacts": result.artifacts,
         "real_validation_status": result.validation_report["status"],
+        "failure_records": failure_records,
+        "recommended_route": result.failure_record.recommended_route if result.failure_record else None,
         "audit_artifacts": [result.manifest],
         "sandbox_runs": 1,
     }
@@ -239,8 +244,8 @@ def summarize_real_adsl_minimal(state: DatasetGraphState) -> DatasetGraphState:
     output_artifact_ids = []
     if "output_adsl" in artifacts:
         output_artifact_ids.append(artifacts["output_adsl"].artifact_id)
-    failure_ids = []
-    if status == "failed":
+    failure_ids = [record.failure_id for record in state.get("failure_records", [])]
+    if status == "failed" and not failure_ids:
         failure_ids = ["failure_adsl_real_minimal"]
 
     summary = DatasetResultSummary(

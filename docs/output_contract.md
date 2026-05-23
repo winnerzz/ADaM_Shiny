@@ -59,6 +59,9 @@ runs/{run_id}/
   compare/
     adsl_compare_report.json
 
+  diagnostics/
+    adsl_failure_report.json
+
   audit/
     manifest.json
     decisions.json
@@ -80,6 +83,7 @@ and audit logic simple while avoiding a false comparison claim.
 | `outputs/` | Stores generated ADaM dataset outputs |
 | `validation/` | Stores structural and rule-based validation results |
 | `compare/` | Stores reference comparison results when reference ADaM exists |
+| `diagnostics/` | Stores structured failure diagnosis and recommended routing when a run fails |
 | `audit/` | Stores full run trace, decisions, hashes, and LLM/tool logs |
 
 ## Canonical Path Rule
@@ -201,6 +205,26 @@ If no reference ADSL exists, the report should look like:
   "reason": "No reference ADSL was provided"
 }
 ```
+
+## Failure Diagnosis Output
+
+When a dataset run fails, the MVP should write a structured diagnosis:
+
+```text
+runs/{run_id}/diagnostics/adsl_failure_report.json
+```
+
+It should contain a `FailureRecord` with:
+
+- failure type
+- root cause
+- recommended route
+- short message
+- related artifact ids when available
+
+This report is not an automatic repair. It is the machine-readable reason the
+graph can later use to choose `revise_spec`, `repair_code`, `human_review`, or
+`fail`.
 
 ## Audit Principle
 

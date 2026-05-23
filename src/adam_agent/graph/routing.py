@@ -18,6 +18,9 @@ def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
 def route_after_sandbox(state: DatasetGraphState) -> DatasetRoute:
     """Route a dataset after stub sandbox execution."""
 
+    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return "success" if state.get("real_run_completed") else "fail"
+
     failure_type = state.get("failure_type")
     if failure_type == "code_error":
         if state.get("repair_attempts", 0) >= state.get("max_repair_attempts", 3):

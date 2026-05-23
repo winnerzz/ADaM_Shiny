@@ -148,8 +148,37 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["summary"].status, "failed")
         self.assertEqual(result["summary"].validation_status, "not_run")
-        self.assertEqual(result["summary"].failure_ids, ["failure_adsl_real_minimal"])
+        self.assertEqual(result["summary"].failure_ids, ["failure_adsl_missing_required_input"])
+        self.assertEqual(result["failure_records"][0].failure_type, "input_error")
+        self.assertEqual(result["failure_records"][0].recommended_route, "fail")
         self.assertIn("requires input_sdtm/dm.csv or .sas7bdat", result["real_run_error"])
+
+    def test_real_adsl_spec_error_records_route_without_stub_revision(self) -> None:
+        study_dir = _workspace_dir("graph_real_adsl_spec_error") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        (input_dir / "dm.csv").write_text("STUDYID,AGE\nS1,34\n", encoding="utf-8")
+        (input_dir / "ex.csv").write_text("USUBJID,EXSTDTC\n01,2024-01-01\n", encoding="utf-8")
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_graph_real_adsl_spec_error",
+                "dataset": "ADSL",
+                "execution_mode": "real_adsl_minimal",
+                "study_dir": str(study_dir),
+                "rscript_path": str(LOCAL_RSCRIPT),
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"].status, "failed")
+        self.assertEqual(result["failure_records"][0].failure_type, "spec_error")
+        self.assertEqual(result["failure_records"][0].recommended_route, "revise_spec")
+        self.assertEqual(result.get("repair_attempts", 0), 0)
+        self.assertNotEqual(result.get("draft_spec_ready"), True)
 
     def test_adsl_failure_blocks_downstream_without_running_it(self) -> None:
         graph = compile_study_graph()

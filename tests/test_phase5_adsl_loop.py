@@ -9,12 +9,14 @@ import subprocess
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
 LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 
 try:
+    from adam_agent.adsl.diagnostics import diagnose_adsl_failure
     from adam_agent.adsl.r_template import render_build_adsl_r
     from adam_agent.adsl.runner import run_adsl_minimal
     from adam_agent.adsl.spec_builder import build_starter_adsl_spec, create_demo_approved_spec
@@ -25,6 +27,7 @@ except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
+    from adam_agent.adsl.diagnostics import diagnose_adsl_failure
     from adam_agent.adsl.r_template import render_build_adsl_r
     from adam_agent.adsl.runner import run_adsl_minimal
     from adam_agent.adsl.spec_builder import build_starter_adsl_spec, create_demo_approved_spec
@@ -41,6 +44,39 @@ def workspace_dir(name: str) -> Path:
 
 
 class Phase5AdslLoopTests(unittest.TestCase):
+    def test_diagnose_adsl_failure_classifies_missing_source_variable_as_spec_error(self) -> None:
+        r_result = LocalRRunner(rscript_path=None).run(
+            RRunRequest(
+                code="",
+                dataset="ADSL",
+                run_id="run_diag",
+                working_dir=str(workspace_dir("diag_missing_source")),
+                script_path="missing.R",
+            )
+        )
+        r_result.stderr = "Error in eval(predvars, data, env): object 'EXSTDTC' not found"
+
+        record = diagnose_adsl_failure(stage="run_or_validate", r_result=r_result)
+
+        self.assertEqual(record.failure_type, "spec_error")
+        self.assertEqual(record.failure_id, "failure_adsl_source_variable_missing")
+        self.assertEqual(record.root_cause, "source_variable_missing")
+        self.assertEqual(record.recommended_route, "revise_spec")
+
+    def test_diagnose_adsl_failure_routes_key_validation_to_human_review(self) -> None:
+        record = diagnose_adsl_failure(
+            stage="run_or_validate",
+            validation_report={
+                "dataset": "ADSL",
+                "status": "fail",
+                "errors": ["USUBJID is not unique"],
+            },
+        )
+
+        self.assertEqual(record.failure_type, "validation_error")
+        self.assertEqual(record.root_cause, "key_integrity_error")
+        self.assertEqual(record.recommended_route, "human_review")
+
     def test_starter_spec_marks_treatment_and_safety_candidates_review_required(self) -> None:
         dm_profile = DatasetProfile(
             dataset="DM",
@@ -389,7 +425,117 @@ class Phase5AdslLoopTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["status"], "failed")
-        self.assertIn("requires input_sdtm/dm.csv or .sas7bdat", payload["error"])
+        self.assertEqual(payload["failure_type"], "input_error")
+        self.assertEqual(payload["root_cause"], "missing_required_input")
+        self.assertEqual(payload["recommended_route"], "fail")
+        self.assertEqual(payload["failure_id"], "failure_adsl_missing_required_input")
+        self.assertTrue((study_dir / "runs" / "run_cli_missing" / "diagnostics" / "adsl_failure_report.json").exists())
+
+    def test_run_adsl_minimal_writes_failure_report_for_missing_inputs(self) -> None:
+        study_dir = workspace_dir("adsl_minimal_missing_inputs") / "PSY201"
+        study_dir.mkdir(parents=True)
+
+        result = run_adsl_minimal(study_dir, run_id="run_missing_inputs")
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(result.failure_record)
+        self.assertEqual(result.failure_record.failure_id, "failure_adsl_missing_required_input")
+        self.assertEqual(result.failure_record.failure_type, "input_error")
+        self.assertEqual(result.failure_record.root_cause, "missing_required_input")
+        self.assertEqual(result.failure_record.recommended_route, "fail")
+        self.assertIn("failure_report", result.artifacts)
+        failure_report = study_dir / "runs" / "run_missing_inputs" / "diagnostics" / "adsl_failure_report.json"
+        manifest = study_dir / "runs" / "run_missing_inputs" / "audit" / "manifest.json"
+        self.assertTrue(failure_report.exists())
+        manifest_text = manifest.read_text(encoding="utf-8")
+        self.assertIn("adsl_failure_report", manifest_text)
+        self.assertIn("missing_required_input", manifest_text)
+
+    def test_run_adsl_minimal_writes_failure_report_for_spec_build_failure(self) -> None:
+        study_dir = workspace_dir("adsl_minimal_spec_failure") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        (input_dir / "dm.csv").write_text("STUDYID,AGE\nS1,34\n", encoding="utf-8")
+        (input_dir / "ex.csv").write_text("USUBJID,EXSTDTC\n01,2024-01-01\n", encoding="utf-8")
+
+        result = run_adsl_minimal(study_dir, run_id="run_spec_failure")
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(result.failure_record)
+        self.assertEqual(result.failure_record.failure_type, "spec_error")
+        self.assertEqual(result.failure_record.root_cause, "source_variable_missing")
+        self.assertEqual(result.failure_record.recommended_route, "revise_spec")
+        failure_report = study_dir / "runs" / "run_spec_failure" / "diagnostics" / "adsl_failure_report.json"
+        manifest = study_dir / "runs" / "run_spec_failure" / "audit" / "manifest.json"
+        self.assertTrue(failure_report.exists())
+        manifest_text = manifest.read_text(encoding="utf-8")
+        self.assertIn("failure_adsl_source_variable_missing", manifest_text)
+        self.assertIn("revise_spec", manifest_text)
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_run_adsl_minimal_writes_failure_report_for_profile_failure(self) -> None:
+        study_dir = workspace_dir("adsl_minimal_profile_failure") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        (input_dir / "dm.sas7bdat").write_text("not a sas dataset", encoding="utf-8")
+        (input_dir / "ex.sas7bdat").write_text("not a sas dataset", encoding="utf-8")
+
+        result = run_adsl_minimal(study_dir, run_id="run_profile_failure", rscript_path=str(LOCAL_RSCRIPT))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(result.failure_record)
+        self.assertEqual(result.failure_record.failure_type, "input_error")
+        self.assertEqual(result.failure_record.root_cause, "unsupported_or_unreadable_input")
+        failure_report = study_dir / "runs" / "run_profile_failure" / "diagnostics" / "adsl_failure_report.json"
+        manifest = study_dir / "runs" / "run_profile_failure" / "audit" / "manifest.json"
+        self.assertTrue(failure_report.exists())
+        self.assertIn("unsupported_or_unreadable_input", manifest.read_text(encoding="utf-8"))
+
+    def test_run_adsl_minimal_writes_failure_report_for_r_failure(self) -> None:
+        study_dir = workspace_dir("adsl_minimal_r_failure") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        (input_dir / "dm.csv").write_text("USUBJID\n01\n", encoding="utf-8")
+        (input_dir / "ex.csv").write_text("USUBJID\n01\n", encoding="utf-8")
+
+        result = run_adsl_minimal(study_dir, run_id="run_r_failure", rscript_path="C:/missing/Rscript.exe")
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(result.failure_record)
+        self.assertEqual(result.failure_record.failure_type, "sandbox_error")
+        self.assertEqual(result.failure_record.root_cause, "r_runtime_error")
+        failure_report = study_dir / "runs" / "run_r_failure" / "diagnostics" / "adsl_failure_report.json"
+        manifest = study_dir / "runs" / "run_r_failure" / "audit" / "manifest.json"
+        self.assertTrue(failure_report.exists())
+        self.assertIn("r_runtime_error", manifest.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_run_adsl_minimal_writes_failure_report_for_validation_failure(self) -> None:
+        study_dir = workspace_dir("adsl_minimal_validation_failure") / "PSY201"
+        input_dir = study_dir / "input_sdtm"
+        input_dir.mkdir(parents=True)
+        (input_dir / "dm.csv").write_text("USUBJID\n01\n", encoding="utf-8")
+        (input_dir / "ex.csv").write_text("USUBJID\n01\n", encoding="utf-8")
+
+        forced_report = {
+            "dataset": "ADSL",
+            "status": "fail",
+            "checks": [],
+            "warnings": [],
+            "errors": ["USUBJID is not unique"],
+        }
+        with patch("adam_agent.adsl.runner.validate_adsl_csv", return_value=forced_report):
+            result = run_adsl_minimal(study_dir, run_id="run_validation_failure", rscript_path=str(LOCAL_RSCRIPT))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(result.failure_record)
+        self.assertEqual(result.failure_record.failure_type, "validation_error")
+        self.assertEqual(result.failure_record.root_cause, "key_integrity_error")
+        self.assertEqual(result.failure_record.recommended_route, "human_review")
+        failure_report = study_dir / "runs" / "run_validation_failure" / "diagnostics" / "adsl_failure_report.json"
+        manifest = study_dir / "runs" / "run_validation_failure" / "audit" / "manifest.json"
+        self.assertTrue(failure_report.exists())
+        self.assertIn("key_integrity_error", manifest.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

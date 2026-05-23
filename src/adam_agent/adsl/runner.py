@@ -7,9 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from adam_agent.adsl.diagnostics import diagnose_adsl_failure, write_failure_report
 from adam_agent.adsl.r_template import render_build_adsl_r
 from adam_agent.adsl.spec_builder import build_starter_adsl_spec, create_demo_approved_spec
 from adam_agent.adsl.validator import validate_adsl_csv, write_validation_report
+from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.tools.artifacts import ArtifactStore
 from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
@@ -30,6 +32,7 @@ class AdslRunResult:
     artifacts: dict[str, ArtifactRef]
     manifest: ArtifactRef
     warnings: list[str]
+    failure_record: FailureRecord | None = None
 
 
 def run_adsl_minimal(
@@ -47,13 +50,7 @@ def run_adsl_minimal(
     index = scanner.scan()
     warnings = list(index.warnings)
 
-    dm_artifact = _require_input(index, "DM")
-    ex_artifact = _require_input(index, "EX")
-
     store = ArtifactStore(study_path, study_id=resolved_study_id, run_id=run_id)
-    store.add_ref(dm_artifact)
-    store.add_ref(ex_artifact)
-
     run_dir = study_path / "runs" / run_id
     specs_dir = run_dir / "specs"
     code_dir = run_dir / "code"
@@ -61,8 +58,28 @@ def run_adsl_minimal(
     validation_dir = run_dir / "validation"
     compare_dir = run_dir / "compare"
     profile_dir = run_dir / "profile"
-    for folder in [specs_dir, code_dir, outputs_dir, validation_dir, compare_dir, profile_dir]:
+    diagnostics_dir = run_dir / "diagnostics"
+    for folder in [specs_dir, code_dir, outputs_dir, validation_dir, compare_dir, profile_dir, diagnostics_dir]:
         folder.mkdir(parents=True, exist_ok=True)
+    failure_report_path = diagnostics_dir / "adsl_failure_report.json"
+
+    try:
+        dm_artifact = _require_input(index, "DM")
+        ex_artifact = _require_input(index, "EX")
+    except ValueError as exc:
+        return _failed_run_result(
+            store=store,
+            failure_report_path=failure_report_path,
+            study_id=resolved_study_id,
+            run_id=run_id,
+            run_dir=run_dir,
+            stage="scan_inputs",
+            message=str(exc),
+            warnings=warnings,
+        )
+
+    store.add_ref(dm_artifact)
+    store.add_ref(ex_artifact)
 
     reader = SDTMReader()
     dm_profile = reader.profile(dm_artifact.path, dataset="DM")
@@ -70,9 +87,35 @@ def run_adsl_minimal(
     dm_profile = _profile_or_r_runtime_profile(dm_profile, rscript_path=rscript_path, profile_dir=profile_dir)
     ex_profile = _profile_or_r_runtime_profile(ex_profile, rscript_path=rscript_path, profile_dir=profile_dir)
     if dm_profile.status != "ok" or ex_profile.status != "ok":
-        raise ValueError(f"DM/EX profiling failed or is unsupported: DM={dm_profile.status}, EX={ex_profile.status}")
+        message = (
+            "DM/EX profiling failed or is unsupported: "
+            f"DM={dm_profile.status} {dm_profile.message}; "
+            f"EX={ex_profile.status} {ex_profile.message}"
+        )
+        return _failed_run_result(
+            store=store,
+            failure_report_path=failure_report_path,
+            study_id=resolved_study_id,
+            run_id=run_id,
+            run_dir=run_dir,
+            stage="profile_inputs",
+            message=message,
+            warnings=warnings,
+        )
 
-    spec_result = build_starter_adsl_spec(dm_profile, ex_profile)
+    try:
+        spec_result = build_starter_adsl_spec(dm_profile, ex_profile)
+    except ValueError as exc:
+        return _failed_run_result(
+            store=store,
+            failure_report_path=failure_report_path,
+            study_id=resolved_study_id,
+            run_id=run_id,
+            run_dir=run_dir,
+            stage="draft_spec",
+            message=str(exc),
+            warnings=warnings,
+        )
     approved_spec, approval = create_demo_approved_spec(spec_result.draft_spec)
 
     draft_spec_path = specs_dir / "adsl_draft_spec.json"
@@ -165,6 +208,22 @@ def run_adsl_minimal(
             dataset="ADSL",
         ),
     }
+    failure_record: FailureRecord | None = None
+    if not r_result.success or validation_report["status"] != "pass":
+        failure_record = diagnose_adsl_failure(
+            stage="run_or_validate",
+            r_result=r_result,
+            validation_report=validation_report,
+            artifact_ids=["adsl_generated_code", "adsl_validation_report"],
+        )
+        write_failure_report(failure_record, failure_report_path)
+        artifacts["failure_report"] = store.register_existing(
+            failure_report_path,
+            artifact_id="adsl_failure_report",
+            kind="tool_log",
+            role="audit",
+            dataset="ADSL",
+        )
     if output_path.exists():
         artifacts["output_adsl"] = store.register_existing(
             output_path,
@@ -180,6 +239,10 @@ def run_adsl_minimal(
             "phase": "phase5_adsl_minimal",
             "r_exit_code": r_result.exit_code,
             "validation_status": validation_report["status"],
+            "failure_id": failure_record.failure_id if failure_record else None,
+            "failure_type": failure_record.failure_type if failure_record else None,
+            "root_cause": failure_record.root_cause if failure_record else None,
+            "recommended_route": failure_record.recommended_route if failure_record else None,
             "warnings": warnings,
         }
     )
@@ -194,6 +257,7 @@ def run_adsl_minimal(
         artifacts=artifacts,
         manifest=manifest,
         warnings=warnings,
+        failure_record=failure_record,
     )
 
 
@@ -202,6 +266,59 @@ def _require_input(index: StudyInputIndex, domain: str) -> ArtifactRef:
         return index.input_sdtm[domain]
     except KeyError as exc:
         raise ValueError(f"ADSL minimal run requires input_sdtm/{domain.lower()}.csv or .sas7bdat") from exc
+
+
+def _failed_run_result(
+    *,
+    store: ArtifactStore,
+    failure_report_path: Path,
+    study_id: str,
+    run_id: str,
+    run_dir: Path,
+    stage: str,
+    message: str,
+    warnings: list[str],
+) -> AdslRunResult:
+    failure_record = diagnose_adsl_failure(stage=stage, message=message)
+    write_failure_report(failure_record, failure_report_path)
+    failure_ref = store.register_existing(
+        failure_report_path,
+        artifact_id="adsl_failure_report",
+        kind="tool_log",
+        role="audit",
+        dataset="ADSL",
+    )
+    validation_report = {
+        "dataset": "ADSL",
+        "status": "not_run",
+        "checks": [],
+        "warnings": [],
+        "errors": [message],
+    }
+    manifest = store.write_manifest(
+        extra={
+            "dataset": "ADSL",
+            "phase": "phase6_failure_diagnosis",
+            "validation_status": "not_run",
+            "failure_id": failure_record.failure_id,
+            "failure_type": failure_record.failure_type,
+            "root_cause": failure_record.root_cause,
+            "recommended_route": failure_record.recommended_route,
+            "warnings": warnings,
+        }
+    )
+    return AdslRunResult(
+        study_id=study_id,
+        run_id=run_id,
+        status="failed",
+        run_dir=str(run_dir.as_posix()),
+        r_result=RRunResult(dataset="ADSL", exit_code=2, stderr=message),
+        validation_report=validation_report,
+        artifacts={"failure_report": failure_ref},
+        manifest=manifest,
+        warnings=warnings,
+        failure_record=failure_record,
+    )
 
 
 def _profile_or_r_runtime_profile(profile: DatasetProfile, *, rscript_path: str | None, profile_dir: Path) -> DatasetProfile:

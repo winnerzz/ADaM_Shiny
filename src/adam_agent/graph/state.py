@@ -6,6 +6,7 @@ import operator
 from typing import Annotated, Literal, TypedDict
 
 from adam_agent.schemas.artifacts import ArtifactRef
+from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 
 
@@ -61,6 +62,8 @@ class DatasetGraphState(TypedDict, total=False):
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]
     real_validation_status: str
+    failure_records: list[FailureRecord]
+    recommended_route: str | None
     summary: DatasetResultSummary
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
 
