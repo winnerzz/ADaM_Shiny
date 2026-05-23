@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 4 审核页 - Tool Layer MVP</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5f6c7b;
+      --line: #d9e1ea;
+      --blue: #2563eb;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --code: #111827;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.65;
+    }
+
+    header {
+      background: #102033;
+      color: white;
+      padding: 34px 24px 28px;
+    }
+
+    header .wrap, main {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #d8e2ee;
+      max-width: 920px;
+    }
+
+    main { padding: 24px; }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 22px;
+      margin: 18px 0;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 17px;
+    }
+
+    p { margin: 8px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    code {
+      background: #eef2f7;
+      color: var(--code);
+      border: 1px solid #d8e0ea;
+      border-radius: 5px;
+      padding: 2px 5px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #eef2f7;
+      font-weight: 700;
+    }
+
+    .callout {
+      background: #f8fafc;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 12px 0;
+      border-left: 5px solid var(--blue);
+    }
+
+    .ok { border-left-color: var(--green); }
+    .warn { border-left-color: var(--amber); }
+    .risk { border-left-color: var(--red); }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+      white-space: nowrap;
+    }
+
+    .green { background: var(--green); }
+    .amber { background: var(--amber); }
+    .red { background: var(--red); }
+    .blue { background: var(--blue); }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Phase 4 Tool Layer MVP 审核页</h1>
+      <p class="subtitle">
+        这一页帮助你快速审核 Phase 4：我们不是在做真实 ADaM 生成，而是在给后续 LangGraph 节点装一层稳定、可替换、可审计的工具接口。
+      </p>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. Phase 4 一句话目标</h2>
+      <p>
+        Phase 4 的目标是把“具体干活的能力”从 Graph 节点里抽出来：读文件、扫 study、算 hash、写 manifest、调用 LLM、跑 R，都先通过工具接口。
+      </p>
+      <div class="callout ok">
+        简单说：Graph 负责决定下一步做什么；Tool 负责把这件事具体做出来。
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 当前实现流程图</h2>
+      <pre><code>StudyGraph / DatasetGraph
+  -> ConfigLoader      读取本次 run 的策略
+  -> StudyInputScanner 扫描 input_sdtm / reference_adam / input_spec / legacy_code
+  -> SDTMReader        读取 CSV 的列名、行数、少量样例
+  -> ArtifactStore     计算 sha256，写 runs/{run_id}/audit/manifest.json
+  -> LLMClient         Phase 4 只接 MockLLMClient，不接真实外部 API
+  -> RRunner           Phase 4 只接 StubRRunner，不启动真实 R 进程</code></pre>
+    </section>
+
+    <section>
+      <h2>3. 你需要重点看的文件</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>它负责什么</th>
+            <th>审核重点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>src/adam_agent/tools/artifacts.py</code></td>
+            <td>注册文件、计算 sha256、写 canonical manifest。</td>
+            <td>manifest 路径是否接受：<code>runs/{run_id}/audit/manifest.json</code>。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/tools/study_inputs.py</code></td>
+            <td>扫描 study 文件夹，把输入变成结构化 index。</td>
+            <td><code>.sas</code> 是否只当 legacy code，不当数据。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/tools/sdtm_reader.py</code></td>
+            <td>轻量读取 CSV metadata、row count、sample rows。</td>
+            <td><code>.sas7bdat</code> 现在是否可以明确暂不解析，而不是假装成功。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/tools/config.py</code></td>
+            <td>读取 run config，归一化 LLM 数据暴露策略。</td>
+            <td>是否沿用 Phase 2 的 <code>LLMExposureConfig</code>，不另搞一套 schema。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/llm/model_registry.py</code></td>
+            <td>管理 provider/model 能不能用。</td>
+            <td>OpenAI/Anthropic 现在是否应该明确未实现，避免误以为能跑。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/llm/clients.py</code></td>
+            <td>定义 LLMClient 协议和 mock client。</td>
+            <td>返回值是否包含 response text 和审计记录，而不是裸字符串。</td>
+          </tr>
+          <tr>
+            <td><code>src/adam_agent/tools/r_runner.py</code></td>
+            <td>定义 R 执行边界和 stub runner。</td>
+            <td>Phase 4 不依赖本机 R，也不启动真实 R subprocess。</td>
+          </tr>
+          <tr>
+            <td><code>tests/test_tools_phase4.py</code></td>
+            <td>验证上述工具边界。</td>
+            <td>是否覆盖了“不需要 API key、不需要网络、不需要真实 R”。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. 关键设计判断</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>判断</th>
+            <th>当前实现</th>
+            <th>我的建议</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Phase 4 要不要接真实 OpenAI/Anthropic？</td>
+            <td>不接。只支持 <code>mock/mock-model</code>。</td>
+            <td><span class="badge green">接受</span> 先把接口稳定下来，避免 API key 和 provider 细节干扰架构。</td>
+          </tr>
+          <tr>
+            <td>用户说的 <code>gpt-5.5</code> 这类模型怎么办？</td>
+            <td><code>openai/gpt-5.5</code> 会明确报未实现，不会偷偷 fallback 到 mock。</td>
+            <td><span class="badge green">接受</span> 这样不会造成“以为测过真实模型”的假象。</td>
+          </tr>
+          <tr>
+            <td>Mock LLM 是否还要审计？</td>
+            <td>要。会产生 prompt/response artifact id 和 hash。</td>
+            <td><span class="badge green">接受</span> mock 也走真实审计形状，后面替换 provider 更稳。</td>
+          </tr>
+          <tr>
+            <td><code>.sas7bdat</code> 现在是否读取？</td>
+            <td>识别格式，但 profiler 返回 <code>not_implemented_yet</code>。</td>
+            <td><span class="badge amber">可接受</span> Phase 5/后续再接 R/haven 或 pyreadstat。</td>
+          </tr>
+          <tr>
+            <td>R 沙盒现在是否真实跑？</td>
+            <td>不跑。<code>StubRRunner</code> 只返回结构化成功/失败。</td>
+            <td><span class="badge green">接受</span> 真实 sandbox 是 Phase 5 的复杂点。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>5. 现在已经能保证什么</h2>
+      <ul>
+        <li>工具模块可以 import。</li>
+        <li>Mock LLM 不需要 API key、网络或外部 provider。</li>
+        <li>Mock LLM 仍然产生 <code>LLMCallRecord</code>，包含 provider、model、exposure mode、prompt hash、response hash。</li>
+        <li>Study input scanner 返回结构化对象，而不是简单 path list。</li>
+        <li>Artifact manifest 写到固定 run audit 路径。</li>
+        <li>CSV profiler 能读列名、行数和限定数量的样例行。</li>
+        <li><code>.sas</code> 不会被当成 SDTM 数据。</li>
+        <li>R runner 结果是结构化对象，有 stdout、stderr、exit code。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>6. 现在明确不能保证什么</h2>
+      <ul>
+        <li>不能生成真实 ADSL。</li>
+        <li>不能调用真实 OpenAI、Anthropic 或 OpenAI-compatible endpoint。</li>
+        <li>不能读取真实 <code>.sas7bdat</code> 内容。</li>
+        <li>不能执行真实 R 代码。</li>
+        <li>工具还没有接入 Phase 3 的 StudyGraph/DatasetGraph。</li>
+      </ul>
+      <div class="callout warn">
+        这些不是 bug，是 Phase 4 的有意边界。真正跑 ADSL 的闭环应该进入 Phase 5。
+      </div>
+    </section>
+
+    <section>
+      <h2>7. 测试结果</h2>
+      <pre><code>python -m unittest discover -s tests -p "test_*.py"
+
+Ran 31 tests in 0.210s
+OK</code></pre>
+      <p>
+        测试时有 LangGraph/Python 依赖的 deprecation warning，但不影响通过。Phase 4 测试不需要真实 API key、网络或 R 安装。
+      </p>
+    </section>
+
+    <section>
+      <h2>8. Windows 临时目录问题</h2>
+      <p>
+        最初 Phase 4 测试用 <code>tempfile.TemporaryDirectory()</code>，在这个 Windows 环境下创建的临时子目录出现写入/清理权限错误。
+      </p>
+      <p>
+        已改为项目内 <code>.tmp_tests/</code> 固定测试根目录，并加入 <code>.gitignore</code>。这只影响测试稳定性，不影响产品逻辑。
+      </p>
+    </section>
+
+    <section>
+      <h2>9. 我建议你怎么快速审核</h2>
+      <ol>
+        <li>先看本页第 4、5、6 节，确认边界是否符合你的预期。</li>
+        <li>再看 <code>src/adam_agent/llm/model_registry.py</code> 和 <code>clients.py</code>，确认“不假装支持真实 provider”。</li>
+        <li>再看 <code>src/adam_agent/tools/study_inputs.py</code>，确认 study 输入扫描的结构是否直观。</li>
+        <li>最后看 <code>tests/test_tools_phase4.py</code>，确认测试覆盖的是工具边界，而不是过早进入真实业务逻辑。</li>
+      </ol>
+      <div class="callout ok">
+        如果你认可，下一步是提交 Phase 4。之后 Phase 5 才开始把这些工具接入单 dataset ADSL 真实闭环。
+      </div>
+    </section>
+  </main>
+</body>
+</html>

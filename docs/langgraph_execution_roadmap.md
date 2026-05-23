@@ -22,14 +22,14 @@ Update rule:
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 2 - State model |
+| Current phase | Phase 5 - Single-dataset real loop |
 | Original Shiny worktree branch | `experimental-v3` |
 | Active worktree branch | `LangGraph` |
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 3 complete; ready for Phase 4 tool layer MVP |
-| Last roadmap update | 2026-05-22 |
+| Current implementation status | Phase 4 complete; ready for Phase 5 single-dataset ADSL loop |
+| Last roadmap update | 2026-05-23 |
 
 Known workspace notes:
 
@@ -64,7 +64,7 @@ Phase 0  Engineering foundation
 | 1. Product and data contracts | Define exactly what the MVP accepts and produces | input/output contract, study folder convention, data governance rules | The first MVP scope is unambiguous | complete |
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | complete |
 | 3. LangGraph skeleton | Prove main graph and dataset graph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | complete |
-| 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | not started |
+| 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | complete |
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | not started |
 | 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | not started |
 | 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | not started |
@@ -744,7 +744,99 @@ Exit criteria:
 
 Status:
 
-`not started`
+`complete`
+
+## Phase 4 Handoff Record - 2026-05-23
+
+Date:
+
+2026-05-23
+
+Phase:
+
+Phase 4 - Tool layer MVP
+
+Status:
+
+`complete`
+
+What changed:
+
+- Added a deterministic tool layer so future graph nodes do not directly handle
+  scattered file I/O, model-provider calls, or R execution details.
+- Added `ArtifactStore` for file hashing and canonical run manifest writing.
+- Added `StudyInputScanner` for structured study-folder scanning.
+- Added `SDTMReader` for lightweight CSV profiling and explicit sas7bdat
+  not-implemented behavior.
+- Added `ConfigLoader` for default and demo LLM exposure policies, reusing the
+  existing `LLMExposureConfig` schema.
+- Added `ModelRegistry` with Phase 4 mock-only support. Real providers such as
+  OpenAI, Anthropic, and OpenAI-compatible endpoints intentionally raise
+  `ModelNotImplementedError` for now.
+- Added `MockLLMClient` that runs without API keys or network but still returns
+  an auditable `LLMCallRecord`.
+- Added `StubRRunner` with structured success/failure results and no real R
+  subprocess execution.
+- Added Phase 4 tests covering the boundaries above.
+- Added `.tmp_tests/` to `.gitignore` because Windows/Python temporary
+  directory permissions blocked `tempfile.TemporaryDirectory()` in this
+  environment.
+
+Files changed:
+
+- `.gitignore`
+- `docs/phase4_design.md`
+- `docs/langgraph_execution_roadmap.md`
+- `docs/phase4_review_temp.html`
+- `src/adam_agent/tools/artifacts.py`
+- `src/adam_agent/tools/study_inputs.py`
+- `src/adam_agent/tools/sdtm_reader.py`
+- `src/adam_agent/tools/config.py`
+- `src/adam_agent/tools/r_runner.py`
+- `src/adam_agent/llm/model_registry.py`
+- `src/adam_agent/llm/clients.py`
+- `tests/test_tools_phase4.py`
+
+Commands run:
+
+- `git status --short --branch`
+- `python -m unittest discover -s tests -p "test_*.py"`
+
+Verification result:
+
+- Full test suite passes:
+  `Ran 31 tests ... OK`.
+- Test output still includes LangGraph/Python dependency deprecation warnings;
+  they do not fail the suite.
+- No API key, network call, or real R installation is required for Phase 4 tests.
+
+Decisions made:
+
+- Keep Phase 4 mock-only for provider calls. This avoids pretending that
+  OpenAI/Anthropic models such as `gpt-5.5` are already wired into the product.
+- Preserve the clean boundary for future real provider clients: they must
+  implement the same `LLMClient.generate()` contract and return both response
+  text and `LLMCallRecord`.
+- Treat `external_api_allowed=true` in demo config as policy rehearsal only
+  until a real provider client is implemented.
+- Keep `.sas7bdat` as a recognized data format but return
+  `not_implemented_yet` for profiling in Phase 4.
+- Keep `.sas` under `legacy_code` as text evidence and flag `.sas` under
+  `input_sdtm` as invalid data input.
+
+Open issues:
+
+- Phase 4 tools are not yet wired into the LangGraph nodes.
+- Real R execution belongs to Phase 5.
+- Real OpenAI/Anthropic/OpenAI-compatible clients are intentionally not
+  implemented yet.
+- `.sas7bdat` profiling needs an optional reader in a later phase.
+- User reviewed and approved Phase 4.
+
+Recommended next action:
+
+- Commit Phase 4 as the tool-layer MVP.
+- Then begin Phase 5 by wiring tools into a single-dataset ADSL loop.
 
 ## Phase 5 - Single-Dataset Real Loop
 
