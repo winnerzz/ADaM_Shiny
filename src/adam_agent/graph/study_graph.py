@@ -51,6 +51,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         run_id=state["run_id"],
         approved_dependency_datasets=approved_dependency_datasets,
     )
+    dependency_resolution_dicts = [record.as_dict() for record in dependency_resolutions]
     requested_set = set(plan.requested_datasets)
     satisfied_dependency_datasets = available_dependency_targets(dependency_resolutions)
     runnable_datasets = _runnable_datasets(
@@ -62,7 +63,13 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
     )
 
     foundation_tasks = [
-        _make_dataset_task(state, dataset, scenarios.get(dataset, "success"), _dependency_status(plan.dependencies.get(dataset, [])))
+        _make_dataset_task(
+            state,
+            dataset,
+            scenarios.get(dataset, "success"),
+            _dependency_status(plan.dependencies.get(dataset, [])),
+            dependency_resolution_dicts,
+        )
         for dataset in plan.foundation_datasets
         if dataset in runnable_datasets
     ]
@@ -72,6 +79,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             dataset,
             scenarios.get(dataset, "code_error_then_success" if dataset == "ADAE" else "success"),
             _dependency_status(plan.dependencies.get(dataset, [])),
+            dependency_resolution_dicts,
         )
         for dataset in plan.downstream_datasets
         if dataset in runnable_datasets
@@ -128,7 +136,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         "dependency_graph": plan.dependency_graph,
         "dataset_dependencies": plan.dependencies,
         "dependency_decisions": [decision.as_dict() for decision in plan.decisions],
-        "dependency_resolution": [record.as_dict() for record in dependency_resolutions],
+        "dependency_resolution": dependency_resolution_dicts,
         "dependency_action_required": bool(dependency_blocks),
         "dependency_evidence": plan.evidence,
         "dependency_evidence_records": [record.as_dict() for record in plan.evidence_records],
@@ -574,6 +582,7 @@ def _make_dataset_task(
     dataset: str,
     scenario: str,
     dependency_status: str,
+    dependency_resolution: list[dict[str, object]],
 ) -> DatasetTask:
     return {
         "study_id": state["study_id"],
@@ -585,6 +594,7 @@ def _make_dataset_task(
         "execution_mode": state.get("execution_mode", "stub"),
         "study_dir": state.get("study_dir", ""),
         "rscript_path": state.get("rscript_path", ""),
+        "dependency_resolution": dependency_resolution,
     }
 
 

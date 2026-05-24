@@ -13,7 +13,7 @@ from adam_agent.llm.generated_code import LLMGeneratedCodeError, parse_generated
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.r_runner import RRunRequest, RRunResult, StubRRunner
+from adam_agent.tools.r_runner import RRunRequest, RRunResult
 
 
 @dataclass
@@ -55,7 +55,7 @@ def run_downstream_adam(
     run_dir = root / "runs" / run_id
     artifacts: dict[str, ArtifactRef] = {}
     exposure_config = exposure or LLMExposureConfig()
-    runner = r_runner or StubRRunner()
+    runner = r_runner or StructuralStubRRunner()
 
     context = build_target_llm_context(
         study_id=study_id,
@@ -164,6 +164,16 @@ def run_downstream_adam(
         validation_report=validation_report,
         warnings=context.warnings,
     )
+
+
+class StructuralStubRRunner:
+    """Stub runner for graph integration that writes the canonical output file."""
+
+    def run(self, request: RRunRequest) -> RRunResult:
+        output_path = Path(request.working_dir) / "outputs" / f"{request.dataset.lower()}.csv"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("USUBJID\n", encoding="utf-8")
+        return RRunResult(dataset=request.dataset, exit_code=0, stdout=f"Structural stub wrote {output_path.name}", stderr="")
 
 
 def _prompt_from_context(context: dict[str, Any]) -> str:

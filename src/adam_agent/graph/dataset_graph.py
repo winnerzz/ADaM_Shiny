@@ -5,6 +5,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.adsl.runner import run_adsl_minimal
+from adam_agent.downstream.runner import run_downstream_adam
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
 from adam_agent.schemas.artifacts import ArtifactRef
@@ -17,12 +18,63 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("dataset") == "ADSL" and state.get("execution_mode") == "real_adsl_minimal":
         return run_adsl_minimal_node(state)
+    if state.get("dataset") != "ADSL" and state.get("execution_mode") == "llm_downstream_stubbed":
+        return run_llm_downstream_stubbed_node(state)
 
     return {
         "status": "running",
         "repair_attempts": state.get("repair_attempts", 0),
         "max_repair_attempts": state.get("max_repair_attempts", 3),
         "sandbox_runs": state.get("sandbox_runs", 0),
+    }
+
+
+def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Run the generic downstream LLM/R service with mock boundaries."""
+
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": "execution_mode=llm_downstream_stubbed requires study_dir",
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    try:
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            target_dataset=state["dataset"],
+            dependency_resolution=state.get("dependency_resolution", []),
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": str(exc),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    return {
+        "status": result.status,
+        "failure_type": None if result.status == "completed" else "sandbox_error",
+        "route": "success" if result.status == "completed" else "fail",
+        "real_run_completed": result.status == "completed",
+        "real_run_error": result.error or "; ".join(result.validation_report.get("errors", [])),
+        "real_run_artifacts": result.artifacts,
+        "real_validation_status": result.validation_status,
+        "audit_artifacts": [artifact for key, artifact in result.artifacts.items() if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report"}],
+        "sandbox_runs": 1,
     }
 
 
@@ -81,6 +133,8 @@ def draft_lineage_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+        return {}
     return {"lineage_ready": True}
 
 
@@ -89,6 +143,8 @@ def draft_spec_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+        return {}
     return {"draft_spec_ready": True}
 
 
@@ -96,6 +152,8 @@ def route_risk_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Flag higher-risk datasets for a stub human review path."""
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {"human_review_required": False, "route": state.get("route", "success")}
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
         return {"human_review_required": False, "route": state.get("route", "success")}
     return {
         "human_review_required": state.get("dataset") != "ADSL",
@@ -114,6 +172,8 @@ def generate_code_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+        return {}
     dataset = state["dataset"]
     return {"generated_code": f"# stub generated code for {dataset}"}
 
@@ -122,6 +182,8 @@ def run_sandbox_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend code ran in the R sandbox."""
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
+        return {}
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
         return {}
     sandbox_runs = state.get("sandbox_runs", 0) + 1
     scenario = state.get("stub_scenario", "success")
@@ -193,6 +255,8 @@ def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return summarize_real_adsl_minimal(state)
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+        return summarize_real_downstream(state)
 
     status = "failed" if state.get("failure_type") else "completed"
     dataset = state["dataset"]
@@ -234,6 +298,35 @@ def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
         "status": status,
         "summary": summary,
         "audit_artifacts": [audit_artifact],
+    }
+
+
+def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
+    """Create a DatasetResultSummary for the generic downstream service."""
+
+    dataset = state["dataset"]
+    status = "completed" if state.get("real_run_completed") else "failed"
+    artifacts = state.get("real_run_artifacts", {})
+    output_artifact_ids = []
+    if "output_adam" in artifacts:
+        output_artifact_ids.append(artifacts["output_adam"].artifact_id)
+    failure_ids = [] if status == "completed" else [f"failure_{dataset.lower()}_llm_downstream"]
+    audit_artifact_id = None
+    if state.get("audit_artifacts"):
+        audit_artifact_id = state["audit_artifacts"][-1].artifact_id
+
+    summary = DatasetResultSummary(
+        dataset=dataset,
+        status=status,
+        output_artifact_ids=output_artifact_ids,
+        audit_artifact_id=audit_artifact_id,
+        validation_status=state.get("real_validation_status", "unknown"),
+        compare_status="not_run",
+        failure_ids=failure_ids,
+    )
+    return {
+        "status": status,
+        "summary": summary,
     }
 
 

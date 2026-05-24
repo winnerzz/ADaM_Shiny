@@ -27,6 +27,7 @@ class DatasetTask(TypedDict, total=False):
     execution_mode: str
     study_dir: str
     rscript_path: str
+    dependency_resolution: list[dict[str, object]]
 
 
 class BlockedDataset(TypedDict):
@@ -58,6 +59,7 @@ class DatasetGraphState(TypedDict, total=False):
     execution_mode: str
     study_dir: str
     rscript_path: str
+    dependency_resolution: list[dict[str, object]]
     real_run_completed: bool
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]

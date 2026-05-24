@@ -407,11 +407,16 @@ Implemented so far:
   `ADAE`, although ADAE is used as the first test fixture.
 - The runner can use a fixed mock LLM response and a stub R runner, so the
   chain can be tested without API keys or local R.
+- Wired the generic downstream runner into `DatasetGraph` behind the explicit
+  mode `execution_mode = "llm_downstream_stubbed"`.
+- StudyGraph now passes dependency-resolution records into each dataset task so
+  downstream dataset graphs can build dependency-aware LLM context packages.
+- The graph-level downstream mode writes context, response, generated R code,
+  minimal output, and validation artifacts into the study run folder.
 
 Not implemented yet:
 
 - Real LLM provider call.
-- StudyGraph integration for the downstream runner.
 - Real downstream R execution through local R for a non-ADSL target.
 - Real downstream ADaM validation beyond structural checks.
 

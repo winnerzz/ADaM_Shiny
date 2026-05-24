@@ -1233,6 +1233,14 @@ Phase 7.4 implementation notes:
 - Added `tests/test_downstream_runner.py`.
 - Full test suite after generic downstream runner:
   `Ran 83 tests ... OK`.
+- Wired the generic downstream runner into `DatasetGraph` behind
+  `execution_mode = "llm_downstream_stubbed"`.
+- `StudyGraph` now passes dependency-resolution records into dataset tasks so a
+  downstream dataset can build its dependency-aware LLM context package.
+- Added a graph-level smoke test showing ADAE can run through the explicit
+  LLM-downstream stubbed mode when ADSL is available as a dependency artifact.
+- Full test suite after StudyGraph/DatasetGraph integration:
+  `Ran 84 tests ... OK`.
 
 Open issues:
 
@@ -1242,7 +1250,6 @@ Open issues:
   dataset loops.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
-- Phase 7.4 has not yet wired the downstream runner into StudyGraph.
 - Phase 7.4 has not yet implemented real LLM provider calls or real downstream
   R execution for a non-ADSL target.
 - Downstream validation is still structural and must not be described as

@@ -484,6 +484,49 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["satisfied_dependency_datasets"], ["ADSL"])
         self.assertEqual(result["status"], "completed")
 
+    def test_study_graph_runs_llm_downstream_stubbed_when_dependency_available(self) -> None:
+        study_dir = _workspace_dir("phase74_graph_llm_downstream") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase74_graph_llm_downstream",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "llm_downstream_stubbed",
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(set(summaries), {"ADAE"})
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(summaries["ADAE"].validation_status, "pass")
+        self.assertEqual(summaries["ADAE"].output_artifact_ids, ["output_adam_psy201_run_phase74_graph_llm_downstream_adae"])
+        self.assertTrue((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "llm" / "adae_context.json").exists())
+        self.assertTrue((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "code" / "build_adae.R").exists())
+        self.assertTrue((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "outputs" / "adae.csv").exists())
+        manifest_payload = json.loads((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "audit" / "manifest.json").read_text(encoding="utf-8"))
+        artifact_ids = {artifact["artifact_id"] for artifact in manifest_payload["artifacts"]}
+        self.assertIn("llm_context_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
+        self.assertIn("llm_response_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
+
     def test_approved_dependency_generation_allows_running_dependency_once(self) -> None:
         graph = compile_study_graph()
 
