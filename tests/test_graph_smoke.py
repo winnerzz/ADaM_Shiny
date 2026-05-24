@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 import uuid
@@ -76,6 +77,140 @@ class GraphSmokeTests(unittest.TestCase):
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["LB"].source, "mvp_no_default_dependency")
         self.assertTrue(decisions["LB"].review_required)
+
+    def test_dependency_plan_uses_input_spec_dependency_before_fallback(self) -> None:
+        study_dir = _workspace_dir("phase7_spec_dependency") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "PARAMCD",
+                            "source_domains": ["ADSL", "ADLB"],
+                            "derivation": "Derive time to threshold from ADLB and subject-level covariates from ADSL.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADTTE"], study_dir=study_dir)
+
+        self.assertEqual(plan.requested_datasets, ["ADTTE"])
+        self.assertEqual(plan.target_datasets, ["ADSL", "ADLB", "ADTTE"])
+        self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
+        self.assertEqual(plan.dependencies["ADLB"], ["ADSL"])
+        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
+        self.assertEqual(plan.evidence, "user_evidence_plus_mvp_fallback")
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(decisions["ADTTE"].source, "input_spec_dependency")
+        self.assertGreater(decisions["ADTTE"].confidence, 0.8)
+        self.assertTrue(decisions["ADTTE"].evidence_ids)
+
+    def test_input_spec_is_authoritative_and_secondary_conflict_becomes_warning(self) -> None:
+        study_dir = _workspace_dir("phase7_spec_conflict_dependency") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sas_dir = study_dir / "legacy_code"
+        spec_dir.mkdir(parents=True)
+        sas_dir.mkdir(parents=True)
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sas_dir / "ADTTE.sas").write_text(
+            "data adtte;\n  merge adlb adae;\nrun;\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADTTE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADTTE"], ["ADLB"])
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(decisions["ADTTE"].source, "input_spec_dependency")
+        self.assertNotIn("ADAE", plan.target_datasets)
+        self.assertTrue(any("Dependency conflict" in warning and "ADAE" in warning for warning in plan.planning_warnings))
+
+    def test_input_spec_consistent_secondary_evidence_stays_quiet(self) -> None:
+        study_dir = _workspace_dir("phase7_spec_consistent_dependency") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sas_dir = study_dir / "legacy_code"
+        spec_dir.mkdir(parents=True)
+        sas_dir.mkdir(parents=True)
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sas_dir / "ADTTE.sas").write_text(
+            "data adtte;\n  merge adlb;\nrun;\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADTTE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADTTE"], ["ADLB"])
+        self.assertFalse(any("Dependency conflict" in warning for warning in plan.planning_warnings))
+
+    def test_dependency_plan_uses_legacy_sas_dependency_evidence(self) -> None:
+        study_dir = _workspace_dir("phase7_sas_dependency") / "PSY201"
+        sas_dir = study_dir / "legacy_code"
+        sas_dir.mkdir(parents=True)
+        (sas_dir / "ADTTE.sas").write_text(
+            "data adtte;\n  merge adsl adlb;\n  by usubjid;\nrun;\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADTTE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(decisions["ADTTE"].source, "legacy_sas_dependency")
+        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
+
+    def test_dependency_plan_uses_define_xml_dependency_evidence(self) -> None:
+        study_dir = _workspace_dir("phase7_define_dependency") / "PSY201"
+        define_dir = study_dir / "input_define"
+        define_dir.mkdir(parents=True)
+        (define_dir / "define.xml").write_text(
+            """
+            <ItemGroupDef Name="ADTTE">
+              <Description>ADTTE uses ADLB threshold records and ADSL population flags.</Description>
+            </ItemGroupDef>
+            """,
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADTTE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(decisions["ADTTE"].source, "define_xml_dependency")
+        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
 
     def test_study_graph_runs_foundation_then_downstream_stub_datasets(self) -> None:
         graph = compile_study_graph()
@@ -326,6 +461,50 @@ class GraphSmokeTests(unittest.TestCase):
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(summaries["ADSL"].status, "completed")
         self.assertEqual(summaries["ADAE"].status, "failed")
+        self.assertEqual(result["status"], "failed")
+
+    def test_midstream_dependency_failure_blocks_only_dependent_datasets(self) -> None:
+        study_dir = _workspace_dir("phase7_midstream_block") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ADTTE.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase7_midstream_block",
+                "target_datasets": ["ADAE", "ADTTE"],
+                "study_dir": str(study_dir),
+                "stub_scenarios": {"ADLB": "fail_adsl"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADSL"].status, "completed")
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(summaries["ADLB"].status, "failed")
+        self.assertEqual(summaries["ADTTE"].status, "failed")
+        self.assertEqual(summaries["ADTTE"].validation_status, "blocked_by_dependency")
+        self.assertIn({"dataset": "ADTTE", "reason": "blocked_by_dependency", "blocked_by": "ADLB"}, result["blocked_datasets"])
+        self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADSL"], ["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
 
     def test_checkpoint_history_exists_and_matches_final_state(self) -> None:

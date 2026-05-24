@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from langgraph.types import Send
-
-from adam_agent.graph.state import DatasetGraphState, DatasetRoute, StudyGraphState
+from adam_agent.graph.state import DatasetGraphState, DatasetRoute
 
 
 def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
@@ -33,15 +31,3 @@ def route_after_sandbox(state: DatasetGraphState) -> DatasetRoute:
     if failure_type:
         return "fail"
     return "success"
-
-
-def route_after_foundation(state: StudyGraphState) -> str | list[Send]:
-    """Route study execution after foundation datasets have completed."""
-
-    if state.get("route") == "foundation_failed":
-        return "mark_downstream_blocked"
-    sends = [
-        Send("run_downstream_dataset", task)
-        for task in state.get("downstream_tasks", [])
-    ]
-    return sends or "reduce_dataset_results"

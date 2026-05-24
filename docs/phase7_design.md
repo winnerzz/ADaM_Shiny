@@ -1,8 +1,8 @@
 # Phase 7 Design - Multi-Dataset Study Orchestration MVP
 
-Last updated: 2026-05-23
+Last updated: 2026-05-24
 
-Phase status: in progress
+Phase status: implementation in progress
 
 ## Purpose
 
@@ -49,16 +49,16 @@ ADLB = LB records + ADSL subject-level variables
 
 ## Evidence Priority for Dependencies
 
-Production dependency planning should eventually use this priority:
+Dependency planning follows a spec-first rule:
 
-1. approved spec
-2. legacy SAS program evidence
-3. define.xml metadata
-4. study/SAP/protocol notes
-5. MVP fallback default
-6. human decision
+1. If `input_spec` is provided, use it as the authoritative dependency source.
+2. When `input_spec` exists, scan legacy SAS and define.xml only as consistency
+   checks. Do not let them change the dependency plan. Report only conflicts.
+3. If `input_spec` is missing, use legacy SAS and define.xml as draft
+   dependency evidence.
+4. If no usable dependency evidence exists, use the MVP fallback default.
 
-Phase 7.1 only implements the fallback default and records it as:
+The fallback default is recorded as:
 
 ```text
 dependency_evidence = phase7_mvp_fallback_adsl_foundation
@@ -164,8 +164,9 @@ Phase 7.1 is complete when:
 
 ## Follow-Ups
 
-- infer dependencies from approved spec
-- detect `merge ... adsl` from legacy SAS text
-- define.xml dependency extraction
+- production-grade define.xml parsing
+- production-grade spec dependency parsing beyond lightweight ADaM token
+  detection
+- production-grade legacy SAS dependency parsing beyond simple merge/set/join
+  lines
 - real ADAE minimal loop
-- parallel dispatch for independent downstream datasets

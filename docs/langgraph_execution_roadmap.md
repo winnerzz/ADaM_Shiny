@@ -22,13 +22,13 @@ Update rule:
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 5 - Single-dataset real loop |
+| Current phase | Phase 7 - Multi-dataset study orchestration |
 | Original Shiny worktree branch | `experimental-v3` |
 | Active worktree branch | `LangGraph` |
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7 started; explicit study-level dataset dependency planning implemented |
+| Current implementation status | Phase 7 in progress; evidence-backed dependency planning and batched study execution implemented |
 | Last roadmap update | 2026-05-23 |
 
 Known workspace notes:
@@ -1082,21 +1082,45 @@ Phase 7.1 implementation notes:
 - Multiple downstream requests such as `["ADAE", "ADCM"]` auto-add `ADSL` only
   once.
 
+Phase 7.2 implementation notes:
+
+- Added conservative dependency evidence scanning from:
+  - `input_spec`
+  - `legacy_code`
+  - `input_define`
+- Dependency planning is spec-first:
+  - if `input_spec` is present, it is the authoritative dependency source
+  - legacy SAS and define.xml are scanned only to validate the spec for
+    conflicts
+  - consistent secondary evidence stays quiet
+  - conflicting secondary evidence is recorded as a planning warning
+  - if `input_spec` is missing, legacy SAS and define.xml can provide draft
+    dependency evidence before MVP fallback
+- StudyGraph now builds execution batches from the dependency plan, for
+  example:
+  `ADSL -> ADLB -> ADTTE`.
+- Datasets in the same dependency batch can run together through a bounded
+  thread pool.
+- If an intermediate dataset fails, only datasets that depend on it are
+  blocked. Unrelated datasets in the same study can still complete.
+- Study-level audit metadata now records dependency evidence records,
+  dependency planning warnings, and execution batches.
+
 Verification so far:
 
 ```text
 python -m unittest discover -s tests -p "test_*.py"
-Ran 60 tests ... OK
+Ran 66 tests ... OK
 ```
 
 Open issues:
 
-- Dependencies are still fallback defaults, not inferred from spec/SAS/define.
 - The fallback is not a complete ADaM dependency graph and must not be treated
   as production evidence.
 - Downstream datasets still use stubs unless a later phase implements real
   dataset loops.
-- No true parallel execution optimization yet beyond LangGraph send structure.
+- Dependency extraction is conservative and lightweight; production-grade
+  define.xml/spec parsing still belongs in a later standards-hardening phase.
 
 ## Phase 8 - Product UI and Audit Workflow
 

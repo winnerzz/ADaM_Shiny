@@ -86,6 +86,9 @@ class StudyGraphState(TypedDict, total=False):
     dataset_dependencies: dict[str, list[str]]
     dependency_decisions: list[dict[str, object]]
     dependency_evidence: str
+    dependency_evidence_records: list[dict[str, object]]
+    dependency_planning_warnings: list[str]
+    execution_batches: list[list[str]]
     foundation_datasets: list[str]
     downstream_datasets: list[str]
     dataset_tasks: list[DatasetTask]
@@ -94,4 +97,3 @@ class StudyGraphState(TypedDict, total=False):
     blocked_datasets: Annotated[list[BlockedDataset], operator.add]
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
     audit_manifest: ArtifactRef
-    route: Literal["foundation_ready", "foundation_failed"]
