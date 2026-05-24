@@ -47,12 +47,13 @@ class LLMClient(Protocol):
 class MockLLMClient:
     """Deterministic mock client that requires no API key or network."""
 
-    def __init__(self, registry: ModelRegistry | None = None) -> None:
+    def __init__(self, registry: ModelRegistry | None = None, *, fixed_response_text: str | None = None) -> None:
         self.registry = registry or ModelRegistry()
+        self.fixed_response_text = fixed_response_text
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         model_info = self.registry.lookup(request.provider, request.model)
-        response_text = f"[mock:{model_info.model}] deterministic response for {request.node}"
+        response_text = self.fixed_response_text or f"[mock:{model_info.model}] deterministic response for {request.node}"
         prompt_artifact_id = request.prompt_artifact_id or f"prompt_{request.call_id}"
         response_artifact_id = request.response_artifact_id or f"response_{request.call_id}"
 

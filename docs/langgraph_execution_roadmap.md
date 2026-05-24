@@ -1222,6 +1222,17 @@ Phase 7.4 implementation notes:
 - Added `tests/test_llm_generated_code.py`.
 - Full test suite after generated-code parser/writer:
   `Ran 79 tests ... OK`.
+- Added `src/adam_agent/downstream/runner.py`.
+- The generic downstream runner now wires the Phase 7.4 pieces into one
+  testable service boundary:
+  `context package -> LLM client -> generated-code parser/writer -> R runner ->
+  structural output validation`.
+- The runner is dataset-generic and uses ADAE only as the first fixture.
+- It can run with a fixed mock LLM response and stub R runner, so no API key or
+  local R installation is required for these tests.
+- Added `tests/test_downstream_runner.py`.
+- Full test suite after generic downstream runner:
+  `Ran 83 tests ... OK`.
 
 Open issues:
 
@@ -1231,8 +1242,11 @@ Open issues:
   dataset loops.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
-- Phase 7.4 has not yet implemented real LLM provider calls, downstream R
-  execution, or downstream output validation.
+- Phase 7.4 has not yet wired the downstream runner into StudyGraph.
+- Phase 7.4 has not yet implemented real LLM provider calls or real downstream
+  R execution for a non-ADSL target.
+- Downstream validation is still structural and must not be described as
+  regulatory-grade ADaM compliance validation.
 
 ## Phase 8 - Product UI and Audit Workflow
 

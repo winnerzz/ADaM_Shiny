@@ -400,12 +400,20 @@ Implemented so far:
 - Added a small MVP guardrail that rejects obvious unsafe generated R calls such
   as `system()`, `shell()`, `unlink()`, `download.file()`, and
   `install.packages()` before R execution.
+- Added a generic downstream runner that wires:
+  `context package -> LLM client -> generated-code parser/writer -> R runner ->
+  minimal output validation`.
+- The downstream runner is generic by dataset name. It is not hard-coded to
+  `ADAE`, although ADAE is used as the first test fixture.
+- The runner can use a fixed mock LLM response and a stub R runner, so the
+  chain can be tested without API keys or local R.
 
 Not implemented yet:
 
 - Real LLM provider call.
-- Generated downstream R code execution.
-- Real downstream ADaM validation beyond stubs.
+- StudyGraph integration for the downstream runner.
+- Real downstream R execution through local R for a non-ADSL target.
+- Real downstream ADaM validation beyond structural checks.
 
 ## Exit Criteria
 
