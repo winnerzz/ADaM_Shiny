@@ -1210,6 +1210,18 @@ Phase 7.4 implementation notes:
 - Added `tests/test_llm_context.py`.
 - Full test suite after context package builder:
   `Ran 75 tests ... OK`.
+- Added `src/adam_agent/llm/generated_code.py`.
+- The generated-code parser enforces the first strict LLM JSON output contract:
+  `dataset`, `r_code`, `assumptions`, `risk_points`, `used_inputs`, and
+  `expected_outputs`.
+- The writer records the raw response, parsed response, and generated R script
+  under the run directory.
+- Added a small pre-sandbox guardrail for obvious unsafe generated R calls such
+  as `system()`, `shell()`, `unlink()`, `download.file()`, and
+  `install.packages()`.
+- Added `tests/test_llm_generated_code.py`.
+- Full test suite after generated-code parser/writer:
+  `Ran 79 tests ... OK`.
 
 Open issues:
 
@@ -1219,8 +1231,8 @@ Open issues:
   dataset loops.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
-- Phase 7.4 has not yet implemented real LLM provider calls, LLM response
-  parsing, downstream R code writing, or downstream R execution.
+- Phase 7.4 has not yet implemented real LLM provider calls, downstream R
+  execution, or downstream output validation.
 
 ## Phase 8 - Product UI and Audit Workflow
 

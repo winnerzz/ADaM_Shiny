@@ -390,11 +390,20 @@ Implemented so far:
   - `demo_rich_context` may include the configured sample rows
 - Unreadable or missing dependency artifacts create context warnings instead of
   being silently trusted.
+- Added a strict LLM generated-code response parser for the first JSON contract:
+  `dataset`, `r_code`, `assumptions`, `risk_points`, `used_inputs`, and
+  `expected_outputs`.
+- Added generated-code artifact writing:
+  - raw LLM response under `runs/{run_id}/llm/{dataset}_response.json`
+  - parsed response under `runs/{run_id}/llm/{dataset}_parsed_response.json`
+  - generated R script under `runs/{run_id}/code/build_{dataset}.R`
+- Added a small MVP guardrail that rejects obvious unsafe generated R calls such
+  as `system()`, `shell()`, `unlink()`, `download.file()`, and
+  `install.packages()` before R execution.
 
 Not implemented yet:
 
 - Real LLM provider call.
-- LLM JSON output parsing.
 - Generated downstream R code execution.
 - Real downstream ADaM validation beyond stubs.
 
