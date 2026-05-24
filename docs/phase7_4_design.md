@@ -381,11 +381,19 @@ Implemented so far:
   parent, both the middle dependency and final requested target stay blocked.
 - Existing dependency artifacts satisfy dependency requirements without running
   that dependency in the current batch.
+- Added an LLM context package builder that does not call a provider. It scans
+  study inputs, loads the target spec artifact when present, profiles source
+  SDTM files, profiles resolved dependency artifacts, and writes an auditable
+  `runs/{run_id}/llm/{dataset}_context.json` package.
+- The context builder follows the exposure policy:
+  - `metadata_only` includes columns and row counts but no sample rows
+  - `demo_rich_context` may include the configured sample rows
+- Unreadable or missing dependency artifacts create context warnings instead of
+  being silently trusted.
 
 Not implemented yet:
 
 - Real LLM provider call.
-- LLM context package.
 - LLM JSON output parsing.
 - Generated downstream R code execution.
 - Real downstream ADaM validation beyond stubs.

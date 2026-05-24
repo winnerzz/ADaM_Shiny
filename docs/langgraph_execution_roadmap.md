@@ -1197,6 +1197,19 @@ Phase 7.4 implementation notes:
   semantics.
 - Full test suite after this step:
   `Ran 71 tests ... OK`.
+- Added `src/adam_agent/llm/context.py` as the first LLM-generation preparation
+  component.
+- The context builder creates an auditable target package without calling a real
+  provider:
+  - target input spec payload
+  - source SDTM profiles
+  - resolved dependency profiles
+  - runtime contract for generated R code/output paths
+  - exposure-policy summary
+  - warnings for missing/unreadable artifacts
+- Added `tests/test_llm_context.py`.
+- Full test suite after context package builder:
+  `Ran 75 tests ... OK`.
 
 Open issues:
 
@@ -1206,8 +1219,8 @@ Open issues:
   dataset loops.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
-- Phase 7.4 has not yet implemented real LLM provider calls or downstream LLM
-  code generation.
+- Phase 7.4 has not yet implemented real LLM provider calls, LLM response
+  parsing, downstream R code writing, or downstream R execution.
 
 ## Phase 8 - Product UI and Audit Workflow
 
