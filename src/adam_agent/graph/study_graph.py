@@ -10,6 +10,14 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.graph.dataset_graph import compile_dataset_graph
+from adam_agent.graph.dependency_resolution import (
+    approved_dependency_targets,
+    available_dependency_targets,
+    blocked_dependency_targets,
+    missing_dependency_blocks,
+    resolve_dependency_availability,
+    unresolved_dependency_targets,
+)
 from adam_agent.graph.dependencies import plan_dataset_dependencies
 from adam_agent.graph.state import DatasetGraphState, DatasetTask, StudyGraphState
 from adam_agent.schemas.artifacts import ArtifactRef
@@ -33,10 +41,30 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
 
     plan = plan_dataset_dependencies(state.get("target_datasets"), study_dir=state.get("study_dir") or None)
     scenarios = state.get("stub_scenarios", {})
+    approved_dependency_datasets = state.get("approved_dependency_datasets", [])
+    resolution_scope = _resolution_scope_datasets(plan.requested_datasets, approved_dependency_datasets)
+    dependency_resolutions = resolve_dependency_availability(
+        plan.dependencies,
+        requested_datasets=plan.requested_datasets,
+        resolution_scope_datasets=resolution_scope,
+        study_dir=state.get("study_dir") or None,
+        run_id=state["run_id"],
+        approved_dependency_datasets=approved_dependency_datasets,
+    )
+    requested_set = set(plan.requested_datasets)
+    satisfied_dependency_datasets = available_dependency_targets(dependency_resolutions)
+    runnable_datasets = _runnable_datasets(
+        plan.target_datasets,
+        requested_set,
+        dependency_resolutions,
+        dependencies=plan.dependencies,
+        satisfied_dependency_datasets=satisfied_dependency_datasets,
+    )
 
     foundation_tasks = [
         _make_dataset_task(state, dataset, scenarios.get(dataset, "success"), _dependency_status(plan.dependencies.get(dataset, [])))
         for dataset in plan.foundation_datasets
+        if dataset in runnable_datasets
     ]
     downstream_tasks = [
         _make_dataset_task(
@@ -46,6 +74,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             _dependency_status(plan.dependencies.get(dataset, [])),
         )
         for dataset in plan.downstream_datasets
+        if dataset in runnable_datasets
     ]
     unsupported_results = [
         DatasetResultSummary(
@@ -65,25 +94,51 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         }
         for dataset in plan.unsupported_datasets
     ]
+    direct_dependency_blocks = missing_dependency_blocks(
+        dependency_resolutions,
+        reportable_datasets=resolution_scope,
+    )
+    dependency_blocks = direct_dependency_blocks + blocked_dependency_targets(
+        target_datasets=plan.target_datasets,
+        candidate_datasets=plan.requested_datasets,
+        runnable_datasets=runnable_datasets,
+        direct_blocks=direct_dependency_blocks,
+        dependencies=plan.dependencies,
+        satisfied_dependency_datasets=satisfied_dependency_datasets,
+    )
+    dependency_blocked_results = [
+        DatasetResultSummary(
+            dataset=block["dataset"],
+            status="failed",
+            validation_status=block["reason"],
+            compare_status="not_run_stub",
+            failure_ids=[block["reason"]],
+        )
+        for block in dependency_blocks
+    ]
 
     return {
         "requested_datasets": plan.requested_datasets,
         "target_datasets": plan.target_datasets,
         "auto_added_datasets": plan.auto_added_datasets,
+        "runnable_datasets": runnable_datasets,
         "unsupported_datasets": plan.unsupported_datasets,
         "foundation_datasets": plan.foundation_datasets,
         "downstream_datasets": plan.downstream_datasets,
         "dependency_graph": plan.dependency_graph,
         "dataset_dependencies": plan.dependencies,
         "dependency_decisions": [decision.as_dict() for decision in plan.decisions],
+        "dependency_resolution": [record.as_dict() for record in dependency_resolutions],
+        "dependency_action_required": bool(dependency_blocks),
         "dependency_evidence": plan.evidence,
         "dependency_evidence_records": [record.as_dict() for record in plan.evidence_records],
         "dependency_planning_warnings": plan.planning_warnings,
-        "execution_batches": plan.execution_batches,
+        "execution_batches": _filter_execution_batches(plan.execution_batches, runnable_datasets),
+        "satisfied_dependency_datasets": satisfied_dependency_datasets,
         "dataset_tasks": foundation_tasks + downstream_tasks,
         "downstream_tasks": downstream_tasks,
-        "dataset_results": unsupported_results,
-        "blocked_datasets": unsupported_blocked,
+        "dataset_results": unsupported_results + dependency_blocked_results,
+        "blocked_datasets": unsupported_blocked + dependency_blocks,
     }
 
 
@@ -97,6 +152,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
     blocked_datasets = []
     completed: set[str] = set()
     failed: set[str] = set()
+    satisfied: set[str] = set(state.get("satisfied_dependency_datasets", []))
 
     for batch in state.get("execution_batches", []):
         runnable: list[DatasetTask] = []
@@ -105,7 +161,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             missing_dependencies = [
                 dependency
                 for dependency in dependencies.get(dataset, [])
-                if dependency not in completed and dependency not in failed
+                if dependency not in completed and dependency not in failed and dependency not in satisfied
             ]
             if failed_dependencies or missing_dependencies:
                 blocked_by = failed_dependencies or missing_dependencies
@@ -194,10 +250,13 @@ def _write_study_audit_manifest(
         "requested_datasets": state.get("requested_datasets", []),
         "target_datasets": state.get("target_datasets", []),
         "auto_added_datasets": state.get("auto_added_datasets", []),
+        "runnable_datasets": state.get("runnable_datasets", []),
         "unsupported_datasets": state.get("unsupported_datasets", []),
         "datasets": [result.dataset for result in state.get("dataset_results", [])],
         "dataset_dependencies": state.get("dataset_dependencies", {}),
         "dependency_decisions": state.get("dependency_decisions", []),
+        "dependency_resolution": state.get("dependency_resolution", []),
+        "dependency_action_required": state.get("dependency_action_required", False),
         "dependency_evidence": state.get("dependency_evidence", ""),
         "dependency_evidence_records": state.get("dependency_evidence_records", []),
         "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
@@ -306,9 +365,12 @@ def _dependency_plan_payload(state: StudyGraphState, review_status: str) -> dict
         "unsupported_datasets": state.get("unsupported_datasets", []),
         "foundation_datasets": state.get("foundation_datasets", []),
         "downstream_datasets": state.get("downstream_datasets", []),
+        "runnable_datasets": state.get("runnable_datasets", []),
         "dataset_dependencies": state.get("dataset_dependencies", {}),
         "dependency_graph": state.get("dependency_graph", {}),
         "dependency_decisions": state.get("dependency_decisions", []),
+        "dependency_resolution": state.get("dependency_resolution", []),
+        "dependency_action_required": state.get("dependency_action_required", False),
         "dependency_evidence": state.get("dependency_evidence", ""),
         "dependency_evidence_records": state.get("dependency_evidence_records", []),
         "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
@@ -349,6 +411,19 @@ def _dependency_review_markdown(state: StudyGraphState, review_status: str) -> s
         for dataset in state.get("target_datasets", sorted(dependencies)):
             if dataset in dependencies:
                 lines.append(f"- {dataset}: {_csv_or_none(dependencies.get(dataset, []))}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Dependency Resolution"])
+    resolutions = state.get("dependency_resolution", [])
+    if resolutions:
+        for record in resolutions:
+            target = record.get("target_dataset", "UNKNOWN")
+            required = record.get("required_dataset", "UNKNOWN")
+            status = record.get("resolution_status", "unknown")
+            artifact = record.get("artifact_path") or "None"
+            reason = record.get("reason", "")
+            lines.append(f"- {target} requires {required}: status={status}; artifact={artifact}; reason={reason}")
     else:
         lines.append("- None")
 
@@ -394,6 +469,8 @@ def _dependency_review_markdown(state: StudyGraphState, review_status: str) -> s
 def _dependency_review_status(state: StudyGraphState) -> str:
     if state.get("unsupported_datasets"):
         return "blocked"
+    if state.get("dependency_action_required"):
+        return "blocked"
     if state.get("dependency_planning_warnings"):
         return "warning"
     if any(decision.get("review_required") for decision in state.get("dependency_decisions", [])):
@@ -403,7 +480,7 @@ def _dependency_review_status(state: StudyGraphState) -> str:
 
 def _dependency_review_status_reason(state: StudyGraphState, review_status: str) -> str:
     if review_status == "blocked":
-        return "Unsupported target datasets were requested, so the dependency plan needs correction before a full run can be considered valid."
+        return "Unsupported targets or unresolved dependency requirements need user action before a full run can be considered valid."
     if review_status == "warning":
         return "The plan can run, but dependency evidence has warnings that should be reviewed before trusting the study-level plan."
     if review_status == "review_required":
@@ -445,6 +522,51 @@ def _csv_or_none(values: object) -> str:
     if isinstance(values, list):
         return ", ".join(str(value) for value in values) if values else "None"
     return str(values)
+
+
+def _runnable_datasets(
+    target_datasets: list[str],
+    requested_datasets: set[str],
+    dependency_resolutions: list[Any],
+    *,
+    dependencies: dict[str, list[str]],
+    satisfied_dependency_datasets: list[str],
+) -> list[str]:
+    approved_dependencies = set(approved_dependency_targets(dependency_resolutions))
+    unresolved_targets = set(unresolved_dependency_targets(dependency_resolutions))
+    candidate_datasets = requested_datasets | approved_dependencies
+    satisfied = set(satisfied_dependency_datasets)
+    runnable = []
+    changed = True
+    while changed:
+        changed = False
+        for dataset in target_datasets:
+            if dataset in runnable or dataset not in candidate_datasets or dataset in unresolved_targets:
+                continue
+            required = dependencies.get(dataset, [])
+            if all(dependency in satisfied or dependency in runnable for dependency in required):
+                runnable.append(dataset)
+                changed = True
+    return runnable
+
+
+def _resolution_scope_datasets(requested_datasets: list[str], approved_dependency_datasets: list[str]) -> list[str]:
+    scope = []
+    for dataset in requested_datasets + approved_dependency_datasets:
+        normalized = str(dataset).strip().upper()
+        if normalized and normalized not in scope:
+            scope.append(normalized)
+    return scope
+
+
+def _filter_execution_batches(execution_batches: list[list[str]], runnable_datasets: list[str]) -> list[list[str]]:
+    runnable_set = set(runnable_datasets)
+    filtered = []
+    for batch in execution_batches:
+        runnable_batch = [dataset for dataset in batch if dataset in runnable_set]
+        if runnable_batch:
+            filtered.append(runnable_batch)
+    return filtered
 
 
 def _make_dataset_task(

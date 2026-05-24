@@ -11,7 +11,7 @@ Phase 7 moves from one real dataset to study-level orchestration.
 The first target is not to generate every ADaM dataset. The first target is to
 make dataset dependency planning explicit and auditable.
 
-Plain language:
+Plain language for Phase 7.1-7.3:
 
 ```text
 requested datasets
@@ -132,6 +132,22 @@ auto_added = ["ADSL"]
 
 ADSL should run only once.
 
+Phase 7.4 refines this behavior. Dependency discovery is still automatic, but
+discovered dependencies are not automatically approved for execution. In
+user-facing language, `auto_added_datasets` should be treated as:
+
+```text
+required by dependency planning
+```
+
+not:
+
+```text
+approved for automatic execution
+```
+
+See `docs/phase7_4_design.md` for the general dependency resolution rule.
+
 ## State Additions
 
 Study graph state should expose:
@@ -246,9 +262,10 @@ Phase 7.1 is complete when:
 
 ## Follow-Ups
 
+- implement Phase 7.4 general dependency resolution and LLM-driven downstream
+  generation
 - production-grade define.xml parsing
 - production-grade spec dependency parsing beyond lightweight ADaM token
   detection
 - production-grade legacy SAS dependency parsing beyond simple merge/set/join
   lines
-- real ADAE minimal loop

@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7 in progress; dependency review artifacts implemented |
+| Current implementation status | Phase 7.4 design started; general dependency resolution and LLM-driven downstream generation planned |
 | Last roadmap update | 2026-05-24 |
 
 Known workspace notes:
@@ -1154,6 +1154,50 @@ python -m unittest discover -s tests -p "test_*.py"
 Ran 69 tests ... OK
 ```
 
+Phase 7.4 design notes:
+
+- Added `docs/phase7_4_design.md`.
+- Phase 7.4 is not a UI phase. UI remains Phase 8.
+- Phase 7.4 should implement general dependency resolution and LLM-driven
+  target generation.
+- The key product rule is now:
+  - dependency discovery can be automatic
+  - dependency availability must be checked
+  - missing dependency execution must not be automatic unless the user or run
+    configuration explicitly approves it
+- This rule must be generic. Do not hard-code `ADAE -> ADSL` behavior.
+- ADAE can be the first test fixture, but code should work for any dependency
+  relationship discovered by the dependency planner.
+- The current `auto_added_datasets` field should be treated carefully in UI and
+  review language. It means "required by dependency planning", not "approved for
+  automatic execution".
+
+Phase 7.4 implementation notes:
+
+- Added generic dependency availability and decision records.
+- StudyGraph now checks dependency availability for requested targets before
+  executing them.
+- Available dependency artifacts can satisfy requirements without running the
+  dependency dataset in the current run.
+- First MVP availability sources:
+  - `reference_adam/{dataset}.csv`
+  - `reference_adam/{dataset}.sas7bdat`
+  - `runs/{run_id}/outputs/{dataset}.csv`
+  - `runs/{run_id}/outputs/{dataset}.sas7bdat`
+- Missing dependency datasets now create a structured block:
+  `dependency_user_action_required`.
+- StudyGraph no longer silently runs discovered dependencies. It executes only:
+  - user-requested datasets
+  - dependency datasets explicitly listed in `approved_dependency_datasets`
+- StudyGraph also checks dependency-chain readiness before execution. If a user
+  approves a middle dependency but its own required parent is still missing, the
+  middle dependency and final requested target both remain blocked with
+  `dependency_user_action_required`.
+- Existing tests were updated to reflect the new dependency-resolution
+  semantics.
+- Full test suite after this step:
+  `Ran 71 tests ... OK`.
+
 Open issues:
 
 - The fallback is not a complete ADaM dependency graph and must not be treated
@@ -1162,6 +1206,8 @@ Open issues:
   dataset loops.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
+- Phase 7.4 has not yet implemented real LLM provider calls or downstream LLM
+  code generation.
 
 ## Phase 8 - Product UI and Audit Workflow
 

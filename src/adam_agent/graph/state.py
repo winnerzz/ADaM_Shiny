@@ -85,6 +85,11 @@ class StudyGraphState(TypedDict, total=False):
     dependency_graph: dict[str, list[str]]
     dataset_dependencies: dict[str, list[str]]
     dependency_decisions: list[dict[str, object]]
+    dependency_resolution: list[dict[str, object]]
+    dependency_action_required: bool
+    approved_dependency_datasets: list[str]
+    runnable_datasets: list[str]
+    satisfied_dependency_datasets: list[str]
     dependency_evidence: str
     dependency_evidence_records: list[dict[str, object]]
     dependency_planning_warnings: list[str]
