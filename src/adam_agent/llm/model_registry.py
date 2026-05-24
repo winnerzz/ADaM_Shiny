@@ -1,4 +1,4 @@
-"""Model registry for the Phase 4 MVP."""
+"""Model registry for mock and configurable provider metadata."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class ModelInfo:
 
 
 class ModelRegistry:
-    """Registry with mock-only support in Phase 4."""
+    """Registry with mock support plus provider metadata for real clients."""
 
     def __init__(self) -> None:
         self._models: dict[tuple[str, str], ModelInfo] = {
@@ -37,9 +37,17 @@ class ModelRegistry:
     def lookup(self, provider: str, model: str) -> ModelInfo:
         provider_key = provider.lower()
         model_key = model
-        if provider_key in {"openai", "anthropic", "openai-compatible"}:
+        if provider_key in {"openai", "openai-compatible"}:
+            return ModelInfo(
+                provider=provider,
+                model=model,
+                provider_locality="external_api",
+                requires_api_key=True,
+                implemented=True,
+            )
+        if provider_key == "anthropic":
             raise ModelNotImplementedError(
-                f"{provider}/{model} is not implemented in Phase 4; use mock/mock-model"
+                f"{provider}/{model} does not use the OpenAI-compatible client yet."
             )
 
         try:

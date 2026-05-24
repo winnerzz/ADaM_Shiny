@@ -22,7 +22,14 @@ def workspace_tempdir(name: str) -> Path:
     return path
 
 try:
-    from adam_agent.llm.clients import LLMRequest, LLMResponse, MockLLMClient
+    from adam_agent.llm.clients import (
+        LLMClientConfigError,
+        LLMRequest,
+        LLMResponse,
+        MockLLMClient,
+        OpenAICompatibleConfig,
+        OpenAICompatibleLLMClient,
+    )
     from adam_agent.llm.model_registry import ModelNotImplementedError, ModelRegistry
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
@@ -35,7 +42,14 @@ except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
-    from adam_agent.llm.clients import LLMRequest, LLMResponse, MockLLMClient
+    from adam_agent.llm.clients import (
+        LLMClientConfigError,
+        LLMRequest,
+        LLMResponse,
+        MockLLMClient,
+        OpenAICompatibleConfig,
+        OpenAICompatibleLLMClient,
+    )
     from adam_agent.llm.model_registry import ModelNotImplementedError, ModelRegistry
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
@@ -199,11 +213,124 @@ class Phase4ToolTests(unittest.TestCase):
         model = registry.lookup("mock", "mock-model")
         self.assertFalse(model.requires_api_key)
 
-        with self.assertRaises(ModelNotImplementedError):
-            registry.lookup("openai", "gpt-5.5")
+        openai_model = registry.lookup("openai", "gpt-5.5")
+        self.assertEqual(openai_model.provider, "openai")
+        self.assertEqual(openai_model.model, "gpt-5.5")
+        self.assertTrue(openai_model.requires_api_key)
+        self.assertEqual(openai_model.provider_locality, "external_api")
 
         with self.assertRaises(ModelNotImplementedError):
             registry.lookup("anthropic", "claude-opus-4.5")
+
+    def test_openai_compatible_client_requires_explicit_external_api_approval(self) -> None:
+        client = OpenAICompatibleLLMClient(
+            OpenAICompatibleConfig(base_url="https://example.test/v1", api_key="test-key"),
+            transport=lambda _url, _headers, _payload, _timeout: {
+                "choices": [{"message": {"content": "not used"}}]
+            },
+        )
+
+        with self.assertRaises(LLMClientConfigError):
+            client.generate(
+                LLMRequest(
+                    prompt="Draft ADAE code",
+                    provider="openai-compatible",
+                    model="gpt-5.5",
+                    exposure=LLMExposureConfig(),
+                    node="generate_downstream_code",
+                    call_id="llm_external_blocked",
+                )
+            )
+
+    def test_openai_compatible_client_requires_api_key(self) -> None:
+        old_key = os.environ.pop("OPENAI_API_KEY", None)
+        try:
+            client = OpenAICompatibleLLMClient(
+                OpenAICompatibleConfig(base_url="https://example.test/v1", api_key=None),
+                transport=lambda _url, _headers, _payload, _timeout: {
+                    "choices": [{"message": {"content": "not used"}}]
+                },
+            )
+            with self.assertRaises(LLMClientConfigError):
+                client.generate(
+                    LLMRequest(
+                        prompt="Draft ADAE code",
+                        provider="openai-compatible",
+                        model="gpt-5.5",
+                        exposure=LLMExposureConfig(
+                            mode="demo_rich_context",
+                            data_classification="processed_demo",
+                            external_api_allowed=True,
+                        ),
+                        node="generate_downstream_code",
+                        call_id="llm_missing_key",
+                        prompt_artifact_id="prompt_missing_key",
+                        response_artifact_id="response_missing_key",
+                        redaction_policy="processed_demo_test",
+                    )
+                )
+        finally:
+            if old_key is not None:
+                os.environ["OPENAI_API_KEY"] = old_key
+
+    def test_openai_compatible_client_uses_transport_and_returns_audit_record(self) -> None:
+        calls = []
+
+        def fake_transport(url, headers, payload, timeout):
+            calls.append((url, headers, payload, timeout))
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "dataset": "ADAE",
+                                    "r_code": "write.csv(data.frame(), 'outputs/adae.csv')",
+                                    "assumptions": [],
+                                    "risk_points": [],
+                                    "used_inputs": ["AE"],
+                                    "expected_outputs": ["adae.csv"],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+        client = OpenAICompatibleLLMClient(
+            OpenAICompatibleConfig(base_url="https://llm.example/v1", api_key="test-key"),
+            transport=fake_transport,
+        )
+        response = client.generate(
+            LLMRequest(
+                prompt="Generate ADAE",
+                provider="openai-compatible",
+                model="gpt-5.5",
+                exposure=LLMExposureConfig(
+                    mode="demo_rich_context",
+                    data_classification="processed_demo",
+                    external_api_allowed=True,
+                    sample_rows_per_dataset=1,
+                ),
+                node="generate_downstream_code",
+                call_id="llm_openai_compatible_001",
+                datasets_included=["AE"],
+                sample_row_counts={"AE": 1},
+                prompt_artifact_id="prompt_001",
+                response_artifact_id="response_001",
+                redaction_policy="processed_demo_test",
+            )
+        )
+
+        self.assertIsInstance(response, LLMResponse)
+        self.assertIn('"dataset": "ADAE"', response.response_text)
+        self.assertEqual(response.call_record.provider, "openai-compatible")
+        self.assertEqual(response.call_record.model, "gpt-5.5")
+        self.assertEqual(response.call_record.provider_locality, "external_api")
+        self.assertEqual(response.call_record.sample_row_counts, {"AE": 1})
+        self.assertEqual(calls[0][0], "https://llm.example/v1/chat/completions")
+        self.assertEqual(calls[0][1]["Authorization"], "Bearer test-key")
+        self.assertEqual(calls[0][2]["model"], "gpt-5.5")
 
     def test_stub_r_runner_returns_structured_success_and_failure(self) -> None:
         runner = StubRRunner()

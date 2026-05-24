@@ -1260,6 +1260,18 @@ Phase 7.4 implementation notes:
     instead of the older `blocked_by_adsl` wording
 - Full test suite after boundary fixes:
   `Ran 88 tests ... OK`.
+- Added `OpenAICompatibleLLMClient` behind the existing `LLMClient.generate()`
+  interface.
+- The OpenAI-compatible client uses a configurable base URL, API key, and model
+  string. It does not hard-code a small model allowlist, so newer model IDs can
+  be supplied by run configuration.
+- External provider calls require explicit `external_api_allowed=True` and a
+  configured API key. There is still no fallback from a real provider to mock.
+- Tests use a fake transport and do not call the network.
+- StudyGraph/DatasetGraph still default to mock/stub mode; real provider use
+  needs an explicit later wiring step.
+- Full test suite after OpenAI-compatible client boundary:
+  `Ran 91 tests ... OK`.
 
 Open issues:
 

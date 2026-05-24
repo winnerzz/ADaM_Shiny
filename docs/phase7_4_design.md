@@ -440,11 +440,23 @@ Implemented so far:
 
 Not implemented yet:
 
-- Real LLM provider call.
+- Graph-level use of a real LLM provider call.
 - Real downstream R execution through local R for a non-ADSL target.
 - Real downstream ADaM validation beyond structural checks.
 - Stubbed downstream runs are smoke tests. A `structural_stub_pass` must not be
   described as real ADaM generation.
+
+Latest LLM client boundary:
+
+- Added an OpenAI-compatible chat-completions client behind the same
+  `LLMClient.generate()` interface used by the mock client.
+- The client accepts model IDs from configuration rather than from a hard-coded
+  allowlist, so newer model names can be used without changing graph logic.
+- External calls require both an API key and an `LLMExposureConfig` that allows
+  external API use.
+- Tests use a fake transport and do not call the network.
+- StudyGraph/DatasetGraph still default to mock/stub mode; real provider use
+  requires explicit client injection in a later wiring step.
 
 ## Exit Criteria
 
