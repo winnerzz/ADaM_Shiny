@@ -109,6 +109,7 @@ class GraphSmokeTests(unittest.TestCase):
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["ADTTE"].source, "input_spec_dependency")
         self.assertGreater(decisions["ADTTE"].confidence, 0.8)
+        self.assertFalse(decisions["ADTTE"].review_required)
         self.assertTrue(decisions["ADTTE"].evidence_ids)
 
     def test_input_spec_is_authoritative_and_secondary_conflict_becomes_warning(self) -> None:
@@ -142,6 +143,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(plan.dependencies["ADTTE"], ["ADLB"])
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["ADTTE"].source, "input_spec_dependency")
+        self.assertFalse(decisions["ADTTE"].review_required)
         self.assertNotIn("ADAE", plan.target_datasets)
         self.assertTrue(any("Dependency conflict" in warning and "ADAE" in warning for warning in plan.planning_warnings))
 
@@ -175,6 +177,27 @@ class GraphSmokeTests(unittest.TestCase):
 
         self.assertEqual(plan.dependencies["ADTTE"], ["ADLB"])
         self.assertFalse(any("Dependency conflict" in warning for warning in plan.planning_warnings))
+
+    def test_input_spec_present_but_missing_target_spec_warns_before_fallback(self) -> None:
+        study_dir = _workspace_dir("phase7_spec_gap_dependency") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID"}]}),
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADAE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADAE"], ["ADSL"])
+        self.assertTrue(
+            any(
+                "Input spec is present" in warning
+                and "ADAE" in warning
+                and "MVP fallback" in warning
+                for warning in plan.planning_warnings
+            )
+        )
 
     def test_dependency_plan_uses_legacy_sas_dependency_evidence(self) -> None:
         study_dir = _workspace_dir("phase7_sas_dependency") / "PSY201"
@@ -279,6 +302,10 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adsl_summary.output_artifact_ids, ["adsl_output_csv"])
         self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "outputs" / "adsl.csv").exists())
         self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "manifest.json").exists())
+        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "adsl_manifest.json").exists())
+        study_manifest = json.loads((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(study_manifest["manifest_scope"], "study")
+        self.assertTrue(any(artifact["path"].endswith("adsl_manifest.json") for artifact in study_manifest["artifacts"]))
 
     def test_dataset_state_isolation_across_stub_runs(self) -> None:
         dataset_graph = compile_dataset_graph()
@@ -506,6 +533,107 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn({"dataset": "ADTTE", "reason": "blocked_by_dependency", "blocked_by": "ADLB"}, result["blocked_datasets"])
         self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADSL"], ["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
+
+    def test_study_graph_writes_dependency_plan_review_artifacts(self) -> None:
+        study_dir = _workspace_dir("phase73_dependency_review") / "PSY201"
+        study_dir.mkdir(parents=True)
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase73_dependency_review",
+                "target_datasets": ["ADAE"],
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        plan_path = study_dir / "runs" / "run_phase73_dependency_review" / "planning" / "dependency_plan.json"
+        review_path = study_dir / "runs" / "run_phase73_dependency_review" / "planning" / "dependency_review.md"
+        self.assertTrue(plan_path.exists())
+        self.assertTrue(review_path.exists())
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        review_text = review_path.read_text(encoding="utf-8")
+
+        self.assertEqual(payload["requested_datasets"], ["ADAE"])
+        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
+        self.assertEqual(payload["auto_added_datasets"], ["ADSL"])
+        self.assertEqual(payload["dataset_dependencies"]["ADAE"], ["ADSL"])
+        self.assertEqual(payload["execution_batches"], [["ADSL"], ["ADAE"]])
+        self.assertEqual(payload["review_status"], "review_required")
+        self.assertIn("dependency_decisions", payload)
+        self.assertIn("dependency_evidence_records", payload)
+        self.assertIn("Review status: review_required", review_text)
+        self.assertIn("Batch 1: ADSL", review_text)
+        self.assertIn("ADAE: dependencies=ADSL", review_text)
+        self.assertIsNotNone(result["dependency_plan_artifact"].sha256)
+        self.assertIsNotNone(result["dependency_review_artifact"].sha256)
+        self.assertEqual(result["audit_manifest"].path, str((study_dir / "runs" / "run_phase73_dependency_review" / "audit" / "manifest.json").as_posix()))
+        self.assertIsNotNone(result["audit_manifest"].sha256)
+        self.assertEqual(
+            result["audit_manifest"].metadata["dependency_plan_artifact_id"],
+            result["dependency_plan_artifact"].artifact_id,
+        )
+        manifest_payload = json.loads((study_dir / "runs" / "run_phase73_dependency_review" / "audit" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_payload["manifest_scope"], "study")
+        self.assertEqual(manifest_payload["dependency_plan_artifact_id"], result["dependency_plan_artifact"].artifact_id)
+        self.assertEqual(manifest_payload["dependency_review_artifact_id"], result["dependency_review_artifact"].artifact_id)
+        self.assertTrue(any(artifact["artifact_id"] == result["dependency_plan_artifact"].artifact_id for artifact in manifest_payload["artifacts"]))
+
+    def test_dependency_review_artifacts_include_conflict_warning(self) -> None:
+        study_dir = _workspace_dir("phase73_dependency_conflict_review") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sas_dir = study_dir / "legacy_code"
+        spec_dir.mkdir(parents=True)
+        sas_dir.mkdir(parents=True)
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sas_dir / "ADTTE.sas").write_text(
+            "data adtte;\n  merge adlb adae;\nrun;\n",
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase73_dependency_conflict_review",
+                "target_datasets": ["ADTTE"],
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        plan_path = study_dir / "runs" / "run_phase73_dependency_conflict_review" / "planning" / "dependency_plan.json"
+        review_path = study_dir / "runs" / "run_phase73_dependency_conflict_review" / "planning" / "dependency_review.md"
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        review_text = review_path.read_text(encoding="utf-8")
+
+        self.assertEqual(result["dependency_review_status"], "warning")
+        self.assertEqual(payload["review_status"], "warning")
+        self.assertEqual(payload["dataset_dependencies"]["ADTTE"], ["ADLB"])
+        self.assertNotIn("ADAE", payload["target_datasets"])
+        self.assertTrue(any("Dependency conflict" in warning and "ADAE" in warning for warning in payload["dependency_planning_warnings"]))
+        self.assertIn("Dependency conflict", review_text)
+        self.assertIn("ADAE", review_text)
 
     def test_checkpoint_history_exists_and_matches_final_state(self) -> None:
         checkpointer = InMemorySaver()

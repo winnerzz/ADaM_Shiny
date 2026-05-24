@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
+from pathlib import Path
+from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
@@ -11,6 +14,7 @@ from adam_agent.graph.dependencies import plan_dataset_dependencies
 from adam_agent.graph.state import DatasetGraphState, DatasetTask, StudyGraphState
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.states import DatasetResultSummary
+from adam_agent.tools.artifacts import sha256_file
 
 
 def initialize_study(state: StudyGraphState) -> StudyGraphState:
@@ -156,31 +160,291 @@ def reduce_dataset_results(state: StudyGraphState) -> StudyGraphState:
 def write_audit_manifest_stub(state: StudyGraphState) -> StudyGraphState:
     """Represent a study-level audit manifest as an artifact reference."""
 
-    artifact = ArtifactRef(
-        artifact_id=f"audit_{state['study_id'].lower()}_{state['run_id']}_study_stub",
-        kind="audit_manifest",
-        path=f"runs/{state['run_id']}/study_audit_stub.json",
-        format="json",
-        role="audit",
-        metadata={
-            "stub": True,
-            "requested_datasets": state.get("requested_datasets", []),
-            "auto_added_datasets": state.get("auto_added_datasets", []),
-            "unsupported_datasets": state.get("unsupported_datasets", []),
-            "datasets": [result.dataset for result in state.get("dataset_results", [])],
-            "dataset_dependencies": state.get("dataset_dependencies", {}),
-            "dependency_decisions": state.get("dependency_decisions", []),
-            "dependency_evidence": state.get("dependency_evidence", ""),
-            "dependency_evidence_records": state.get("dependency_evidence_records", []),
-            "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
-            "execution_batches": state.get("execution_batches", []),
-            "blocked_datasets": state.get("blocked_datasets", []),
-        },
+    planning_artifacts = _write_dependency_planning_artifacts(state)
+    artifact = _write_study_audit_manifest(
+        state,
+        planning_artifacts=planning_artifacts,
+        audit_artifacts=state.get("audit_artifacts", [])
+        + [planning_artifacts["plan_artifact"], planning_artifacts["review_artifact"]],
     )
     return {
         "audit_manifest": artifact,
-        "audit_artifacts": [artifact],
+        "audit_artifacts": [
+            planning_artifacts["plan_artifact"],
+            planning_artifacts["review_artifact"],
+            artifact,
+        ],
+        "dependency_review_status": planning_artifacts["review_status"],
+        "dependency_plan_artifact": planning_artifacts["plan_artifact"],
+        "dependency_review_artifact": planning_artifacts["review_artifact"],
     }
+
+
+def _write_study_audit_manifest(
+    state: StudyGraphState,
+    *,
+    planning_artifacts: dict[str, Any],
+    audit_artifacts: list[ArtifactRef],
+) -> ArtifactRef:
+    """Write the study-level audit manifest when a study directory is available."""
+
+    metadata = {
+        "stub": False,
+        "manifest_scope": "study",
+        "requested_datasets": state.get("requested_datasets", []),
+        "target_datasets": state.get("target_datasets", []),
+        "auto_added_datasets": state.get("auto_added_datasets", []),
+        "unsupported_datasets": state.get("unsupported_datasets", []),
+        "datasets": [result.dataset for result in state.get("dataset_results", [])],
+        "dataset_dependencies": state.get("dataset_dependencies", {}),
+        "dependency_decisions": state.get("dependency_decisions", []),
+        "dependency_evidence": state.get("dependency_evidence", ""),
+        "dependency_evidence_records": state.get("dependency_evidence_records", []),
+        "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
+        "execution_batches": state.get("execution_batches", []),
+        "blocked_datasets": state.get("blocked_datasets", []),
+        "dependency_review_status": planning_artifacts["review_status"],
+        "dependency_plan_artifact_id": planning_artifacts["plan_artifact"].artifact_id,
+        "dependency_review_artifact_id": planning_artifacts["review_artifact"].artifact_id,
+    }
+    study_dir = state.get("study_dir")
+    relative_path = f"runs/{state['run_id']}/audit/manifest.json"
+
+    if study_dir:
+        manifest_path = Path(study_dir) / "runs" / state["run_id"] / "audit" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "study_id": state["study_id"],
+            "run_id": state["run_id"],
+            "status": state.get("status", "unknown"),
+            "phase": "phase7_study_orchestration",
+            "artifacts": [artifact.model_dump(mode="json") for artifact in audit_artifacts],
+            **metadata,
+        }
+        manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return ArtifactRef(
+            artifact_id=f"manifest_{state['study_id'].lower()}_{state['run_id']}_study",
+            kind="audit_manifest",
+            path=str(manifest_path.as_posix()),
+            sha256=f"sha256:{sha256_file(manifest_path)}",
+            format="json",
+            role="audit",
+            metadata=metadata,
+        )
+
+    return ArtifactRef(
+        artifact_id=f"manifest_{state['study_id'].lower()}_{state['run_id']}_study_stub",
+        kind="audit_manifest",
+        path=relative_path,
+        format="json",
+        role="audit",
+        metadata={**metadata, "stub": True},
+    )
+
+
+def _write_dependency_planning_artifacts(state: StudyGraphState) -> dict[str, Any]:
+    """Write dependency planning artifacts when a study directory is available."""
+
+    review_status = _dependency_review_status(state)
+    plan_payload = _dependency_plan_payload(state, review_status)
+    review_markdown = _dependency_review_markdown(state, review_status)
+    study_dir = state.get("study_dir")
+    relative_plan_path = f"runs/{state['run_id']}/planning/dependency_plan.json"
+    relative_review_path = f"runs/{state['run_id']}/planning/dependency_review.md"
+
+    if study_dir:
+        planning_dir = Path(study_dir) / "runs" / state["run_id"] / "planning"
+        planning_dir.mkdir(parents=True, exist_ok=True)
+        plan_path = planning_dir / "dependency_plan.json"
+        review_path = planning_dir / "dependency_review.md"
+        plan_path.write_text(json.dumps(plan_payload, indent=2, sort_keys=True), encoding="utf-8")
+        review_path.write_text(review_markdown, encoding="utf-8")
+        plan_artifact = _planning_artifact_ref(
+            state,
+            artifact_id=f"dependency_plan_{state['study_id'].lower()}_{state['run_id']}",
+            path=plan_path,
+            format="json",
+            review_status=review_status,
+        )
+        review_artifact = _planning_artifact_ref(
+            state,
+            artifact_id=f"dependency_review_{state['study_id'].lower()}_{state['run_id']}",
+            path=review_path,
+            format="md",
+            review_status=review_status,
+        )
+    else:
+        plan_artifact = _planning_artifact_ref(
+            state,
+            artifact_id=f"dependency_plan_{state['study_id'].lower()}_{state['run_id']}",
+            path=relative_plan_path,
+            format="json",
+            review_status=review_status,
+        )
+        review_artifact = _planning_artifact_ref(
+            state,
+            artifact_id=f"dependency_review_{state['study_id'].lower()}_{state['run_id']}",
+            path=relative_review_path,
+            format="md",
+            review_status=review_status,
+        )
+
+    return {
+        "review_status": review_status,
+        "plan_artifact": plan_artifact,
+        "review_artifact": review_artifact,
+    }
+
+
+def _dependency_plan_payload(state: StudyGraphState, review_status: str) -> dict[str, Any]:
+    return {
+        "study_id": state["study_id"],
+        "run_id": state["run_id"],
+        "requested_datasets": state.get("requested_datasets", []),
+        "target_datasets": state.get("target_datasets", []),
+        "auto_added_datasets": state.get("auto_added_datasets", []),
+        "unsupported_datasets": state.get("unsupported_datasets", []),
+        "foundation_datasets": state.get("foundation_datasets", []),
+        "downstream_datasets": state.get("downstream_datasets", []),
+        "dataset_dependencies": state.get("dataset_dependencies", {}),
+        "dependency_graph": state.get("dependency_graph", {}),
+        "dependency_decisions": state.get("dependency_decisions", []),
+        "dependency_evidence": state.get("dependency_evidence", ""),
+        "dependency_evidence_records": state.get("dependency_evidence_records", []),
+        "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
+        "execution_batches": state.get("execution_batches", []),
+        "blocked_datasets": state.get("blocked_datasets", []),
+        "review_status": review_status,
+        "review_status_reason": _dependency_review_status_reason(state, review_status),
+    }
+
+
+def _dependency_review_markdown(state: StudyGraphState, review_status: str) -> str:
+    lines = [
+        f"# Dependency Plan Review - {state['study_id']} / {state['run_id']}",
+        "",
+        f"Review status: {review_status}",
+        "",
+        "## Requested Datasets",
+        _csv_or_none(state.get("requested_datasets", [])),
+        "",
+        "## Final Target Datasets",
+        _csv_or_none(state.get("target_datasets", [])),
+        "",
+        "## Auto-Added Datasets",
+        _csv_or_none(state.get("auto_added_datasets", [])),
+        "",
+        "## Execution Batches",
+    ]
+    batches = state.get("execution_batches", [])
+    if batches:
+        for index, batch in enumerate(batches, start=1):
+            lines.append(f"- Batch {index}: {_csv_or_none(batch)}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Dataset Dependencies"])
+    dependencies = state.get("dataset_dependencies", {})
+    if dependencies:
+        for dataset in state.get("target_datasets", sorted(dependencies)):
+            if dataset in dependencies:
+                lines.append(f"- {dataset}: {_csv_or_none(dependencies.get(dataset, []))}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Decisions"])
+    decisions = state.get("dependency_decisions", [])
+    if decisions:
+        for decision in decisions:
+            dataset = decision.get("dataset", "UNKNOWN")
+            source = decision.get("source", "unknown")
+            confidence = decision.get("confidence", "unknown")
+            review_required = decision.get("review_required", "unknown")
+            reason = decision.get("reason", "")
+            dependencies_text = _csv_or_none(decision.get("dependencies", []))
+            lines.append(
+                f"- {dataset}: dependencies={dependencies_text}; source={source}; "
+                f"confidence={confidence}; review_required={review_required}; reason={reason}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Warnings"])
+    warnings = state.get("dependency_planning_warnings", [])
+    if warnings:
+        for warning in warnings:
+            lines.append(f"- {warning}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Unsupported Datasets"])
+    unsupported = state.get("unsupported_datasets", [])
+    if unsupported:
+        for dataset in unsupported:
+            lines.append(f"- {dataset}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Human Review Meaning"])
+    lines.append(_dependency_review_status_reason(state, review_status))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _dependency_review_status(state: StudyGraphState) -> str:
+    if state.get("unsupported_datasets"):
+        return "blocked"
+    if state.get("dependency_planning_warnings"):
+        return "warning"
+    if any(decision.get("review_required") for decision in state.get("dependency_decisions", [])):
+        return "review_required"
+    return "accepted"
+
+
+def _dependency_review_status_reason(state: StudyGraphState, review_status: str) -> str:
+    if review_status == "blocked":
+        return "Unsupported target datasets were requested, so the dependency plan needs correction before a full run can be considered valid."
+    if review_status == "warning":
+        return "The plan can run, but dependency evidence has warnings that should be reviewed before trusting the study-level plan."
+    if review_status == "review_required":
+        return "At least one dependency decision uses MVP fallback or file-derived evidence that should be checked by a human reviewer."
+    return "No dependency warning or unsupported dataset was found in this MVP planning pass."
+
+
+def _planning_artifact_ref(
+    state: StudyGraphState,
+    *,
+    artifact_id: str,
+    path: str | Path,
+    format: str,
+    review_status: str,
+) -> ArtifactRef:
+    path_value = str(Path(path).as_posix()) if isinstance(path, Path) else path
+    sha256 = None
+    if isinstance(path, Path) and path.exists():
+        sha256 = f"sha256:{sha256_file(path)}"
+    return ArtifactRef(
+        artifact_id=artifact_id,
+        kind="audit_manifest",
+        path=path_value,
+        sha256=sha256,
+        format=format,
+        role="audit",
+        metadata={
+            "planning_artifact": True,
+            "review_status": review_status,
+            "requested_datasets": state.get("requested_datasets", []),
+            "target_datasets": state.get("target_datasets", []),
+        },
+    )
+
+
+def _csv_or_none(values: object) -> str:
+    if not values:
+        return "None"
+    if isinstance(values, list):
+        return ", ".join(str(value) for value in values) if values else "None"
+    return str(values)
 
 
 def _make_dataset_task(

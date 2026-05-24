@@ -88,6 +88,9 @@ class StudyGraphState(TypedDict, total=False):
     dependency_evidence: str
     dependency_evidence_records: list[dict[str, object]]
     dependency_planning_warnings: list[str]
+    dependency_review_status: str
+    dependency_plan_artifact: ArtifactRef
+    dependency_review_artifact: ArtifactRef
     execution_batches: list[list[str]]
     foundation_datasets: list[str]
     downstream_datasets: list[str]

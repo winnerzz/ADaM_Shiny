@@ -108,26 +108,41 @@ Do not frame this project as "vibe coding ADaM". The correct framing is:
 
 ## 2. Current Repository Reality
 
-Before changing code, remember the current codebase is still a prototype.
+This worktree is the `LangGraph` architecture branch. It intentionally starts
+from a clean Python/LangGraph project shape and does not contain the old Shiny
+application files.
 
-Important existing files:
+Important current files and directories:
 
-- `app.R`: Shiny launcher. Loads packages, sources modules, starts `shinyApp()`.
-- `server.R`: Main Shiny orchestration layer. Contains much of the current runtime flow.
-- `ui.R`: Shiny interface.
-- `data_utils.R`: SDTM/spec loading, profiling, and sandbox helper functions.
-- `derivation_plan_utils.R`: Converts spec-like inputs into derivation plans.
-- `llm_api.R`: Current provider calls, prompt construction, JSON parsing, mock/repair logic.
-- `code_static_checks.R`: Regex/rule-based pre-execution checks.
-- `validation_utils.R`: Post-execution validation helpers.
-- `provider_registry.R`: Current model/provider registry. Treat it as stale-prone.
-- `domain_registry.R`: Domain-specific assumptions and registry logic.
-- `tests/`: Existing R tests for pipeline and static checks.
-- `docs/langgraph_adam_architecture.html`: Human-readable architecture proposal.
+- `src/adam_agent/graph/study_graph.py`: study-level orchestration, dependency
+  planning, dataset dispatch, result reduction, and study audit artifacts.
+- `src/adam_agent/graph/dataset_graph.py`: isolated per-dataset graph. Current
+  real execution is limited to the Phase 5 ADSL minimal path.
+- `src/adam_agent/graph/dependencies.py`: Phase 7 dependency planner. It is an
+  orchestration planner, not a complete production ADaM dependency engine.
+- `src/adam_agent/adsl/`: Phase 5 deterministic ADSL starter loop, including
+  spec builder, R code template, local R runner integration, validation, and
+  failure diagnosis.
+- `src/adam_agent/tools/`: deterministic tool boundaries for study input scan,
+  artifact hashing/manifests, SDTM profiling, R execution, and config.
+- `src/adam_agent/llm/`: isolated mock/provider boundary. Real provider support
+  is intentionally not the core of the current graph work.
+- `src/adam_agent/schemas/`: Pydantic contracts for artifacts, evidence,
+  approvals, LLM calls, routing, specs, and durable study/dataset state.
+- `docs/`: product contracts, phase designs, architecture notes, and the
+  execution roadmap.
+- `studies/_template/`: expected local study-folder shape.
+- `tests/`: Python `unittest` suite for schemas, tools, the ADSL loop, and graph
+  orchestration.
 
-The current app contains demo-specific assumptions around ADSL/ADAE, DM/EX/AE,
-`TRTSDT`, `TRTEDT`, `TRTEMFL`, `RELGR1`, mock paths, and hard-coded prompt shapes.
-Separate reusable framework logic from demo scaffolding.
+Historical Shiny files such as `app.R`, `server.R`, `ui.R`, `llm_api.R`, and
+`data_utils.R` belong to the earlier prototype worktree. Treat them as product
+history and migration context, not as files that exist in this branch.
+
+Carry forward lessons from the Shiny prototype, but do not recreate its central
+problem: a single large prompt and demo-shaped assumptions around ADSL/ADAE,
+DM/EX/AE, `TRTSDT`, `TRTEDT`, `TRTEMFL`, `RELGR1`, mock paths, or hard-coded
+prompt shapes. Separate reusable framework logic from demo scaffolding.
 
 ## 3. Architecture Principles
 

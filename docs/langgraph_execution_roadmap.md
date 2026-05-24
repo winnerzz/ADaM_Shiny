@@ -28,8 +28,8 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7 in progress; evidence-backed dependency planning and batched study execution implemented |
-| Last roadmap update | 2026-05-23 |
+| Current implementation status | Phase 7 in progress; dependency review artifacts implemented |
+| Last roadmap update | 2026-05-24 |
 
 Known workspace notes:
 
@@ -1106,11 +1106,52 @@ Phase 7.2 implementation notes:
 - Study-level audit metadata now records dependency evidence records,
   dependency planning warnings, and execution batches.
 
+Phase 7.3 implementation notes:
+
+- Added a file-backed dependency planning review contract.
+- StudyGraph now writes the following files when `study_dir` is present:
+  - `runs/{run_id}/planning/dependency_plan.json`
+  - `runs/{run_id}/planning/dependency_review.md`
+- `dependency_plan.json` records requested datasets, final target datasets,
+  auto-added datasets, unsupported datasets, dataset dependencies, dependency
+  decisions, evidence records, planning warnings, execution batches, blocked
+  datasets, and `review_status`.
+- `dependency_review.md` gives the same information in a human-readable form
+  for quick review.
+- Added review status levels:
+  - `accepted`
+  - `review_required`
+  - `warning`
+  - `blocked`
+- Tightened the user-provided spec rule:
+  - if `input_spec` exists, it drives the dependency plan
+  - consistent secondary SAS/define evidence stays quiet
+  - conflicting secondary evidence becomes a warning
+  - `input_spec_dependency` by itself is not marked `review_required` because
+    it represents the user-provided spec in the current contract
+- Added an `input_spec` coverage-gap warning:
+  - if the spec folder exists but no dependency evidence is extracted for a
+    requested or auto-added target dataset, the plan records that it is falling
+    back to MVP ordering for that dataset
+- StudyGraph now writes the study-level audit manifest when `study_dir` is
+  present:
+  - `runs/{run_id}/audit/manifest.json`
+  - the manifest links the dependency plan/review artifacts and dataset-level
+    audit artifacts
+- Real ADSL runs invoked from StudyGraph write their dataset manifest as
+  `runs/{run_id}/audit/adsl_manifest.json` so they do not overwrite the
+  study-level `audit/manifest.json`. Direct CLI/service ADSL runs still write
+  the canonical `audit/manifest.json`.
+- StudyGraph state and audit metadata now carry dependency plan/review artifact
+  references.
+- Updated `CODEX.md` so the repository guidance describes the current
+  LangGraph worktree instead of the older Shiny prototype file layout.
+
 Verification so far:
 
 ```text
 python -m unittest discover -s tests -p "test_*.py"
-Ran 66 tests ... OK
+Ran 69 tests ... OK
 ```
 
 Open issues:

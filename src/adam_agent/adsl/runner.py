@@ -41,6 +41,7 @@ def run_adsl_minimal(
     run_id: str,
     rscript_path: str | None = None,
     study_id: str | None = None,
+    manifest_name: str = "manifest.json",
 ) -> AdslRunResult:
     """Run the Phase 5 ADSL starter loop for a local study folder."""
 
@@ -50,7 +51,7 @@ def run_adsl_minimal(
     index = scanner.scan()
     warnings = list(index.warnings)
 
-    store = ArtifactStore(study_path, study_id=resolved_study_id, run_id=run_id)
+    store = ArtifactStore(study_path, study_id=resolved_study_id, run_id=run_id, manifest_name=manifest_name)
     run_dir = study_path / "runs" / run_id
     specs_dir = run_dir / "specs"
     code_dir = run_dir / "code"

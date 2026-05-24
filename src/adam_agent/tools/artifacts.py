@@ -13,18 +13,21 @@ from adam_agent.schemas.artifacts import ArtifactKind, ArtifactRef, ArtifactRole
 class ArtifactStore:
     """Register files and write a run-level artifact manifest."""
 
-    def __init__(self, study_dir: str | Path, study_id: str, run_id: str) -> None:
+    def __init__(self, study_dir: str | Path, study_id: str, run_id: str, *, manifest_name: str = "manifest.json") -> None:
         self.study_dir = Path(study_dir)
         self.study_id = study_id
         self.run_id = run_id
         self.run_dir = self.study_dir / "runs" / run_id
+        if Path(manifest_name).name != manifest_name:
+            raise ValueError("manifest_name must be a file name, not a path")
+        self.manifest_name = manifest_name
         self.artifacts: list[ArtifactRef] = []
 
     @property
     def manifest_path(self) -> Path:
         """Canonical Phase 4 manifest path."""
 
-        return self.run_dir / "audit" / "manifest.json"
+        return self.run_dir / "audit" / self.manifest_name
 
     def register_existing(
         self,

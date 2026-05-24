@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-24
 
-Phase status: implementation in progress
+Phase status: Phase 7.3 implemented; Phase 7 still in progress overall
 
 ## Purpose
 
@@ -146,9 +146,89 @@ Study graph state should expose:
 - `dependency_decisions`
 - `dependency_graph`
 - `dependency_evidence`
+- `dependency_review_status`
+- `dependency_plan_artifact`
+- `dependency_review_artifact`
 
 The study-level audit stub should include the same fields so another tool can
 explain why ADSL was inserted.
+
+## Phase 7.3 Review Contract
+
+Phase 7.3 makes the dependency plan reviewable as files, not only as transient
+LangGraph state.
+
+When `study_dir` is available, StudyGraph writes:
+
+```text
+runs/{run_id}/planning/dependency_plan.json
+runs/{run_id}/planning/dependency_review.md
+```
+
+Plain language:
+
+- `dependency_plan.json` is for software tools and later UI screens.
+- `dependency_review.md` is for a human reviewer.
+- Both files say what the user requested, what the system added, what will run
+  first, what depends on what, and what warnings exist.
+
+Review status values:
+
+```text
+accepted
+  no warnings and no review-required dependency decision
+
+review_required
+  the plan can run, but at least one decision uses MVP fallback or file-derived
+  evidence that should be checked
+
+warning
+  the plan can run, but there is a dependency warning such as input_spec versus
+  SAS/define conflict
+
+blocked
+  unsupported non-ADaM targets were requested
+```
+
+Important boundary:
+
+If `input_spec` is present, it is treated as the user-provided spec. It can
+drive the dependency plan directly. Legacy SAS and define.xml are scanned only
+to find conflicts. A consistent secondary scan should stay quiet.
+
+If `input_spec` is present but does not cover a requested or auto-added target
+dataset, the system may still use MVP fallback ordering, but it must record a
+planning warning. This prevents the UI from hiding the difference between:
+
+```text
+spec explicitly supports this dependency
+```
+
+and:
+
+```text
+spec folder exists, but no dependency evidence was extracted for this dataset
+```
+
+Phase 7.3 also writes a real study-level manifest when `study_dir` is available:
+
+```text
+runs/{run_id}/audit/manifest.json
+```
+
+That manifest links the dependency plan/review artifacts and the dataset-level
+audit artifacts returned by dataset subgraphs.
+
+When StudyGraph invokes the real ADSL minimal dataset subgraph, the dataset
+manifest is written as:
+
+```text
+runs/{run_id}/audit/adsl_manifest.json
+```
+
+This avoids overwriting the study-level `audit/manifest.json`. When the ADSL
+service runs alone through its CLI/service boundary, it still writes the
+canonical `audit/manifest.json`.
 
 ## Exit Criteria
 
@@ -160,6 +240,8 @@ Phase 7.1 is complete when:
 - ADSL failure blocks downstream datasets
 - downstream stub failure does not change completed ADSL status
 - audit manifest metadata records requested/auto-added/dependency evidence
+- dependency plan and dependency review artifacts are written under
+  `runs/{run_id}/planning/` when a study directory is available
 - full test suite passes
 
 ## Follow-Ups

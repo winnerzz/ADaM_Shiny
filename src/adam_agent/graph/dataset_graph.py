@@ -45,6 +45,7 @@ def run_adsl_minimal_node(state: DatasetGraphState) -> DatasetGraphState:
             run_id=state["run_id"],
             rscript_path=state.get("rscript_path") or None,
             study_id=state["study_id"],
+            manifest_name="adsl_manifest.json",
         )
     except Exception as exc:
         return {

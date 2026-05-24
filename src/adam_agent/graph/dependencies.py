@@ -94,6 +94,7 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
     requested = _normalize_datasets(requested_datasets or ["ADSL", "ADAE"])
     evidence_records, planning_warnings = collect_dependency_evidence(study_dir)
     evidence_by_dataset = _evidence_by_dataset(evidence_records)
+    input_spec_present = _input_spec_present(study_dir)
     auto_added: list[str] = []
     targets = list(requested)
 
@@ -114,6 +115,8 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
     ordered_supported, execution_batches, cycle_warnings = _topological_order(supported_targets, evidence_by_dataset)
     planning_warnings.extend(cycle_warnings)
     ordered_targets = ordered_supported + [dataset for dataset in targets if dataset in unsupported]
+    if input_spec_present:
+        planning_warnings.extend(_input_spec_gap_warnings(ordered_supported, evidence_by_dataset))
 
     decisions = [
         _dependency_decision(dataset, evidence_by_dataset, is_auto_added=dataset in auto_added)
@@ -169,6 +172,12 @@ def collect_dependency_evidence(study_dir: str | Path | None) -> tuple[list[Depe
     return _dedupe_evidence(evidence), warnings
 
 
+def _input_spec_present(study_dir: str | Path | None) -> bool:
+    if not study_dir:
+        return False
+    return _folder_has_files(Path(study_dir) / "input_spec")
+
+
 def _normalize_datasets(datasets: list[str]) -> list[str]:
     normalized: list[str] = []
     for dataset in datasets:
@@ -209,13 +218,18 @@ def _dependency_decision(
     if evidence:
         dependencies = _evidence_dependencies_for_dataset(dataset, evidence_by_dataset)
         primary = min(evidence, key=lambda item: DEPENDENCY_SOURCE_PRIORITY.get(item.source, 99))
+        is_input_spec = primary.source == "input_spec_dependency"
         return DependencyDecision(
             dataset=dataset,
             dependencies=dependencies,
             source=primary.source,
             confidence=max(item.confidence for item in evidence),
-            review_required=True,
-            reason=f"{dataset} dependency was inferred from user-provided {primary.source.replace('_dependency', '')} evidence and should be reviewed against the approved study contract.",
+            review_required=not is_input_spec,
+            reason=(
+                f"{dataset} dependency follows the user-provided input_spec. Secondary evidence only creates a warning when it conflicts."
+                if is_input_spec
+                else f"{dataset} dependency was inferred from user-provided {primary.source.replace('_dependency', '')} evidence and should be reviewed against the approved study contract."
+            ),
             evidence_ids=[item.evidence_id for item in evidence if item.dependency in dependencies],
         )
     if dataset == "ADSL":
@@ -264,6 +278,21 @@ def _evidence_by_dataset(evidence_records: list[DependencyEvidence]) -> dict[str
     for record in evidence_records:
         grouped.setdefault(record.dataset, []).append(record)
     return grouped
+
+
+def _input_spec_gap_warnings(
+    supported_targets: list[str],
+    evidence_by_dataset: dict[str, list[DependencyEvidence]],
+) -> list[str]:
+    warnings: list[str] = []
+    for dataset in supported_targets:
+        if dataset == "ADSL" or dataset in evidence_by_dataset:
+            continue
+        warnings.append(
+            f"Input spec is present, but no dependency evidence was extracted for {dataset}; "
+            "using MVP fallback ordering for this dataset."
+        )
+    return warnings
 
 
 def _collect_secondary_dependency_evidence(root: Path, warnings: list[str]) -> list[DependencyEvidence]:
