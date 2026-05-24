@@ -113,6 +113,12 @@ runs/{run_id}/outputs/{dataset}.csv
 runs/{run_id}/outputs/{dataset}.sas7bdat
 ```
 
+Phase 7.4 separates "found on disk" from "usable by this dependency gate." A
+CSV dependency artifact must at least be readable enough to confirm a header.
+A `.sas7bdat` dependency artifact may be found, but Python-side dependency
+profiling is not available in this phase, so it is recorded as
+`found_but_unusable` and still requires user action or a later reader path.
+
 Later sources:
 
 ```text
@@ -152,6 +158,7 @@ Possible `resolution_status` values:
 
 ```text
 available
+found_but_unusable
 user_action_required
 approved_for_system_generation
 provided_by_user
@@ -390,6 +397,9 @@ Implemented so far:
   - `demo_rich_context` may include the configured sample rows
 - Unreadable or missing dependency artifacts create context warnings instead of
   being silently trusted.
+- Dependency availability now distinguishes usable artifacts from merely found
+  files. `.sas7bdat` dependency artifacts are not marked `available` by the
+  Python dependency gate in Phase 7.4; they become `found_but_unusable`.
 - Added a strict LLM generated-code response parser for the first JSON contract:
   `dataset`, `r_code`, `assumptions`, `risk_points`, `used_inputs`, and
   `expected_outputs`.
@@ -407,18 +417,34 @@ Implemented so far:
   `ADAE`, although ADAE is used as the first test fixture.
 - The runner can use a fixed mock LLM response and a stub R runner, so the
   chain can be tested without API keys or local R.
+- The default stub runner reports `structural_stub_pass` and
+  `not_real_derivation = true` rather than ordinary `pass`. This means the
+  orchestration and artifact boundary worked; it does not mean a clinically
+  meaningful downstream ADaM derivation was produced.
+- Dataset summaries for stubbed downstream runs use `status = completed_stub`
+  so callers that only inspect the summary status still see the prototype
+  boundary.
 - Wired the generic downstream runner into `DatasetGraph` behind the explicit
   mode `execution_mode = "llm_downstream_stubbed"`.
 - StudyGraph now passes dependency-resolution records into each dataset task so
   downstream dataset graphs can build dependency-aware LLM context packages.
 - The graph-level downstream mode writes context, response, generated R code,
   minimal output, and validation artifacts into the study run folder.
+- Dependency-resolution records are filtered per target before context
+  construction, so one downstream target cannot accidentally receive another
+  target's resolved ADaM dependencies.
+- Unusable dependency profiles now block downstream structural success instead
+  of being hidden inside warnings.
+- Full test suite after the target-filtering and boundary fixes:
+  `Ran 86 tests ... OK`.
 
 Not implemented yet:
 
 - Real LLM provider call.
 - Real downstream R execution through local R for a non-ADSL target.
 - Real downstream ADaM validation beyond structural checks.
+- Stubbed downstream runs are smoke tests. A `structural_stub_pass` must not be
+  described as real ADaM generation.
 
 ## Exit Criteria
 

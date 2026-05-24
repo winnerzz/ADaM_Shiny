@@ -68,7 +68,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             dataset,
             scenarios.get(dataset, "success"),
             _dependency_status(plan.dependencies.get(dataset, [])),
-            dependency_resolution_dicts,
+            _dependency_resolution_for_dataset(dataset, dependency_resolution_dicts),
         )
         for dataset in plan.foundation_datasets
         if dataset in runnable_datasets
@@ -79,7 +79,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             dataset,
             scenarios.get(dataset, "code_error_then_success" if dataset == "ADAE" else "success"),
             _dependency_status(plan.dependencies.get(dataset, [])),
-            dependency_resolution_dicts,
+            _dependency_resolution_for_dataset(dataset, dependency_resolution_dicts),
         )
         for dataset in plan.downstream_datasets
         if dataset in runnable_datasets
@@ -175,7 +175,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
                 blocked_by = failed_dependencies or missing_dependencies
                 blocked_record = {
                     "dataset": dataset,
-                    "reason": "blocked_by_adsl" if blocked_by == ["ADSL"] else "blocked_by_dependency",
+                    "reason": "blocked_by_dependency",
                     "blocked_by": ",".join(blocked_by),
                 }
                 blocked_datasets.append(blocked_record)
@@ -199,7 +199,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             summary = result["summary"]
             dataset_results.append(summary)
             audit_artifacts.extend(result.get("audit_artifacts", []))
-            if summary.status == "completed":
+            if summary.status in {"completed", "completed_stub"}:
                 completed.add(summary.dataset)
             else:
                 failed.add(summary.dataset)
@@ -565,6 +565,18 @@ def _resolution_scope_datasets(requested_datasets: list[str], approved_dependenc
         if normalized and normalized not in scope:
             scope.append(normalized)
     return scope
+
+
+def _dependency_resolution_for_dataset(
+    dataset: str,
+    dependency_resolution: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    target = dataset.strip().upper()
+    return [
+        record
+        for record in dependency_resolution
+        if str(record.get("target_dataset", "")).strip().upper() == target
+    ]
 
 
 def _filter_execution_batches(execution_batches: list[list[str]], runnable_datasets: list[str]) -> list[list[str]]:

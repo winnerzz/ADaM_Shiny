@@ -80,6 +80,7 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertIn("generated_code", result.artifacts)
         self.assertIn("validation_report", result.artifacts)
         self.assertIn("output_adam", result.artifacts)
+        self.assertFalse(result.validation_report["stubbed_r_execution"])
         self.assertEqual(result.llm_call_record.provider, "mock")
         self.assertEqual(result.llm_call_record.datasets_included, ["AE", "ADSL"])
         self.assertTrue((study_dir / "runs" / "run_downstream_success" / "llm" / "adae_context.json").exists())
@@ -127,6 +128,34 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertIn("generated_code", result.artifacts)
         self.assertNotIn("output_adam", result.artifacts)
 
+    def test_downstream_runner_fails_when_available_dependency_profile_is_not_usable(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_unusable_dependency", include_reference_adsl_csv=False)
+        sas7bdat_path = study_dir / "reference_adam" / "adsl.sas7bdat"
+        sas7bdat_path.write_text("not a real sas7bdat", encoding="utf-8")
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_unusable_dependency",
+            target_dataset="ADAE",
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "resolution_status": "available",
+                    "artifact_path": str(sas7bdat_path.as_posix()),
+                    "artifact_source": "reference_adam",
+                }
+            ],
+            r_runner=FileWritingStubRRunner(),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation_status, "fail")
+        self.assertTrue(any("Profile not fully available" in error for error in result.validation_report["errors"]))
+        self.assertIn("output_adam", result.artifacts)
+
     def test_downstream_runner_respects_demo_rich_context_sample_rows(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_demo_context")
         exposure = LLMExposureConfig(
@@ -149,9 +178,28 @@ class DownstreamRunnerTests(unittest.TestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.llm_call_record.sample_row_counts, {"AE": 1, "ADSL": 1})
+        self.assertFalse(result.validation_report["stubbed_r_execution"])
+
+    def test_default_downstream_runner_marks_structural_stub_not_real_generation(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_default_stub")
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_default_stub",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "completed_stub")
+        self.assertEqual(result.validation_status, "structural_stub_pass")
+        self.assertTrue(result.validation_report["stubbed_r_execution"])
+        self.assertTrue(result.validation_report["not_real_derivation"])
+        self.assertEqual(result.validation_report["llm_provider"], "mock")
 
 
-def _study_with_adae_inputs(name: str) -> Path:
+def _study_with_adae_inputs(name: str, *, include_reference_adsl_csv: bool = True) -> Path:
     study_dir = _workspace_dir(name) / "PSY201"
     input_sdtm = study_dir / "input_sdtm"
     input_spec = study_dir / "input_spec"
@@ -164,7 +212,8 @@ def _study_with_adae_inputs(name: str) -> Path:
         json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
         encoding="utf-8",
     )
-    (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n02,2024-01-02\n", encoding="utf-8")
+    if include_reference_adsl_csv:
+        (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n02,2024-01-02\n", encoding="utf-8")
     return study_dir
 
 

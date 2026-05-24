@@ -1184,6 +1184,11 @@ Phase 7.4 implementation notes:
   - `reference_adam/{dataset}.sas7bdat`
   - `runs/{run_id}/outputs/{dataset}.csv`
   - `runs/{run_id}/outputs/{dataset}.sas7bdat`
+- Availability now separates a file that is merely found from a file that is
+  usable by the current dependency gate. CSV dependencies must be minimally
+  readable; `.sas7bdat` dependency artifacts are recorded as
+  `found_but_unusable` in Phase 7.4 because Python-side dependency profiling is
+  not implemented.
 - Missing dependency datasets now create a structured block:
   `dependency_user_action_required`.
 - StudyGraph no longer silently runs discovered dependencies. It executes only:
@@ -1230,6 +1235,9 @@ Phase 7.4 implementation notes:
 - The runner is dataset-generic and uses ADAE only as the first fixture.
 - It can run with a fixed mock LLM response and stub R runner, so no API key or
   local R installation is required for these tests.
+- The default stub runner now reports `structural_stub_pass`,
+  `stubbed_r_execution = true`, and `not_real_derivation = true`, rather than a
+  plain validation `pass`.
 - Added `tests/test_downstream_runner.py`.
 - Full test suite after generic downstream runner:
   `Ran 83 tests ... OK`.
@@ -1241,6 +1249,17 @@ Phase 7.4 implementation notes:
   LLM-downstream stubbed mode when ADSL is available as a dependency artifact.
 - Full test suite after StudyGraph/DatasetGraph integration:
   `Ran 84 tests ... OK`.
+- Sub-agent review then identified two boundary risks:
+  - `.sas7bdat` dependency artifacts were too easy to misread as available
+  - stubbed downstream execution could be mistaken for real generation
+- Fixed both boundaries:
+  - dependency records now support `found_but_unusable`
+  - dataset summaries now use `status = completed_stub` and
+    `validation_status = structural_stub_pass` for stubbed downstream runs
+  - dependency blocks now use the generic `blocked_by_dependency` reason
+    instead of the older `blocked_by_adsl` wording
+- Full test suite after boundary fixes:
+  `Ran 88 tests ... OK`.
 
 Open issues:
 
@@ -1248,6 +1267,8 @@ Open issues:
   as production evidence.
 - Downstream datasets still use stubs unless a later phase implements real
   dataset loops.
+- A downstream `structural_stub_pass` is only a smoke-test success for
+  orchestration and artifacts, not a real ADaM derivation.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
 - Phase 7.4 has not yet implemented real LLM provider calls or real downstream

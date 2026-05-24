@@ -10,7 +10,7 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 
 
-GraphRunStatus = Literal["pending", "running", "blocked", "completed", "failed"]
+GraphRunStatus = Literal["pending", "running", "blocked", "completed", "completed_stub", "failed"]
 StubScenario = Literal["success", "code_error_then_success", "spec_error_then_success", "fail_adsl"]
 DatasetRoute = Literal["continue", "human_review", "repair_code", "revise_spec", "success", "fail"]
 
@@ -64,6 +64,7 @@ class DatasetGraphState(TypedDict, total=False):
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]
     real_validation_status: str
+    real_run_metadata: dict[str, object]
     failure_records: list[FailureRecord]
     recommended_route: str | None
     summary: DatasetResultSummary

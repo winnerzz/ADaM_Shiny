@@ -421,8 +421,8 @@ class GraphSmokeTests(unittest.TestCase):
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(summaries["ADSL"].status, "failed")
         self.assertEqual(summaries["ADAE"].status, "failed")
-        self.assertEqual(summaries["ADAE"].validation_status, "blocked_by_adsl")
-        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "blocked_by_adsl", "blocked_by": "ADSL"}])
+        self.assertEqual(summaries["ADAE"].validation_status, "blocked_by_dependency")
+        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "blocked_by_dependency", "blocked_by": "ADSL"}])
         self.assertEqual(result["status"], "failed")
 
     def test_downstream_only_request_requires_dependency_decision_when_missing(self) -> None:
@@ -516,8 +516,12 @@ class GraphSmokeTests(unittest.TestCase):
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(set(summaries), {"ADAE"})
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(summaries["ADAE"].status, "completed")
-        self.assertEqual(summaries["ADAE"].validation_status, "pass")
+        self.assertEqual(summaries["ADAE"].status, "completed_stub")
+        self.assertEqual(summaries["ADAE"].validation_status, "structural_stub_pass")
+        self.assertTrue(summaries["ADAE"].metadata["stubbed_r_execution"])
+        self.assertTrue(summaries["ADAE"].metadata["not_real_derivation"])
+        self.assertEqual(summaries["ADAE"].metadata["llm_provider"], "mock")
+        self.assertEqual(summaries["ADAE"].metadata["summary_status_note"], "completed_stub")
         self.assertEqual(summaries["ADAE"].output_artifact_ids, ["output_adam_psy201_run_phase74_graph_llm_downstream_adae"])
         self.assertTrue((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "llm" / "adae_context.json").exists())
         self.assertTrue((study_dir / "runs" / "run_phase74_graph_llm_downstream" / "code" / "build_adae.R").exists())
@@ -526,6 +530,36 @@ class GraphSmokeTests(unittest.TestCase):
         artifact_ids = {artifact["artifact_id"] for artifact in manifest_payload["artifacts"]}
         self.assertIn("llm_context_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
         self.assertIn("llm_response_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
+
+    def test_sas7bdat_dependency_artifact_is_found_but_not_usable_for_downstream_availability(self) -> None:
+        study_dir = _workspace_dir("phase74_unusable_sas7bdat_dependency") / "PSY201"
+        reference_dir = study_dir / "reference_adam"
+        reference_dir.mkdir(parents=True)
+        (reference_dir / "adsl.sas7bdat").write_text("not a real sas7bdat", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase74_unusable_sas7bdat_dependency",
+                "target_datasets": ["ADAE"],
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        resolution = result["dependency_resolution"][0]
+        self.assertEqual(result["runnable_datasets"], [])
+        self.assertTrue(result["dependency_action_required"])
+        self.assertEqual(resolution["resolution_status"], "found_but_unusable")
+        self.assertFalse(resolution["available"])
+        self.assertTrue(resolution["artifact_path"].endswith("adsl.sas7bdat"))
+        self.assertEqual(summaries["ADAE"].validation_status, "dependency_user_action_required")
+        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "dependency_user_action_required", "blocked_by": "ADSL"}])
+        self.assertEqual(result["status"], "failed")
 
     def test_approved_dependency_generation_allows_running_dependency_once(self) -> None:
         graph = compile_study_graph()

@@ -136,6 +136,10 @@ def run_downstream_adam(
         output_path=output_path,
         r_result=r_result,
         expected_outputs=generated_package.expected_outputs,
+        context_warnings=context.warnings,
+        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+        provider=provider,
+        model=model,
     )
     validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
     artifacts["validation_report"] = validation_artifact
@@ -150,7 +154,7 @@ def run_downstream_adam(
             role="output",
         )
 
-    status = "completed" if validation_report["status"] == "pass" else "failed"
+    status = "completed_stub" if validation_report["status"] == "structural_stub_pass" else "completed" if validation_report["status"] == "pass" else "failed"
     return DownstreamRunResult(
         study_id=study_id,
         run_id=run_id,
@@ -231,9 +235,13 @@ def _validate_downstream_output(
     output_path: Path,
     r_result: RRunResult,
     expected_outputs: list[str],
+    context_warnings: list[str],
+    stubbed_r_execution: bool,
+    provider: str,
+    model: str,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(context_warnings)
     checks = [
         {"name": "r_exit_code_zero", "pass": r_result.success},
         {"name": "output_file_exists", "pass": output_path.exists() and output_path.is_file()},
@@ -245,16 +253,28 @@ def _validate_downstream_output(
     expected_name = output_path.name
     if expected_outputs and expected_name not in expected_outputs:
         warnings.append(f"LLM expected_outputs does not include canonical output file {expected_name}.")
+    dependency_profile_warnings = [
+        warning
+        for warning in warnings
+        if warning.startswith("Profile not fully available") or warning.startswith("Artifact missing")
+    ]
+    if dependency_profile_warnings:
+        errors.extend(dependency_profile_warnings)
 
+    status = "fail" if errors else "structural_stub_pass" if stubbed_r_execution else "pass"
     return {
         "dataset": target,
-        "status": "pass" if not errors else "fail",
+        "status": status,
         "checks": checks,
         "warnings": warnings,
         "errors": errors,
         "expected_outputs": expected_outputs,
         "output_path": str(output_path.as_posix()),
         "r_exit_code": r_result.exit_code,
+        "stubbed_r_execution": stubbed_r_execution,
+        "llm_provider": provider,
+        "llm_model": model,
+        "not_real_derivation": stubbed_r_execution or provider == "mock",
     }
 
 

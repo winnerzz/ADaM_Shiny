@@ -63,6 +63,11 @@ def build_target_llm_context(
     input_index = StudyInputScanner(root, study_id=study_id).scan()
     warnings.extend(input_index.warnings)
     warnings.extend(f"Invalid input file skipped: {item.path} ({item.reason})" for item in input_index.invalid_files)
+    target_dependency_resolution = [
+        record
+        for record in dependency_resolution
+        if str(record.get("target_dataset", "")).strip().upper() == target
+    ]
 
     reader = SDTMReader()
     source_profiles: dict[str, dict[str, Any]] = {}
@@ -76,7 +81,7 @@ def build_target_llm_context(
 
     resolved_dependencies = _resolved_dependency_profiles(
         reader=reader,
-        dependency_resolution=dependency_resolution,
+        dependency_resolution=target_dependency_resolution,
         sample_rows=sample_rows,
         warnings=warnings,
     )

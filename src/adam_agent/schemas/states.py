@@ -16,7 +16,7 @@ from adam_agent.schemas.routing import FailureRecord, RouteDecision
 from adam_agent.schemas.specs import SpecDocument
 
 
-RunStatus = Literal["pending", "running", "needs_review", "completed", "failed", "cancelled"]
+RunStatus = Literal["pending", "running", "needs_review", "completed", "completed_stub", "failed", "cancelled"]
 DatasetRole = Literal["subject_level", "event_level", "findings_level", "basic_data_structure", "other"]
 
 
@@ -30,6 +30,7 @@ class DatasetResultSummary(StrictBaseModel):
     validation_status: str | None = None
     compare_status: str | None = None
     failure_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=utc_now)
 
 

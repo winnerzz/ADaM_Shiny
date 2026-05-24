@@ -42,6 +42,16 @@ class DependencyResolution:
         }
 
 
+@dataclass(frozen=True)
+class DependencyArtifactCandidate:
+    """Existing dependency artifact found on disk."""
+
+    path: Path
+    source: str
+    usable: bool
+    reason: str
+
+
 def resolve_dependency_availability(
     dependencies: dict[str, list[str]],
     *,
@@ -62,13 +72,28 @@ def resolve_dependency_availability(
         for required in dependencies.get(target, []):
             artifact = _find_dependency_artifact(required, study_dir=study_dir, run_id=run_id)
             if artifact:
+                if not artifact.usable:
+                    records.append(
+                        DependencyResolution(
+                            target_dataset=target,
+                            required_dataset=required,
+                            available=False,
+                            artifact_path=str(artifact.path.as_posix()),
+                            artifact_source=artifact.source,
+                            resolution_status="found_but_unusable",
+                            allowed_actions=list(ALLOWED_DEPENDENCY_ACTIONS),
+                            selected_action=None,
+                            reason=artifact.reason,
+                        )
+                    )
+                    continue
                 records.append(
                     DependencyResolution(
                         target_dataset=target,
                         required_dataset=required,
                         available=True,
-                        artifact_path=str(artifact[0].as_posix()),
-                        artifact_source=artifact[1],
+                        artifact_path=str(artifact.path.as_posix()),
+                        artifact_source=artifact.source,
                         resolution_status="available",
                         allowed_actions=[],
                         selected_action="use_existing_dataset",
@@ -147,7 +172,7 @@ def unresolved_dependency_targets(resolutions: list[DependencyResolution]) -> li
 
     targets: list[str] = []
     for record in resolutions:
-        if record.resolution_status == "user_action_required" and record.target_dataset not in targets:
+        if record.resolution_status in {"user_action_required", "found_but_unusable"} and record.target_dataset not in targets:
             targets.append(record.target_dataset)
     return targets
 
@@ -162,7 +187,7 @@ def missing_dependency_blocks(
     reportable = set(_normalize(reportable_datasets)) if reportable_datasets is not None else None
     blocked_by_dataset: dict[str, list[str]] = {}
     for record in resolutions:
-        if record.resolution_status != "user_action_required":
+        if record.resolution_status not in {"user_action_required", "found_but_unusable"}:
             continue
         if reportable is not None and record.target_dataset not in reportable:
             continue
@@ -219,7 +244,7 @@ def _find_dependency_artifact(
     *,
     study_dir: str | Path | None,
     run_id: str | None,
-) -> tuple[Path, str] | None:
+) -> DependencyArtifactCandidate | None:
     if not study_dir:
         return None
     root = Path(study_dir)
@@ -234,8 +259,53 @@ def _find_dependency_artifact(
             candidates.append((root / "runs" / run_id / "outputs" / f"{upper}{suffix}", "run_output"))
     for path, source in candidates:
         if path.exists() and path.is_file():
-            return path, source
+            return DependencyArtifactCandidate(
+                path=path,
+                source=source,
+                usable=_is_usable_dependency_artifact(path),
+                reason=_dependency_artifact_reason(dataset, path),
+            )
     return None
+
+
+def _is_usable_dependency_artifact(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _csv_has_header(path)
+    if suffix == ".sas7bdat":
+        return False
+    return False
+
+
+def _csv_has_header(path: Path) -> bool:
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            first_line = handle.readline().strip()
+    except UnicodeDecodeError:
+        try:
+            with path.open("r", encoding="latin-1") as handle:
+                first_line = handle.readline().strip()
+        except OSError:
+            return False
+    except OSError:
+        return False
+    return bool(first_line)
+
+
+def _dependency_artifact_reason(dataset: str, path: Path) -> str:
+    dependency = dataset.strip().upper()
+    suffix = path.suffix.lower()
+    if suffix == ".sas7bdat":
+        return (
+            f"{dependency} dependency artifact was found at {path.as_posix()}, "
+            "but Python-side dependency profiling for sas7bdat is not available in Phase 7.4."
+        )
+    if suffix == ".csv":
+        return (
+            f"{dependency} dependency artifact was found at {path.as_posix()}, "
+            "but the CSV file could not be confirmed usable."
+        )
+    return f"{dependency} dependency artifact was found at {path.as_posix()}, but its format is not usable."
 
 
 def _normalize(values: list[str]) -> list[str]:

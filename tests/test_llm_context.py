@@ -121,6 +121,37 @@ class LLMContextTests(unittest.TestCase):
         self.assertTrue(any("Artifact missing" in warning for warning in package.warnings))
         self.assertTrue(any("No input_spec artifact" in warning for warning in package.warnings))
 
+    def test_context_uses_only_dependency_records_for_current_target(self) -> None:
+        study_dir = _study_with_adae_spec_and_adsl_dependency("llm_context_target_filter")
+        (study_dir / "reference_adam" / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
+
+        package = build_target_llm_context(
+            study_id="PSY201",
+            run_id="run_context_target_filter",
+            target_dataset="ADAE",
+            study_dir=study_dir,
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "resolution_status": "available",
+                    "artifact_path": str((study_dir / "reference_adam" / "adsl.csv").as_posix()),
+                    "artifact_source": "reference_adam",
+                },
+                {
+                    "target_dataset": "ADTTE",
+                    "required_dataset": "ADLB",
+                    "resolution_status": "available",
+                    "artifact_path": str((study_dir / "reference_adam" / "adlb.csv").as_posix()),
+                    "artifact_source": "reference_adam",
+                },
+            ],
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(set(package.resolved_dependencies), {"ADSL"})
+        self.assertNotIn("ADLB", package.resolved_dependencies)
+
     def test_write_llm_context_package_creates_audit_artifact(self) -> None:
         study_dir = _study_with_adae_spec_and_adsl_dependency("llm_context_write")
         package = build_target_llm_context(

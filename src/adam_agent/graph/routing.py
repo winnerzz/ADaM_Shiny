@@ -18,6 +18,8 @@ def route_after_sandbox(state: DatasetGraphState) -> DatasetRoute:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return "success" if state.get("real_run_completed") else "fail"
+    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+        return "success" if state.get("real_run_completed") else "fail"
 
     failure_type = state.get("failure_type")
     if failure_type == "code_error":

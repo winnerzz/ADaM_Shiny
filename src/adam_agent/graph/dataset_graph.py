@@ -67,12 +67,18 @@ def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphSta
 
     return {
         "status": result.status,
-        "failure_type": None if result.status == "completed" else "sandbox_error",
-        "route": "success" if result.status == "completed" else "fail",
-        "real_run_completed": result.status == "completed",
+        "failure_type": None if result.status in {"completed", "completed_stub"} else "sandbox_error",
+        "route": "success" if result.status in {"completed", "completed_stub"} else "fail",
+        "real_run_completed": result.status in {"completed", "completed_stub"},
         "real_run_error": result.error or "; ".join(result.validation_report.get("errors", [])),
         "real_run_artifacts": result.artifacts,
         "real_validation_status": result.validation_status,
+        "real_run_metadata": {
+            "stubbed_r_execution": result.validation_report.get("stubbed_r_execution", False),
+            "llm_provider": result.validation_report.get("llm_provider"),
+            "llm_model": result.validation_report.get("llm_model"),
+            "not_real_derivation": result.validation_report.get("not_real_derivation", False),
+        },
         "audit_artifacts": [artifact for key, artifact in result.artifacts.items() if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report"}],
         "sandbox_runs": 1,
     }
@@ -305,12 +311,14 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
     """Create a DatasetResultSummary for the generic downstream service."""
 
     dataset = state["dataset"]
-    status = "completed" if state.get("real_run_completed") else "failed"
+    run_metadata = state.get("real_run_metadata", {})
+    is_stubbed = bool(run_metadata.get("stubbed_r_execution") or run_metadata.get("not_real_derivation"))
+    status = "completed_stub" if state.get("real_run_completed") and is_stubbed else "completed" if state.get("real_run_completed") else "failed"
     artifacts = state.get("real_run_artifacts", {})
     output_artifact_ids = []
     if "output_adam" in artifacts:
         output_artifact_ids.append(artifacts["output_adam"].artifact_id)
-    failure_ids = [] if status == "completed" else [f"failure_{dataset.lower()}_llm_downstream"]
+    failure_ids = [] if status in {"completed", "completed_stub"} else [f"failure_{dataset.lower()}_llm_downstream"]
     audit_artifact_id = None
     if state.get("audit_artifacts"):
         audit_artifact_id = state["audit_artifacts"][-1].artifact_id
@@ -320,9 +328,16 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
         status=status,
         output_artifact_ids=output_artifact_ids,
         audit_artifact_id=audit_artifact_id,
-        validation_status=state.get("real_validation_status", "unknown"),
+        validation_status="structural_stub_pass" if status == "completed_stub" else state.get("real_validation_status", "unknown"),
         compare_status="not_run",
         failure_ids=failure_ids,
+        metadata={
+            "stubbed_r_execution": is_stubbed,
+            "llm_provider": run_metadata.get("llm_provider"),
+            "llm_model": run_metadata.get("llm_model"),
+            "not_real_derivation": is_stubbed,
+            "summary_status_note": status,
+        },
     )
     return {
         "status": status,
