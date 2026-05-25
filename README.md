@@ -107,6 +107,23 @@ runs/{run_id}/
 
 `diagnostics/` appears when a run fails or when an initial failure was repaired.
 
+## Local Web UI
+
+Start the Phase 8 local API and browser UI:
+
+```powershell
+uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+The current page can create a synchronous run and inspect dependency,
+validation, diagnostics, audit, and LLM context JSON artifacts.
+
 ## Data and API Safety
 
 Mock mode requires no API key and no network call.

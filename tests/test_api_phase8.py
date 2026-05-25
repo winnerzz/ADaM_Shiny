@@ -40,6 +40,17 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_index_serves_local_web_ui(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("ADaM Agent Studio", response.text)
+        self.assertIn("Run Study", response.text)
+        self.assertIn("Dependency", response.text)
+
     def test_create_run_and_read_artifacts(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_api_create_run")
         client = TestClient(create_app())

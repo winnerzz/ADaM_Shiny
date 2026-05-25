@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
 from adam_agent.api.models import ArtifactReadRequest, RunStudyRequest, RunStudyResponse
 from adam_agent.api.service import ApiServiceError, read_run_json_artifact, run_study_from_request
+from adam_agent.api.web import INDEX_HTML
 
 
 def create_app() -> FastAPI:
@@ -22,6 +24,10 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> str:
+        return INDEX_HTML
 
     @app.post("/runs", response_model=RunStudyResponse)
     def create_run(request: RunStudyRequest) -> RunStudyResponse:

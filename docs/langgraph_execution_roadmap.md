@@ -1548,6 +1548,39 @@ Phase 8.1 implementation notes:
   `python -m unittest discover -s tests -p "test_*.py"`
   `Ran 111 tests ... OK`
 
+Phase 8.2 design notes:
+
+- Add a minimal local browser UI served by the FastAPI app.
+- Avoid a frontend build system for this phase.
+- The page should call HTTP endpoints only; it should not import or call
+  LangGraph internals.
+- The first UI should support run creation and artifact inspection, not
+  asynchronous jobs or human approval writeback yet.
+
+Phase 8.2 implementation notes:
+
+- Added `src/adam_agent/api/web.py` with a static local HTML/CSS/JavaScript UI.
+- Added `GET /` to serve the page from the FastAPI app.
+- The page supports:
+  - study folder path
+  - run id
+  - target datasets
+  - execution mode
+  - config path
+  - optional Rscript path
+  - optional approved dependency datasets
+  - run summary table
+  - dependency, validation, diagnostics, audit, and context JSON views
+- Added `docs/phase8_2_local_web_ui.md`.
+- Updated `README.md` with the local `uvicorn` start command.
+- Verification:
+  - `python -m unittest tests.test_api_phase8`
+    `Ran 5 tests ... OK`
+  - `python -m unittest discover -s tests -p "test_*.py"`
+    `Ran 112 tests ... OK`
+  - temporary local `uvicorn adam_agent.api.app:app --host 127.0.0.1 --port 8000`
+    returned `/health = ok` and `GET / = 200`.
+
 ## Phase 9 - Standards and Production Hardening
 
 Goal:
