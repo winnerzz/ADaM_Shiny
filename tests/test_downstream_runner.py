@@ -13,7 +13,7 @@ TMP_ROOT = ROOT / ".tmp_tests"
 
 try:
     from adam_agent.downstream.runner import run_downstream_adam
-    from adam_agent.llm.clients import MockLLMClient
+    from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
     from adam_agent.tools.r_runner import RRunRequest, RRunResult
 except ModuleNotFoundError:
@@ -21,7 +21,7 @@ except ModuleNotFoundError:
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from adam_agent.downstream.runner import run_downstream_adam
-    from adam_agent.llm.clients import MockLLMClient
+    from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
     from adam_agent.tools.r_runner import RRunRequest, RRunResult
 
@@ -197,6 +197,79 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertTrue(result.validation_report["stubbed_r_execution"])
         self.assertTrue(result.validation_report["not_real_derivation"])
         self.assertEqual(result.validation_report["llm_provider"], "mock")
+
+    def test_downstream_runner_uses_configured_provider_client_and_records_audit(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_provider_client")
+        response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Provider response."],
+                "risk_points": [],
+                "used_inputs": ["AE", "ADSL"],
+                "expected_outputs": ["adae.csv"],
+            }
+        )
+        calls = []
+
+        def fake_transport(url, headers, payload, timeout_seconds):
+            calls.append((url, headers, payload, timeout_seconds))
+            return {"choices": [{"message": {"content": response}}]}
+
+        provider_config = LLMProviderConfig(
+            provider="deepseek",
+            model="deepseek-chat",
+            api_key="test-key",
+        )
+        exposure = LLMExposureConfig(
+            mode="demo_rich_context",
+            data_classification="processed_demo",
+            external_api_allowed=True,
+            sample_rows_per_dataset=1,
+        )
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_provider_client",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            llm_client=build_llm_client(provider_config, transport=fake_transport),
+            exposure=exposure,
+            provider=provider_config.provider,
+            model=provider_config.model,
+            r_runner=FileWritingStubRRunner(),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(calls[0][0], "https://api.deepseek.com/v1/chat/completions")
+        self.assertEqual(result.llm_call_record.provider_alias, "deepseek")
+        self.assertEqual(result.llm_call_record.transport, "openai-compatible")
+        self.assertEqual(result.llm_call_record.provider_base_url, "https://api.deepseek.com/v1")
+        self.assertEqual(result.validation_report["provider_alias"], "deepseek")
+        self.assertEqual(result.validation_report["transport"], "openai-compatible")
+        self.assertFalse(result.validation_report["not_real_derivation"])
+
+    def test_downstream_runner_refuses_non_mock_provider_without_explicit_client(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_provider_without_client")
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_provider_without_client",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            provider="deepseek",
+            model="deepseek-chat",
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation_status, "llm_client_required")
+        self.assertIn("refusing to fall back to mock", result.error)
+        self.assertEqual(result.validation_report["llm_provider"], "deepseek")
+        self.assertNotIn("generated_code", result.artifacts)
 
 
 def _study_with_adae_inputs(name: str, *, include_reference_adsl_csv: bool = True) -> Path:

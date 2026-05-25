@@ -117,7 +117,9 @@ Important current files and directories:
 - `src/adam_agent/graph/study_graph.py`: study-level orchestration, dependency
   planning, dataset dispatch, result reduction, and study audit artifacts.
 - `src/adam_agent/graph/dataset_graph.py`: isolated per-dataset graph. Current
-  real execution is limited to the Phase 5 ADSL minimal path.
+  real deterministic execution is limited to the Phase 5 ADSL minimal path;
+  Phase 7.6 also wires configured LLM provider calls into downstream code
+  generation behind explicit execution modes.
 - `src/adam_agent/graph/dependencies.py`: Phase 7 dependency planner. It is an
   orchestration planner, not a complete production ADaM dependency engine.
 - `src/adam_agent/adsl/`: Phase 5 deterministic ADSL starter loop, including
@@ -125,8 +127,9 @@ Important current files and directories:
   failure diagnosis.
 - `src/adam_agent/tools/`: deterministic tool boundaries for study input scan,
   artifact hashing/manifests, SDTM profiling, R execution, and config.
-- `src/adam_agent/llm/`: isolated mock/provider boundary. Real provider support
-  is intentionally not the core of the current graph work.
+- `src/adam_agent/llm/`: isolated mock/provider boundary. OpenAI-compatible,
+  DeepSeek/Qwen, and Anthropic/Claude clients are behind the same factory, with
+  fail-closed external API policy and audit records.
 - `src/adam_agent/schemas/`: Pydantic contracts for artifacts, evidence,
   approvals, LLM calls, routing, specs, and durable study/dataset state.
 - `docs/`: product contracts, phase designs, architecture notes, and the

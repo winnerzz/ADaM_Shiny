@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import json
+
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.adsl.runner import run_adsl_minimal
-from adam_agent.downstream.runner import run_downstream_adam
+from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
+from adam_agent.llm.clients import LLMProviderConfig, build_llm_client
 from adam_agent.schemas.artifacts import ArtifactRef
+from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
+
+
+def _is_llm_downstream_mode(state: DatasetGraphState) -> bool:
+    return state.get("dataset") != "ADSL" and state.get("execution_mode") in {
+        "llm_downstream_stubbed",
+        "llm_downstream_provider",
+    }
 
 
 def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
@@ -20,6 +31,8 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
         return run_adsl_minimal_node(state)
     if state.get("dataset") != "ADSL" and state.get("execution_mode") == "llm_downstream_stubbed":
         return run_llm_downstream_stubbed_node(state)
+    if state.get("dataset") != "ADSL" and state.get("execution_mode") == "llm_downstream_provider":
+        return run_llm_downstream_provider_node(state)
 
     return {
         "status": "running",
@@ -65,6 +78,12 @@ def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphSta
             "sandbox_runs": 0,
         }
 
+    return _downstream_result_state(result)
+
+
+def _downstream_result_state(result: DownstreamRunResult) -> DatasetGraphState:
+    """Convert a downstream service result into DatasetGraph runtime state."""
+
     return {
         "status": result.status,
         "failure_type": None if result.status in {"completed", "completed_stub"} else "sandbox_error",
@@ -77,11 +96,117 @@ def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphSta
             "stubbed_r_execution": result.validation_report.get("stubbed_r_execution", False),
             "llm_provider": result.validation_report.get("llm_provider"),
             "llm_model": result.validation_report.get("llm_model"),
+            "provider_alias": result.validation_report.get("provider_alias"),
+            "transport": result.validation_report.get("transport"),
+            "provider_base_url": result.validation_report.get("provider_base_url"),
+            "external_relay": result.validation_report.get("external_relay", False),
+            "risk_flags": result.validation_report.get("risk_flags", []),
             "not_real_derivation": result.validation_report.get("not_real_derivation", False),
         },
         "audit_artifacts": [artifact for key, artifact in result.artifacts.items() if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report"}],
         "sandbox_runs": 1,
     }
+
+
+def run_llm_downstream_provider_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Run the generic downstream service with a configured LLM provider."""
+
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": "execution_mode=llm_downstream_provider requires study_dir",
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    try:
+        provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
+        exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
+        llm_client = build_llm_client(provider_config)
+        if provider_config.provider.strip().lower() == "mock":
+            llm_client = _provider_mode_default_mock_client(state["dataset"])
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            target_dataset=state["dataset"],
+            dependency_resolution=state.get("dependency_resolution", []),
+            llm_client=llm_client,
+            exposure=exposure,
+            provider=provider_config.provider,
+            model=provider_config.model,
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": str(exc),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "real_run_metadata": _provider_failure_metadata(state.get("llm_provider", {})),
+            "sandbox_runs": 0,
+        }
+
+    return _downstream_result_state(result)
+
+
+def _provider_failure_metadata(provider_payload: dict[str, object]) -> dict[str, object]:
+    provider_config = LLMProviderConfig(**provider_payload)
+    base_url = provider_config.base_url
+    provider = provider_config.provider.strip().lower()
+    if base_url is None:
+        if provider in {"openai", "openai-compatible"}:
+            base_url = "https://api.openai.com/v1"
+        elif provider == "deepseek":
+            base_url = "https://api.deepseek.com/v1"
+        elif provider == "qwen":
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        elif provider in {"anthropic", "claude", "anthropic-messages"}:
+            base_url = "https://api.anthropic.com"
+    return {
+        "stubbed_r_execution": False,
+        "llm_provider": provider_config.provider,
+        "llm_model": provider_config.model,
+        "provider_alias": provider_config.provider,
+        "provider_base_url": base_url,
+        "external_relay": bool(provider_config.base_url),
+        "risk_flags": ["provider_config_failed"],
+        "not_real_derivation": True,
+    }
+
+
+def _provider_mode_default_mock_client(dataset: str):
+    """Return a contract-valid mock when provider mode is used with mock config."""
+
+    from adam_agent.llm.clients import MockLLMClient
+
+    return MockLLMClient(fixed_response_text=_default_mock_generated_code_response(dataset))
+
+
+def _default_mock_generated_code_response(dataset: str) -> str:
+    target = dataset.upper()
+    filename = target.lower()
+    r_code = f"""dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
+output <- data.frame(USUBJID = character(), stringsAsFactors = FALSE)
+write.csv(output, file = "outputs/{filename}.csv", row.names = FALSE)
+"""
+    return json.dumps(
+        {
+            "dataset": target,
+            "r_code": r_code,
+            "assumptions": ["Mock provider-mode response writes an empty structural output."],
+            "risk_points": ["This is not a real ADaM derivation."],
+            "used_inputs": [],
+            "expected_outputs": [f"{filename}.csv"],
+        }
+    )
 
 
 def run_adsl_minimal_node(state: DatasetGraphState) -> DatasetGraphState:
@@ -139,7 +264,7 @@ def draft_lineage_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return {}
     return {"lineage_ready": True}
 
@@ -149,7 +274,7 @@ def draft_spec_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return {}
     return {"draft_spec_ready": True}
 
@@ -159,7 +284,7 @@ def route_risk_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {"human_review_required": False, "route": state.get("route", "success")}
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return {"human_review_required": False, "route": state.get("route", "success")}
     return {
         "human_review_required": state.get("dataset") != "ADSL",
@@ -178,7 +303,7 @@ def generate_code_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return {}
     dataset = state["dataset"]
     return {"generated_code": f"# stub generated code for {dataset}"}
@@ -189,7 +314,7 @@ def run_sandbox_stub(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return {}
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return {}
     sandbox_runs = state.get("sandbox_runs", 0) + 1
     scenario = state.get("stub_scenario", "success")
@@ -261,7 +386,7 @@ def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
 
     if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
         return summarize_real_adsl_minimal(state)
-    if state.get("execution_mode") == "llm_downstream_stubbed" and state.get("dataset") != "ADSL":
+    if _is_llm_downstream_mode(state):
         return summarize_real_downstream(state)
 
     status = "failed" if state.get("failure_type") else "completed"
@@ -335,6 +460,11 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
             "stubbed_r_execution": is_stubbed,
             "llm_provider": run_metadata.get("llm_provider"),
             "llm_model": run_metadata.get("llm_model"),
+            "provider_alias": run_metadata.get("provider_alias"),
+            "transport": run_metadata.get("transport"),
+            "provider_base_url": run_metadata.get("provider_base_url"),
+            "external_relay": run_metadata.get("external_relay", False),
+            "risk_flags": run_metadata.get("risk_flags", []),
             "not_real_derivation": is_stubbed,
             "summary_status_note": status,
         },

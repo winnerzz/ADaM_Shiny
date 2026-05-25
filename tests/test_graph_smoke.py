@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import unittest
 import uuid
@@ -530,6 +531,149 @@ class GraphSmokeTests(unittest.TestCase):
         artifact_ids = {artifact["artifact_id"] for artifact in manifest_payload["artifacts"]}
         self.assertIn("llm_context_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
         self.assertIn("llm_response_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
+
+    def test_study_graph_runs_llm_downstream_provider_mode_with_mock_config(self) -> None:
+        study_dir = _workspace_dir("phase76_graph_llm_provider_mock") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase76_graph_llm_provider_mock",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "llm_downstream_provider",
+                "study_dir": str(study_dir),
+                "llm_exposure": {},
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(summaries["ADAE"].status, "completed_stub")
+        self.assertEqual(summaries["ADAE"].metadata["llm_provider"], "mock")
+        self.assertEqual(summaries["ADAE"].metadata["provider_alias"], "mock")
+        self.assertTrue(summaries["ADAE"].metadata["stubbed_r_execution"])
+        self.assertTrue((study_dir / "runs" / "run_phase76_graph_llm_provider_mock" / "code" / "build_adae.R").exists())
+
+    def test_study_graph_provider_mode_fails_closed_without_external_approval(self) -> None:
+        study_dir = _workspace_dir("phase76_graph_provider_fail_closed") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase76_graph_provider_fail_closed",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "llm_downstream_provider",
+                "study_dir": str(study_dir),
+                "llm_exposure": {},
+                "llm_provider": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "api_key": "test-key",
+                },
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(summaries["ADAE"].status, "failed")
+        self.assertEqual(summaries["ADAE"].validation_status, "not_run")
+        self.assertIn("failure_adae_llm_downstream", summaries["ADAE"].failure_ids)
+        self.assertEqual(summaries["ADAE"].metadata["llm_provider"], "deepseek")
+        self.assertEqual(summaries["ADAE"].metadata["provider_base_url"], "https://api.deepseek.com/v1")
+        self.assertIn("provider_config_failed", summaries["ADAE"].metadata["risk_flags"])
+
+    def test_cli_run_study_uses_configured_provider_boundary_with_mock(self) -> None:
+        study_dir = _workspace_dir("phase76_cli_run_study") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        config_dir = study_dir / "configs"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        config_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        config_path = config_dir / "provider_mock.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "llm_exposure": {},
+                    "llm_provider": {
+                        "provider": "mock",
+                        "model": "mock-model",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "adam_agent.cli",
+                "run-study",
+                "--study-dir",
+                str(study_dir),
+                "--run-id",
+                "run_phase76_cli",
+                "--target",
+                "ADAE",
+                "--config",
+                str(config_path),
+                "--execution-mode",
+                "llm_downstream_provider",
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["execution_mode"], "llm_downstream_provider")
+        self.assertEqual(payload["dataset_results"][0]["status"], "completed_stub")
+        self.assertTrue((study_dir / "runs" / "run_phase76_cli" / "llm" / "adae_response.json").exists())
 
     def test_sas7bdat_dependency_artifact_is_found_but_not_usable_for_downstream_availability(self) -> None:
         study_dir = _workspace_dir("phase74_unusable_sas7bdat_dependency") / "PSY201"

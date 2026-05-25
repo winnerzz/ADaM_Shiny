@@ -28,8 +28,8 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7.4 design started; general dependency resolution and LLM-driven downstream generation planned |
-| Last roadmap update | 2026-05-24 |
+| Current implementation status | Phase 7.6 in progress; configured provider path is wired into downstream generation with safe mock/default boundaries |
+| Last roadmap update | 2026-05-25 |
 
 Known workspace notes:
 
@@ -1262,6 +1262,9 @@ Phase 7.4 implementation notes:
     instead of the older `blocked_by_adsl` wording
 - Full test suite after boundary fixes:
   `Ran 88 tests ... OK`.
+
+Phase 7.5 implementation notes:
+
 - Added `OpenAICompatibleLLMClient` behind the existing `LLMClient.generate()`
   interface.
 - The OpenAI-compatible client uses a configurable base URL, API key, and model
@@ -1299,6 +1302,37 @@ Phase 7.4 implementation notes:
 - Full test suite after provider factory and Anthropic client:
   `Ran 96 tests ... OK`.
 
+Phase 7.6 implementation notes:
+
+- Added a configured downstream provider execution mode:
+  `execution_mode = "llm_downstream_provider"`.
+- `StudyGraph` now passes `llm_exposure` and `llm_provider` run configuration
+  into `DatasetGraph` tasks.
+- `DatasetGraph` now builds a provider client through `build_llm_client()` and
+  passes it into the generic downstream runner.
+- `run_downstream_adam()` now carries provider audit fields into validation and
+  dataset summaries:
+  `provider_alias`, `transport`, `provider_base_url`, `external_relay`, and
+  `risk_flags`.
+- External provider mode remains fail-closed:
+  - missing `external_api_allowed=true` fails the dataset
+  - missing API keys fail inside the provider client
+  - no path falls back from a real provider to mock
+  - direct `run_downstream_adam()` calls with a non-mock provider require an
+    explicit client and refuse implicit mock fallback
+- Provider configuration failures now carry provider/model/base URL context and
+  a `provider_config_failed` risk flag into the dataset summary metadata.
+- Added `adam-agent run-study` CLI entry point for local study-level smoke runs
+  using a JSON config file.
+- Tests cover:
+  - downstream runner with a configured provider client and fake transport
+  - graph provider mode with mock config
+  - graph provider mode fail-closed behavior without external approval
+  - CLI `run-study` provider-mode smoke path
+- Targeted verification after Phase 7.6 wiring:
+  `python -m unittest tests.test_downstream_runner tests.test_graph_smoke`
+  `Ran 40 tests ... OK`.
+
 Open issues:
 
 - The fallback is not a complete ADaM dependency graph and must not be treated
@@ -1309,8 +1343,12 @@ Open issues:
   orchestration and artifacts, not a real ADaM derivation.
 - Dependency extraction is conservative and lightweight; production-grade
   define.xml/spec parsing still belongs in a later standards-hardening phase.
-- Phase 7.4 has not yet implemented real LLM provider calls or real downstream
-  R execution for a non-ADSL target.
+- Phase 7.6 wires configured provider calls into the graph, but automated tests
+  still use fake transport or mock provider config. A real external API smoke
+  run is manual because it needs a user-owned key and explicit data policy
+  approval.
+- Non-ADSL downstream R execution still defaults to the structural stub runner;
+  real non-ADSL R sandbox execution remains a later task.
 - Downstream validation is still structural and must not be described as
   regulatory-grade ADaM compliance validation.
 

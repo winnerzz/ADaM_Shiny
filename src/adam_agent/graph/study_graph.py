@@ -607,6 +607,8 @@ def _make_dataset_task(
         "study_dir": state.get("study_dir", ""),
         "rscript_path": state.get("rscript_path", ""),
         "dependency_resolution": dependency_resolution,
+        "llm_exposure": state.get("llm_exposure", {}),
+        "llm_provider": state.get("llm_provider", {}),
     }
 
 

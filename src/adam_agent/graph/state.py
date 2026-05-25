@@ -28,6 +28,8 @@ class DatasetTask(TypedDict, total=False):
     study_dir: str
     rscript_path: str
     dependency_resolution: list[dict[str, object]]
+    llm_exposure: dict[str, object]
+    llm_provider: dict[str, object]
 
 
 class BlockedDataset(TypedDict):
@@ -60,6 +62,8 @@ class DatasetGraphState(TypedDict, total=False):
     study_dir: str
     rscript_path: str
     dependency_resolution: list[dict[str, object]]
+    llm_exposure: dict[str, object]
+    llm_provider: dict[str, object]
     real_run_completed: bool
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]
@@ -85,6 +89,8 @@ class StudyGraphState(TypedDict, total=False):
     execution_mode: str
     study_dir: str
     rscript_path: str
+    llm_exposure: dict[str, object]
+    llm_provider: dict[str, object]
     dependency_graph: dict[str, list[str]]
     dataset_dependencies: dict[str, list[str]]
     dependency_decisions: list[dict[str, object]]

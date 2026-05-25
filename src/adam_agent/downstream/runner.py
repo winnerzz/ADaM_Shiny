@@ -69,6 +69,38 @@ def run_downstream_adam(
     context_artifact = write_llm_context_package(context, root)
     artifacts["llm_context"] = context_artifact
 
+    provider_key = provider.strip().lower()
+    if llm_client is None and provider_key != "mock":
+        validation_report = _validation_report(
+            target,
+            "llm_client_required",
+            errors=[f"Provider {provider} requires an explicit LLM client; refusing to fall back to mock."],
+        )
+        validation_report.update(
+            {
+                "llm_provider": provider,
+                "llm_model": model,
+                "stubbed_r_execution": False,
+                "not_real_derivation": True,
+            }
+        )
+        validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
+        artifacts["validation_report"] = validation_artifact
+        return DownstreamRunResult(
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            status="failed",
+            validation_status="llm_client_required",
+            run_dir=str(run_dir.as_posix()),
+            artifacts=artifacts,
+            llm_call_record=None,
+            r_result=None,
+            validation_report=validation_report,
+            warnings=context.warnings,
+            error=validation_report["errors"][0],
+        )
+
     prompt = _prompt_from_context(context.as_dict())
     llm = llm_client or MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
     llm_response = llm.generate(
@@ -82,6 +114,7 @@ def run_downstream_adam(
             datasets_included=_datasets_included(context.as_dict()),
             variables_included=_variables_included(context.as_dict()),
             sample_row_counts=_sample_row_counts(context.as_dict()),
+            subject_level_data_included=bool(_sample_row_counts(context.as_dict())),
             prompt_artifact_id=context_artifact.artifact_id,
             response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}",
             redaction_policy="phase7_context_package_policy",
@@ -140,6 +173,7 @@ def run_downstream_adam(
         stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
         provider=provider,
         model=model,
+        call_record=llm_response.call_record,
     )
     validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
     artifacts["validation_report"] = validation_artifact
@@ -239,6 +273,7 @@ def _validate_downstream_output(
     stubbed_r_execution: bool,
     provider: str,
     model: str,
+    call_record: LLMCallRecord | None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = list(context_warnings)
@@ -274,6 +309,11 @@ def _validate_downstream_output(
         "stubbed_r_execution": stubbed_r_execution,
         "llm_provider": provider,
         "llm_model": model,
+        "provider_alias": call_record.provider_alias if call_record else None,
+        "transport": call_record.transport if call_record else None,
+        "provider_base_url": call_record.provider_base_url if call_record else None,
+        "external_relay": call_record.external_relay if call_record else False,
+        "risk_flags": call_record.risk_flags if call_record else [],
         "not_real_derivation": stubbed_r_execution or provider == "mock",
     }
 
