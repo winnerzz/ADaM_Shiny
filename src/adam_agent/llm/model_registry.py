@@ -37,17 +37,13 @@ class ModelRegistry:
     def lookup(self, provider: str, model: str) -> ModelInfo:
         provider_key = provider.lower()
         model_key = model
-        if provider_key in {"openai", "openai-compatible"}:
+        if provider_key in {"openai", "openai-compatible", "deepseek", "qwen", "anthropic", "claude"}:
             return ModelInfo(
                 provider=provider,
                 model=model,
                 provider_locality="external_api",
                 requires_api_key=True,
                 implemented=True,
-            )
-        if provider_key == "anthropic":
-            raise ModelNotImplementedError(
-                f"{provider}/{model} does not use the OpenAI-compatible client yet."
             )
 
         try:

@@ -153,6 +153,16 @@ class StateSchemaTests(unittest.TestCase):
                 full_data_included=True,
             )
 
+        with self.assertRaises(ValidationError):
+            LLMCallRecord(
+                call_id="llm_bad_004",
+                node="draft_spec",
+                provider="openai-compatible",
+                model="test-model",
+                exposure_mode="metadata_only",
+                subject_level_data_included=True,
+            )
+
     def test_llm_call_policy_rejects_negative_sample_counts(self) -> None:
         with self.assertRaises(ValidationError):
             LLMCallRecord(

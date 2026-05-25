@@ -49,17 +49,23 @@ class LLMCallRecord(StrictBaseModel):
     node: NonEmptyStr
     provider: NonEmptyStr
     model: NonEmptyStr
+    provider_alias: str | None = None
+    transport: str | None = None
+    provider_base_url: str | None = None
     exposure_mode: LLMExposureMode
     datasets_included: list[str] = Field(default_factory=list)
     variables_included: list[str] = Field(default_factory=list)
     sample_row_counts: dict[str, int] = Field(default_factory=dict)
     full_data_included: bool = False
+    subject_level_data_included: bool = False
     prompt_artifact_id: str | None = None
     response_artifact_id: str | None = None
     prompt_hash: Sha256 | None = None
     response_hash: Sha256 | None = None
     redaction_policy: str | None = None
     provider_locality: ProviderLocality = "unknown"
+    external_relay: bool = False
+    risk_flags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
@@ -69,6 +75,8 @@ class LLMCallRecord(StrictBaseModel):
         if self.exposure_mode == "metadata_only":
             if self.full_data_included:
                 raise ValueError("metadata_only calls cannot include full data")
+            if self.subject_level_data_included:
+                raise ValueError("metadata_only calls cannot include subject-level rows")
             if any(count > 0 for count in self.sample_row_counts.values()):
                 raise ValueError("metadata_only calls cannot include sample rows")
         if self.full_data_included and self.exposure_mode != "full_data_allowed":

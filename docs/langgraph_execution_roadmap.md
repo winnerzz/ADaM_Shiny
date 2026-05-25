@@ -770,9 +770,10 @@ What changed:
   not-implemented behavior.
 - Added `ConfigLoader` for default and demo LLM exposure policies, reusing the
   existing `LLMExposureConfig` schema.
-- Added `ModelRegistry` with Phase 4 mock-only support. Real providers such as
-  OpenAI, Anthropic, and OpenAI-compatible endpoints intentionally raise
-  `ModelNotImplementedError` for now.
+- Added `ModelRegistry` with Phase 4 mock-only support. In later Phase 7.4 work,
+  real provider metadata was added for OpenAI-compatible providers and
+  Anthropic, while preserving the rule that real providers must never fall back
+  to mock.
 - Added `MockLLMClient` that runs without API keys or network but still returns
   an auditable `LLMCallRecord`.
 - Added `StubRRunner` with structured success/failure results and no real R
@@ -828,8 +829,9 @@ Open issues:
 
 - Phase 4 tools are not yet wired into the LangGraph nodes.
 - Real R execution belongs to Phase 5.
-- Real OpenAI/Anthropic/OpenAI-compatible clients are intentionally not
-  implemented yet.
+- Real provider clients were intentionally not implemented in Phase 4. Later
+  Phase 7.4 work added OpenAI-compatible and Anthropic client boundaries while
+  keeping graph defaults on mock/stub mode.
 - `.sas7bdat` profiling needs an optional reader in a later phase.
 - User reviewed and approved Phase 4.
 
@@ -1272,6 +1274,30 @@ Phase 7.4 implementation notes:
   needs an explicit later wiring step.
 - Full test suite after OpenAI-compatible client boundary:
   `Ran 91 tests ... OK`.
+- Sub-agent review of provider expansion found no P0 blocker, but required
+  stronger P1 audit/safety controls around arbitrary base URLs, relay risk,
+  provider identity, and fail-closed behavior.
+- Added `LLMProviderConfig` and `build_llm_client()` so provider selection is a
+  configuration/factory concern, not graph business logic.
+- Added provider aliases:
+  - `deepseek` and `qwen` route through the OpenAI-compatible transport
+  - `anthropic` and `claude` route through a separate Anthropic Messages client
+- Added `AnthropicMessagesLLMClient` for official Claude Messages API shape:
+  `POST /v1/messages`, `x-api-key`, `anthropic-version`, optional `system`,
+  and response text extraction across all text content blocks.
+- Added audit fields to `LLMCallRecord`:
+  `provider_alias`, `transport`, `provider_base_url`,
+  `subject_level_data_included`, `external_relay`, and `risk_flags`.
+- Added fail-closed checks:
+  - external providers require explicit external API approval
+  - providers requiring API keys fail when the key is absent
+  - custom base URLs require explicit approval
+  - response payloads without usable text fail instead of falling back to mock
+- A generic `custom-http` relay client remains out of scope. Nonstandard relay
+  formats can be added later, but standard relay services should use
+  OpenAI-compatible mode first.
+- Full test suite after provider factory and Anthropic client:
+  `Ran 96 tests ... OK`.
 
 Open issues:
 

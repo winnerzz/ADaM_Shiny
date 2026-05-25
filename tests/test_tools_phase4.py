@@ -23,12 +23,16 @@ def workspace_tempdir(name: str) -> Path:
 
 try:
     from adam_agent.llm.clients import (
+        AnthropicMessagesLLMClient,
         LLMClientConfigError,
+        LLMProviderConfig,
+        LLMProviderResponseError,
         LLMRequest,
         LLMResponse,
         MockLLMClient,
         OpenAICompatibleConfig,
         OpenAICompatibleLLMClient,
+        build_llm_client,
     )
     from adam_agent.llm.model_registry import ModelNotImplementedError, ModelRegistry
     from adam_agent.schemas.artifacts import ArtifactRef
@@ -43,12 +47,16 @@ except ModuleNotFoundError:
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from adam_agent.llm.clients import (
+        AnthropicMessagesLLMClient,
         LLMClientConfigError,
+        LLMProviderConfig,
+        LLMProviderResponseError,
         LLMRequest,
         LLMResponse,
         MockLLMClient,
         OpenAICompatibleConfig,
         OpenAICompatibleLLMClient,
+        build_llm_client,
     )
     from adam_agent.llm.model_registry import ModelNotImplementedError, ModelRegistry
     from adam_agent.schemas.artifacts import ArtifactRef
@@ -142,6 +150,8 @@ class Phase4ToolTests(unittest.TestCase):
         default_config = ConfigLoader().load(study_id="PSY201", run_id="run_001")
         self.assertIsInstance(default_config.llm_exposure, LLMExposureConfig)
         self.assertEqual(default_config.llm_exposure.mode, "metadata_only")
+        self.assertEqual(default_config.llm_provider.provider, "mock")
+        self.assertEqual(default_config.llm_provider.model, "mock-model")
 
         demo_config = ConfigLoader().from_dict(
             {
@@ -153,10 +163,17 @@ class Phase4ToolTests(unittest.TestCase):
                     "external_api_allowed": True,
                     "sample_rows_per_dataset": 20,
                 },
+                "llm_provider": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                },
             }
         )
         self.assertEqual(demo_config.llm_exposure.mode, "demo_rich_context")
         self.assertEqual(demo_config.llm_exposure.sample_rows_per_dataset, 20)
+        self.assertEqual(demo_config.llm_provider.provider, "deepseek")
+        self.assertEqual(demo_config.llm_provider.model, "deepseek-chat")
 
     def test_config_loader_rejects_full_data_without_approver(self) -> None:
         with self.assertRaises(ValidationError):
@@ -219,8 +236,10 @@ class Phase4ToolTests(unittest.TestCase):
         self.assertTrue(openai_model.requires_api_key)
         self.assertEqual(openai_model.provider_locality, "external_api")
 
-        with self.assertRaises(ModelNotImplementedError):
-            registry.lookup("anthropic", "claude-opus-4.5")
+        anthropic_model = registry.lookup("anthropic", "claude-opus-4.5")
+        self.assertEqual(anthropic_model.provider, "anthropic")
+        self.assertEqual(anthropic_model.model, "claude-opus-4.5")
+        self.assertTrue(anthropic_model.requires_api_key)
 
     def test_openai_compatible_client_requires_explicit_external_api_approval(self) -> None:
         client = OpenAICompatibleLLMClient(
@@ -298,7 +317,7 @@ class Phase4ToolTests(unittest.TestCase):
             }
 
         client = OpenAICompatibleLLMClient(
-            OpenAICompatibleConfig(base_url="https://llm.example/v1", api_key="test-key"),
+            OpenAICompatibleConfig(base_url="https://api.openai.com/v1", api_key="test-key"),
             transport=fake_transport,
         )
         response = client.generate(
@@ -328,9 +347,191 @@ class Phase4ToolTests(unittest.TestCase):
         self.assertEqual(response.call_record.model, "gpt-5.5")
         self.assertEqual(response.call_record.provider_locality, "external_api")
         self.assertEqual(response.call_record.sample_row_counts, {"AE": 1})
-        self.assertEqual(calls[0][0], "https://llm.example/v1/chat/completions")
+        self.assertEqual(calls[0][0], "https://api.openai.com/v1/chat/completions")
         self.assertEqual(calls[0][1]["Authorization"], "Bearer test-key")
         self.assertEqual(calls[0][2]["model"], "gpt-5.5")
+        self.assertNotIn("test-key", response.call_record.model_dump_json())
+
+    def test_client_factory_routes_deepseek_and_qwen_through_openai_compatible_transport(self) -> None:
+        def fake_transport(_url, _headers, _payload, _timeout):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        deepseek = build_llm_client(
+            LLMProviderConfig(provider="deepseek", model="deepseek-chat", api_key="deepseek-key"),
+            transport=fake_transport,
+        )
+        qwen = build_llm_client(
+            LLMProviderConfig(provider="qwen", model="qwen-plus", api_key="qwen-key"),
+            transport=fake_transport,
+        )
+
+        self.assertIsInstance(deepseek, OpenAICompatibleLLMClient)
+        self.assertIsInstance(qwen, OpenAICompatibleLLMClient)
+        deepseek_response = deepseek.generate(
+            LLMRequest(
+                prompt="Generate ADAE",
+                provider="deepseek",
+                model="deepseek-chat",
+                exposure=LLMExposureConfig(
+                    mode="demo_rich_context",
+                    data_classification="processed_demo",
+                    external_api_allowed=True,
+                ),
+                node="generate_downstream_code",
+                call_id="llm_deepseek_alias",
+                prompt_artifact_id="prompt_deepseek",
+                response_artifact_id="response_deepseek",
+                redaction_policy="processed_demo_test",
+            )
+        )
+
+        self.assertEqual(deepseek_response.call_record.provider, "deepseek")
+        self.assertEqual(deepseek_response.call_record.provider_alias, "deepseek")
+        self.assertEqual(deepseek_response.call_record.transport, "openai-compatible")
+        self.assertEqual(deepseek_response.call_record.provider_base_url, "https://api.deepseek.com/v1")
+
+    def test_custom_openai_compatible_base_url_requires_explicit_approval(self) -> None:
+        client = build_llm_client(
+            LLMProviderConfig(
+                provider="deepseek",
+                model="deepseek-chat",
+                base_url="https://relay.example/v1",
+                api_key="relay-key",
+            ),
+            transport=lambda _url, _headers, _payload, _timeout: {
+                "choices": [{"message": {"content": "not used"}}]
+            },
+        )
+
+        with self.assertRaises(LLMClientConfigError):
+            client.generate(
+                LLMRequest(
+                    prompt="Generate ADAE",
+                    provider="deepseek",
+                    model="deepseek-chat",
+                    exposure=LLMExposureConfig(
+                        mode="demo_rich_context",
+                        data_classification="processed_demo",
+                        external_api_allowed=True,
+                    ),
+                    node="generate_downstream_code",
+                    call_id="llm_custom_base_denied",
+                    prompt_artifact_id="prompt_custom_base_denied",
+                    response_artifact_id="response_custom_base_denied",
+                    redaction_policy="processed_demo_test",
+                )
+            )
+
+    def test_custom_openai_compatible_base_url_records_relay_risk_when_approved(self) -> None:
+        client = build_llm_client(
+            LLMProviderConfig(
+                provider="deepseek",
+                model="deepseek-chat",
+                base_url="https://relay.example/v1",
+                api_key="relay-key",
+                allow_custom_base_url=True,
+                custom_base_url_approved_by="tester",
+            ),
+            transport=lambda _url, _headers, _payload, _timeout: {
+                "choices": [{"message": {"content": "ok"}}]
+            },
+        )
+
+        response = client.generate(
+            LLMRequest(
+                prompt="Generate ADAE",
+                provider="deepseek",
+                model="deepseek-chat",
+                exposure=LLMExposureConfig(
+                    mode="demo_rich_context",
+                    data_classification="processed_demo",
+                    external_api_allowed=True,
+                ),
+                node="generate_downstream_code",
+                call_id="llm_custom_base_allowed",
+                prompt_artifact_id="prompt_custom_base_allowed",
+                response_artifact_id="response_custom_base_allowed",
+                redaction_policy="processed_demo_test",
+                subject_level_data_included=True,
+            )
+        )
+
+        self.assertTrue(response.call_record.external_relay)
+        self.assertIn("external_relay", response.call_record.risk_flags)
+        self.assertIn("custom_base_url_approved", response.call_record.risk_flags)
+        self.assertIn("subject_level_data_sent", response.call_record.risk_flags)
+
+    def test_anthropic_messages_client_uses_official_message_shape_and_text_blocks(self) -> None:
+        calls = []
+
+        def fake_transport(url, headers, payload, timeout):
+            calls.append((url, headers, payload, timeout))
+            return {
+                "content": [
+                    {"type": "text", "text": "part one"},
+                    {"type": "tool_use", "name": "ignored"},
+                    {"type": "text", "text": "part two"},
+                ]
+            }
+
+        client = build_llm_client(
+            LLMProviderConfig(provider="anthropic", model="claude-sonnet-4-5", api_key="anthropic-key"),
+            transport=fake_transport,
+        )
+        response = client.generate(
+            LLMRequest(
+                prompt="Generate ADAE",
+                system_prompt="Return strict JSON.",
+                provider="anthropic",
+                model="claude-sonnet-4-5",
+                exposure=LLMExposureConfig(
+                    mode="demo_rich_context",
+                    data_classification="processed_demo",
+                    external_api_allowed=True,
+                ),
+                node="generate_downstream_code",
+                call_id="llm_anthropic_001",
+                prompt_artifact_id="prompt_anthropic",
+                response_artifact_id="response_anthropic",
+                redaction_policy="processed_demo_test",
+            )
+        )
+
+        self.assertIsInstance(client, AnthropicMessagesLLMClient)
+        self.assertEqual(response.response_text, "part one\npart two")
+        self.assertEqual(response.call_record.provider_alias, "anthropic")
+        self.assertEqual(response.call_record.transport, "anthropic-messages")
+        self.assertEqual(calls[0][0], "https://api.anthropic.com/v1/messages")
+        self.assertEqual(calls[0][1]["x-api-key"], "anthropic-key")
+        self.assertEqual(calls[0][1]["anthropic-version"], "2023-06-01")
+        self.assertEqual(calls[0][2]["system"], "Return strict JSON.")
+        self.assertEqual(calls[0][2]["messages"], [{"role": "user", "content": "Generate ADAE"}])
+        self.assertNotIn("anthropic-key", response.call_record.model_dump_json())
+
+    def test_anthropic_messages_client_fails_closed_on_missing_text(self) -> None:
+        client = build_llm_client(
+            LLMProviderConfig(provider="anthropic", model="claude-sonnet-4-5", api_key="anthropic-key"),
+            transport=lambda _url, _headers, _payload, _timeout: {"content": [{"type": "tool_use"}]},
+        )
+
+        with self.assertRaises(LLMProviderResponseError):
+            client.generate(
+                LLMRequest(
+                    prompt="Generate ADAE",
+                    provider="anthropic",
+                    model="claude-sonnet-4-5",
+                    exposure=LLMExposureConfig(
+                        mode="demo_rich_context",
+                        data_classification="processed_demo",
+                        external_api_allowed=True,
+                    ),
+                    node="generate_downstream_code",
+                    call_id="llm_anthropic_bad_response",
+                    prompt_artifact_id="prompt_anthropic_bad",
+                    response_artifact_id="response_anthropic_bad",
+                    redaction_policy="processed_demo_test",
+                )
+            )
 
     def test_stub_r_runner_returns_structured_success_and_failure(self) -> None:
         runner = StubRRunner()

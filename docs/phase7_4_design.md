@@ -458,6 +458,26 @@ Latest LLM client boundary:
 - StudyGraph/DatasetGraph still default to mock/stub mode; real provider use
   requires explicit client injection in a later wiring step.
 
+Provider expansion boundary:
+
+- Added a provider config/factory layer so run configuration can select
+  `mock`, `openai`, `openai-compatible`, `deepseek`, `qwen`, `anthropic`, or
+  `claude` without changing graph nodes.
+- DeepSeek and Qwen use the OpenAI-compatible transport because their common
+  API mode follows the OpenAI chat-completions shape.
+- Claude/Anthropic uses a separate Anthropic Messages client because the
+  request headers, request body, and response content blocks differ from
+  OpenAI-compatible APIs.
+- Audit records separate the provider identity from the transport protocol:
+  `provider/provider_alias` records who the data was sent to, while `transport`
+  records the protocol used.
+- Custom `base_url` values are treated as relay risk. They require
+  `allow_custom_base_url = true` and `custom_base_url_approved_by`, and the
+  audit record marks `external_relay`.
+- A generic `custom-http` client is intentionally not implemented yet. Most
+  relay services should use OpenAI-compatible mode first; nonstandard relay
+  formats can be added later with narrower tests and audit controls.
+
 ## Exit Criteria
 
 Phase 7.4 is complete when:
