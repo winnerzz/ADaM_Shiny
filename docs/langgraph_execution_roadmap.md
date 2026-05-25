@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7.7 in progress; real downstream R sandbox execution is being wired behind an explicit mode |
+| Current implementation status | Phase 7.7 complete; real downstream LLM-to-Rscript sandbox execution is wired and smoke-tested |
 | Last roadmap update | 2026-05-25 |
 
 Known workspace notes:
