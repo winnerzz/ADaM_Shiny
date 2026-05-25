@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7.7 complete; real downstream LLM-to-Rscript sandbox execution is wired and smoke-tested |
+| Current implementation status | Phase 7.8 complete; downstream LLM/R failures are diagnosed and one repair attempt is supported |
 | Last roadmap update | 2026-05-25 |
 
 Known workspace notes:
@@ -1409,6 +1409,62 @@ Open issues:
   `llm_downstream_r_sandbox` is explicitly selected.
 - Downstream validation is still structural and must not be described as
   regulatory-grade ADaM compliance validation.
+
+Phase 7.8 design notes:
+
+- Phase 7.8 adds failure diagnosis and a bounded repair loop for downstream
+  LLM/R execution.
+- The core rule is: only code-contract, R runtime, and output-contract failures
+  may trigger `repair_code`.
+- Missing source variables, spec conflicts, dependency/input problems, sandbox
+  policy violations, and R environment/configuration failures must not be hidden
+  by repeated code repair. They route to `revise_spec`, `human_review`, or fail
+  with a structured report.
+- The first implementation intentionally allows at most one repair attempt.
+  This is enough to prove the graph behavior without creating an uncontrolled
+  self-healing loop.
+
+Phase 7.8 implementation notes:
+
+- Added `src/adam_agent/downstream/diagnostics.py`.
+- Downstream failures now produce `FailureRecord` objects with:
+  - `failure_type`
+  - `root_cause`
+  - `recommended_route`
+  - `repair_attempt`
+  - linked artifact IDs
+- Downstream runs now write a diagnostic artifact:
+  `runs/{run_id}/diagnostics/{dataset}_failure_report.json`.
+- `run_downstream_adam()` now supports one bounded repair attempt through the
+  same LLM client boundary.
+- The repair prompt includes:
+  - original context
+  - raw LLM response
+  - generated R code
+  - validation report
+  - R stdout/stderr/exit code
+  - the required strict JSON contract
+- Repair artifacts use attempt suffixes such as:
+  - `llm/adae_response_repair1.json`
+  - `llm/adae_parsed_response_repair1.json`
+  - `code/build_adae_repair1.R`
+  - `validation/adae_validation_report_repair1.json`
+- `DatasetGraph` summaries now carry downstream diagnosis metadata:
+  `failure_root_cause`, `recommended_route`, and `repair_attempts_used`.
+- Tests cover:
+  - LLM parse failure writes raw response, validation report, and diagnostic
+    failure report
+  - R runtime failure triggers one repair attempt and can pass
+  - missing source variable routes to `revise_spec` and does not trigger repair
+  - graph-level downstream failures expose diagnosis metadata in the dataset
+    summary
+- Full verification after Phase 7.8 implementation:
+  `python -m unittest discover -s tests -p "test_*.py"`
+  `Ran 107 tests ... OK`.
+
+Phase 7.8 status:
+
+`complete`
 
 ## Phase 8 - Product UI and Audit Workflow
 

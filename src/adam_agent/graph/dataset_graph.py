@@ -106,8 +106,17 @@ def _downstream_result_state(result: DownstreamRunResult) -> DatasetGraphState:
             "external_relay": result.validation_report.get("external_relay", False),
             "risk_flags": result.validation_report.get("risk_flags", []),
             "not_real_derivation": result.validation_report.get("not_real_derivation", False),
+            "failure_root_cause": result.failure_records[-1].root_cause if result.failure_records else None,
+            "recommended_route": result.failure_records[-1].recommended_route if result.failure_records else None,
+            "repair_attempts_used": result.validation_report.get("repair_attempt", 0),
         },
-        "audit_artifacts": [artifact for key, artifact in result.artifacts.items() if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report"}],
+        "failure_records": result.failure_records,
+        "recommended_route": result.failure_records[-1].recommended_route if result.failure_records else None,
+        "audit_artifacts": [
+            artifact
+            for key, artifact in result.artifacts.items()
+            if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report", "failure_report"}
+        ],
         "sandbox_runs": 1,
     }
 
@@ -462,7 +471,9 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
     output_artifact_ids = []
     if "output_adam" in artifacts:
         output_artifact_ids.append(artifacts["output_adam"].artifact_id)
-    failure_ids = [] if status in {"completed", "completed_stub"} else [f"failure_{dataset.lower()}_llm_downstream"]
+    failure_ids = [record.failure_id for record in state.get("failure_records", [])]
+    if status not in {"completed", "completed_stub"} and not failure_ids:
+        failure_ids = [f"failure_{dataset.lower()}_llm_downstream"]
     audit_artifact_id = None
     if state.get("audit_artifacts"):
         audit_artifact_id = state["audit_artifacts"][-1].artifact_id
@@ -485,6 +496,9 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
             "external_relay": run_metadata.get("external_relay", False),
             "risk_flags": run_metadata.get("risk_flags", []),
             "not_real_derivation": bool(run_metadata.get("not_real_derivation", False)),
+            "failure_root_cause": run_metadata.get("failure_root_cause"),
+            "recommended_route": run_metadata.get("recommended_route"),
+            "repair_attempts_used": run_metadata.get("repair_attempts_used", 0),
             "summary_status_note": status,
         },
     )

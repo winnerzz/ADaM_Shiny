@@ -85,26 +85,28 @@ def write_generated_code_artifacts(
     study_dir: str | Path,
     package: GeneratedCodePackage,
     response_text: str,
+    attempt_label: str | None = None,
 ) -> GeneratedCodeArtifacts:
     """Write the raw response, parsed package, and R script under the run dir."""
 
     root = Path(study_dir)
     dataset_lower = package.dataset.lower()
+    suffix = f"_{attempt_label}" if attempt_label else ""
     llm_dir = root / "runs" / run_id / "llm"
     code_dir = root / "runs" / run_id / "code"
     llm_dir.mkdir(parents=True, exist_ok=True)
     code_dir.mkdir(parents=True, exist_ok=True)
 
-    response_path = llm_dir / f"{dataset_lower}_response.json"
-    package_path = llm_dir / f"{dataset_lower}_parsed_response.json"
-    code_path = code_dir / f"build_{dataset_lower}.R"
+    response_path = llm_dir / f"{dataset_lower}_response{suffix}.json"
+    package_path = llm_dir / f"{dataset_lower}_parsed_response{suffix}.json"
+    code_path = code_dir / f"build_{dataset_lower}{suffix}.R"
 
     response_path.write_text(response_text, encoding="utf-8")
     package_path.write_text(json.dumps(package.as_dict(), indent=2, sort_keys=True), encoding="utf-8")
     code_path.write_text(package.r_code, encoding="utf-8")
 
     response_artifact = ArtifactRef(
-        artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{dataset_lower}",
+        artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{dataset_lower}{suffix}",
         kind="llm_response",
         path=str(response_path.as_posix()),
         sha256=f"sha256:{sha256_file(response_path)}",
@@ -115,10 +117,11 @@ def write_generated_code_artifacts(
             "parsed": True,
             "assumption_count": len(package.assumptions),
             "risk_point_count": len(package.risk_points),
+            "attempt_label": attempt_label or "initial",
         },
     )
     code_artifact = ArtifactRef(
-        artifact_id=f"generated_code_{study_id.lower()}_{run_id}_{dataset_lower}",
+        artifact_id=f"generated_code_{study_id.lower()}_{run_id}_{dataset_lower}{suffix}",
         kind="generated_code",
         path=str(code_path.as_posix()),
         sha256=f"sha256:{sha256_file(code_path)}",
@@ -129,17 +132,18 @@ def write_generated_code_artifacts(
             "source": "llm_response",
             "used_inputs": package.used_inputs,
             "expected_outputs": package.expected_outputs,
+            "attempt_label": attempt_label or "initial",
         },
     )
     package_artifact = ArtifactRef(
-        artifact_id=f"llm_parsed_response_{study_id.lower()}_{run_id}_{dataset_lower}",
+        artifact_id=f"llm_parsed_response_{study_id.lower()}_{run_id}_{dataset_lower}{suffix}",
         kind="tool_log",
         path=str(package_path.as_posix()),
         sha256=f"sha256:{sha256_file(package_path)}",
         dataset=package.dataset,
         format="json",
         role="audit",
-        metadata={"parsed_llm_response": True},
+        metadata={"parsed_llm_response": True, "attempt_label": attempt_label or "initial"},
     )
     return GeneratedCodeArtifacts(
         response_artifact=response_artifact,

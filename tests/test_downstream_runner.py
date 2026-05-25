@@ -49,6 +49,42 @@ class FailingStubRRunner:
         return RRunResult(dataset=request.dataset, exit_code=1, stdout="", stderr="stub downstream failure")
 
 
+class SequentialMockLLMClient:
+    """Mock client that returns one response per call."""
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls = []
+
+    def generate(self, request):
+        self.calls.append(request)
+        index = min(len(self.calls) - 1, len(self.responses) - 1)
+        return MockLLMClient(fixed_response_text=self.responses[index]).generate(request)
+
+
+class FailsThenWritesStubRRunner:
+    """Fail once, then write the canonical output on the repair attempt."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(self, request: RRunRequest) -> RRunResult:
+        self.calls += 1
+        if self.calls == 1:
+            return RRunResult(dataset=request.dataset, exit_code=1, stdout="", stderr="unexpected symbol in generated code")
+        output_path = Path(request.working_dir) / "outputs" / f"{request.dataset.lower()}.csv"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("USUBJID\n01\n", encoding="utf-8")
+        return RRunResult(dataset=request.dataset, exit_code=0, stdout="repair wrote output", stderr="")
+
+
+class MissingSourceVariableRRunner:
+    """Simulate an R error caused by a missing source variable."""
+
+    def run(self, request: RRunRequest) -> RRunResult:
+        return RRunResult(dataset=request.dataset, exit_code=1, stdout="", stderr="object 'AETERM' not found")
+
+
 class DownstreamRunnerTests(unittest.TestCase):
     def test_downstream_runner_wires_context_llm_code_writer_r_and_validation(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_success")
@@ -106,8 +142,95 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(result.validation_status, "llm_output_parse_error")
         self.assertIsNone(result.r_result)
         self.assertIn("validation_report", result.artifacts)
+        self.assertIn("failure_report", result.artifacts)
         self.assertNotIn("generated_code", result.artifacts)
         self.assertIn("not valid JSON", result.error)
+        failure_report = json.loads(Path(result.artifacts["failure_report"].path).read_text(encoding="utf-8"))
+        self.assertEqual(failure_report["latest_root_cause"], "code_contract_error")
+        self.assertEqual(failure_report["latest_recommended_route"], "repair_code")
+
+    def test_downstream_runner_repairs_r_failure_once_and_passes(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_repair_pass")
+        initial_response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "stop('bad generated code')\n",
+                "assumptions": ["Initial bad code."],
+                "risk_points": [],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["adae.csv"],
+            }
+        )
+        repair_response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Repair only fixes runtime/output behavior."],
+                "risk_points": [],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["adae.csv"],
+            }
+        )
+        llm_client = SequentialMockLLMClient([initial_response, repair_response])
+        r_runner = FailsThenWritesStubRRunner()
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_repair_pass",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            llm_client=llm_client,
+            r_runner=r_runner,
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.validation_status, "pass")
+        self.assertEqual(len(llm_client.calls), 2)
+        self.assertEqual(r_runner.calls, 2)
+        self.assertEqual(len(result.failure_records), 1)
+        self.assertEqual(result.failure_records[0].root_cause, "r_runtime_error")
+        self.assertIn("generated_code_repair1", result.artifacts)
+        self.assertIn("failure_report", result.artifacts)
+        failure_report = json.loads(Path(result.artifacts["failure_report"].path).read_text(encoding="utf-8"))
+        self.assertEqual(failure_report["status"], "repaired")
+        self.assertEqual(failure_report["failure_count"], 1)
+
+    def test_downstream_runner_does_not_repair_missing_source_variable(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_missing_source")
+        response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(AETERM = missing_source), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Missing source variable scenario."],
+                "risk_points": [],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["adae.csv"],
+            }
+        )
+        llm_client = SequentialMockLLMClient([response, response])
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_missing_source",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            llm_client=llm_client,
+            r_runner=MissingSourceVariableRRunner(),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation_status, "fail")
+        self.assertEqual(len(llm_client.calls), 1)
+        self.assertEqual(result.failure_records[0].failure_type, "spec_error")
+        self.assertEqual(result.failure_records[0].root_cause, "source_variable_missing")
+        self.assertEqual(result.failure_records[0].recommended_route, "revise_spec")
+        self.assertNotIn("generated_code_repair1", result.artifacts)
+        failure_report = json.loads(Path(result.artifacts["failure_report"].path).read_text(encoding="utf-8"))
+        self.assertEqual(failure_report["latest_recommended_route"], "revise_spec")
 
     def test_downstream_runner_records_r_failure_and_missing_output(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_r_failure")

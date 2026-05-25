@@ -7,11 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from adam_agent.downstream.diagnostics import diagnose_downstream_failure, write_downstream_failure_report
 from adam_agent.llm.clients import LLMClient, LLMRequest, MockLLMClient
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.generated_code import LLMGeneratedCodeError, parse_generated_code_response, write_generated_code_artifacts
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
+from adam_agent.schemas.routing import FailureRecord
 from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.r_runner import RRunRequest, RRunResult
 
@@ -32,6 +34,22 @@ class DownstreamRunResult:
     validation_report: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
     error: str = ""
+    failure_records: list[FailureRecord] = field(default_factory=list)
+
+
+@dataclass
+class _AttemptResult:
+    """Internal result for one generate/repair attempt."""
+
+    status: str
+    validation_status: str
+    call_record: LLMCallRecord | None
+    r_result: RRunResult | None
+    validation_report: dict[str, Any]
+    error: str = ""
+    failure_record: FailureRecord | None = None
+    generated_code: str = ""
+    raw_response_text: str = ""
 
 
 def run_downstream_adam(
@@ -47,6 +65,7 @@ def run_downstream_adam(
     provider: str = "mock",
     model: str = "mock-model",
     r_runner: Any | None = None,
+    max_repair_attempts: int = 1,
 ) -> DownstreamRunResult:
     """Generate and execute one downstream ADaM target through stable tool boundaries."""
 
@@ -103,141 +122,159 @@ def run_downstream_adam(
 
     prompt = _prompt_from_context(context.as_dict())
     llm = llm_client or MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
+    context_dict = context.as_dict()
+    failure_records: list[FailureRecord] = []
+
     llm_response = llm.generate(
-        LLMRequest(
+        _llm_request(
             prompt=prompt,
-            system_prompt=_code_generation_system_prompt(target),
+            target=target,
+            study_id=study_id,
+            run_id=run_id,
             provider=provider,
             model=model,
             exposure=exposure_config,
+            context_dict=context_dict,
+            context_artifact_id=context_artifact.artifact_id,
             node="generate_downstream_code",
             call_id=f"llm_{run_id}_{target.lower()}",
-            datasets_included=_datasets_included(context.as_dict()),
-            variables_included=_variables_included(context.as_dict()),
-            sample_row_counts=_sample_row_counts(context.as_dict()),
-            subject_level_data_included=bool(_sample_row_counts(context.as_dict())),
-            prompt_artifact_id=context_artifact.artifact_id,
             response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}",
-            redaction_policy="phase7_context_package_policy",
         )
     )
-    raw_response_artifact = _write_raw_llm_response_artifact(root, study_id, run_id, target, llm_response.response_text)
-    artifacts["llm_response"] = raw_response_artifact
-
-    try:
-        generated_package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
-    except LLMGeneratedCodeError as exc:
-        validation_report = _validation_report(target, "llm_output_parse_error", errors=[str(exc)])
-        validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
-        artifacts["validation_report"] = validation_artifact
-        return DownstreamRunResult(
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            status="failed",
-            validation_status="llm_output_parse_error",
-            run_dir=str(run_dir.as_posix()),
-            artifacts=artifacts,
-            llm_call_record=llm_response.call_record,
-            r_result=None,
-            validation_report=validation_report,
-            warnings=context.warnings,
-            error=str(exc),
-        )
-
-    generated_artifacts = write_generated_code_artifacts(
+    attempt = _run_generated_response_attempt(
         study_id=study_id,
         run_id=run_id,
         study_dir=root,
-        package=generated_package,
-        response_text=llm_response.response_text,
-    )
-    artifacts["llm_response"] = generated_artifacts.response_artifact
-    artifacts["generated_code"] = generated_artifacts.code_artifact
-    artifacts["llm_parsed_response"] = generated_artifacts.package_artifact
-
-    preflight_errors = _real_r_preflight_errors(
         run_dir=run_dir,
         target=target,
-        script_path=Path(generated_artifacts.code_artifact.path),
-        output_path=Path(context.runtime_contract["output_path"]),
-        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+        context_warnings=context.warnings,
+        runtime_output_path=Path(context.runtime_contract["output_path"]),
+        llm_response_text=llm_response.response_text,
+        call_record=llm_response.call_record,
+        runner=runner,
+        provider=provider,
+        model=model,
+        artifacts=artifacts,
+        repair_attempt=0,
     )
-    if preflight_errors:
-        validation_report = _validation_report(target, "r_sandbox_preflight_error", errors=preflight_errors)
-        validation_report.update(
-            {
-                "llm_provider": provider,
-                "llm_model": model,
-                "stubbed_r_execution": False,
-                "not_real_derivation": True,
-            }
-        )
-        validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
-        artifacts["validation_report"] = validation_artifact
+
+    if attempt.failure_record is not None:
+        failure_records.append(attempt.failure_record)
+
+    if attempt.status in {"completed", "completed_stub"}:
         return DownstreamRunResult(
             study_id=study_id,
             run_id=run_id,
             dataset=target,
-            status="failed",
-            validation_status="r_sandbox_preflight_error",
+            status=attempt.status,
+            validation_status=attempt.validation_status,
             run_dir=str(run_dir.as_posix()),
             artifacts=artifacts,
-            llm_call_record=llm_response.call_record,
-            r_result=None,
-            validation_report=validation_report,
+            llm_call_record=attempt.call_record,
+            r_result=attempt.r_result,
+            validation_report=attempt.validation_report,
             warnings=context.warnings,
-            error="; ".join(preflight_errors),
+            failure_records=failure_records,
         )
 
-    r_result = runner.run(
-        RRunRequest(
-            code="",
-            dataset=target,
+    if attempt.failure_record and _should_repair(attempt.failure_record, max_repair_attempts=max_repair_attempts):
+        repair_prompt = _repair_prompt_from_failure(
+            context=context_dict,
+            raw_response_text=attempt.raw_response_text,
+            generated_code=attempt.generated_code,
+            validation_report=attempt.validation_report,
+            r_result=attempt.r_result,
+            failure_record=attempt.failure_record,
+        )
+        repair_response = llm.generate(
+            _llm_request(
+                prompt=repair_prompt,
+                target=target,
+                study_id=study_id,
+                run_id=run_id,
+                provider=provider,
+                model=model,
+                exposure=exposure_config,
+                context_dict=context_dict,
+                context_artifact_id=context_artifact.artifact_id,
+                node="repair_downstream_code",
+                call_id=f"llm_{run_id}_{target.lower()}_repair1",
+                response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}_repair1",
+                system_prompt=_code_repair_system_prompt(target),
+            )
+        )
+        repair_attempt = _run_generated_response_attempt(
+            study_id=study_id,
             run_id=run_id,
-            working_dir=str(run_dir),
-            script_path=generated_artifacts.code_artifact.path,
+            study_dir=root,
+            run_dir=run_dir,
+            target=target,
+            context_warnings=context.warnings,
+            runtime_output_path=Path(context.runtime_contract["output_path"]),
+            llm_response_text=repair_response.response_text,
+            call_record=repair_response.call_record,
+            runner=runner,
+            provider=provider,
+            model=model,
+            artifacts=artifacts,
+            repair_attempt=1,
+            attempt_label="repair1",
         )
-    )
+        if repair_attempt.failure_record is not None:
+            failure_records.append(repair_attempt.failure_record)
 
-    output_path = Path(context.runtime_contract["output_path"])
-    validation_report = _validate_downstream_output(
-        target=target,
-        output_path=output_path,
-        r_result=r_result,
-        expected_outputs=generated_package.expected_outputs,
-        context_warnings=context.warnings,
-        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
-        provider=provider,
-        model=model,
-        call_record=llm_response.call_record,
-    )
-    validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
-    artifacts["validation_report"] = validation_artifact
-    if output_path.exists() and output_path.is_file():
-        artifacts["output_adam"] = ArtifactRef(
-            artifact_id=f"output_adam_{study_id.lower()}_{run_id}_{target.lower()}",
-            kind="output_adam",
-            path=str(output_path.as_posix()),
-            sha256=f"sha256:{sha256_file(output_path)}",
-            dataset=target,
-            format=output_path.suffix.lower().lstrip("."),
-            role="output",
-        )
+        if repair_attempt.status in {"completed", "completed_stub"}:
+            failure_report = write_downstream_failure_report(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                failure_records=failure_records,
+                validation_report=repair_attempt.validation_report,
+                status="repaired",
+            )
+            artifacts["failure_report"] = failure_report
+            return DownstreamRunResult(
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                status=repair_attempt.status,
+                validation_status=repair_attempt.validation_status,
+                run_dir=str(run_dir.as_posix()),
+                artifacts=artifacts,
+                llm_call_record=repair_attempt.call_record,
+                r_result=repair_attempt.r_result,
+                validation_report=repair_attempt.validation_report,
+                warnings=context.warnings,
+                failure_records=failure_records,
+            )
+        attempt = repair_attempt
 
-    status = "completed_stub" if validation_report["status"] == "structural_stub_pass" else "completed" if validation_report["status"] == "pass" else "failed"
+    failure_report = write_downstream_failure_report(
+        study_dir=root,
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        failure_records=failure_records,
+        validation_report=attempt.validation_report,
+        status="failed",
+    )
+    artifacts["failure_report"] = failure_report
+
     return DownstreamRunResult(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
-        status=status,
-        validation_status=validation_report["status"],
+        status="failed",
+        validation_status=attempt.validation_status,
         run_dir=str(run_dir.as_posix()),
         artifacts=artifacts,
-        llm_call_record=llm_response.call_record,
-        r_result=r_result,
-        validation_report=validation_report,
+        llm_call_record=attempt.call_record,
+        r_result=attempt.r_result,
+        validation_report=attempt.validation_report,
         warnings=context.warnings,
+        error=attempt.error,
+        failure_records=failure_records,
     )
 
 
@@ -249,6 +286,229 @@ class StructuralStubRRunner:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("USUBJID\n", encoding="utf-8")
         return RRunResult(dataset=request.dataset, exit_code=0, stdout=f"Structural stub wrote {output_path.name}", stderr="")
+
+
+def _run_generated_response_attempt(
+    *,
+    study_id: str,
+    run_id: str,
+    study_dir: Path,
+    run_dir: Path,
+    target: str,
+    context_warnings: list[str],
+    runtime_output_path: Path,
+    llm_response_text: str,
+    call_record: LLMCallRecord | None,
+    runner: Any,
+    provider: str,
+    model: str,
+    artifacts: dict[str, ArtifactRef],
+    repair_attempt: int,
+    attempt_label: str | None = None,
+) -> _AttemptResult:
+    """Parse, write, execute, validate, and diagnose one LLM response."""
+
+    artifact_suffix = f"_{attempt_label}" if attempt_label else ""
+    raw_response_artifact = _write_raw_llm_response_artifact(
+        study_dir,
+        study_id,
+        run_id,
+        target,
+        llm_response_text,
+        attempt_label=attempt_label,
+    )
+    artifacts[f"llm_response{artifact_suffix}"] = raw_response_artifact
+
+    try:
+        generated_package = parse_generated_code_response(llm_response_text, expected_dataset=target)
+    except LLMGeneratedCodeError as exc:
+        validation_report = _validation_report(target, "llm_output_parse_error", errors=[str(exc)])
+        _add_attempt_metadata(
+            validation_report,
+            provider=provider,
+            model=model,
+            call_record=call_record,
+            stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+            repair_attempt=repair_attempt,
+            attempt_label=attempt_label,
+        )
+        failure_record = diagnose_downstream_failure(
+            dataset=target,
+            stage="llm_parse",
+            message=str(exc),
+            validation_report=validation_report,
+            artifact_ids=[raw_response_artifact.artifact_id],
+            repair_attempt=repair_attempt,
+        )
+        validation_report["failure"] = failure_record.model_dump(mode="json")
+        validation_artifact = _write_validation_artifact(
+            study_dir,
+            study_id,
+            run_id,
+            target,
+            validation_report,
+            attempt_label=attempt_label,
+        )
+        artifacts[f"validation_report{artifact_suffix}"] = validation_artifact
+        artifacts["validation_report"] = validation_artifact
+        return _AttemptResult(
+            status="failed",
+            validation_status="llm_output_parse_error",
+            call_record=call_record,
+            r_result=None,
+            validation_report=validation_report,
+            error=str(exc),
+            failure_record=failure_record,
+            raw_response_text=llm_response_text,
+        )
+
+    generated_artifacts = write_generated_code_artifacts(
+        study_id=study_id,
+        run_id=run_id,
+        study_dir=study_dir,
+        package=generated_package,
+        response_text=llm_response_text,
+        attempt_label=attempt_label,
+    )
+    artifacts[f"llm_response{artifact_suffix}"] = generated_artifacts.response_artifact
+    artifacts[f"generated_code{artifact_suffix}"] = generated_artifacts.code_artifact
+    artifacts[f"llm_parsed_response{artifact_suffix}"] = generated_artifacts.package_artifact
+    if attempt_label is None:
+        artifacts["llm_response"] = generated_artifacts.response_artifact
+        artifacts["generated_code"] = generated_artifacts.code_artifact
+        artifacts["llm_parsed_response"] = generated_artifacts.package_artifact
+
+    preflight_errors = _real_r_preflight_errors(
+        run_dir=run_dir,
+        target=target,
+        script_path=Path(generated_artifacts.code_artifact.path),
+        output_path=runtime_output_path,
+        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+    )
+    if preflight_errors:
+        validation_report = _validation_report(target, "r_sandbox_preflight_error", errors=preflight_errors)
+        _add_attempt_metadata(
+            validation_report,
+            provider=provider,
+            model=model,
+            call_record=call_record,
+            stubbed_r_execution=False,
+            repair_attempt=repair_attempt,
+            attempt_label=attempt_label,
+        )
+        failure_record = diagnose_downstream_failure(
+            dataset=target,
+            stage="preflight",
+            message="; ".join(preflight_errors),
+            validation_report=validation_report,
+            artifact_ids=[
+                generated_artifacts.response_artifact.artifact_id,
+                generated_artifacts.code_artifact.artifact_id,
+                generated_artifacts.package_artifact.artifact_id,
+            ],
+            repair_attempt=repair_attempt,
+        )
+        validation_report["failure"] = failure_record.model_dump(mode="json")
+        validation_artifact = _write_validation_artifact(
+            study_dir,
+            study_id,
+            run_id,
+            target,
+            validation_report,
+            attempt_label=attempt_label,
+        )
+        artifacts[f"validation_report{artifact_suffix}"] = validation_artifact
+        artifacts["validation_report"] = validation_artifact
+        return _AttemptResult(
+            status="failed",
+            validation_status="r_sandbox_preflight_error",
+            call_record=call_record,
+            r_result=None,
+            validation_report=validation_report,
+            error="; ".join(preflight_errors),
+            failure_record=failure_record,
+            generated_code=generated_package.r_code,
+            raw_response_text=llm_response_text,
+        )
+
+    r_result = runner.run(
+        RRunRequest(
+            code="",
+            dataset=target,
+            run_id=run_id,
+            working_dir=str(run_dir),
+            script_path=generated_artifacts.code_artifact.path,
+        )
+    )
+    validation_report = _validate_downstream_output(
+        target=target,
+        output_path=runtime_output_path,
+        r_result=r_result,
+        expected_outputs=generated_package.expected_outputs,
+        context_warnings=context_warnings,
+        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+        provider=provider,
+        model=model,
+        call_record=call_record,
+    )
+    _add_attempt_metadata(
+        validation_report,
+        provider=provider,
+        model=model,
+        call_record=call_record,
+        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+        repair_attempt=repair_attempt,
+        attempt_label=attempt_label,
+    )
+    failure_record = None
+    if validation_report["status"] == "fail":
+        failure_record = diagnose_downstream_failure(
+            dataset=target,
+            stage="r_sandbox" if not r_result.success else "validation",
+            r_result=r_result,
+            validation_report=validation_report,
+            artifact_ids=[
+                generated_artifacts.response_artifact.artifact_id,
+                generated_artifacts.code_artifact.artifact_id,
+                generated_artifacts.package_artifact.artifact_id,
+            ],
+            repair_attempt=repair_attempt,
+        )
+        validation_report["failure"] = failure_record.model_dump(mode="json")
+
+    validation_artifact = _write_validation_artifact(
+        study_dir,
+        study_id,
+        run_id,
+        target,
+        validation_report,
+        attempt_label=attempt_label,
+    )
+    artifacts[f"validation_report{artifact_suffix}"] = validation_artifact
+    artifacts["validation_report"] = validation_artifact
+    if runtime_output_path.exists() and runtime_output_path.is_file():
+        output_artifact = _output_artifact(study_id, run_id, target, runtime_output_path)
+        artifacts[f"output_adam{artifact_suffix}"] = output_artifact
+        artifacts["output_adam"] = output_artifact
+
+    status = (
+        "completed_stub"
+        if validation_report["status"] == "structural_stub_pass"
+        else "completed"
+        if validation_report["status"] == "pass"
+        else "failed"
+    )
+    return _AttemptResult(
+        status=status,
+        validation_status=validation_report["status"],
+        call_record=call_record,
+        r_result=r_result,
+        validation_report=validation_report,
+        error="; ".join(str(error) for error in validation_report.get("errors", [])),
+        failure_record=failure_record,
+        generated_code=generated_package.r_code,
+        raw_response_text=llm_response_text,
+    )
 
 
 def _real_r_preflight_errors(
@@ -307,26 +567,114 @@ def _code_generation_system_prompt(target: str) -> str:
     )
 
 
+def _code_repair_system_prompt(target: str) -> str:
+    dataset = target.upper()
+    return (
+        "You are repairing generated R code for an ADaM prototype. "
+        "Return only valid JSON. Do not wrap the JSON in markdown. "
+        "The JSON object must contain exactly these top-level fields: "
+        "dataset, r_code, assumptions, risk_points, used_inputs, expected_outputs. "
+        f"dataset must be {dataset}. r_code must write outputs/{dataset.lower()}.csv "
+        "relative to the working directory. assumptions, risk_points, used_inputs, "
+        "and expected_outputs must be arrays of strings. Fix only code/runtime/output "
+        "contract problems; do not invent missing source variables or new clinical rules."
+    )
+
+
+def _llm_request(
+    *,
+    prompt: str,
+    target: str,
+    study_id: str,
+    run_id: str,
+    provider: str,
+    model: str,
+    exposure: LLMExposureConfig,
+    context_dict: dict[str, Any],
+    context_artifact_id: str,
+    node: str,
+    call_id: str,
+    response_artifact_id: str,
+    system_prompt: str | None = None,
+) -> LLMRequest:
+    return LLMRequest(
+        prompt=prompt,
+        system_prompt=system_prompt or _code_generation_system_prompt(target),
+        provider=provider,
+        model=model,
+        exposure=exposure,
+        node=node,
+        call_id=call_id,
+        datasets_included=_datasets_included(context_dict),
+        variables_included=_variables_included(context_dict),
+        sample_row_counts=_sample_row_counts(context_dict),
+        subject_level_data_included=bool(_sample_row_counts(context_dict)),
+        prompt_artifact_id=context_artifact_id,
+        response_artifact_id=response_artifact_id,
+        redaction_policy="phase7_context_package_policy",
+    )
+
+
+def _repair_prompt_from_failure(
+    *,
+    context: dict[str, Any],
+    raw_response_text: str,
+    generated_code: str,
+    validation_report: dict[str, Any],
+    r_result: RRunResult | None,
+    failure_record: FailureRecord,
+) -> str:
+    repair_context = {
+        "instruction": (
+            "Repair the previous generated R response. Return the same strict JSON "
+            "contract. Do not change the clinical intent. If the evidence shows a "
+            "missing source variable or spec conflict, report that as a risk point "
+            "instead of inventing a derivation."
+        ),
+        "failure": failure_record.model_dump(mode="json"),
+        "validation_report": validation_report,
+        "r_result": {
+            "exit_code": r_result.exit_code if r_result else None,
+            "stdout": r_result.stdout if r_result else "",
+            "stderr": r_result.stderr if r_result else "",
+        },
+        "previous_raw_response": raw_response_text,
+        "previous_r_code": generated_code,
+        "original_context": context,
+    }
+    return json.dumps(repair_context, indent=2, sort_keys=True)
+
+
+def _should_repair(record: FailureRecord, *, max_repair_attempts: int) -> bool:
+    if max_repair_attempts < 1:
+        return False
+    if record.repair_attempt >= max_repair_attempts:
+        return False
+    return record.recommended_route == "repair_code" and record.failure_type in {"llm_error", "code_error"}
+
+
 def _write_raw_llm_response_artifact(
     study_dir: Path,
     study_id: str,
     run_id: str,
     target: str,
     response_text: str,
+    attempt_label: str | None = None,
 ) -> ArtifactRef:
     target_lower = target.lower()
-    response_path = study_dir / "runs" / run_id / "llm" / f"{target_lower}_response.json"
+    suffix = f"_{attempt_label}" if attempt_label else ""
+    response_path = study_dir / "runs" / run_id / "llm" / f"{target_lower}_response{suffix}.json"
     response_path.parent.mkdir(parents=True, exist_ok=True)
     response_path.write_text(response_text, encoding="utf-8")
     return ArtifactRef(
-        artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target_lower}",
+        artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target_lower}{suffix}",
         kind="llm_response",
         path=str(response_path.as_posix()),
         sha256=f"sha256:{sha256_file(response_path)}",
         dataset=target,
         format="json",
         role="audit",
-        metadata={"parsed": False},
+        metadata={"parsed": False, "attempt_label": attempt_label or "initial"},
     )
 
 
@@ -433,6 +781,45 @@ def _validate_downstream_output(
     }
 
 
+def _add_attempt_metadata(
+    report: dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+    call_record: LLMCallRecord | None,
+    stubbed_r_execution: bool,
+    repair_attempt: int,
+    attempt_label: str | None,
+) -> None:
+    report.update(
+        {
+            "llm_provider": provider,
+            "llm_model": model,
+            "provider_alias": call_record.provider_alias if call_record else None,
+            "transport": call_record.transport if call_record else None,
+            "provider_base_url": call_record.provider_base_url if call_record else None,
+            "external_relay": call_record.external_relay if call_record else False,
+            "risk_flags": call_record.risk_flags if call_record else [],
+            "stubbed_r_execution": stubbed_r_execution,
+            "not_real_derivation": stubbed_r_execution or provider == "mock",
+            "repair_attempt": repair_attempt,
+            "attempt_label": attempt_label or "initial",
+        }
+    )
+
+
+def _output_artifact(study_id: str, run_id: str, target: str, output_path: Path) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=f"output_adam_{study_id.lower()}_{run_id}_{target.lower()}",
+        kind="output_adam",
+        path=str(output_path.as_posix()),
+        sha256=f"sha256:{sha256_file(output_path)}",
+        dataset=target,
+        format=output_path.suffix.lower().lstrip("."),
+        role="output",
+    )
+
+
 def _validation_report(target: str, status: str, *, errors: list[str]) -> dict[str, Any]:
     return {
         "dataset": target,
@@ -449,17 +836,20 @@ def _write_validation_artifact(
     run_id: str,
     target: str,
     report: dict[str, Any],
+    attempt_label: str | None = None,
 ) -> ArtifactRef:
     target_lower = target.lower()
-    validation_path = study_dir / "runs" / run_id / "validation" / f"{target_lower}_validation_report.json"
+    suffix = f"_{attempt_label}" if attempt_label else ""
+    validation_path = study_dir / "runs" / run_id / "validation" / f"{target_lower}_validation_report{suffix}.json"
     validation_path.parent.mkdir(parents=True, exist_ok=True)
     validation_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     return ArtifactRef(
-        artifact_id=f"validation_{study_id.lower()}_{run_id}_{target_lower}",
+        artifact_id=f"validation_{study_id.lower()}_{run_id}_{target_lower}{suffix}",
         kind="validation_report",
         path=str(validation_path.as_posix()),
         sha256=f"sha256:{sha256_file(validation_path)}",
         dataset=target,
         format="json",
         role="output",
+        metadata={"attempt_label": attempt_label or "initial"},
     )

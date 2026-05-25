@@ -615,6 +615,47 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summaries["ADAE"].metadata["provider_base_url"], "https://api.deepseek.com/v1")
         self.assertIn("provider_config_failed", summaries["ADAE"].metadata["risk_flags"])
 
+    def test_study_graph_downstream_failure_summary_carries_diagnosis(self) -> None:
+        study_dir = _workspace_dir("phase78_graph_failure_diagnosis") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase78_graph_failure",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "llm_downstream_r_sandbox",
+                "study_dir": str(study_dir),
+                "rscript_path": "C:/not/a/real/Rscript.exe",
+                "llm_exposure": {},
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        adae = summaries["ADAE"]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(adae.status, "failed")
+        self.assertEqual(adae.metadata["failure_root_cause"], "r_environment_error")
+        self.assertEqual(adae.metadata["recommended_route"], "human_review")
+        self.assertTrue(adae.failure_ids)
+        self.assertTrue((study_dir / "runs" / "run_phase78_graph_failure" / "diagnostics" / "adae_failure_report.json").exists())
+
     def test_cli_run_study_uses_configured_provider_boundary_with_mock(self) -> None:
         study_dir = _workspace_dir("phase76_cli_run_study") / "PSY201"
         input_sdtm = study_dir / "input_sdtm"
