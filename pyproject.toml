@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2,<3",
-  "langgraph>=0.6,<1"
+  "langgraph>=0.6,<1",
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.30,<1"
 ]
 
 [tool.hatch.build.targets.wheel]

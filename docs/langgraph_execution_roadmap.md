@@ -1511,7 +1511,42 @@ Exit criteria:
 
 Status:
 
-`not started`
+`in progress`
+
+Phase 8.1 design notes:
+
+- Start with a FastAPI backend shell before building a browser UI.
+- Keep the first API synchronous and local-first.
+- Do not add a database, background queue, authentication, or multi-user
+  deployment controls yet.
+- The future UI should call stable API endpoints instead of importing LangGraph
+  internals or reading arbitrary files directly.
+- Phase 8.1 should expose the Phase 7 artifacts that a reviewer needs:
+  dependency plan, validation, diagnostics, audit manifest, and dataset
+  summaries.
+
+Phase 8.1 implementation notes:
+
+- Added FastAPI dependency declarations to `pyproject.toml`.
+- Added API modules:
+  - `src/adam_agent/api/app.py`
+  - `src/adam_agent/api/models.py`
+  - `src/adam_agent/api/service.py`
+- Added `POST /runs` to run the study graph synchronously from an HTTP request.
+- Added artifact read endpoints:
+  - `GET /runs/{run_id}/dependency-plan`
+  - `GET /runs/{run_id}/audit-manifest`
+  - `GET /runs/{run_id}/datasets/{dataset}/validation`
+  - `GET /runs/{run_id}/datasets/{dataset}/diagnostics`
+  - `POST /runs/{run_id}/artifacts/read`
+- Added `docs/phase8_1_api_contract.md`.
+- Added `tests/test_api_phase8.py`.
+- Verification so far:
+  `python -m unittest tests.test_api_phase8`
+  `Ran 4 tests ... OK`
+- Full verification so far:
+  `python -m unittest discover -s tests -p "test_*.py"`
+  `Ran 111 tests ... OK`
 
 ## Phase 9 - Standards and Production Hardening
 
