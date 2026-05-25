@@ -106,6 +106,7 @@ def run_downstream_adam(
     llm_response = llm.generate(
         LLMRequest(
             prompt=prompt,
+            system_prompt=_code_generation_system_prompt(target),
             provider=provider,
             model=model,
             exposure=exposure_config,
@@ -120,6 +121,8 @@ def run_downstream_adam(
             redaction_policy="phase7_context_package_policy",
         )
     )
+    raw_response_artifact = _write_raw_llm_response_artifact(root, study_id, run_id, target, llm_response.response_text)
+    artifacts["llm_response"] = raw_response_artifact
 
     try:
         generated_package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
@@ -215,7 +218,47 @@ class StructuralStubRRunner:
 
 
 def _prompt_from_context(context: dict[str, Any]) -> str:
-    return json.dumps(context, indent=2, sort_keys=True)
+    return (
+        "Use the following ADaM generation context. Return only the strict JSON "
+        "object requested by the system instructions.\n\n"
+        f"{json.dumps(context, indent=2, sort_keys=True)}"
+    )
+
+
+def _code_generation_system_prompt(target: str) -> str:
+    dataset = target.upper()
+    return (
+        "You are generating auditable R code for an ADaM prototype. "
+        "Return only valid JSON. Do not wrap the JSON in markdown. "
+        "The JSON object must contain exactly these top-level fields: "
+        "dataset, r_code, assumptions, risk_points, used_inputs, expected_outputs. "
+        f"dataset must be {dataset}. r_code must write outputs/{dataset.lower()}.csv "
+        "relative to the working directory. assumptions, risk_points, used_inputs, "
+        "and expected_outputs must be arrays of strings."
+    )
+
+
+def _write_raw_llm_response_artifact(
+    study_dir: Path,
+    study_id: str,
+    run_id: str,
+    target: str,
+    response_text: str,
+) -> ArtifactRef:
+    target_lower = target.lower()
+    response_path = study_dir / "runs" / run_id / "llm" / f"{target_lower}_response.json"
+    response_path.parent.mkdir(parents=True, exist_ok=True)
+    response_path.write_text(response_text, encoding="utf-8")
+    return ArtifactRef(
+        artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target_lower}",
+        kind="llm_response",
+        path=str(response_path.as_posix()),
+        sha256=f"sha256:{sha256_file(response_path)}",
+        dataset=target,
+        format="json",
+        role="audit",
+        metadata={"parsed": False},
+    )
 
 
 def _datasets_included(context: dict[str, Any]) -> list[str]:
