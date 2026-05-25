@@ -1,0 +1,12 @@
+{
+  "llm_exposure": {
+    "mode": "demo_rich_context",
+    "data_classification": "processed_demo",
+    "external_api_allowed": false,
+    "sample_rows_per_dataset": 2
+  },
+  "llm_provider": {
+    "provider": "mock",
+    "model": "mock-model"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "llm_exposure": {
+    "mode": "metadata_only",
+    "data_classification": "unknown",
+    "external_api_allowed": false,
+    "sample_rows_per_dataset": 0
+  },
+  "llm_provider": {
+    "provider": "mock",
+    "model": "mock-model"
+  }
+}

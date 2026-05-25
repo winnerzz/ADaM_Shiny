@@ -22,13 +22,13 @@ Update rule:
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 7 - Multi-dataset study orchestration |
+| Current phase | Phase 8 - Product UI and audit workflow |
 | Original Shiny worktree branch | `experimental-v3` |
 | Active worktree branch | `LangGraph` |
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7.8 complete; downstream LLM/R failures are diagnosed and one repair attempt is supported |
+| Current implementation status | Phase 7 complete; ready to start Phase 8 UI/audit workflow |
 | Last roadmap update | 2026-05-25 |
 
 Known workspace notes:
@@ -65,9 +65,9 @@ Phase 0  Engineering foundation
 | 2. State model | Define `StudyState` and `DatasetState` | schema files and examples | Dataset-level state isolation is explicit | complete |
 | 3. LangGraph skeleton | Prove main graph and dataset graph orchestration | stub `StudyGraph`, stub `DatasetGraph`, checkpoint stub | ADSL/ADAE stubs can be dispatched and collected | complete |
 | 4. Tool layer MVP | Add deterministic interfaces around data, artifacts, LLM, and R | SDTM reader stub, artifact manifest, LLM client interface, R runner stub | Graph nodes call tools through stable interfaces | complete |
-| 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | in progress |
-| 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | in progress |
-| 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | in progress |
+| 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | complete |
+| 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | complete |
+| 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | complete |
 | 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | not started |
 | 9. Standards and production hardening | Add reference standards and production controls | CDISC/P21 tools, provider expansion, security/deployment strategy | System is extensible beyond demo data | not started |
 
@@ -1382,7 +1382,7 @@ Phase 7.7 implementation notes:
   `python -m unittest discover -s tests -p "test_*.py"`
   `Ran 104 tests ... OK`.
 - Real external smoke test:
-  - provider: OpenAI-compatible relay at `https://api.86gamestore.com/v1`
+  - provider: OpenAI-compatible relay through a user-approved custom base URL
   - model: `gpt-5.5`
   - execution mode: `llm_downstream_r_sandbox`
   - Rscript: `C:\Dev\R-4.5.2\bin\Rscript.exe`
@@ -1465,6 +1465,30 @@ Phase 7.8 implementation notes:
 Phase 7.8 status:
 
 `complete`
+
+Phase 7 closeout notes:
+
+- Added `docs/phase7_closeout.md` as the backend handoff guide.
+- Updated `README.md` with:
+  - current prototype boundary
+  - quick start commands
+  - minimal downstream study folder shape
+  - expected output artifact locations
+  - external API key safety notes
+- Added template run configs:
+  - `studies/_template/configs/mock_downstream.json`
+  - `studies/_template/configs/demo_rich_mock_downstream.json`
+- These closeout files are intended to let another developer or AI tool run the
+  Phase 7 backend without needing chat history.
+- Closeout CLI smoke:
+  `python -m adam_agent.cli run-study --study-dir .tmp_tests\phase7_closeout_smoke\PSY201 --run-id run_phase7_closeout_mock --target ADAE --config studies\_template\configs\mock_downstream.json --execution-mode llm_downstream_provider`
+- Closeout smoke result:
+  - study status: `completed`
+  - ADAE status: `completed_stub`
+  - validation status: `structural_stub_pass`
+  - output written: `runs/run_phase7_closeout_mock/outputs/adae.csv`
+  - audit manifest written:
+    `runs/run_phase7_closeout_mock/audit/manifest.json`
 
 ## Phase 8 - Product UI and Audit Workflow
 
