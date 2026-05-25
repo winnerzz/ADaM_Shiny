@@ -156,6 +156,40 @@ def run_downstream_adam(
     artifacts["generated_code"] = generated_artifacts.code_artifact
     artifacts["llm_parsed_response"] = generated_artifacts.package_artifact
 
+    preflight_errors = _real_r_preflight_errors(
+        run_dir=run_dir,
+        target=target,
+        script_path=Path(generated_artifacts.code_artifact.path),
+        output_path=Path(context.runtime_contract["output_path"]),
+        stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+    )
+    if preflight_errors:
+        validation_report = _validation_report(target, "r_sandbox_preflight_error", errors=preflight_errors)
+        validation_report.update(
+            {
+                "llm_provider": provider,
+                "llm_model": model,
+                "stubbed_r_execution": False,
+                "not_real_derivation": True,
+            }
+        )
+        validation_artifact = _write_validation_artifact(root, study_id, run_id, target, validation_report)
+        artifacts["validation_report"] = validation_artifact
+        return DownstreamRunResult(
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            status="failed",
+            validation_status="r_sandbox_preflight_error",
+            run_dir=str(run_dir.as_posix()),
+            artifacts=artifacts,
+            llm_call_record=llm_response.call_record,
+            r_result=None,
+            validation_report=validation_report,
+            warnings=context.warnings,
+            error="; ".join(preflight_errors),
+        )
+
     r_result = runner.run(
         RRunRequest(
             code="",
@@ -215,6 +249,41 @@ class StructuralStubRRunner:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("USUBJID\n", encoding="utf-8")
         return RRunResult(dataset=request.dataset, exit_code=0, stdout=f"Structural stub wrote {output_path.name}", stderr="")
+
+
+def _real_r_preflight_errors(
+    *,
+    run_dir: Path,
+    target: str,
+    script_path: Path,
+    output_path: Path,
+    stubbed_r_execution: bool,
+) -> list[str]:
+    """Check path boundaries before local Rscript executes generated code."""
+
+    if stubbed_r_execution:
+        return []
+
+    errors: list[str] = []
+    resolved_run_dir = run_dir.resolve()
+    resolved_script = script_path.resolve()
+    resolved_output = output_path.resolve()
+    expected_code_dir = (resolved_run_dir / "code").resolve()
+    expected_output = (resolved_run_dir / "outputs" / f"{target.lower()}.csv").resolve()
+
+    if not _is_relative_to(resolved_script, expected_code_dir):
+        errors.append(f"Generated R script must live under run code directory: {expected_code_dir.as_posix()}")
+    if resolved_output != expected_output:
+        errors.append(f"Runtime output path must be canonical: {expected_output.as_posix()}")
+    return errors
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def _prompt_from_context(context: dict[str, Any]) -> str:
@@ -329,7 +398,8 @@ def _validate_downstream_output(
     if not output_path.exists():
         errors.append(f"Expected output file was not written: {output_path.as_posix()}")
     expected_name = output_path.name
-    if expected_outputs and expected_name not in expected_outputs:
+    expected_output_names = {Path(value).name for value in expected_outputs}
+    if expected_outputs and expected_name not in expected_output_names:
         warnings.append(f"LLM expected_outputs does not include canonical output file {expected_name}.")
     dependency_profile_warnings = [
         warning
@@ -349,6 +419,8 @@ def _validate_downstream_output(
         "expected_outputs": expected_outputs,
         "output_path": str(output_path.as_posix()),
         "r_exit_code": r_result.exit_code,
+        "r_stdout": r_result.stdout,
+        "r_stderr": r_result.stderr,
         "stubbed_r_execution": stubbed_r_execution,
         "llm_provider": provider,
         "llm_model": model,

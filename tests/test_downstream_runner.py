@@ -10,12 +10,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
+LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 
 try:
     from adam_agent.downstream.runner import run_downstream_adam
     from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
-    from adam_agent.tools.r_runner import RRunRequest, RRunResult
+    from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -23,7 +24,7 @@ except ModuleNotFoundError:
     from adam_agent.downstream.runner import run_downstream_adam
     from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
-    from adam_agent.tools.r_runner import RRunRequest, RRunResult
+    from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
 
 
 def _workspace_dir(name: str) -> Path:
@@ -270,6 +271,38 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertIn("refusing to fall back to mock", result.error)
         self.assertEqual(result.validation_report["llm_provider"], "deepseek")
         self.assertNotIn("generated_code", result.artifacts)
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_downstream_runner_can_execute_generated_code_with_local_r(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_local_r")
+        response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE, recursive = TRUE)\nae <- read.csv('../../input_sdtm/ae.csv', stringsAsFactors = FALSE)\nwrite.csv(data.frame(USUBJID = ae[['USUBJID']], AETERM = ae[['AETERM']]), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Local R smoke response."],
+                "risk_points": ["Prototype only."],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["outputs/adae.csv"],
+            }
+        )
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_local_r",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir),
+            llm_client=MockLLMClient(fixed_response_text=response),
+            r_runner=LocalRRunner(str(LOCAL_RSCRIPT)),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.validation_status, "pass")
+        self.assertFalse(result.validation_report["stubbed_r_execution"])
+        self.assertTrue(result.validation_report["not_real_derivation"])
+        self.assertFalse(any("expected_outputs" in warning for warning in result.validation_report["warnings"]))
+        self.assertTrue((study_dir / "runs" / "run_downstream_local_r" / "outputs" / "adae.csv").exists())
 
 
 def _study_with_adae_inputs(name: str, *, include_reference_adsl_csv: bool = True) -> Path:

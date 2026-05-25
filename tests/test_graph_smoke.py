@@ -675,6 +675,102 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(payload["dataset_results"][0]["status"], "completed_stub")
         self.assertTrue((study_dir / "runs" / "run_phase76_cli" / "llm" / "adae_response.json").exists())
 
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_study_graph_runs_llm_downstream_r_sandbox_with_mock_config(self) -> None:
+        study_dir = _workspace_dir("phase77_graph_llm_r_sandbox") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase77_graph_llm_r_sandbox",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "llm_downstream_r_sandbox",
+                "study_dir": str(study_dir),
+                "rscript_path": str(LOCAL_RSCRIPT),
+                "llm_exposure": {},
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(summaries["ADAE"].validation_status, "pass")
+        self.assertFalse(summaries["ADAE"].metadata["stubbed_r_execution"])
+        self.assertTrue(summaries["ADAE"].metadata["not_real_derivation"])
+        self.assertTrue((study_dir / "runs" / "run_phase77_graph_llm_r_sandbox" / "outputs" / "adae.csv").exists())
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_cli_run_study_can_execute_llm_downstream_r_sandbox(self) -> None:
+        study_dir = _workspace_dir("phase77_cli_r_sandbox") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
+        config_dir = study_dir / "configs"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_dir.mkdir()
+        config_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        config_path = config_dir / "mock.json"
+        config_path.write_text(
+            json.dumps({"llm_exposure": {}, "llm_provider": {"provider": "mock", "model": "mock-model"}}),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "adam_agent.cli",
+                "run-study",
+                "--study-dir",
+                str(study_dir),
+                "--run-id",
+                "run_phase77_cli_r",
+                "--target",
+                "ADAE",
+                "--config",
+                str(config_path),
+                "--execution-mode",
+                "llm_downstream_r_sandbox",
+                "--rscript-path",
+                str(LOCAL_RSCRIPT),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["dataset_results"][0]["status"], "completed")
+        self.assertEqual(payload["dataset_results"][0]["validation_status"], "pass")
+        self.assertTrue((study_dir / "runs" / "run_phase77_cli_r" / "outputs" / "adae.csv").exists())
+
     def test_sas7bdat_dependency_artifact_is_found_but_not_usable_for_downstream_availability(self) -> None:
         study_dir = _workspace_dir("phase74_unusable_sas7bdat_dependency") / "PSY201"
         reference_dir = study_dir / "reference_adam"

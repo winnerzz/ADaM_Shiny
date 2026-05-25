@@ -28,7 +28,7 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7.6 in progress; configured provider path is wired into downstream generation with safe mock/default boundaries |
+| Current implementation status | Phase 7.7 in progress; real downstream R sandbox execution is being wired behind an explicit mode |
 | Last roadmap update | 2026-05-25 |
 
 Known workspace notes:
@@ -1333,6 +1333,64 @@ Phase 7.6 implementation notes:
   `python -m unittest tests.test_downstream_runner tests.test_graph_smoke`
   `Ran 40 tests ... OK`.
 
+Phase 7.7 design notes:
+
+- Phase 7.7 should add an explicit real-R execution mode for downstream LLM
+  targets:
+  `execution_mode = "llm_downstream_r_sandbox"`.
+- The intended distinction is:
+  - `llm_downstream_provider`: configured LLM provider plus structural stub R
+    runner, resulting in `completed_stub` when successful
+  - `llm_downstream_r_sandbox`: configured LLM provider plus local `Rscript`
+    execution, resulting in `completed` only when R exits successfully and the
+    canonical output file exists
+- This phase is still not a production ADAE/ADLB/ADCM implementation. It proves
+  the execution chain:
+  context -> LLM JSON -> generated R file -> local Rscript -> output CSV ->
+  structural validation.
+- The first implementation should use the existing `LocalRRunner` boundary and
+  a stricter generated-code guard before execution. It should not add a UI or
+  broad CDISC/P21 validation.
+
+Phase 7.7 implementation notes:
+
+- Added `execution_mode = "llm_downstream_r_sandbox"`.
+- `DatasetGraph` now selects `LocalRRunner` for this mode and passes the
+  configured `rscript_path` into the downstream runner.
+- The existing `llm_downstream_provider` mode remains provider + structural
+  stub R execution and continues to produce `completed_stub`.
+- `completed_stub` now specifically means the R execution boundary was stubbed.
+  If mock LLM output is executed by local R successfully, the dataset can be
+  `completed`, while metadata may still mark `not_real_derivation = true`.
+- Added a preflight path check before local R execution:
+  - generated R script must live under `runs/{run_id}/code/`
+  - canonical output path must be `runs/{run_id}/outputs/{dataset}.csv`
+- Added tests for:
+  - `run_downstream_adam()` executing generated R through `LocalRRunner`
+  - `StudyGraph` executing `llm_downstream_r_sandbox`
+  - CLI `run-study` executing `llm_downstream_r_sandbox`
+- Fixed `LocalRRunner` to resolve script paths before launching `Rscript`.
+  The real smoke test exposed that passing a repo-relative script path while
+  setting `cwd` to the run directory can make Rscript look in the wrong place.
+- Validation reports now include `r_stdout` and `r_stderr`.
+- Output expectation matching now accepts both `adae.csv` and
+  `outputs/adae.csv` as references to the canonical output file.
+- Targeted verification after Phase 7.7 wiring:
+  `python -m unittest tests.test_graph_smoke tests.test_downstream_runner`
+  `Ran 44 tests ... OK`.
+- Full verification after Phase 7.7 implementation:
+  `python -m unittest discover -s tests -p "test_*.py"`
+  `Ran 104 tests ... OK`.
+- Real external smoke test:
+  - provider: OpenAI-compatible relay at `https://api.86gamestore.com/v1`
+  - model: `gpt-5.5`
+  - execution mode: `llm_downstream_r_sandbox`
+  - Rscript: `C:\Dev\R-4.5.2\bin\Rscript.exe`
+  - result: `status = completed`, ADAE `validation_status = pass`
+  - output: `runs/run_gpt55_86gamestore_r_sandbox_retry/outputs/adae.csv`
+  - audit risk flags: `external_relay`, `custom_base_url_approved`,
+    `subject_level_data_sent`
+
 Open issues:
 
 - The fallback is not a complete ADaM dependency graph and must not be treated
@@ -1347,8 +1405,8 @@ Open issues:
   still use fake transport or mock provider config. A real external API smoke
   run is manual because it needs a user-owned key and explicit data policy
   approval.
-- Non-ADSL downstream R execution still defaults to the structural stub runner;
-  real non-ADSL R sandbox execution remains a later task.
+- Non-ADSL downstream R execution defaults to the structural stub runner unless
+  `llm_downstream_r_sandbox` is explicitly selected.
 - Downstream validation is still structural and must not be described as
   regulatory-grade ADaM compliance validation.
 

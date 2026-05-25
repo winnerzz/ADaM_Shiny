@@ -72,9 +72,11 @@ class LocalRRunner:
                 stderr="Rscript is not available on PATH. Install R or pass rscript_path.",
             )
 
-        working_dir = Path(request.working_dir)
+        working_dir = Path(request.working_dir).resolve()
         working_dir.mkdir(parents=True, exist_ok=True)
         script_path = Path(request.script_path) if request.script_path else working_dir / f"build_{request.dataset.lower()}.R"
+        if not script_path.is_absolute():
+            script_path = script_path.resolve()
         if request.code:
             script_path.parent.mkdir(parents=True, exist_ok=True)
             script_path.write_text(request.code, encoding="utf-8")

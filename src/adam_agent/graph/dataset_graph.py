@@ -15,12 +15,14 @@ from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
+from adam_agent.tools.r_runner import LocalRRunner
 
 
 def _is_llm_downstream_mode(state: DatasetGraphState) -> bool:
     return state.get("dataset") != "ADSL" and state.get("execution_mode") in {
         "llm_downstream_stubbed",
         "llm_downstream_provider",
+        "llm_downstream_r_sandbox",
     }
 
 
@@ -33,6 +35,8 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
         return run_llm_downstream_stubbed_node(state)
     if state.get("dataset") != "ADSL" and state.get("execution_mode") == "llm_downstream_provider":
         return run_llm_downstream_provider_node(state)
+    if state.get("dataset") != "ADSL" and state.get("execution_mode") == "llm_downstream_r_sandbox":
+        return run_llm_downstream_r_sandbox_node(state)
 
     return {
         "status": "running",
@@ -111,14 +115,27 @@ def _downstream_result_state(result: DownstreamRunResult) -> DatasetGraphState:
 def run_llm_downstream_provider_node(state: DatasetGraphState) -> DatasetGraphState:
     """Run the generic downstream service with a configured LLM provider."""
 
+    return _run_llm_downstream_provider_node(state, use_local_r=False)
+
+
+def run_llm_downstream_r_sandbox_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Run the generic downstream service with configured LLM and local Rscript."""
+
+    return _run_llm_downstream_provider_node(state, use_local_r=True)
+
+
+def _run_llm_downstream_provider_node(state: DatasetGraphState, *, use_local_r: bool) -> DatasetGraphState:
+    """Run one downstream target through configured LLM and selected R boundary."""
+
     study_dir = state.get("study_dir")
     if not study_dir:
+        mode = state.get("execution_mode", "llm_downstream_provider")
         return {
             "status": "failed",
             "failure_type": "input_error",
             "route": "fail",
             "real_run_completed": False,
-            "real_run_error": "execution_mode=llm_downstream_provider requires study_dir",
+            "real_run_error": f"execution_mode={mode} requires study_dir",
             "real_run_artifacts": {},
             "real_validation_status": "not_run",
             "sandbox_runs": 0,
@@ -130,6 +147,7 @@ def run_llm_downstream_provider_node(state: DatasetGraphState) -> DatasetGraphSt
         llm_client = build_llm_client(provider_config)
         if provider_config.provider.strip().lower() == "mock":
             llm_client = _provider_mode_default_mock_client(state["dataset"])
+        r_runner = LocalRRunner(state.get("rscript_path") or None) if use_local_r else None
         result = run_downstream_adam(
             study_dir=study_dir,
             study_id=state["study_id"],
@@ -140,6 +158,7 @@ def run_llm_downstream_provider_node(state: DatasetGraphState) -> DatasetGraphSt
             exposure=exposure,
             provider=provider_config.provider,
             model=provider_config.model,
+            r_runner=r_runner,
         )
     except Exception as exc:
         return {
@@ -437,7 +456,7 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
 
     dataset = state["dataset"]
     run_metadata = state.get("real_run_metadata", {})
-    is_stubbed = bool(run_metadata.get("stubbed_r_execution") or run_metadata.get("not_real_derivation"))
+    is_stubbed = bool(run_metadata.get("stubbed_r_execution"))
     status = "completed_stub" if state.get("real_run_completed") and is_stubbed else "completed" if state.get("real_run_completed") else "failed"
     artifacts = state.get("real_run_artifacts", {})
     output_artifact_ids = []
@@ -465,7 +484,7 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
             "provider_base_url": run_metadata.get("provider_base_url"),
             "external_relay": run_metadata.get("external_relay", False),
             "risk_flags": run_metadata.get("risk_flags", []),
-            "not_real_derivation": is_stubbed,
+            "not_real_derivation": bool(run_metadata.get("not_real_derivation", False)),
             "summary_status_note": status,
         },
     )
