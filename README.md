@@ -68,6 +68,23 @@ python -m unittest tests.test_live_llm_smoke
 
 The live test is skipped unless `ADAM_AGENT_RUN_LIVE_LLM=1` is set.
 
+Optional real LLM UI/API workflow smoke test:
+
+```powershell
+$env:ADAM_AGENT_RUN_LIVE_UI_SMOKE = "1"
+$env:ADAM_AGENT_LIVE_LLM_PROVIDER = "openai-compatible"
+$env:ADAM_AGENT_LIVE_LLM_MODEL = "gpt-5.5"
+$env:ADAM_AGENT_LIVE_LLM_BASE_URL = "https://your-relay.example/v1"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY_ENV = "ADAM_AGENT_LIVE_LLM_API_KEY"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY = "<private key>"
+python -m unittest tests.test_live_ui_smoke
+```
+
+This follows the same backend contract as the browser UI: demo study creation,
+dependency planning, provider connection test, and reviewable R code generation.
+Set `ADAM_AGENT_LIVE_UI_EXECUTE_R=1` only when you also want to approve and run
+the generated R code locally.
+
 Run a study-level mock downstream smoke test:
 
 ```powershell

@@ -392,6 +392,65 @@ class Phase8ApiTests(unittest.TestCase):
         provider_config = builder.call_args.args[0]
         self.assertEqual(provider_config.api_key, "test-key")
 
+    def test_generate_code_uses_browser_scoped_real_provider_settings(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_real_provider_override")
+        client = TestClient(create_app())
+        requests = []
+
+        class FakeLLMClient:
+            def generate(self, request):
+                requests.append(request)
+                return SimpleNamespace(
+                    response_text=json.dumps(
+                        {
+                            "dataset": "ADAE",
+                            "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)",
+                            "assumptions": ["Test response."],
+                            "risk_points": [],
+                            "used_inputs": ["AE"],
+                            "expected_outputs": ["outputs/adae.csv"],
+                        }
+                    ),
+                    call_record=SimpleNamespace(),
+                )
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=FakeLLMClient()) as builder:
+            response = client.post(
+                "/runs/run_real_provider_override/datasets/ADAE/generate-code",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "base_url": "https://relay.example/v1",
+                        "api_key": "test-key",
+                        "max_tokens": 1234,
+                        "allow_custom_base_url": True,
+                        "custom_base_url_approved_by": "tester",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 3,
+                        "include_reference_rows": True,
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "code_generated")
+        builder.assert_called_once()
+        self.assertEqual(builder.call_args.args[0].provider, "openai-compatible")
+        self.assertEqual(builder.call_args.args[0].model, "gpt-5.5")
+        self.assertEqual(builder.call_args.args[0].api_key, "test-key")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].model, "gpt-5.5")
+        self.assertEqual(requests[0].max_tokens, 1234)
+        self.assertEqual(requests[0].exposure.mode, "demo_rich_context")
+
     def test_create_run_and_read_artifacts(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_api_create_run")
         client = TestClient(create_app())

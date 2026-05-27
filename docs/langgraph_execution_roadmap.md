@@ -28,8 +28,8 @@ Update rule:
 | Active LangGraph worktree | `D:\Archive\Research\Projects\ADaM_Shiny_LangGraph` |
 | Target architecture branch | `LangGraph` |
 | Product direction | Local-first ADaM Agent Studio using LangGraph orchestration and R sandbox execution |
-| Current implementation status | Phase 7 complete; ready to start Phase 8 UI/audit workflow |
-| Last roadmap update | 2026-05-25 |
+| Current implementation status | Phase 8.5 in progress: local UI/API workflow exists, real LLM UI smoke is opt-in |
+| Last roadmap update | 2026-05-27 |
 
 Known workspace notes:
 
@@ -68,7 +68,7 @@ Phase 0  Engineering foundation
 | 5. Single-dataset real loop | Run one real ADaM dataset end to end, likely ADSL first | lineage/spec/code/run/validate path for ADSL | One dataset can run from inputs to validated output | complete |
 | 6. Failure diagnosis and rollback | Add controlled repair and backward routing | `diagnose_failure`, `repair_code`, `revise_spec`, `revise_lineage` | Failures are classified instead of blindly repairing code | complete |
 | 7. Multi-dataset study orchestration | Coordinate multiple ADaM datasets with dependencies | dependency graph, dataset dispatch/reduce logic | ADSL can complete before dependent datasets run | complete |
-| 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | not started |
+| 8. Product UI and audit workflow | Make the system usable by a human reviewer | FastAPI/UI, run history, review views, audit report | User can upload, run, review, and export | in progress |
 | 9. Standards and production hardening | Add reference standards and production controls | CDISC/P21 tools, provider expansion, security/deployment strategy | System is extensible beyond demo data | not started |
 
 ## Phase 0 - Engineering Foundation
@@ -1623,6 +1623,56 @@ Phase 8.2 correction notes:
   - `ads_adae_full.csv`, `ads_adsl_full.csv` -> input specs
   - `adae.csv`, `adsl.csv` -> reference ADaM comparison evidence
   - `PSY201/` remains excluded from this demo workflow.
+
+Phase 8.4 implementation notes:
+
+- Added browser-session LLM overrides to generated-code requests:
+  - provider
+  - model
+  - optional custom/OpenAI-compatible base URL
+  - API key
+  - external API approval and exposure policy
+- Added `POST /llm/test-connection` so the UI can validate provider settings
+  before generation without sending study data.
+- Kept API keys request-scoped; they are not written to repo configs or run
+  artifacts.
+- The UI now offers Mock/offline mode and Real LLM API mode under Advanced
+  settings. Real mode requires explicit external API approval.
+- Verification:
+  - `python -m unittest tests.test_api_phase8`
+    `Ran 15 tests ... OK`
+  - `python -m unittest discover -s tests -p "test_*.py"`
+    `Ran 127 tests ... OK (skipped=1)`
+
+Phase 8.5 design notes:
+
+- Real LLM validation should be reproducible without making ordinary tests
+  call external APIs.
+- Browser clicking alone is not enough engineering evidence, so Phase 8.5 adds
+  an opt-in API smoke test that follows the same backend contract used by the
+  local UI.
+- The smoke test should prove:
+  - demo study creation works
+  - dependency planning accepts the target
+  - provider connection testing works
+  - real provider code generation returns the strict R-code JSON contract
+  - optional local R execution can be enabled separately
+- The smoke test must not commit or print real API keys.
+
+Phase 8.5 implementation notes:
+
+- Added `tests/test_live_ui_smoke.py`.
+- The test is skipped unless `ADAM_AGENT_RUN_LIVE_UI_SMOKE=1`.
+- The test uses the existing live LLM environment variables:
+  - `ADAM_AGENT_LIVE_LLM_PROVIDER`
+  - `ADAM_AGENT_LIVE_LLM_MODEL`
+  - `ADAM_AGENT_LIVE_LLM_BASE_URL`
+  - `ADAM_AGENT_LIVE_LLM_API_KEY_ENV`
+  - `ADAM_AGENT_LIVE_LLM_API_KEY`
+- Optional R execution is controlled by `ADAM_AGENT_LIVE_UI_EXECUTE_R=1` and
+  `ADAM_AGENT_LIVE_UI_RSCRIPT_PATH`.
+- Fixed generated-code request construction so `LLMProviderConfig.max_tokens`
+  is passed through to the provider call.
 
 ## Phase 9 - Standards and Production Hardening
 

@@ -892,6 +892,7 @@ def _llm_request_for_code_generation(
         exposure=exposure,
         node="generate_downstream_code_for_review",
         call_id=f"llm_{run_id}_{target.lower()}",
+        max_tokens=provider_config.max_tokens,
         datasets_included=_datasets_included(context_dict),
         variables_included=_variables_included(context_dict),
         sample_row_counts=_sample_row_counts(context_dict),

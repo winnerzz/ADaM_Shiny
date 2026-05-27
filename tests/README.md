@@ -29,3 +29,33 @@ python -m unittest tests.test_live_llm_smoke
 ```
 
 Do not commit API keys or private relay configs.
+
+## Optional Live UI/API Workflow Smoke Test
+
+`test_live_ui_smoke.py` is also skipped by default. It validates the Phase 8 UI
+backend workflow against a real provider:
+
+- prepare demo study files
+- prepare the dependency plan
+- call `/llm/test-connection`
+- call `/runs/{run_id}/datasets/ADAE/generate-code`
+- optionally approve and execute generated R locally
+
+Example:
+
+```powershell
+$env:ADAM_AGENT_RUN_LIVE_UI_SMOKE = "1"
+$env:ADAM_AGENT_LIVE_LLM_PROVIDER = "openai-compatible"
+$env:ADAM_AGENT_LIVE_LLM_MODEL = "gpt-5.5"
+$env:ADAM_AGENT_LIVE_LLM_BASE_URL = "https://your-relay.example/v1"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY_ENV = "ADAM_AGENT_LIVE_LLM_API_KEY"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY = "<private key>"
+python -m unittest tests.test_live_ui_smoke
+```
+
+Add these only if you want the smoke test to run generated R locally:
+
+```powershell
+$env:ADAM_AGENT_LIVE_UI_EXECUTE_R = "1"
+$env:ADAM_AGENT_LIVE_UI_RSCRIPT_PATH = "C:\Dev\R-4.5.2\bin\Rscript.exe"
+```
