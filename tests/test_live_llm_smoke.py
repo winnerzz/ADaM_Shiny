@@ -100,10 +100,16 @@ class LiveLLMSmokeTests(unittest.TestCase):
                     "The r_code can be minimal, but it must write outputs/adae.csv."
                 ),
                 target="ADAE",
+                study_id="LIVE_SMOKE",
+                run_id="run_live_llm_smoke",
                 provider=provider,
                 model=model,
                 exposure=exposure,
-                context=context,
+                context_dict=context,
+                context_artifact_id="live_smoke_context",
+                node="live_smoke_generate_downstream_code",
+                call_id="live_smoke_llm_call",
+                response_artifact_id="live_smoke_response",
             )
         )
 
