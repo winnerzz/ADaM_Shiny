@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from http.client import RemoteDisconnected
 from typing import Any, Callable, Protocol
 from urllib import error, request
 
@@ -512,6 +513,10 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeo
         raise LLMProviderResponseError(f"Provider HTTP error {exc.code}: {message}") from exc
     except error.URLError as exc:
         raise LLMProviderResponseError(f"Provider request failed: {exc.reason}") from exc
+    except RemoteDisconnected as exc:
+        raise LLMProviderResponseError("Provider closed the connection without returning a response.") from exc
+    except TimeoutError as exc:
+        raise LLMProviderResponseError(f"Provider request timed out after {timeout_seconds} seconds.") from exc
     try:
         return json.loads(response_text)
     except json.JSONDecodeError as exc:

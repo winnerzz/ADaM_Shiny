@@ -52,7 +52,11 @@ from adam_agent.llm.clients import (
     build_llm_client,
 )
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
-from adam_agent.llm.generated_code import parse_generated_code_response, write_generated_code_artifacts
+from adam_agent.llm.generated_code import (
+    LLMGeneratedCodeError,
+    parse_generated_code_response,
+    write_generated_code_artifacts,
+)
 from adam_agent.llm.mock_code import default_mock_generated_code_response
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
@@ -392,7 +396,10 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         )
     except (LLMClientConfigError, LLMProviderResponseError) as exc:
         raise ApiServiceError(str(exc)) from exc
-    package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
+    try:
+        package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
+    except LLMGeneratedCodeError as exc:
+        raise ApiServiceError(str(exc)) from exc
     artifacts = write_generated_code_artifacts(
         study_id=study_id,
         run_id=run_id,

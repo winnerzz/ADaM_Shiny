@@ -7,7 +7,9 @@ import os
 import sys
 import unittest
 import uuid
+from http.client import RemoteDisconnected
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -351,6 +353,31 @@ class Phase4ToolTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["Authorization"], "Bearer test-key")
         self.assertEqual(calls[0][2]["model"], "gpt-5.5")
         self.assertNotIn("test-key", response.call_record.model_dump_json())
+
+    def test_openai_compatible_http_client_wraps_remote_disconnect(self) -> None:
+        client = OpenAICompatibleLLMClient(
+            OpenAICompatibleConfig(base_url="https://api.openai.com/v1", api_key="test-key")
+        )
+
+        with patch("adam_agent.llm.clients.request.urlopen", side_effect=RemoteDisconnected("closed")):
+            with self.assertRaisesRegex(LLMProviderResponseError, "closed the connection"):
+                client.generate(
+                    LLMRequest(
+                        prompt="Generate ADAE",
+                        provider="openai-compatible",
+                        model="gpt-5.5",
+                        exposure=LLMExposureConfig(
+                            mode="demo_rich_context",
+                            data_classification="processed_demo",
+                            external_api_allowed=True,
+                        ),
+                        node="generate_downstream_code",
+                        call_id="llm_remote_disconnect",
+                        prompt_artifact_id="prompt_disconnect",
+                        response_artifact_id="response_disconnect",
+                        redaction_policy="processed_demo_test",
+                    )
+                )
 
     def test_client_factory_routes_deepseek_and_qwen_through_openai_compatible_transport(self) -> None:
         def fake_transport(_url, _headers, _payload, _timeout):

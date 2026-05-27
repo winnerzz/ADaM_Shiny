@@ -451,6 +451,37 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(requests[0].max_tokens, 1234)
         self.assertEqual(requests[0].exposure.mode, "demo_rich_context")
 
+    def test_generate_code_returns_readable_error_for_bad_llm_json(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_bad_llm_json")
+        client = TestClient(create_app())
+
+        class BadJsonLLMClient:
+            def generate(self, _request):
+                return SimpleNamespace(response_text="not json", call_record=SimpleNamespace())
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=BadJsonLLMClient()):
+            response = client.post(
+                "/runs/run_bad_llm_json/datasets/ADAE/generate-code",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not valid JSON", response.json()["detail"])
+
     def test_create_run_and_read_artifacts(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_api_create_run")
         client = TestClient(create_app())
