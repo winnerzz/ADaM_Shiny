@@ -1,9 +1,9 @@
-"""Static local web UI for Phase 8.2."""
+"""Static local web UI for the product-facing Phase 8 workflow."""
 
 from __future__ import annotations
 
 
-INDEX_HTML = """<!doctype html>
+INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -12,21 +12,20 @@ INDEX_HTML = """<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f8fb;
+      --bg: #f5f7fa;
       --panel: #ffffff;
-      --line: #d9e2ec;
-      --text: #14212f;
-      --muted: #5c6c7d;
+      --line: #d8dee8;
+      --text: #172033;
+      --muted: #637083;
+      --soft: #edf3f6;
       --accent: #0f766e;
       --accent-dark: #115e59;
-      --danger: #b42318;
-      --warn: #a15c07;
       --ok: #067647;
-      --code: #0b1220;
+      --warn: #9a5b00;
+      --danger: #b42318;
+      --code: #101827;
     }
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -35,83 +34,122 @@ INDEX_HTML = """<!doctype html>
       background: var(--bg);
     }
     header {
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-      padding: 14px 22px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 18px;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
     }
-    h1 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 700;
-    }
-    .status-line {
+    h1 { margin: 0 0 4px; font-size: 22px; }
+    h2 { margin: 0; font-size: 17px; }
+    h3 { margin: 0 0 8px; font-size: 14px; }
+    .subtitle, .muted, .status-line {
       color: var(--muted);
       font-size: 13px;
+      line-height: 1.45;
     }
     main {
       display: grid;
-      grid-template-columns: minmax(280px, 360px) minmax(360px, 1fr) minmax(360px, 1fr);
+      grid-template-columns: 280px minmax(700px, 1fr);
       gap: 14px;
       padding: 14px;
-      height: calc(100vh - 58px);
+      min-height: calc(100vh - 74px);
     }
-    section {
+    aside, section, .card {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      min-height: 0;
-      display: flex;
-      flex-direction: column;
     }
+    aside {
+      padding: 12px;
+      height: fit-content;
+      position: sticky;
+      top: 14px;
+    }
+    section { margin-bottom: 14px; }
     .section-head {
-      border-bottom: 1px solid var(--line);
-      padding: 12px 14px;
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
     }
-    h2 {
-      margin: 0;
-      font-size: 15px;
+    .section-body { padding: 16px; }
+    .step {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 9px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+      margin-bottom: 8px;
     }
-    .section-body {
-      padding: 14px;
-      overflow: auto;
-      min-height: 0;
+    .step.active { border-color: rgba(15, 118, 110, 0.45); background: #edf8f6; }
+    .step.done .step-number { background: var(--ok); }
+    .step-number {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
     }
+    .step strong { display: block; margin-bottom: 2px; font-size: 13px; }
+    .step p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .grid5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .card { padding: 13px; min-width: 0; }
+    .metric {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .metric-value { display: block; margin-bottom: 3px; font-size: 22px; font-weight: 800; color: var(--text); }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .choice-card {
+      cursor: pointer;
+      min-height: 140px;
+    }
+    .choice-card:hover { border-color: rgba(15, 118, 110, 0.5); background: #fbfffe; }
+    .choice-card.active { border-color: var(--accent); background: #eef8f6; }
+    .drop-card {
+      border: 1px dashed #b9c4d3;
+      background: #fbfdff;
+    }
+    .drop-card input { margin-top: 8px; }
     label {
       display: block;
-      margin: 0 0 6px;
+      margin-bottom: 6px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
     }
-    input,
-    select {
+    input, textarea {
       width: 100%;
-      height: 36px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      padding: 7px 9px;
-      color: var(--text);
+      padding: 8px 9px;
       background: #fff;
+      color: var(--text);
       font-size: 13px;
     }
-    .field {
-      margin-bottom: 12px;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
+    input { height: 36px; }
+    input[type=file] { height: auto; padding: 7px; }
+    textarea { min-height: 74px; resize: vertical; }
+    .field { margin-bottom: 12px; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     button {
-      height: 36px;
+      min-height: 36px;
       border: 1px solid var(--accent-dark);
       border-radius: 6px;
       padding: 0 12px;
@@ -120,85 +158,191 @@ INDEX_HTML = """<!doctype html>
       font-weight: 700;
       cursor: pointer;
     }
-    button:hover {
-      background: var(--accent-dark);
-    }
+    button:hover { background: var(--accent-dark); }
     button.secondary {
       color: var(--text);
-      border-color: var(--line);
       background: #fff;
+      border-color: var(--line);
     }
-    button.secondary:hover {
-      background: #edf3f8;
+    button.secondary:hover { background: #edf3f8; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .target-button {
+      color: var(--text);
+      background: #fff;
+      border-color: var(--line);
     }
-    .button-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .metric {
+    .target-button.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    .graph-canvas {
+      min-height: 180px;
+      padding: 12px;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px;
+      border-radius: 8px;
       background: #fbfdff;
     }
-    .metric span {
-      display: block;
+    .graph-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .graph-node {
+      min-width: 84px;
+      padding: 9px 10px;
+      border: 1px solid #bdc8d7;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .graph-node.source { border-color: #9fb7d6; background: #eef5ff; color: #24456f; }
+    .graph-node.target { border-color: rgba(15, 118, 110, 0.45); background: #eef8f6; color: var(--accent-dark); }
+    .graph-node.blocked { border-color: #e3b0aa; background: #fff2f0; color: var(--danger); }
+    .graph-arrow { color: var(--muted); font-weight: 800; }
+    .dataset-board { display: grid; gap: 8px; }
+    .dataset-card {
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .dataset-card.active { border-color: rgba(15, 118, 110, 0.45); background: #fbfffe; }
+    .dataset-card.blocked { border-color: #efc4be; background: #fff8f7; }
+    .dataset-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .dataset-name { font-size: 15px; font-weight: 800; }
+    .stage-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+    .stage {
+      min-height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      border: 1px solid var(--line);
       color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 5px;
+      background: #f7f9fb;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
     }
-    .metric strong {
-      display: block;
-      overflow-wrap: anywhere;
-      font-size: 14px;
+    .stage.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
+    .stage.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
+    .stage.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .timeline {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+      padding-right: 4px;
     }
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .timeline-time { color: var(--muted); font-size: 12px; }
+    .timeline-title { margin-bottom: 2px; font-weight: 800; font-size: 13px; }
     .pill {
       display: inline-flex;
       align-items: center;
-      min-height: 24px;
       border-radius: 999px;
-      padding: 3px 9px;
+      min-height: 23px;
+      padding: 2px 8px;
+      color: var(--ok);
+      background: #e8f6ee;
       font-size: 12px;
       font-weight: 700;
-      background: #e8f5f1;
-      color: var(--ok);
+      white-space: nowrap;
     }
-    .pill.fail {
-      background: #fcebea;
-      color: var(--danger);
-    }
-    .pill.warn {
-      background: #fff4df;
-      color: var(--warn);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    .pill.warn { color: var(--warn); background: #fff4df; }
+    .pill.fail { color: var(--danger); background: #fde9e7; }
+    .note {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+      color: var(--muted);
       font-size: 13px;
+      line-height: 1.45;
     }
-    th,
-    td {
+    .note.strong {
+      color: var(--text);
+      border-color: rgba(15, 118, 110, 0.24);
+      background: #eef8f6;
+    }
+    .note.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+      color: #6d4200;
+    }
+    .file-list { display: grid; gap: 8px; }
+    .file-item {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdff;
+    }
+    .file-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .file-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .mini-pre {
+      margin-top: 7px;
+      max-height: 120px;
+      overflow: auto;
+      padding: 8px;
+      border-radius: 6px;
+      color: #d8e2f0;
+      background: var(--code);
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 12px; }
+    .tab {
+      min-height: 33px;
+      padding: 0 10px;
+      color: var(--text);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .tab.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
       border-bottom: 1px solid var(--line);
       padding: 8px 6px;
       text-align: left;
       vertical-align: top;
       overflow-wrap: anywhere;
     }
-    th {
-      color: var(--muted);
-      font-size: 12px;
-    }
+    th { color: var(--muted); font-size: 12px; white-space: nowrap; }
     pre {
       margin: 0;
       min-height: 260px;
+      max-height: 560px;
+      overflow: auto;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       border-radius: 6px;
@@ -208,267 +352,1044 @@ INDEX_HTML = """<!doctype html>
       font-size: 12px;
       line-height: 1.45;
     }
-    .muted {
-      color: var(--muted);
-      font-size: 13px;
+    .result-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
+    .result-tab {
+      min-height: 32px;
+      padding: 0 10px;
+      color: var(--text);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
     }
-    @media (max-width: 1100px) {
-      main {
-        grid-template-columns: 1fr;
-        height: auto;
-      }
-      section {
-        min-height: 360px;
-      }
+    .result-tab.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+    .table-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 10px 0;
+    }
+    .download-list { display: grid; gap: 8px; }
+    .download-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    ul.clean { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    details { margin-top: 12px; }
+    summary { cursor: pointer; font-weight: 700; font-size: 13px; }
+    .hidden { display: none !important; }
+    @media (max-width: 1120px) {
+      main { grid-template-columns: 1fr; }
+      aside { position: static; }
+      .grid3, .grid5, .metric-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      header { align-items: flex-start; flex-direction: column; }
+      .grid2 { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>ADaM Agent Studio</h1>
+    <div>
+      <h1>ADaM Agent Studio</h1>
+      <div class="subtitle">Upload study evidence, generate reviewable R code, then run it locally after approval.</div>
+    </div>
     <div class="status-line" id="health">Checking API...</div>
   </header>
+
   <main>
-    <section>
-      <div class="section-head">
-        <h2>Run Setup</h2>
-      </div>
-      <div class="section-body">
-        <div class="field">
-          <label for="studyDir">Study Folder</label>
-          <input id="studyDir" placeholder="D:\\path\\to\\PSY201">
+    <aside>
+      <div class="step active" data-step="1"><div class="step-number">1</div><div><strong>Start</strong><p>Use the demo or upload your own files.</p></div></div>
+      <div class="step" data-step="2"><div class="step-number">2</div><div><strong>Inputs</strong><p>Check recognized SDTM, specs, and references.</p></div></div>
+      <div class="step" data-step="3"><div class="step-number">3</div><div><strong>Target</strong><p>Choose which ADaM dataset to generate.</p></div></div>
+      <div class="step" data-step="4"><div class="step-number">4</div><div><strong>Code</strong><p>Generate R without running it.</p></div></div>
+      <div class="step" data-step="5"><div class="step-number">5</div><div><strong>Review & Run</strong><p>Approve code, then execute in R sandbox.</p></div></div>
+      <div class="step" data-step="6"><div class="step-number">6</div><div><strong>Results</strong><p>Inspect generated ADaM and warnings.</p></div></div>
+    </aside>
+
+    <div>
+      <section>
+        <div class="section-head">
+          <h2>Study Dashboard</h2>
+          <span class="pill warn" id="graphStatus">waiting</span>
         </div>
-        <div class="row">
-          <div class="field">
-            <label for="runId">Run ID</label>
-            <input id="runId">
+        <div class="section-body">
+          <div class="metric-grid">
+            <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
+            <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
+            <div class="metric"><span class="metric-value" id="metricRunnable">0</span><span class="metric-label">runnable now</span></div>
+            <div class="metric"><span class="metric-value" id="metricBlocked">0</span><span class="metric-label">blocked</span></div>
           </div>
-          <div class="field">
-            <label for="targets">Targets</label>
-            <input id="targets" value="ADAE">
+          <div class="grid2">
+            <div>
+              <h3>Dependency Map</h3>
+              <div id="dependencyGraph" class="graph-canvas"><div class="muted">Load inputs to build the study graph.</div></div>
+            </div>
+            <div>
+              <h3>Dataset Execution Cards</h3>
+              <div id="datasetBoard" class="dataset-board"><div class="muted">No dataset selected yet.</div></div>
+            </div>
           </div>
         </div>
-        <div class="field">
-          <label for="configPath">Config Path</label>
-          <input id="configPath" value="studies\\_template\\configs\\mock_downstream.json">
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Start A Study</h2>
+          <span class="pill warn" id="workspaceStatus">not started</span>
         </div>
-        <div class="field">
-          <label for="executionMode">Execution Mode</label>
-          <select id="executionMode">
-            <option value="llm_downstream_provider">llm_downstream_provider</option>
-            <option value="llm_downstream_r_sandbox">llm_downstream_r_sandbox</option>
-            <option value="real_adsl_minimal">real_adsl_minimal</option>
-            <option value="stub">stub</option>
-          </select>
+        <div class="section-body">
+          <div class="grid2">
+            <div class="card choice-card" id="demoChoice">
+              <h3>Try With Shiny Demo Data</h3>
+              <p class="muted">Loads AE, DM, EX as SDTM; ads_adsl_full and ads_adae_full as specs; ADSL and ADAE as reference outputs.</p>
+              <div class="button-row"><button id="createDemoButton">Load Demo</button></div>
+            </div>
+            <div class="card choice-card" id="uploadChoice">
+              <h3>Use My Study Files</h3>
+              <p class="muted">Creates a local working folder automatically. You only choose file roles; technical paths stay hidden.</p>
+              <div class="button-row"><button class="secondary" id="startUploadButton">Start Upload</button></div>
+            </div>
+          </div>
+          <p class="note" id="workspaceMessage">Choose one path to begin. The app will organize files into the backend structure automatically.</p>
+
+          <div id="uploadPanel" class="hidden">
+            <div class="grid5">
+              <div class="card drop-card">
+                <h3>SDTM Source Data</h3>
+                <p class="muted">Examples: dm.csv, ae.csv, ex.csv.</p>
+                <input id="uploadSdtm" type="file" multiple>
+                <button data-upload-role="sdtm">Upload SDTM</button>
+                <div class="file-meta" id="uploadStatusSdtm"></div>
+              </div>
+              <div class="card drop-card">
+                <h3>ADaM Specs</h3>
+                <p class="muted">Examples: ads_adsl_full.csv, ads_adae_full.csv.</p>
+                <input id="uploadSpec" type="file" multiple>
+                <button data-upload-role="spec">Upload Specs</button>
+                <div class="file-meta" id="uploadStatusSpec"></div>
+              </div>
+              <div class="card drop-card">
+                <h3>Reference ADaM</h3>
+                <p class="muted">Existing ADaM for comparison or dependency evidence.</p>
+                <input id="uploadReference" type="file" multiple>
+                <button data-upload-role="reference">Upload Reference ADaM</button>
+                <div class="file-meta" id="uploadStatusReference"></div>
+              </div>
+              <div class="card drop-card">
+                <h3>Define</h3>
+                <p class="muted">define.xml or related metadata evidence.</p>
+                <input id="uploadDefine" type="file" multiple>
+                <button data-upload-role="define">Upload Define</button>
+                <div class="file-meta" id="uploadStatusDefine"></div>
+              </div>
+              <div class="card drop-card">
+                <h3>Legacy Code</h3>
+                <p class="muted">SAS/R programs used as lineage evidence.</p>
+                <input id="uploadLegacy" type="file" multiple>
+                <button data-upload-role="legacy">Upload Legacy Code</button>
+                <div class="file-meta" id="uploadStatusLegacy"></div>
+              </div>
+            </div>
+            <p class="note warn" style="margin-top:12px;">Reference ADaM is used for dependency/comparison evidence. It does not override user specs.</p>
+          </div>
         </div>
-        <div class="field">
-          <label for="rscriptPath">Rscript Path</label>
-          <input id="rscriptPath" placeholder="C:\\Dev\\R-4.5.2\\bin\\Rscript.exe">
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Recognized Inputs</h2>
+          <span class="muted" id="inputSummaryLine">Nothing scanned yet.</span>
         </div>
-        <div class="field">
-          <label for="approvedDeps">Approved Dependencies</label>
-          <input id="approvedDeps" placeholder="ADSL, ADLB">
+        <div class="section-body">
+          <div class="grid5">
+            <div class="card"><h3>SDTM</h3><div id="sdtmFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+            <div class="card"><h3>Specs</h3><div id="specFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+            <div class="card"><h3>Reference ADaM</h3><div id="referenceFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+            <div class="card"><h3>Define</h3><div id="defineFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+            <div class="card"><h3>Legacy Code</h3><div id="legacyFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+          </div>
+          <div id="inputWarnings" class="note" style="margin-top: 12px;">No warnings yet.</div>
         </div>
-        <button id="runButton">Run Study</button>
-        <p class="muted">Runs are synchronous in Phase 8.2. The browser waits until the graph finishes.</p>
-      </div>
-    </section>
-    <section>
-      <div class="section-head">
-        <h2>Run Summary</h2>
-        <span id="runStatus" class="pill warn">idle</span>
-      </div>
-      <div class="section-body">
-        <div class="summary-grid">
-          <div class="metric"><span>Study</span><strong id="studyValue">-</strong></div>
-          <div class="metric"><span>Run</span><strong id="runValue">-</strong></div>
-          <div class="metric"><span>Mode</span><strong id="modeValue">-</strong></div>
-          <div class="metric"><span>Dependency Review</span><strong id="reviewValue">-</strong></div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Choose Output</h2>
+          <span id="planStatus" class="pill warn">waiting</span>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Dataset</th>
-              <th>Status</th>
-              <th>Validation</th>
-              <th>Route</th>
-            </tr>
-          </thead>
-          <tbody id="datasetRows">
-            <tr><td colspan="4" class="muted">No run yet.</td></tr>
-          </tbody>
-        </table>
-        <div class="button-row">
-          <button class="secondary" data-artifact="dependency">Dependency</button>
-          <button class="secondary" data-artifact="validation">Validation</button>
-          <button class="secondary" data-artifact="diagnostics">Diagnostics</button>
-          <button class="secondary" data-artifact="audit">Audit</button>
-          <button class="secondary" data-artifact="context">Context</button>
+        <div class="section-body">
+          <p class="note">Pick the ADaM dataset you want to generate. The app will check whether dependencies such as ADSL are already available.</p>
+          <div class="button-row" id="targetButtons"></div>
+          <div class="grid2" style="margin-top:12px;">
+            <div class="field">
+              <label for="manualTarget">Add another ADaM target</label>
+              <input id="manualTarget" placeholder="Example: ADLB, ADCM, ADSL">
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="secondary" id="addTargetButton">Add Target</button>
+            </div>
+          </div>
+          <div id="planView" class="note">Load inputs first, then choose a target.</div>
         </div>
-      </div>
-    </section>
-    <section>
-      <div class="section-head">
-        <h2>Artifact JSON</h2>
-      </div>
-      <div class="section-body">
-        <pre id="artifactView">Select a run artifact.</pre>
-      </div>
-    </section>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Generate, Review, Run</h2>
+          <span id="codeStatus" class="pill warn">not generated</span>
+        </div>
+        <div class="section-body">
+          <div class="button-row">
+            <button id="generateCodeButton" disabled>Generate R Code</button>
+            <button id="approveButton" disabled>Approve And Run Locally</button>
+          </div>
+          <p class="note">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
+          <div class="tabs">
+            <button class="tab active" data-view="summary">Summary</button>
+            <button class="tab" data-view="code">R Code</button>
+            <button class="tab" data-view="risk">Assumptions & Risks</button>
+            <button class="tab" data-view="output">Generated ADaM</button>
+            <button class="tab" data-view="timeline">Audit Timeline</button>
+          </div>
+          <div id="reviewPane"><p class="note">No code generated yet.</p></div>
+          <details>
+            <summary>Advanced settings and audit files</summary>
+            <div class="grid3" style="margin-top:12px;">
+              <div class="field">
+                <label for="studyDir">Study folder</label>
+                <input id="studyDir">
+              </div>
+              <div class="field">
+                <label for="runId">Run id</label>
+                <input id="runId">
+              </div>
+              <div class="field">
+                <label for="configPath">LLM config</label>
+                <input id="configPath" value="studies\\_template\\configs\\mock_downstream.json">
+              </div>
+              <div class="field">
+                <label for="rscriptPath">Rscript path</label>
+                <input id="rscriptPath" value="C:\\Dev\\R-4.5.2\\bin\\Rscript.exe">
+              </div>
+              <div class="field">
+                <label for="reviewer">Reviewer</label>
+                <input id="reviewer" value="local_user">
+              </div>
+              <div class="field">
+                <label for="reviewNotes">Review notes</label>
+                <input id="reviewNotes" value="Approved for local sandbox execution.">
+              </div>
+            </div>
+            <div id="advancedPane" class="note">Audit artifacts appear after a run.</div>
+          </details>
+        </div>
+      </section>
+    </div>
   </main>
+
   <script>
     const state = {
-      lastRun: null,
-      selectedDataset: null
+      studyId: null,
+      inputSummary: null,
+      plan: null,
+      generated: null,
+      review: null,
+      execution: null,
+      runReview: null,
+      selectedTarget: null,
+      targetCandidates: [],
+      events: [],
+      selectedView: 'summary',
+      selectedResultView: 'generated',
+      tablePages: {},
+      compareResults: {}
     };
-
+    const uploadInputs = {
+      sdtm: 'uploadSdtm',
+      spec: 'uploadSpec',
+      reference: 'uploadReference',
+      define: 'uploadDefine',
+      legacy: 'uploadLegacy'
+    };
+    const uploadStatus = {
+      sdtm: 'uploadStatusSdtm',
+      spec: 'uploadStatusSpec',
+      reference: 'uploadStatusReference',
+      define: 'uploadStatusDefine',
+      legacy: 'uploadStatusLegacy'
+    };
     const byId = (id) => document.getElementById(id);
 
     function defaultRunId() {
-      const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-      return `run_ui_${stamp}`;
+      return `run_${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+    }
+    byId('runId').value = defaultRunId();
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `Request failed: ${response.status}`);
+      }
+      return payload;
     }
 
-    byId('runId').value = defaultRunId();
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    function setPill(id, status) {
+      const node = byId(id);
+      node.textContent = status;
+      node.className = 'pill';
+      if (['failed', 'blocked', 'error', 'not started'].includes(status)) node.classList.add('fail');
+      if (['waiting', 'not generated', 'running', 'review', 'warning'].includes(status)) node.classList.add('warn');
+    }
+
+    function setStep(index) {
+      for (const node of document.querySelectorAll('.step')) {
+        const step = Number(node.dataset.step);
+        node.classList.toggle('active', step === index);
+        node.classList.toggle('done', step < index);
+      }
+    }
+
+    function addEvent(title, detail) {
+      state.events.unshift({
+        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'}),
+        title,
+        detail
+      });
+      state.events = state.events.slice(0, 30);
+      renderTimeline();
+    }
+
+    function studyDir() {
+      return byId('studyDir').value.trim();
+    }
+
+    function runId() {
+      const value = byId('runId').value.trim();
+      if (value) return value;
+      const next = defaultRunId();
+      byId('runId').value = next;
+      return next;
+    }
+
+    function selectedTargets() {
+      return state.selectedTarget ? [state.selectedTarget] : [];
+    }
 
     async function checkHealth() {
       try {
-        const response = await fetch('/health');
-        const payload = await response.json();
+        const payload = await api('/health');
         byId('health').textContent = payload.status === 'ok' ? 'API ready' : 'API unavailable';
-      } catch (error) {
+      } catch {
         byId('health').textContent = 'API unavailable';
       }
     }
 
-    function splitValues(value) {
-      return value.split(',').map((item) => item.trim().toUpperCase()).filter(Boolean);
-    }
-
-    function payloadFromForm() {
-      const rscriptPath = byId('rscriptPath').value.trim();
-      const configPath = byId('configPath').value.trim();
-      return {
-        study_dir: byId('studyDir').value.trim(),
-        run_id: byId('runId').value.trim(),
-        target_datasets: splitValues(byId('targets').value),
-        config_path: configPath || null,
-        execution_mode: byId('executionMode').value,
-        approved_dependency_datasets: splitValues(byId('approvedDeps').value),
-        rscript_path: rscriptPath || null
-      };
-    }
-
-    function setStatus(status) {
-      const pill = byId('runStatus');
-      pill.textContent = status;
-      pill.className = 'pill';
-      if (status === 'failed') {
-        pill.classList.add('fail');
-      } else if (status === 'idle' || status === 'running' || status === 'warning') {
-        pill.classList.add('warn');
-      }
-    }
-
-    function renderRun(payload) {
-      state.lastRun = payload;
-      state.selectedDataset = payload.dataset_results?.[0]?.dataset || null;
-      byId('studyValue').textContent = payload.study_id || '-';
-      byId('runValue').textContent = payload.run_id || '-';
-      byId('modeValue').textContent = payload.execution_mode || '-';
-      byId('reviewValue').textContent = payload.dependency_review_status || '-';
-      setStatus(payload.status || 'unknown');
-
-      const rows = byId('datasetRows');
-      rows.innerHTML = '';
-      const results = payload.dataset_results || [];
-      if (!results.length) {
-        rows.innerHTML = '<tr><td colspan="4" class="muted">No dataset result.</td></tr>';
-        return;
-      }
-      for (const result of results) {
-        const route = result.metadata?.recommended_route || result.metadata?.summary_status_note || '-';
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${result.dataset}</td>
-          <td>${result.status}</td>
-          <td>${result.validation_status || '-'}</td>
-          <td>${route}</td>
-        `;
-        tr.addEventListener('click', () => {
-          state.selectedDataset = result.dataset;
-          for (const row of rows.querySelectorAll('tr')) {
-            row.style.background = '';
-          }
-          tr.style.background = '#edf8f6';
-        });
-        rows.appendChild(tr);
-      }
-    }
-
-    async function runStudy() {
-      const payload = payloadFromForm();
-      if (!payload.study_dir || !payload.run_id || !payload.target_datasets.length) {
-        byId('artifactView').textContent = 'Study folder, run id, and target dataset are required.';
-        return;
-      }
-      setStatus('running');
-      byId('artifactView').textContent = 'Running...';
+    async function startUploadWorkspace() {
+      byId('uploadPanel').classList.remove('hidden');
+      byId('uploadChoice').classList.add('active');
+      byId('demoChoice').classList.remove('active');
+      byId('workspaceMessage').textContent = 'Creating a local workspace...';
       try {
-        const response = await fetch('/runs', {
+        const payload = await api('/product-workspace', {method: 'POST'});
+        applyWorkspacePayload(payload);
+        state.inputSummary = payload.input_summary;
+        renderInputSummary(payload.input_summary);
+        addEvent('Workspace created', 'A local study workspace is ready for uploads.');
+        setPill('workspaceStatus', 'ready');
+        byId('workspaceMessage').textContent = 'Workspace ready. Upload SDTM and spec files by role.';
+        setStep(2);
+      } catch (error) {
+        setPill('workspaceStatus', 'error');
+        byId('workspaceMessage').textContent = String(error);
+      }
+    }
+
+    async function createDemoStudy() {
+      byId('demoChoice').classList.add('active');
+      byId('uploadChoice').classList.remove('active');
+      byId('uploadPanel').classList.add('hidden');
+      byId('workspaceMessage').textContent = 'Loading demo data...';
+      try {
+        const payload = await api('/demo-study', {method: 'POST'});
+        applyWorkspacePayload(payload);
+        await scanInputs();
+        autoSelectFirstTarget(inferTargets(state.inputSummary));
+        addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
+        setPill('workspaceStatus', 'ready');
+        byId('workspaceMessage').textContent = 'Demo loaded. Files are already organized by role.';
+        setStep(3);
+      } catch (error) {
+        setPill('workspaceStatus', 'error');
+        byId('workspaceMessage').textContent = String(error);
+      }
+    }
+
+    function applyWorkspacePayload(payload) {
+      state.studyId = payload.study_id || null;
+      byId('studyDir').value = payload.study_dir || '';
+      byId('runId').value = payload.run_id || defaultRunId();
+      byId('configPath').value = payload.config_path || byId('configPath').value;
+      if (payload.rscript_path) byId('rscriptPath').value = payload.rscript_path;
+      if (payload.target_datasets?.length) {
+        state.selectedTarget = payload.target_datasets[0];
+      }
+    }
+
+    async function uploadRole(role) {
+      if (!studyDir()) {
+        await startUploadWorkspace();
+      }
+      const input = byId(uploadInputs[role]);
+      if (!input.files.length) {
+        byId('workspaceMessage').textContent = `Choose at least one ${role} file first.`;
+        return;
+      }
+      byId('workspaceMessage').textContent = `Uploading ${role} file(s)...`;
+      const form = new FormData();
+      for (const file of input.files) form.append('files', file);
+      try {
+        byId(uploadStatus[role]).textContent = 'Uploading...';
+        const payload = await api(`/studies/files?study_dir=${encodeURIComponent(studyDir())}&role=${encodeURIComponent(role)}${state.studyId ? `&study_id=${encodeURIComponent(state.studyId)}` : ''}`, {
+          method: 'POST',
+          body: form
+        });
+        state.inputSummary = payload.input_summary;
+        renderInputSummary(payload.input_summary);
+        addEvent(`${role} uploaded`, `${payload.saved_files.length} file(s) added and inputs rescanned.`);
+        byId(uploadStatus[role]).textContent = `${payload.saved_files.length} file(s) uploaded.`;
+        byId('workspaceMessage').textContent = `Uploaded ${payload.saved_files.length} file(s). Inputs rescanned automatically.`;
+        setStep(2);
+      } catch (error) {
+        byId(uploadStatus[role]).textContent = 'Upload failed.';
+        byId('workspaceMessage').textContent = String(error);
+      }
+    }
+
+    async function scanInputs() {
+      const payload = await api(`/study-inputs?study_dir=${encodeURIComponent(studyDir())}`);
+      state.inputSummary = payload;
+      renderInputSummary(payload);
+      addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
+      return payload;
+    }
+
+    function renderInputSummary(summary) {
+      renderFiles('sdtmFiles', summary?.sdtm || []);
+      renderFiles('specFiles', summary?.specs || []);
+      renderFiles('referenceFiles', summary?.reference_adam || []);
+      renderFiles('defineFiles', summary?.define || []);
+      renderFiles('legacyFiles', summary?.legacy_code || []);
+      const sdtm = summary?.sdtm?.length || 0;
+      const specs = summary?.specs?.length || 0;
+      const refs = summary?.reference_adam?.length || 0;
+      const define = summary?.define?.length || 0;
+      const legacy = summary?.legacy_code?.length || 0;
+      byId('inputSummaryLine').textContent = `${sdtm} SDTM, ${specs} spec, ${refs} reference, ${define} define, ${legacy} legacy file(s) recognized.`;
+      const warnings = [...(summary?.warnings || []), ...((summary?.invalid_files || []).map((item) => `${item.path}: ${item.reason}`))];
+      byId('inputWarnings').textContent = warnings.length ? warnings.join(' ') : 'No input warnings.';
+      renderTargetButtons(inferTargets(summary));
+      renderGraphAwareDashboard();
+    }
+
+    function renderFiles(containerId, files) {
+      const node = byId(containerId);
+      if (!files || !files.length) {
+        node.innerHTML = '<div class="muted">No files found.</div>';
+        return;
+      }
+      node.innerHTML = files.map((file) => `
+        <div class="file-item">
+          <div class="file-title">
+            <span>${escapeHtml(file.dataset || file.file_name)}</span>
+            <span class="pill ${file.status === 'ok' ? '' : 'warn'}">${escapeHtml(file.status)}</span>
+          </div>
+          <div class="file-meta">${escapeHtml(file.file_name)} | ${escapeHtml(file.format)} | ${file.row_count ?? file.line_count ?? '-'} ${file.preview_type === 'code' || file.preview_type === 'text' ? 'lines' : 'rows'}</div>
+          <div class="file-meta">${escapeHtml(fileSummary(file))}</div>
+          ${file.text_preview ? `<div class="mini-pre">${escapeHtml(file.text_preview)}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    function fileSummary(file) {
+      if (file.preview_type === 'code' || file.preview_type === 'text') {
+        const targets = (file.detected_targets || []).join(', ');
+        const deps = (file.detected_dependencies || []).join(', ');
+        return [targets ? `ADaM tokens: ${targets}` : '', deps ? `Dependency hints: ${deps}` : '', file.note || ''].filter(Boolean).join(' | ');
+      }
+      const columns = (file.columns || []).slice(0, 10).join(', ');
+      return columns || file.note || 'No preview details.';
+    }
+
+    function inferTargets(summary) {
+      const candidates = new Set();
+      for (const spec of summary?.specs || []) {
+        if (spec.dataset && spec.dataset.startsWith('AD')) candidates.add(spec.dataset);
+        for (const token of inferAdTokens(`${spec.file_name} ${spec.dataset || ''} ${(spec.columns || []).join(' ')}`)) candidates.add(token);
+      }
+      for (const ref of summary?.reference_adam || []) {
+        if (ref.dataset && ref.dataset.startsWith('AD')) candidates.add(ref.dataset);
+      }
+      for (const legacy of summary?.legacy_code || []) {
+        for (const token of inferAdTokens(`${legacy.file_name} ${legacy.dataset || ''}`)) candidates.add(token);
+      }
+      const merged = new Set([...(state.targetCandidates || []), ...candidates]);
+      if (!merged.size) merged.add('ADAE');
+      state.targetCandidates = Array.from(merged).sort();
+      return state.targetCandidates;
+    }
+
+    function inferAdTokens(text) {
+      const normalized = String(text || '').toUpperCase();
+      const tokens = new Set();
+      for (const match of normalized.matchAll(/\bAD[A-Z0-9]{1,6}\b/g)) {
+        tokens.add(match[0]);
+      }
+      for (const match of normalized.matchAll(/ADS[_-]?(AD[A-Z0-9]{1,6})/g)) {
+        tokens.add(match[1]);
+      }
+      return Array.from(tokens);
+    }
+
+    function autoSelectFirstTarget(targets) {
+      const available = targets.length ? targets : inferTargets(state.inputSummary);
+      state.selectedTarget = available.includes('ADAE') ? 'ADAE' : available[0];
+      renderTargetButtons(available);
+      if (state.selectedTarget) preparePlan();
+    }
+
+    function renderTargetButtons(targets) {
+      const node = byId('targetButtons');
+      if (!targets.length) {
+        node.innerHTML = '<span class="muted">No ADaM targets inferred yet.</span>';
+        return;
+      }
+      if (!state.selectedTarget || !targets.includes(state.selectedTarget)) {
+        state.selectedTarget = targets.includes('ADAE') ? 'ADAE' : targets[0];
+      }
+      node.innerHTML = targets.map((target) => `
+        <button class="target-button ${target === state.selectedTarget ? 'active' : ''}" data-target="${escapeHtml(target)}">${escapeHtml(target)}</button>
+      `).join('');
+      for (const button of node.querySelectorAll('[data-target]')) {
+        button.addEventListener('click', () => {
+          state.selectedTarget = button.dataset.target;
+          renderTargetButtons(targets);
+          resetGeneratedState();
+          preparePlan();
+        });
+      }
+      byId('generateCodeButton').disabled = !state.selectedTarget;
+      renderGraphAwareDashboard();
+    }
+
+    function addManualTarget() {
+      const value = byId('manualTarget').value.trim().toUpperCase();
+      if (!value) return;
+      if (!/^AD[A-Z0-9]{1,6}$/.test(value)) {
+        byId('planView').innerHTML = '<p class="note warn">Target should look like an ADaM dataset name, for example ADSL, ADAE, ADLB, or ADCM.</p>';
+        return;
+      }
+      const next = new Set(state.targetCandidates || []);
+      next.add(value);
+      state.targetCandidates = Array.from(next).sort();
+      state.selectedTarget = value;
+      byId('manualTarget').value = '';
+      resetGeneratedState();
+      renderTargetButtons(state.targetCandidates);
+      addEvent('Target added', `${value} was added manually for planning.`);
+      preparePlan();
+    }
+
+    function resetGeneratedState() {
+      state.generated = null;
+      state.review = null;
+      state.execution = null;
+      state.runReview = null;
+      state.tablePages = {};
+      state.compareResults = {};
+      state.selectedResultView = 'generated';
+      setPill('codeStatus', 'not generated');
+      byId('approveButton').disabled = true;
+      renderPane();
+      renderGraphAwareDashboard();
+    }
+
+    async function preparePlan() {
+      if (!studyDir() || !state.selectedTarget) return;
+      const payload = {
+        study_dir: studyDir(),
+        study_id: state.studyId,
+        run_id: runId(),
+        target_datasets: selectedTargets(),
+        approved_dependency_datasets: []
+      };
+      try {
+        const plan = await api('/runs/prepare', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
-        const result = await response.json();
-        if (!response.ok) {
-          setStatus('failed');
-          byId('artifactView').textContent = JSON.stringify(result, null, 2);
-          return;
-        }
-        renderRun(result);
-        byId('artifactView').textContent = JSON.stringify(result, null, 2);
+        state.plan = plan;
+        addEvent('Dependency plan prepared', `${state.selectedTarget} status: ${plan.dependency_review_status}.`);
+        setPill('planStatus', plan.dependency_review_status || 'planned');
+        renderPlan(plan);
+        renderGraphAwareDashboard();
+        setStep(4);
       } catch (error) {
-        setStatus('failed');
-        byId('artifactView').textContent = String(error);
+        setPill('planStatus', 'failed');
+        byId('planView').textContent = String(error);
       }
     }
 
-    async function loadArtifact(kind) {
-      const run = state.lastRun;
-      if (!run) {
-        byId('artifactView').textContent = 'Run a study first.';
+    function renderPlan(plan) {
+      const blocks = (plan.blocked_datasets || []).map((item) => `<li>${escapeHtml(item.dataset)} needs ${escapeHtml(item.blocked_by)}: ${escapeHtml(item.reason)}</li>`).join('');
+      const decisions = (plan.dependency_decisions || []).map((item) => `<li>${escapeHtml(item.dataset)} depends on ${escapeHtml((item.dependencies || []).join(', ') || 'nothing currently detected')}.</li>`).join('');
+      byId('planView').innerHTML = `
+        <p><strong>Selected target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
+        <p><strong>Runnable now:</strong> ${escapeHtml((plan.runnable_datasets || []).join(', ') || 'None')}</p>
+        ${blocks ? `<p class="note warn">Dependency action needed before generation:</p><ul class="clean">${blocks}</ul>` : '<p class="note strong">No blocking dependency action is required.</p>'}
+        <ul class="clean">${decisions || '<li>No explicit dependency was detected for this target.</li>'}</ul>
+      `;
+    }
+
+    function renderGraphAwareDashboard() {
+      const summary = state.inputSummary;
+      const fileCount =
+        (summary?.sdtm?.length || 0) +
+        (summary?.specs?.length || 0) +
+        (summary?.reference_adam?.length || 0) +
+        (summary?.define?.length || 0) +
+        (summary?.legacy_code?.length || 0);
+      const targets = state.targetCandidates || [];
+      const runnable = state.plan?.runnable_datasets || [];
+      const blocked = state.plan?.blocked_datasets || [];
+      byId('metricInputs').textContent = String(fileCount);
+      byId('metricTargets').textContent = String(targets.length);
+      byId('metricRunnable').textContent = String(runnable.length);
+      byId('metricBlocked').textContent = String(blocked.length);
+      setPill('graphStatus', blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+      renderDependencyGraph(targets, runnable, blocked);
+      renderDatasetBoard(targets, runnable, blocked);
+    }
+
+    function renderDependencyGraph(targets, runnable, blocked) {
+      const node = byId('dependencyGraph');
+      const sdtm = (state.inputSummary?.sdtm || []).map((item) => item.dataset).filter(Boolean);
+      if (!targets.length && !sdtm.length) {
+        node.innerHTML = '<div class="muted">Load inputs to build the study graph.</div>';
         return;
       }
-      const studyDir = encodeURIComponent(byId('studyDir').value.trim());
-      const runId = encodeURIComponent(run.run_id);
-      const dataset = encodeURIComponent(state.selectedDataset || run.dataset_results?.[0]?.dataset || 'ADAE');
-      let url = '';
-      let options = {};
-      if (kind === 'dependency') {
-        url = `/runs/${runId}/dependency-plan?study_dir=${studyDir}`;
-      } else if (kind === 'validation') {
-        url = `/runs/${runId}/datasets/${dataset}/validation?study_dir=${studyDir}`;
-      } else if (kind === 'diagnostics') {
-        url = `/runs/${runId}/datasets/${dataset}/diagnostics?study_dir=${studyDir}`;
-      } else if (kind === 'audit') {
-        url = `/runs/${runId}/audit-manifest?study_dir=${studyDir}`;
-      } else {
-        url = `/runs/${runId}/artifacts/read?study_dir=${studyDir}`;
-        options = {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({relative_path: `llm/${String(dataset).toLowerCase()}_context.json`})
-        };
+      const blockedNames = new Set((blocked || []).map((item) => item.dataset));
+      const rows = [];
+      if (sdtm.length) {
+        rows.push(`
+          <div class="graph-row">
+            ${sdtm.slice(0, 8).map((name) => `<div class="graph-node source">${escapeHtml(name)}</div>`).join('')}
+            <span class="graph-arrow">to</span>
+            <div class="graph-node target">ADaM Spec</div>
+          </div>
+        `);
       }
-      const response = await fetch(url, options);
-      const payload = await response.json();
-      byId('artifactView').textContent = JSON.stringify(payload, null, 2);
+      for (const target of targets) {
+        const dependencies = dependenciesForTarget(target);
+        rows.push(`
+          <div class="graph-row">
+            ${dependencies.map((dependency) => `<div class="graph-node ${dependencyAvailable(dependency, runnable, targets) ? 'target' : 'blocked'}">${escapeHtml(dependency)}</div><span class="graph-arrow">to</span>`).join('')}
+            <div class="graph-node ${blockedNames.has(target) ? 'blocked' : 'target'}">${escapeHtml(target)}</div>
+            <span class="pill ${runnable.includes(target) ? '' : blockedNames.has(target) ? 'fail' : 'warn'}">${escapeHtml(datasetStatus(target, runnable, blocked))}</span>
+          </div>
+        `);
+      }
+      node.innerHTML = rows.join('') || '<div class="muted">No dependency graph yet.</div>';
     }
 
-    byId('runButton').addEventListener('click', runStudy);
-    for (const button of document.querySelectorAll('[data-artifact]')) {
-      button.addEventListener('click', () => loadArtifact(button.dataset.artifact));
+    function renderDatasetBoard(targets, runnable, blocked) {
+      const node = byId('datasetBoard');
+      if (!targets.length) {
+        node.innerHTML = '<div class="muted">No dataset selected yet.</div>';
+        return;
+      }
+      const blockedNames = new Set((blocked || []).map((item) => item.dataset));
+      node.innerHTML = targets.map((target) => {
+        const status = datasetStatus(target, runnable, blocked);
+        const isActive = target === state.selectedTarget;
+        const isGenerated = state.generated?.dataset === target;
+        const isCompleted = state.execution?.dataset === target && state.execution?.status === 'completed';
+        return `
+          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) ? 'blocked' : ''}">
+            <div class="dataset-top">
+              <span class="dataset-name">${escapeHtml(target)}</span>
+              <span class="pill ${status === 'blocked' ? 'fail' : status === 'ready' ? '' : 'warn'}">${escapeHtml(status)}</span>
+            </div>
+            <div class="stage-strip">
+              <div class="stage done">inputs</div>
+              <div class="stage ${state.plan ? (blockedNames.has(target) ? 'blocked' : 'done') : 'active'}">plan</div>
+              <div class="stage ${isGenerated ? 'done' : target === state.selectedTarget ? 'active' : ''}">code</div>
+              <div class="stage ${state.review?.dataset === target ? 'done' : isGenerated ? 'active' : ''}">review</div>
+              <div class="stage ${isCompleted ? 'done' : state.execution?.dataset === target ? 'blocked' : ''}">run</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function hasDatasetEvidence(dataset) {
+      return Boolean((state.inputSummary?.reference_adam || []).find((item) => item.dataset === dataset));
+    }
+
+    function dependenciesForTarget(target) {
+      const decision = (state.plan?.dependency_decisions || []).find((item) => item.dataset === target);
+      return decision?.dependencies || [];
+    }
+
+    function dependencyAvailable(dependency, runnable, targets) {
+      return hasDatasetEvidence(dependency) || (runnable || []).includes(dependency) || (targets || []).includes(dependency);
+    }
+
+    function datasetStatus(target, runnable, blocked) {
+      if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
+      if (state.execution?.dataset === target) return state.execution.status;
+      if (state.generated?.dataset === target) return 'needs review';
+      if ((runnable || []).includes(target)) return 'ready';
+      if (state.plan) return 'waiting';
+      return 'candidate';
+    }
+
+    async function generateCode() {
+      if (!state.selectedTarget) return;
+      if (!state.plan) await preparePlan();
+      setPill('codeStatus', 'running');
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/generate-code`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            config_path: byId('configPath').value.trim() || null,
+            approved_dependency_datasets: []
+          })
+        });
+        state.generated = payload;
+        state.selectedView = 'summary';
+        setActiveTab();
+        setPill('codeStatus', 'review');
+        byId('approveButton').disabled = false;
+        addEvent('R code generated', `${payload.dataset} code is ready for review.`);
+        renderGraphAwareDashboard();
+        setStep(5);
+        renderPane();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+      }
+    }
+
+    async function approveAndRun() {
+      if (!state.generated) return;
+      setPill('codeStatus', 'running');
+      try {
+        state.review = await api(`/runs/${encodeURIComponent(state.generated.run_id)}/datasets/${encodeURIComponent(state.generated.dataset)}/code-review`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            reviewer: byId('reviewer').value.trim() || 'local_user',
+            decision: 'approve',
+            notes: byId('reviewNotes').value.trim()
+          })
+        });
+        state.execution = await api(`/runs/${encodeURIComponent(state.generated.run_id)}/datasets/${encodeURIComponent(state.generated.dataset)}/execute-approved-code`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            rscript_path: byId('rscriptPath').value.trim() || null,
+            require_approval: true
+          })
+        });
+        await loadReviewSummary(state.generated.run_id);
+        addEvent('Sandbox completed', `${state.generated.dataset} finished with status ${state.execution.status}.`);
+        setPill('codeStatus', state.execution.status);
+        state.selectedView = 'output';
+        setActiveTab();
+        setStep(6);
+        renderPane();
+        renderGraphAwareDashboard();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+      }
+    }
+
+    async function loadReviewSummary(id) {
+      try {
+        state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}`);
+        const review = selectedDatasetReview();
+        if (review?.compare_summary) {
+          state.compareResults[review.dataset] = review.compare_summary;
+        }
+        renderAdvanced();
+      } catch {
+        state.runReview = null;
+      }
+    }
+
+    function selectedDatasetReview() {
+      const dataset = state.generated?.dataset || state.selectedTarget;
+      return (state.runReview?.dataset_reviews || []).find((item) => item.dataset === dataset) || null;
+    }
+
+    function renderPane() {
+      const pane = byId('reviewPane');
+      const generated = state.generated;
+      const datasetReview = selectedDatasetReview();
+      if (state.selectedView === 'summary') {
+        if (!generated) {
+          pane.innerHTML = '<p class="note">Generate code after choosing a target. Nothing has been sent to R yet.</p>';
+          return;
+        }
+        pane.innerHTML = `
+          <p class="note strong">R code is ready for ${escapeHtml(generated.dataset)}. Review the assumptions, then approve to run locally.</p>
+          <div class="grid2">
+            <div class="card"><h3>What will happen</h3><ul class="clean">${listItems(generated.expected_outputs, 'No output declared.')}</ul></div>
+            <div class="card"><h3>Inputs used</h3><ul class="clean">${listItems(generated.used_inputs, 'No inputs declared.')}</ul></div>
+          </div>
+        `;
+        return;
+      }
+      if (state.selectedView === 'code') {
+        pane.innerHTML = generated ? `<pre>${escapeHtml(generated.generated_code)}</pre>` : '<p class="note">No R code generated yet.</p>';
+        return;
+      }
+      if (state.selectedView === 'risk') {
+        pane.innerHTML = generated ? `
+          <div class="grid2">
+            <div><h3>Assumptions</h3><ul class="clean">${listItems(generated.assumptions, 'None reported.')}</ul></div>
+            <div><h3>Risk Points</h3><ul class="clean">${listItems(generated.risk_points, 'None reported.')}</ul></div>
+          </div>
+        ` : '<p class="note">No generated package yet.</p>';
+        return;
+      }
+      if (state.selectedView === 'timeline') {
+        pane.innerHTML = `<div class="timeline" id="timelinePane">${timelineHtml()}</div>`;
+        return;
+      }
+      pane.innerHTML = resultWorkspace(datasetReview);
+      attachResultHandlers(datasetReview);
+    }
+
+    function resultWorkspace(review) {
+      if (!review) return '<p class="note">No generated ADaM output found yet.</p>';
+      return `
+        <p class="note strong">Result review for ${escapeHtml(review.dataset)}. Use the tabs below to inspect the generated table, compare it with reference ADaM, and download artifacts.</p>
+        <div class="result-tabs">
+          <button class="result-tab ${state.selectedResultView === 'generated' ? 'active' : ''}" data-result-view="generated">Generated Table</button>
+          <button class="result-tab ${state.selectedResultView === 'reference' ? 'active' : ''}" data-result-view="reference">Reference Table</button>
+          <button class="result-tab ${state.selectedResultView === 'compare' ? 'active' : ''}" data-result-view="compare">Compare</button>
+          <button class="result-tab ${state.selectedResultView === 'downloads' ? 'active' : ''}" data-result-view="downloads">Downloads</button>
+        </div>
+        <div id="resultPane">${resultPaneHtml(review)}</div>
+      `;
+    }
+
+    function resultPaneHtml(review) {
+      if (state.selectedResultView === 'compare') return comparePane(review);
+      if (state.selectedResultView === 'downloads') return downloadsPane(review);
+      return outputPreview(review, state.selectedResultView === 'reference' ? 'reference' : 'generated');
+    }
+
+    function outputPreview(review, kind) {
+      const preview = review?.output_preview;
+      const selectedPreview = kind === 'reference' ? review?.reference_preview : preview;
+      if (!selectedPreview) return `<p class="note">${kind === 'reference' ? 'No reference ADaM found for this dataset.' : 'No generated ADaM output found yet.'}</p>`;
+      const key = tableKey(review.dataset, kind);
+      const page = state.tablePages[key] || null;
+      const columns = page?.columns || selectedPreview.columns || [];
+      const rows = page?.rows || selectedPreview.sample_rows || [];
+      const head = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('');
+      const body = rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] || '')}</td>`).join('')}</tr>`).join('');
+      const rowCount = page?.row_count ?? selectedPreview.row_count ?? '-';
+      const currentPage = page?.page || 1;
+      const totalPages = page?.total_pages || 0;
+      return `
+        <p class="note strong">${kind === 'reference' ? 'Reference ADaM' : 'Generated ADaM'}: ${escapeHtml(selectedPreview.file_name)} | ${rowCount} rows | ${columns.length} columns.</p>
+        <div class="table-toolbar">
+          <span class="muted">${totalPages ? `Page ${currentPage} of ${totalPages}` : 'Showing preview rows.'}</span>
+          <div class="button-row" style="margin:0;">
+            <button class="secondary" data-table-action="prev" data-kind="${kind}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>
+            <button class="secondary" data-table-action="next" data-kind="${kind}" ${totalPages && currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+            <button class="secondary" data-table-action="load" data-kind="${kind}">Load Full Page</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body || '<tr><td class="muted">No preview rows.</td></tr>'}</tbody></table></div>
+      `;
+    }
+
+    function comparePane(review) {
+      const compare = state.compareResults[review.dataset] || review.compare_summary;
+      if (!compare) return '<p class="note">Compare has not been run yet.</p>';
+      const mismatchRows = (compare.mismatch_samples || []).map((item) => `
+        <tr><td>${escapeHtml(item.key)}</td><td>${escapeHtml(item.column)}</td><td>${escapeHtml(item.generated)}</td><td>${escapeHtml(item.reference)}</td></tr>
+      `).join('');
+      return `
+        <p class="note ${compare.status === 'match' ? 'strong' : 'warn'}">Compare status: ${escapeHtml(compare.status)}. ${escapeHtml(compare.note || '')}</p>
+        <div class="grid3">
+          <div class="metric"><span class="metric-value">${compare.row_count_generated ?? '-'}</span><span class="metric-label">generated rows</span></div>
+          <div class="metric"><span class="metric-value">${compare.row_count_reference ?? '-'}</span><span class="metric-label">reference rows</span></div>
+          <div class="metric"><span class="metric-value">${compare.mismatch_count ?? 0}</span><span class="metric-label">cell mismatches</span></div>
+        </div>
+        <div class="grid2" style="margin-top:12px;">
+          <div class="card"><h3>Column differences</h3><ul class="clean">
+            <li>Generated only: ${escapeHtml((compare.generated_only_columns || []).join(', ') || 'none')}</li>
+            <li>Reference only: ${escapeHtml((compare.reference_only_columns || []).join(', ') || 'none')}</li>
+            <li>Keys used: ${escapeHtml((compare.key_columns || []).join(', ') || 'row order')}</li>
+          </ul></div>
+          <div class="card"><h3>Row key differences</h3><ul class="clean">
+            <li>Generated only keys: ${escapeHtml((compare.generated_only_keys || []).slice(0, 8).join(', ') || 'none')}</li>
+            <li>Reference only keys: ${escapeHtml((compare.reference_only_keys || []).slice(0, 8).join(', ') || 'none')}</li>
+          </ul></div>
+        </div>
+        <div class="button-row"><button class="secondary" id="refreshCompareButton">Run Compare Again</button></div>
+        <h3 style="margin-top:12px;">Mismatch Samples</h3>
+        <div class="table-wrap"><table><thead><tr><th>Key</th><th>Column</th><th>Generated</th><th>Reference</th></tr></thead><tbody>${mismatchRows || '<tr><td class="muted" colspan="4">No mismatch samples.</td></tr>'}</tbody></table></div>
+      `;
+    }
+
+    function downloadsPane(review) {
+      const items = review.downloads || [];
+      if (!items.length) return '<p class="note">No downloadable artifacts are registered yet.</p>';
+      return `<div class="download-list">${items.map((item) => `
+        <div class="download-item">
+          <div>
+            <strong>${escapeHtml(item.label)}</strong>
+            <div class="file-meta">${escapeHtml(item.file_name || item.note || 'Not available yet.')}</div>
+          </div>
+          <button class="secondary" data-download-kind="${escapeHtml(item.kind)}" ${item.available ? '' : 'disabled'}>Download</button>
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function attachResultHandlers(review) {
+      if (!review) return;
+      for (const button of document.querySelectorAll('[data-result-view]')) {
+        button.addEventListener('click', () => {
+          state.selectedResultView = button.dataset.resultView;
+          renderPane();
+        });
+      }
+      for (const button of document.querySelectorAll('[data-table-action]')) {
+        button.addEventListener('click', () => handleTableAction(review, button.dataset.kind, button.dataset.tableAction));
+      }
+      for (const button of document.querySelectorAll('[data-download-kind]')) {
+        button.addEventListener('click', () => downloadArtifact(review, button.dataset.downloadKind));
+      }
+      const compareButton = byId('refreshCompareButton');
+      if (compareButton) compareButton.addEventListener('click', () => refreshCompare(review));
+    }
+
+    async function handleTableAction(review, kind, action) {
+      const key = tableKey(review.dataset, kind);
+      const current = state.tablePages[key];
+      let page = current?.page || 1;
+      if (action === 'next') page += 1;
+      if (action === 'prev') page = Math.max(1, page - 1);
+      if (action === 'load') page = 1;
+      const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(review.dataset)}/table?study_dir=${encodeURIComponent(studyDir())}&kind=${encodeURIComponent(kind)}&page=${page}&page_size=25`);
+      state.tablePages[key] = payload;
+      renderPane();
+    }
+
+    async function refreshCompare(review) {
+      const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(review.dataset)}/compare?study_dir=${encodeURIComponent(studyDir())}`);
+      state.compareResults[review.dataset] = payload;
+      renderPane();
+    }
+
+    function downloadArtifact(review, kind) {
+      const url = `/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(review.dataset)}/download?study_dir=${encodeURIComponent(studyDir())}&kind=${encodeURIComponent(kind)}`;
+      window.location.href = url;
+    }
+
+    function tableKey(dataset, kind) {
+      return `${dataset}:${kind}`;
+    }
+
+    function renderAdvanced() {
+      const artifacts = state.runReview?.advanced_artifacts || {};
+      const rows = Object.entries(artifacts).map(([key, value]) => `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`).join('');
+      byId('advancedPane').innerHTML = rows
+        ? `<table><thead><tr><th>Artifact</th><th>Path</th></tr></thead><tbody>${rows}</tbody></table>`
+        : 'Audit artifacts appear after a run.';
+    }
+
+    function renderTimeline() {
+      if (state.selectedView === 'timeline') {
+        byId('reviewPane').innerHTML = `<div class="timeline" id="timelinePane">${timelineHtml()}</div>`;
+      }
+    }
+
+    function timelineHtml() {
+      if (!state.events.length) {
+        return '<div class="note">No graph events yet.</div>';
+      }
+      return state.events.map((event) => `
+        <div class="timeline-item">
+          <div class="timeline-time">${escapeHtml(event.time)}</div>
+          <div>
+            <div class="timeline-title">${escapeHtml(event.title)}</div>
+            <div class="muted">${escapeHtml(event.detail)}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function listItems(items, fallback) {
+      if (!items || !items.length) return `<li>${escapeHtml(fallback)}</li>`;
+      return items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+    }
+
+    function setActiveTab() {
+      for (const button of document.querySelectorAll('[data-view]')) {
+        button.classList.toggle('active', button.dataset.view === state.selectedView);
+      }
+    }
+
+    byId('createDemoButton').addEventListener('click', createDemoStudy);
+    byId('startUploadButton').addEventListener('click', startUploadWorkspace);
+    byId('generateCodeButton').addEventListener('click', generateCode);
+    byId('approveButton').addEventListener('click', approveAndRun);
+    byId('addTargetButton').addEventListener('click', addManualTarget);
+    for (const button of document.querySelectorAll('[data-upload-role]')) {
+      button.addEventListener('click', () => uploadRole(button.dataset.uploadRole));
+    }
+    for (const button of document.querySelectorAll('[data-view]')) {
+      button.addEventListener('click', () => {
+        state.selectedView = button.dataset.view;
+        setActiveTab();
+        renderPane();
+      });
     }
     checkHealth();
   </script>

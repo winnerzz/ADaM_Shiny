@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -104,7 +105,7 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
         for dataset in list(targets):
             if _is_unsupported_target(dataset):
                 continue
-            for dependency in _dependencies_for_dataset(dataset, evidence_by_dataset):
+            for dependency in _dependencies_for_dataset(dataset, evidence_by_dataset, study_dir=study_dir):
                 if dependency not in targets:
                     targets.append(dependency)
                     auto_added.append(dependency)
@@ -112,14 +113,14 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
 
     unsupported = [dataset for dataset in targets if _is_unsupported_target(dataset)]
     supported_targets = [dataset for dataset in targets if dataset not in unsupported]
-    ordered_supported, execution_batches, cycle_warnings = _topological_order(supported_targets, evidence_by_dataset)
+    ordered_supported, execution_batches, cycle_warnings = _topological_order(supported_targets, evidence_by_dataset, study_dir=study_dir)
     planning_warnings.extend(cycle_warnings)
     ordered_targets = ordered_supported + [dataset for dataset in targets if dataset in unsupported]
     if input_spec_present:
-        planning_warnings.extend(_input_spec_gap_warnings(ordered_supported, evidence_by_dataset))
+        planning_warnings.extend(_input_spec_gap_warnings(ordered_supported, evidence_by_dataset, study_dir=study_dir))
 
     decisions = [
-        _dependency_decision(dataset, evidence_by_dataset, is_auto_added=dataset in auto_added)
+        _dependency_decision(dataset, evidence_by_dataset, is_auto_added=dataset in auto_added, study_dir=study_dir)
         for dataset in ordered_targets
     ]
     dependencies = {decision.dataset: decision.dependencies for decision in decisions}
@@ -178,6 +179,25 @@ def _input_spec_present(study_dir: str | Path | None) -> bool:
     return _folder_has_files(Path(study_dir) / "input_spec")
 
 
+def _target_input_spec_present(study_dir: str | Path | None, dataset: str) -> bool:
+    """Return whether a user supplied an input spec that appears to own this target."""
+
+    if not study_dir:
+        return False
+    folder = Path(study_dir) / "input_spec"
+    if not folder.exists():
+        return False
+    target = dataset.strip().upper()
+    for path in sorted(item for item in folder.iterdir() if item.is_file()):
+        if _dataset_from_path(path) == target:
+            return True
+        if path.suffix.lower() == ".csv" and _csv_spec_mentions_dataset(path, target):
+            return True
+        if path.suffix.lower() == ".json" and _json_spec_dataset(path) == target:
+            return True
+    return False
+
+
 def _normalize_datasets(datasets: list[str]) -> list[str]:
     normalized: list[str] = []
     for dataset in datasets:
@@ -187,15 +207,22 @@ def _normalize_datasets(datasets: list[str]) -> list[str]:
     return normalized or ["ADSL"]
 
 
-def _dependencies_for_dataset(dataset: str, evidence_by_dataset: dict[str, list[DependencyEvidence]]) -> list[str]:
+def _dependencies_for_dataset(
+    dataset: str,
+    evidence_by_dataset: dict[str, list[DependencyEvidence]],
+    *,
+    study_dir: str | Path | None = None,
+) -> list[str]:
     evidence_dependencies = _evidence_dependencies_for_dataset(dataset, evidence_by_dataset)
     if evidence_dependencies:
         return evidence_dependencies
-    return _fallback_dependencies_for_dataset(dataset)
+    return _fallback_dependencies_for_dataset(dataset, study_dir=study_dir)
 
 
-def _fallback_dependencies_for_dataset(dataset: str) -> list[str]:
+def _fallback_dependencies_for_dataset(dataset: str, *, study_dir: str | Path | None = None) -> list[str]:
     if dataset == "ADSL":
+        return []
+    if _target_input_spec_present(study_dir, dataset):
         return []
     if dataset in DEFAULT_ADSL_DEPENDENT_DATASETS:
         return ["ADSL"]
@@ -213,6 +240,7 @@ def _dependency_decision(
     evidence_by_dataset: dict[str, list[DependencyEvidence]],
     *,
     is_auto_added: bool,
+    study_dir: str | Path | None = None,
 ) -> DependencyDecision:
     evidence = evidence_by_dataset.get(dataset, [])
     if evidence:
@@ -240,6 +268,19 @@ def _dependency_decision(
             confidence=0.7 if is_auto_added else 0.8,
             review_required=False,
             reason="ADSL is the Phase 7.1 foundation dataset for study orchestration.",
+            evidence_ids=[],
+        )
+    if _target_input_spec_present(study_dir, dataset):
+        return DependencyDecision(
+            dataset=dataset,
+            dependencies=[],
+            source="input_spec_no_adam_dependency",
+            confidence=0.85,
+            review_required=False,
+            reason=(
+                f"{dataset} has a user-provided input_spec and no ADaM dependency was found in dependency-relevant "
+                "spec fields, so the system will not impose an ADSL fallback."
+            ),
             evidence_ids=[],
         )
     if dataset in DEFAULT_ADSL_DEPENDENT_DATASETS:
@@ -283,10 +324,12 @@ def _evidence_by_dataset(evidence_records: list[DependencyEvidence]) -> dict[str
 def _input_spec_gap_warnings(
     supported_targets: list[str],
     evidence_by_dataset: dict[str, list[DependencyEvidence]],
+    *,
+    study_dir: str | Path | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     for dataset in supported_targets:
-        if dataset == "ADSL" or dataset in evidence_by_dataset:
+        if dataset == "ADSL" or dataset in evidence_by_dataset or _target_input_spec_present(study_dir, dataset):
             continue
         warnings.append(
             f"Input spec is present, but no dependency evidence was extracted for {dataset}; "
@@ -339,8 +382,13 @@ def _evidence_dependencies_for_dataset(
 def _topological_order(
     supported_targets: list[str],
     evidence_by_dataset: dict[str, list[DependencyEvidence]],
+    *,
+    study_dir: str | Path | None = None,
 ) -> tuple[list[str], list[list[str]], list[str]]:
-    dependencies = {dataset: _dependencies_for_dataset(dataset, evidence_by_dataset) for dataset in supported_targets}
+    dependencies = {
+        dataset: _dependencies_for_dataset(dataset, evidence_by_dataset, study_dir=study_dir)
+        for dataset in supported_targets
+    }
     remaining = list(supported_targets)
     ordered: list[str] = []
     batches: list[list[str]] = []
@@ -387,6 +435,9 @@ def _scan_input_spec_dependencies(folder: Path, warnings: list[str]) -> list[Dep
         if path.suffix.lower() == ".json":
             evidence.extend(_scan_json_spec_dependencies(path, warnings))
             continue
+        if path.suffix.lower() == ".csv":
+            evidence.extend(_scan_csv_spec_dependencies(path, warnings))
+            continue
         dataset = _dataset_from_path(path)
         if not dataset:
             continue
@@ -401,6 +452,73 @@ def _scan_input_spec_dependencies(folder: Path, warnings: list[str]) -> list[Dep
             )
         )
     return evidence
+
+
+def _scan_csv_spec_dependencies(path: Path, warnings: list[str]) -> list[DependencyEvidence]:
+    """Scan structured CSV specs without treating labels as dependency evidence."""
+
+    dataset_from_name = _dataset_from_path(path)
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except UnicodeDecodeError:
+        try:
+            with path.open("r", encoding="latin-1", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        except (OSError, csv.Error) as exc:
+            warnings.append(f"Could not parse input spec CSV {path.name}: {exc}")
+            return _scan_unstructured_spec_file(path, warnings, dataset_from_name, confidence=0.8)
+    except (OSError, csv.Error) as exc:
+        warnings.append(f"Could not parse input spec CSV {path.name}: {exc}")
+        return _scan_unstructured_spec_file(path, warnings, dataset_from_name, confidence=0.8)
+
+    if not rows:
+        return []
+
+    texts_by_dataset: dict[str, list[str]] = {}
+    for row in rows:
+        row_dataset = _normalize_dataset_token(_first_present(row, ["dataset", "domain", "adataset"])) or dataset_from_name
+        if not row_dataset:
+            continue
+        candidate_texts: list[str] = []
+        for key, value in row.items():
+            if _is_dependency_evidence_column(key):
+                candidate_texts.extend(_flatten_strings(value))
+        if candidate_texts:
+            texts_by_dataset.setdefault(row_dataset, []).extend(candidate_texts)
+
+    evidence: list[DependencyEvidence] = []
+    for dataset, texts in texts_by_dataset.items():
+        evidence.extend(
+            _evidence_from_text(
+                dataset=dataset,
+                text="\n".join(texts),
+                source="input_spec_dependency",
+                confidence=0.85,
+                evidence_prefix=f"input_spec:{path.name}",
+                detail_prefix=f"ADaM dependency token found in structured input spec file {path.name}",
+            )
+        )
+    return evidence
+
+
+def _scan_unstructured_spec_file(
+    path: Path,
+    warnings: list[str],
+    dataset: str | None,
+    *,
+    confidence: float,
+) -> list[DependencyEvidence]:
+    if not dataset:
+        return []
+    return _evidence_from_text(
+        dataset=dataset,
+        text=_read_text(path, warnings),
+        source="input_spec_dependency",
+        confidence=confidence,
+        evidence_prefix=f"input_spec:{path.name}",
+        detail_prefix=f"ADaM dependency token found in unstructured input spec file {path.name}",
+    )
 
 
 def _scan_json_spec_dependencies(path: Path, warnings: list[str]) -> list[DependencyEvidence]:
@@ -573,6 +691,11 @@ def _dataset_from_path(path: Path) -> str | None:
 
 
 def _dataset_from_string(value: str) -> str | None:
+    ads_spec_match = re.search(r"\bADS[_\-\s]+(?P<dataset>AD[A-Z0-9]{1,})(?:[_\-\s]+FULL)?\b", value.upper())
+    if ads_spec_match:
+        token = _normalize_dataset_token(ads_spec_match.group("dataset"))
+        if token:
+            return token
     for part in re.split(r"[^A-Za-z0-9]+", value.upper()):
         token = _normalize_dataset_token(part)
         if token:
@@ -611,6 +734,44 @@ def _flatten_strings(value: Any) -> list[str]:
     return []
 
 
+def _first_present(row: dict[str, Any], keys: list[str]) -> str | None:
+    normalized = {str(key).strip().lower(): value for key, value in row.items()}
+    for key in keys:
+        value = normalized.get(key.lower())
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _is_dependency_evidence_column(key: str | None) -> bool:
+    if key is None:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+    if not normalized:
+        return False
+    include_fragments = [
+        "source",
+        "derivation",
+        "dependency",
+        "dependencies",
+        "origin",
+        "method",
+        "algorithm",
+        "logic",
+        "comment",
+    ]
+    exclude_exact = {
+        "label",
+        "variable_label",
+        "dataset_label",
+        "description",
+        "type",
+        "format",
+        "length",
+    }
+    return normalized not in exclude_exact and any(fragment in normalized for fragment in include_fragments)
+
+
 def _looks_like_sas_dependency_line(line: str) -> bool:
     lower = line.lower()
     return any(keyword in lower for keyword in [" merge ", " set ", " join ", " from "])
@@ -632,3 +793,37 @@ def _read_text(path: Path, warnings: list[str]) -> str:
 
 def _folder_has_files(folder: Path) -> bool:
     return folder.exists() and any(path.is_file() for path in folder.iterdir())
+
+
+def _csv_spec_mentions_dataset(path: Path, dataset: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except UnicodeDecodeError:
+        try:
+            with path.open("r", encoding="latin-1", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        except (OSError, csv.Error):
+            return False
+    except (OSError, csv.Error):
+        return False
+    for row in rows:
+        row_dataset = _normalize_dataset_token(_first_present(row, ["dataset", "domain", "adataset"]))
+        if row_dataset == dataset:
+            return True
+    return False
+
+
+def _json_spec_dataset(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        try:
+            payload = json.loads(path.read_text(encoding="latin-1"))
+        except (OSError, json.JSONDecodeError):
+            return None
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _normalize_dataset_token(_string_value(payload.get("dataset")))

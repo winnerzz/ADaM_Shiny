@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ADaM LangGraph Phase 1-7 完成情况检阅</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #5c667a;
+      --line: #d9deea;
+      --blue: #1f5fbf;
+      --green: #147a4a;
+      --amber: #9a5b00;
+      --red: #b42318;
+      --code: #eef2f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    header {
+      background: #172033;
+      color: #fff;
+      padding: 36px 28px 30px;
+      border-bottom: 5px solid #2f77d1;
+    }
+    header h1 { margin: 0 0 10px; font-size: 30px; letter-spacing: 0; }
+    header p { max-width: 980px; margin: 0; color: #d9e3f7; font-size: 16px; }
+    main { max-width: 1180px; margin: 0 auto; padding: 26px 20px 60px; }
+    section, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin: 18px 0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    h2 { margin: 0 0 14px; font-size: 22px; }
+    h3 { margin: 22px 0 8px; font-size: 18px; }
+    h4 { margin: 18px 0 6px; font-size: 16px; }
+    p { margin: 8px 0; }
+    ul { margin: 8px 0 8px 22px; padding: 0; }
+    li { margin: 5px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th, td { border: 1px solid var(--line); padding: 9px 10px; vertical-align: top; }
+    th { background: #eef3fb; text-align: left; }
+    code, .mono { font-family: Consolas, "Cascadia Mono", monospace; background: var(--code); padding: 2px 5px; border-radius: 4px; }
+    pre { background: #111827; color: #e5e7eb; padding: 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+    .tag { display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; margin-right: 6px; }
+    .done { color: var(--green); background: #e7f6ee; border: 1px solid #bfe7d0; }
+    .warn { color: var(--amber); background: #fff4df; border: 1px solid #f3d49a; }
+    .fail { color: var(--red); background: #fde9e7; border: 1px solid #f5b8b2; }
+    .info { color: var(--blue); background: #e8f1ff; border: 1px solid #bdd5ff; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .callout { border-left: 5px solid #2f77d1; background: #eef5ff; padding: 12px 14px; border-radius: 6px; }
+    .risk { border-left: 5px solid var(--amber); background: #fff8ea; padding: 12px 14px; border-radius: 6px; }
+    .bad { border-left: 5px solid var(--red); background: #fff1f0; padding: 12px 14px; border-radius: 6px; }
+    .small { color: var(--muted); font-size: 13px; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } header h1 { font-size: 24px; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>ADaM LangGraph Phase 1-7 完成情况检阅</h1>
+  <p>这份文件只总结新架构项目 <code>D:\Archive\Research\Projects\ADaM_Shiny_LangGraph</code> 在 Phase 1 到 Phase 7 做成了什么、没做成什么，以及哪些能力是真实执行、哪些仍然是 mock/stub。当前失败的 Phase 8 UI 不计入本报告成果。</p>
+</header>
+<main>
+  <section>
+    <h2>先给结论</h2>
+    <div class="callout">
+      <p><strong>Phase 1-7 的后端架构主线已经搭起来了：</strong>系统已经从“旧 Shiny 单节点大提示词”转成了一个可编排的本地后端原型。它能管理 study 文件夹、扫描输入、维护状态、规划 ADaM 数据集依赖、调用 LLM 边界、生成/保存 R 代码、用本地 Rscript 执行、写审计文件，并对失败做初步诊断和一次受控修复。</p>
+      <p><strong>但这不是一个已经好用的产品：</strong>UI 没有成功，ADSL 以外的数据集还不是稳定的临床生产规则生成器，验证也主要是结构性验证，不是 CDISC/P21 级别合规验证。</p>
+    </div>
+    <table>
+      <tr><th>维度</th><th>当前真实状态</th></tr>
+      <tr><td>产品形态</td><td>后端原型已成型；人用 UI 失败，需要重做。</td></tr>
+      <tr><td>输入模型</td><td>支持 study 文件夹结构：<code>input_sdtm</code>、<code>input_spec</code>、<code>reference_adam</code>、<code>legacy_code</code>、<code>input_define</code>、<code>runs</code>。</td></tr>
+      <tr><td>真实生成能力</td><td>ADSL 有 deterministic R 路径；下游 ADaM 有 LLM 生成 R 代码并进入 R 沙盒的通路，但临床逻辑仍依赖用户 spec、输入数据和 LLM 输出质量。</td></tr>
+      <tr><td>LLM 能力</td><td>已有 OpenAI-compatible、Claude/Anthropic、DeepSeek/Qwen alias、custom base URL 的配置边界；真实调用需要显式允许外部 API 和 API key。</td></tr>
+      <tr><td>R 执行能力</td><td>已有本地 <code>Rscript</code> 执行边界，可使用 <code>C:\Dev\R-4.5.2\bin\Rscript.exe</code>。<code>.sas7bdat</code> 主要走 R/haven 读取。</td></tr>
+      <tr><td>审计能力</td><td>run 目录下写入 dependency plan、LLM response、generated R、validation、diagnostics、manifest 等文件。</td></tr>
+      <tr><td>主要风险</td><td>UI 方向错误；下游数据集业务规则不应被误称为“生产级真实生成”；依赖抽取和验证仍是 MVP 水平。</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>整体架构到底做成了什么</h2>
+    <p>用小白能理解的话说，Phase 1-7 搭的是“后台工厂”，不是“最终软件界面”。</p>
+    <pre>用户准备 study 文件夹
+  -> 系统扫描有哪些 SDTM、spec、参考 ADaM、SAS/define 证据
+  -> 系统判断要生成哪些 ADaM，以及它们互相依赖什么
+  -> 每个目标数据集进入自己的 DatasetGraph
+  -> DatasetGraph 准备 LLM 上下文
+  -> LLM 返回严格 JSON，里面包含 R 代码、假设、风险点
+  -> 系统保存原始回复、解析结果、R 脚本
+  -> Rscript 执行生成的 R 脚本
+  -> 系统检查输出文件是否存在、结构是否基本正确
+  -> 系统写 validation、diagnostics、audit manifest</pre>
+    <p>这说明后端链条已经存在。现在最大问题不是“完全没架构”，而是 <strong>UI 没有按这个工作流让用户理解和控制系统</strong>。</p>
+  </section>
+
+  <section>
+    <h2>Phase 1-7 阶段总览</h2>
+    <table>
+      <tr><th>阶段</th><th>目标</th><th>完成结果</th><th>真实边界</th></tr>
+      <tr><td>Phase 1</td><td>产品与数据契约</td><td><span class="tag done">完成</span>定义输入、输出、数据暴露、spec 缺失处理、study 目录结构。</td><td>只定义边界，不写核心执行代码。</td></tr>
+      <tr><td>Phase 2</td><td>状态模型</td><td><span class="tag done">完成</span>用 Pydantic 定义 StudyState、DatasetState、ArtifactRef、Spec、Evidence、Approval、Failure。</td><td>状态模型不是产品 UI，也不是临床规则库。</td></tr>
+      <tr><td>Phase 3</td><td>LangGraph 骨架</td><td><span class="tag done">完成</span>StudyGraph/DatasetGraph 跑通，支持 stub 数据集、依赖顺序、checkpoint smoke。</td><td>当时大部分节点还是 stub，不是真生成。</td></tr>
+      <tr><td>Phase 4</td><td>工具层 MVP</td><td><span class="tag done">完成</span>把文件扫描、artifact、config、LLM client、R runner 抽成接口。</td><td>Phase 4 默认 mock/stub，不调用真实 API，不跑真实 R。</td></tr>
+      <tr><td>Phase 5</td><td>单数据集真实循环</td><td><span class="tag done">基本完成</span>ADSL minimal 可以读 DM/EX、生成 R、跑 Rscript、写 adsl.csv、验证、审计。</td><td>ADSL 是 MVP starter，不是完整生产 ADSL 规则。</td></tr>
+      <tr><td>Phase 6</td><td>失败诊断与回退路由</td><td><span class="tag done">完成 MVP</span>失败能分类，写 failure report，给 recommended_route。</td><td>不是完整自动修复 UI；只是诊断和路由记录。</td></tr>
+      <tr><td>Phase 7</td><td>多数据集 study 编排</td><td><span class="tag done">完成后端主线</span>依赖规划、依赖可用性检查、LLM/R 下游路径、provider 配置、R sandbox、一次 repair。</td><td>下游 ADaM 的临床正确性仍依赖 spec/LLM/R 输出；验证不是监管级。</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Phase 1：产品与数据契约</h2>
+    <p><strong>这一阶段解决的是：</strong>系统到底接收什么、输出什么、哪些数据能发给 LLM、spec 没有时怎么办。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li>定义 study 文件夹结构：<code>input_sdtm/</code>、<code>input_define/</code>、<code>input_spec/</code>、<code>reference_adam/</code>、<code>legacy_code/</code>、<code>runs/</code>。</li>
+      <li>定义第一版支持格式：<code>.csv</code> 和 <code>.sas7bdat</code>。</li>
+      <li>明确 <code>.sas7bdat</code> 是数据表；<code>.sas</code> 是 SAS 程序文本证据，MVP 不执行 SAS 程序。</li>
+      <li>明确如果有用户提供的 <code>input_spec</code>，它优先；如果没有 spec，系统才从 legacy SAS、define.xml、reference ADaM、SDTM profile 等证据构造 draft spec。</li>
+      <li>明确 reference ADaM 主要用于输出形态和最终比较，不能单独决定推导逻辑。</li>
+      <li>明确 demo 数据可以在显式允许时给 LLM 更多上下文；真实临床数据默认 metadata only。</li>
+    </ul>
+    <h3>产生的关键文档</h3>
+    <ul>
+      <li><code>docs/product_contract.md</code></li>
+      <li><code>docs/input_contract.md</code></li>
+      <li><code>docs/output_contract.md</code></li>
+      <li><code>docs/spec_draft_contract.md</code></li>
+      <li><code>docs/data_governance.md</code></li>
+    </ul>
+    <div class="risk"><strong>边界：</strong>Phase 1 是产品规则和输入输出边界，不负责真正生成 ADaM。</div>
+  </section>
+
+  <section>
+    <h2>Phase 2：状态模型</h2>
+    <p><strong>这一阶段解决的是：</strong>LangGraph 运行时需要记住什么，怎么避免多个数据集互相污染状态。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li>定义 study 级状态 <code>StudyState</code>：记录整个 study、run、目标数据集、依赖图、总体状态。</li>
+      <li>定义 dataset 级状态 <code>DatasetState</code>：每个 ADaM 数据集有自己的 spec、证据、审批、失败、修复次数。</li>
+      <li>定义 <code>ArtifactRef</code>：大文件不塞进 state，只保存路径、hash、角色。</li>
+      <li>定义证据、审批、LLM 调用、路由、失败、spec 变量等对象。</li>
+      <li>确保每个数据集自己的 <code>repair_attempts</code> 独立，不会出现 ADSL 失败影响 ADAE repair count 的全局状态问题。</li>
+    </ul>
+    <h3>代码模块</h3>
+    <ul>
+      <li><code>src/adam_agent/schemas/*.py</code></li>
+      <li><code>tests/test_state_schemas.py</code></li>
+    </ul>
+    <h3>验证</h3>
+    <p>当时 schema 测试通过：<code>Ran 12 tests ... OK</code>。</p>
+    <div class="risk"><strong>边界：</strong>State 是后端运行记忆，不是 UI，不是临床医学知识库。</div>
+  </section>
+
+  <section>
+    <h2>Phase 3：LangGraph 骨架</h2>
+    <p><strong>这一阶段解决的是：</strong>先证明多节点图能跑起来，再往里面填真实工具。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li>实现 <code>StudyGraph</code> 和 <code>DatasetGraph</code> 骨架。</li>
+      <li>支持 study 图调度多个 dataset 子图。</li>
+      <li>支持 ADSL 作为 MVP foundation dataset 先运行。</li>
+      <li>支持 downstream dataset 用 LangGraph <code>Send</code> 分发。</li>
+      <li>支持 ADSL 失败时阻断下游数据集。</li>
+      <li>加入 InMemory checkpoint smoke 测试。</li>
+    </ul>
+    <h3>代码模块</h3>
+    <ul>
+      <li><code>src/adam_agent/graph/study_graph.py</code></li>
+      <li><code>src/adam_agent/graph/dataset_graph.py</code></li>
+      <li><code>src/adam_agent/graph/state.py</code></li>
+      <li><code>src/adam_agent/graph/routing.py</code></li>
+      <li><code>tests/test_graph_smoke.py</code></li>
+    </ul>
+    <h3>验证</h3>
+    <p>当时完整测试通过：<code>Ran 20 tests ... OK</code>。</p>
+    <div class="risk"><strong>边界：</strong>Phase 3 很多节点还是 stub。它证明编排架构，不证明临床生成能力。</div>
+  </section>
+
+  <section>
+    <h2>Phase 4：工具层 MVP</h2>
+    <p><strong>这一阶段解决的是：</strong>不要让图节点直接读写文件、直接调 API、直接跑 R。把这些能力封装成工具接口。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li><code>ArtifactStore</code>：统一写 run artifact 和 manifest。</li>
+      <li><code>StudyInputScanner</code>：扫描 study 文件夹。</li>
+      <li><code>SDTMReader</code>：轻量读取/分析 CSV；识别但不完整解析 <code>.sas7bdat</code>。</li>
+      <li><code>ConfigLoader</code>：读取配置和 LLM exposure policy。</li>
+      <li><code>MockLLMClient</code>：无 API key、无网络也能测试 LLM 边界。</li>
+      <li><code>StubRRunner</code>：不真实跑 R，但返回结构化成功/失败。</li>
+    </ul>
+    <h3>代码模块</h3>
+    <ul>
+      <li><code>src/adam_agent/tools/*.py</code></li>
+      <li><code>src/adam_agent/llm/clients.py</code></li>
+      <li><code>src/adam_agent/llm/model_registry.py</code></li>
+      <li><code>tests/test_tools_phase4.py</code></li>
+    </ul>
+    <h3>验证</h3>
+    <p>当时完整测试通过：<code>Ran 31 tests ... OK</code>。</p>
+    <div class="risk"><strong>边界：</strong>Phase 4 默认 mock/stub，不代表真实 LLM 或真实 R 执行已经完成。</div>
+  </section>
+
+  <section>
+    <h2>Phase 5：ADSL 单数据集真实循环</h2>
+    <p><strong>这一阶段解决的是：</strong>先让一个数据集真的从输入跑到输出，而不是只跑 stub。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li>新增 <code>src/adam_agent/adsl/</code> 包，专门处理 ADSL minimal loop。</li>
+      <li>能扫描 DM/EX，生成 starter ADSL spec。</li>
+      <li>能记录 <code>demo_only_no_review</code>，明确 demo bypass 不是生产审批。</li>
+      <li>能生成 deterministic base-R 脚本 <code>build_adsl.R</code>。</li>
+      <li>能调用本地 <code>Rscript</code> 执行脚本，输出 <code>runs/{run_id}/outputs/adsl.csv</code>。</li>
+      <li>能做基础结构验证：必需列、USUBJID 唯一性、日期顺序、SAFFL 形态。</li>
+      <li>能写 draft spec、approved spec、R code、output、validation report、compare report、audit manifest。</li>
+      <li>已支持 R 侧通过 <code>haven</code> 读取 <code>.sas7bdat</code>，Python 侧不作为主力解析。</li>
+      <li>把 ADSL real loop 接入 DatasetGraph，模式为 <code>real_adsl_minimal</code>。</li>
+      <li>增加 CLI：<code>python -m adam_agent.cli run-adsl-minimal ...</code>。</li>
+    </ul>
+    <h3>代码模块</h3>
+    <ul>
+      <li><code>src/adam_agent/adsl/spec_builder.py</code></li>
+      <li><code>src/adam_agent/adsl/r_template.py</code></li>
+      <li><code>src/adam_agent/adsl/runner.py</code></li>
+      <li><code>src/adam_agent/adsl/validator.py</code></li>
+      <li><code>src/adam_agent/tools/r_runner.py</code></li>
+      <li><code>tests/test_phase5_adsl_loop.py</code></li>
+    </ul>
+    <h3>验证</h3>
+    <p>当时完整测试通过：<code>Ran 46 tests ... OK</code>。并用 <code>C:\Dev\R-4.5.2\bin\Rscript.exe</code> 做过本地 R smoke test。</p>
+    <div class="bad"><strong>重要边界：</strong>ADSL 只是 minimal starter，不是完整生产 ADSL。starter 变量不是通用临床规则，治疗日期、SAFFL 等都必须在正式场景中由 spec/SAP/legacy/human 证据确认。</div>
+  </section>
+
+  <section>
+    <h2>Phase 6：失败诊断与回退路由</h2>
+    <p><strong>这一阶段解决的是：</strong>不要所有失败都当成“代码坏了”。有些失败其实是 spec 错、输入缺、R 环境缺、依赖缺。</p>
+    <h3>已经完成</h3>
+    <ul>
+      <li>新增 <code>diagnostics/</code> 输出目录规则。</li>
+      <li>ADSL 路径失败时写 <code>adsl_failure_report.json</code>。</li>
+      <li>能分类 missing input、unsupported/unreadable input、source variable missing、R runtime error、validation error、key integrity error。</li>
+      <li>失败报告包含 <code>failure_id</code>、<code>failure_type</code>、<code>root_cause</code>、<code>recommended_route</code>。</li>
+      <li>CLI 和 graph summary 都会带上失败信息。</li>
+      <li>失败后不会假装走过 stub repair/spec revise，而是直接记录推荐路由。</li>
+    </ul>
+    <h3>代码模块</h3>
+    <ul>
+      <li><code>src/adam_agent/adsl/diagnostics.py</code></li>
+      <li><code>src/adam_agent/adsl/runner.py</code></li>
+      <li><code>docs/phase6_design.md</code></li>
+    </ul>
+    <h3>验证</h3>
+    <p>当时完整测试通过：<code>Ran 54 tests ... OK</code>。</p>
+    <div class="risk"><strong>边界：</strong>Phase 6 是诊断和路由记录，不是完整自动 rollback UI，也不是完整自动修复系统。</div>
+  </section>
+
+  <section>
+    <h2>Phase 7：多数据集 study 编排</h2>
+    <p><strong>这一阶段解决的是：</strong>从“只跑一个 ADSL”升级为“用户请求多个 ADaM 时，系统知道依赖、顺序、可用性、是否需要用户决策”。</p>
+
+    <h3>7.1 依赖规划</h3>
+    <ul>
+      <li>新增 <code>src/adam_agent/graph/dependencies.py</code>。</li>
+      <li>定义 <code>DatasetDependencyPlan</code>。</li>
+      <li>把依赖决策记录成：依赖列表、来源、置信度、是否需 review、原因。</li>
+      <li>非 ADaM 目标如 <code>LB</code>、<code>DM</code> 不会被 stub 成 completed，而是标为 unsupported。</li>
+      <li>downstream-only 请求能识别 foundation dependency，但后来已改成不静默执行缺失依赖。</li>
+    </ul>
+
+    <h3>7.2 spec-first 依赖证据</h3>
+    <ul>
+      <li>依赖提取优先看 <code>input_spec</code>。</li>
+      <li>如果 <code>input_spec</code> 存在，legacy SAS 和 define.xml 只做冲突检查，不改变依赖计划。</li>
+      <li>如果没有 <code>input_spec</code>，才用 legacy SAS、define.xml 等作为 draft 证据。</li>
+      <li>没有证据时才使用 MVP fallback。</li>
+      <li>支持执行批次，例如 <code>ADSL -> ADLB -> ADTTE</code>。</li>
+      <li>中间数据集失败时，只阻断依赖它的数据集，不污染不相关数据集。</li>
+    </ul>
+
+    <h3>7.3 文件化依赖审查</h3>
+    <ul>
+      <li>写入 <code>runs/{run_id}/planning/dependency_plan.json</code>。</li>
+      <li>写入 <code>runs/{run_id}/planning/dependency_review.md</code>。</li>
+      <li>写入 study-level <code>runs/{run_id}/audit/manifest.json</code>。</li>
+      <li>引入 review status：<code>accepted</code>、<code>review_required</code>、<code>warning</code>、<code>blocked</code>。</li>
+      <li>如果 spec 文件夹存在但覆盖不到某个目标数据集，会记录 coverage-gap warning。</li>
+    </ul>
+
+    <h3>7.4 通用依赖可用性检查与 LLM 下游路径</h3>
+    <ul>
+      <li>把“发现依赖”和“执行依赖”拆开。</li>
+      <li>系统可以自动发现依赖，但不能静默执行缺失依赖。</li>
+      <li>可用依赖来源包括 <code>reference_adam/{dataset}.csv</code>、<code>reference_adam/{dataset}.sas7bdat</code>、当前 run 输出。</li>
+      <li>CSV 依赖要能读 header 才算 usable。</li>
+      <li><code>.sas7bdat</code> 依赖在 Python 侧会先标 <code>found_but_unusable</code>，因为这个阶段没有 Python profiling；R 侧读取能力另算。</li>
+      <li>新增 LLM context package：把目标 spec、SDTM profile、依赖数据 profile、输出路径、暴露策略、warnings 打包给 LLM。</li>
+      <li>新增 LLM JSON 输出 contract：必须包含 <code>dataset</code>、<code>r_code</code>、<code>assumptions</code>、<code>risk_points</code>、<code>used_inputs</code>、<code>expected_outputs</code>。</li>
+      <li>新增 generated R 安全预检查，禁止明显危险调用，如 <code>system()</code>、<code>shell()</code>、<code>unlink()</code>、<code>download.file()</code>、<code>install.packages()</code>。</li>
+      <li>新增 generic downstream runner：<code>context -> LLM -> parse/write R -> R runner -> structural validation</code>。</li>
+    </ul>
+
+    <h3>7.5 LLM provider 边界</h3>
+    <ul>
+      <li>新增 OpenAI-compatible client，支持自定义 base URL 和任意 model string，不做过窄模型白名单。</li>
+      <li>新增 provider factory：<code>LLMProviderConfig</code> 和 <code>build_llm_client()</code>。</li>
+      <li>支持 provider alias：OpenAI-compatible、DeepSeek、Qwen、Anthropic/Claude。</li>
+      <li>Anthropic 使用 Messages API 形态。</li>
+      <li>外部 provider 必须显式 <code>external_api_allowed=true</code> 且提供 API key。</li>
+      <li>真实 provider 不会失败后自动 fallback 到 mock。</li>
+      <li>custom base URL 必须显式允许，并在 audit 中记录 relay 风险。</li>
+    </ul>
+
+    <h3>7.6 provider 模式接入图</h3>
+    <ul>
+      <li>新增 <code>execution_mode = llm_downstream_provider</code>。</li>
+      <li>StudyGraph 把 <code>llm_exposure</code> 和 <code>llm_provider</code> 传给 DatasetGraph。</li>
+      <li>DatasetGraph 通过 factory 构造真实/模拟 provider client。</li>
+      <li>CLI 新增 <code>adam-agent run-study</code>，可以用 JSON config 跑 study。</li>
+      <li>provider 配置错误会 fail-closed，记录 provider/model/base URL/risk flags。</li>
+    </ul>
+
+    <h3>7.7 下游真实 R sandbox</h3>
+    <ul>
+      <li>新增 <code>execution_mode = llm_downstream_r_sandbox</code>。</li>
+      <li>该模式会让 LLM 生成 R，然后用本地 <code>Rscript</code> 真实执行。</li>
+      <li>生成脚本必须位于 <code>runs/{run_id}/code/</code> 下。</li>
+      <li>输出必须写到 <code>runs/{run_id}/outputs/{dataset}.csv</code>。</li>
+      <li>validation report 会记录 <code>r_stdout</code> 和 <code>r_stderr</code>。</li>
+      <li>曾做过一次真实外部 API smoke：OpenAI-compatible relay + <code>gpt-5.5</code> + 本地 Rscript，ADAE 输出结构验证通过。</li>
+    </ul>
+
+    <h3>7.8 下游失败诊断与一次修复</h3>
+    <ul>
+      <li>新增 <code>src/adam_agent/downstream/diagnostics.py</code>。</li>
+      <li>下游失败会写 <code>runs/{run_id}/diagnostics/{dataset}_failure_report.json</code>。</li>
+      <li>只有 code contract、R runtime、output contract 这类问题允许触发一次 <code>repair_code</code>。</li>
+      <li>缺源变量、spec 冲突、依赖缺失、sandbox policy、R 环境配置问题不能靠盲目修代码掩盖。</li>
+      <li>repair prompt 会带上上下文、原始 LLM 回复、R 代码、validation report、stdout/stderr、JSON contract。</li>
+      <li>repair artifact 用 <code>repair1</code> 后缀保存，便于审计。</li>
+    </ul>
+
+    <h3>Phase 7 验证记录</h3>
+    <ul>
+      <li>7.3 后测试：<code>Ran 69 tests ... OK</code></li>
+      <li>7.4 context/runner 后测试逐步增长到：<code>Ran 88 tests ... OK</code></li>
+      <li>7.5 provider 后测试：<code>Ran 96 tests ... OK</code></li>
+      <li>7.7 后完整测试：<code>Ran 104 tests ... OK</code></li>
+      <li>Phase 8 UI 修改前后，最近一次完整测试记录为：<code>Ran 117 tests ... OK</code>。但这包含 Phase 8 API/UI 测试，不能拿来证明 UI 设计成功。</li>
+    </ul>
+    <div class="bad"><strong>重要边界：</strong>Phase 7 已经证明“LLM 生成 R 代码并让 R 跑起来”的后端通路，但这不等于每个 ADaM 数据集都有了稳定、通用、生产级的临床推导规则。下游数据集是否正确，仍主要取决于用户提供的 spec、SDTM、依赖数据、LLM 输出和后续人工审查。</div>
+  </section>
+
+  <section>
+    <h2>mock / stub / real 到底怎么区分</h2>
+    <table>
+      <tr><th>词</th><th>意思</th><th>在本项目里的例子</th><th>能不能当真实生成</th></tr>
+      <tr><td><code>mock</code></td><td>假 LLM 或假外部服务，用固定返回测试流程。</td><td><code>MockLLMClient</code></td><td>不能。只能证明接口和流程。</td></tr>
+      <tr><td><code>stub</code></td><td>占位实现，不执行真实核心逻辑。</td><td><code>StubRRunner</code>、<code>completed_stub</code></td><td>不能。只能证明编排和 artifact。</td></tr>
+      <tr><td><code>real_adsl_minimal</code></td><td>真实跑本地 R 生成 ADSL starter。</td><td>DM/EX -> build_adsl.R -> adsl.csv</td><td>可以说是真执行，但不是完整生产 ADSL。</td></tr>
+      <tr><td><code>llm_downstream_provider</code></td><td>真实或配置 provider 生成代码，但 R 执行可仍是 stub。</td><td>provider + structural stub runner</td><td>不能完整算真实执行。</td></tr>
+      <tr><td><code>llm_downstream_r_sandbox</code></td><td>LLM 生成 R，系统保存代码，本地 Rscript 真实执行。</td><td>ADAE smoke 路径</td><td>能证明生成-执行链路，但不证明临床推导正确。</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>当前项目目录和模块职责</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>核心图编排</h3>
+        <ul>
+          <li><code>src/adam_agent/graph/study_graph.py</code>：study 级编排。</li>
+          <li><code>src/adam_agent/graph/dataset_graph.py</code>：单个 dataset 子图。</li>
+          <li><code>src/adam_agent/graph/dependencies.py</code>：依赖规划。</li>
+          <li><code>src/adam_agent/graph/dependency_resolution.py</code>：依赖可用性和用户决策门。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>状态与契约</h3>
+        <ul>
+          <li><code>src/adam_agent/schemas/</code>：状态、artifact、spec、evidence、approval、failure、LLM call。</li>
+          <li><code>docs/input_contract.md</code>：输入边界。</li>
+          <li><code>docs/output_contract.md</code>：输出边界。</li>
+          <li><code>docs/state_model.md</code>：状态模型解释。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>工具层</h3>
+        <ul>
+          <li><code>src/adam_agent/tools/study_inputs.py</code>：扫描 study。</li>
+          <li><code>src/adam_agent/tools/artifacts.py</code>：artifact 和 manifest。</li>
+          <li><code>src/adam_agent/tools/r_runner.py</code>：Stub 和 Local R runner。</li>
+          <li><code>src/adam_agent/tools/config.py</code>：配置加载。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>LLM 和下游生成</h3>
+        <ul>
+          <li><code>src/adam_agent/llm/clients.py</code>：mock、OpenAI-compatible、Anthropic client。</li>
+          <li><code>src/adam_agent/llm/context.py</code>：构建 LLM 上下文包。</li>
+          <li><code>src/adam_agent/llm/generated_code.py</code>：解析/保存 LLM 生成代码。</li>
+          <li><code>src/adam_agent/downstream/runner.py</code>：下游 ADaM 通用 runner。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>ADSL starter</h3>
+        <ul>
+          <li><code>src/adam_agent/adsl/spec_builder.py</code>：starter spec。</li>
+          <li><code>src/adam_agent/adsl/r_template.py</code>：deterministic R 模板。</li>
+          <li><code>src/adam_agent/adsl/runner.py</code>：ADSL 真实执行服务。</li>
+          <li><code>src/adam_agent/adsl/validator.py</code>：基础验证。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>CLI 和 API</h3>
+        <ul>
+          <li><code>src/adam_agent/cli.py</code>：本地命令行入口。</li>
+          <li><code>src/adam_agent/api/</code>：Phase 8 API/UI 尝试。当前 UI 失败，不应作为产品方向依据。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>真实限制和下一步应怎么纠偏</h2>
+    <h3>已经确定的限制</h3>
+    <ul>
+      <li>当前 UI 把用户暴露给了太多后端 artifact 和 JSON，失败。</li>
+      <li>demo 数据映射曾经搞错：<code>ae/dm/ex</code> 是 SDTM，<code>ads_adae_full/ads_adsl_full</code> 是 spec，<code>adae/adsl</code> 是 reference ADaM，<code>PSY201</code> 是另一个项目。</li>
+      <li>Phase 7 后端不是没有价值，但 UI 没有把“上传/识别/生成/执行/审查/比较”的产品流程表达出来。</li>
+      <li>ADSL 以外的真实临床逻辑不能写死在代码里，应该由用户 spec + LLM + R sandbox + review 支撑。</li>
+      <li>validation 目前是结构验证，不是监管级 ADaM 合规验证。</li>
+      <li>依赖 fallback 是 MVP 排序保护，不是完整 ADaM 依赖知识图谱。</li>
+    </ul>
+    <h3>建议的下一步</h3>
+    <ol>
+      <li>先冻结/回滚当前失败 UI 思路，不再沿着 JSON dashboard 方向修补。</li>
+      <li>重新画 UI 工作流：输入准备、文件识别、目标数据集选择、依赖检查、LLM/R 运行、输出审查、reference 比较、audit。</li>
+      <li>把 old Shiny UI 当作交互参考，而不是照搬技术栈。</li>
+      <li>修正 demo loader：严格按 <code>demo-data</code> 中真实文件角色放置到 study 目录。</li>
+      <li>UI 首页只讲用户任务，不展示后端 JSON；高级审计页再显示 raw artifacts。</li>
+      <li>在产品语言里明确区分：真实执行、stub、mock、结构验证、临床验证。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>本报告依据</h2>
+    <ul>
+      <li><code>docs/langgraph_execution_roadmap.md</code></li>
+      <li><code>docs/input_contract.md</code></li>
+      <li><code>docs/state_model.md</code></li>
+      <li><code>docs/phase5_design.md</code></li>
+      <li><code>docs/phase6_design.md</code></li>
+      <li><code>docs/phase7_design.md</code></li>
+      <li><code>docs/phase7_4_design.md</code></li>
+      <li><code>docs/phase7_closeout.md</code></li>
+      <li>当前 git 状态：<code>LangGraph</code> 分支本地 ahead 1，且存在 Phase 8 UI 相关未提交改动。</li>
+    </ul>
+    <p class="small">生成时间：2026-05-26。报告文件：<code>docs/phase1_7_completion_review.html</code></p>
+  </section>
+</main>
+</body>
+</html>

@@ -4,11 +4,48 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 
-from adam_agent.api.models import ArtifactReadRequest, RunStudyRequest, RunStudyResponse
-from adam_agent.api.service import ApiServiceError, read_run_json_artifact, run_study_from_request
+from adam_agent.api.models import (
+    ArtifactReadRequest,
+    CodeReviewRequest,
+    CodeReviewResponse,
+    DatasetCompareResponse,
+    DemoStudyResponse,
+    ExecuteCodeRequest,
+    ExecuteCodeResponse,
+    FileUploadResponse,
+    GenerateCodeRequest,
+    GenerateCodeResponse,
+    ProductWorkspaceResponse,
+    RunReviewSummary,
+    RunPlanRequest,
+    RunPlanResponse,
+    RunStudyRequest,
+    RunStudyResponse,
+    StudyWorkspaceRequest,
+    StudyInputSummary,
+    TablePageResponse,
+)
+from adam_agent.api.service import (
+    ApiServiceError,
+    build_run_review_summary,
+    compare_dataset_with_reference,
+    create_default_product_workspace,
+    dataset_download_path,
+    ensure_study_workspace,
+    execute_approved_dataset_code,
+    generate_dataset_code,
+    persist_code_review,
+    prepare_run_plan,
+    prepare_demo_study,
+    read_dataset_table_page,
+    read_run_json_artifact,
+    run_study_from_request,
+    save_uploaded_file_bytes,
+    summarize_study_inputs,
+)
 from adam_agent.api.web import INDEX_HTML
 
 
@@ -29,12 +66,109 @@ def create_app() -> FastAPI:
     def index() -> str:
         return INDEX_HTML
 
+    @app.post("/demo-study", response_model=DemoStudyResponse)
+    def create_demo_study(
+        demo_source_dir: str | None = Query(None, description="Optional source demo-data folder override."),
+        study_dir: str | None = Query(None, description="Optional output study folder override."),
+    ) -> DemoStudyResponse:
+        try:
+            return prepare_demo_study(demo_source_dir=demo_source_dir, study_dir=study_dir)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/product-workspace", response_model=ProductWorkspaceResponse)
+    def product_workspace() -> ProductWorkspaceResponse:
+        try:
+            return create_default_product_workspace()
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/studies/workspace", response_model=StudyInputSummary)
+    def create_or_open_workspace(request: StudyWorkspaceRequest) -> StudyInputSummary:
+        try:
+            return ensure_study_workspace(request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/studies/files", response_model=FileUploadResponse)
+    async def upload_study_files(
+        study_dir: str = Query(..., description="Path to the local study folder."),
+        role: str = Query(..., description="Input role: sdtm, spec, define, reference, or legacy."),
+        study_id: str | None = Query(None, description="Optional study id override."),
+        files: list[UploadFile] = File(...),
+    ) -> FileUploadResponse:
+        try:
+            file_bytes = [(file.filename or "uploaded_file", await file.read()) for file in files]
+            normalized_role, folder, saved, summary = save_uploaded_file_bytes(
+                study_dir=study_dir,
+                role=role,
+                files=file_bytes,
+                study_id=study_id,
+            )
+            return FileUploadResponse(
+                study_id=summary.study_id,
+                study_dir=summary.study_dir,
+                role=normalized_role,
+                folder=folder,
+                saved_files=saved,
+                input_summary=summary,
+            )
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/runs", response_model=RunStudyResponse)
     def create_run(request: RunStudyRequest) -> RunStudyResponse:
         try:
             return run_study_from_request(request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/prepare", response_model=RunPlanResponse)
+    def prepare_run(request: RunPlanRequest) -> RunPlanResponse:
+        try:
+            return prepare_run_plan(request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/generate-code", response_model=GenerateCodeResponse)
+    def generate_code(run_id: str, dataset: str, request: GenerateCodeRequest) -> GenerateCodeResponse:
+        try:
+            return generate_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/code-review", response_model=CodeReviewResponse)
+    def code_review(run_id: str, dataset: str, request: CodeReviewRequest) -> CodeReviewResponse:
+        try:
+            return persist_code_review(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/execute-approved-code", response_model=ExecuteCodeResponse)
+    def execute_approved_code(run_id: str, dataset: str, request: ExecuteCodeRequest) -> ExecuteCodeResponse:
+        try:
+            return execute_approved_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/study-inputs", response_model=StudyInputSummary)
+    def study_inputs(
+        study_dir: str = Query(..., description="Path to the local study folder."),
+    ) -> StudyInputSummary:
+        try:
+            return summarize_study_inputs(study_dir)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/review-summary", response_model=RunReviewSummary)
+    def run_review_summary(
+        run_id: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+    ) -> RunReviewSummary:
+        try:
+            return build_run_review_summary(study_dir, run_id)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/runs/{run_id}/dependency-plan")
     def dependency_plan(
@@ -65,6 +199,44 @@ def create_app() -> FastAPI:
         study_dir: str = Query(..., description="Path to the local study folder."),
     ) -> dict[str, Any]:
         return _read_artifact(study_dir, run_id, f"diagnostics/{dataset.lower()}_failure_report.json")
+
+    @app.get("/runs/{run_id}/datasets/{dataset}/table", response_model=TablePageResponse)
+    def dataset_table(
+        run_id: str,
+        dataset: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+        kind: str = Query("generated", description="generated or reference."),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(25, ge=1, le=200),
+    ) -> TablePageResponse:
+        try:
+            return read_dataset_table_page(study_dir, run_id, dataset, kind=kind, page=page, page_size=page_size)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/datasets/{dataset}/compare", response_model=DatasetCompareResponse)
+    def dataset_compare(
+        run_id: str,
+        dataset: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+    ) -> DatasetCompareResponse:
+        try:
+            return compare_dataset_with_reference(study_dir, run_id, dataset)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/datasets/{dataset}/download")
+    def dataset_download(
+        run_id: str,
+        dataset: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+        kind: str = Query(..., description="generated, reference, code, validation_report, or compare_report."),
+    ) -> FileResponse:
+        try:
+            path = dataset_download_path(study_dir, run_id, dataset, kind)
+            return FileResponse(path, filename=path.name)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/runs/{run_id}/artifacts/read")
     def read_json_artifact(

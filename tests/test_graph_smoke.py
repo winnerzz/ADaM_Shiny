@@ -113,6 +113,63 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertFalse(decisions["ADTTE"].review_required)
         self.assertTrue(decisions["ADTTE"].evidence_ids)
 
+    def test_dependency_plan_recognizes_ads_full_spec_filename(self) -> None:
+        study_dir = _workspace_dir("phase7_ads_full_spec_filename") / "demo_adam"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ads_adae_full.csv").write_text(
+            "Dataset,Variable,Label,Type,Source,Derivation\n"
+            "ADAE,USUBJID,Unique Subject Identifier,Copied,SDTM.AE.USUBJID,Copied from source\n"
+            "ADAE,TRTSDT,Treatment Start Date,Copied,ADSL.TRTSDT,Copied from ADSL\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADAE"], study_dir=study_dir)
+
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(plan.dependencies["ADAE"], ["ADSL"])
+        self.assertEqual(decisions["ADAE"].source, "input_spec_dependency")
+        self.assertFalse(
+            any("no dependency evidence was extracted for ADAE" in warning for warning in plan.planning_warnings)
+        )
+
+    def test_target_input_spec_without_adam_dependency_does_not_force_adsl(self) -> None:
+        study_dir = _workspace_dir("phase7_addm_spec_without_adsl") / "demo_adam"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "addm_spec.csv").write_text(
+            "Dataset,Variable,Label,Type,Source,Derivation\n"
+            "ADDM,USUBJID,Unique Subject Identifier,Copied,SDTM.DM.USUBJID,Copied from DM\n"
+            "ADDM,DMDTC,Disposition Date,Copied,SDTM.DS.DSSTDTC,Copied from DS\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADDM"], study_dir=study_dir)
+
+        self.assertEqual(plan.target_datasets, ["ADDM"])
+        self.assertEqual(plan.dependencies["ADDM"], [])
+        decisions = {decision.dataset: decision for decision in plan.decisions}
+        self.assertEqual(decisions["ADDM"].source, "input_spec_no_adam_dependency")
+        self.assertFalse(decisions["ADDM"].review_required)
+        self.assertFalse(plan.blocked_datasets if hasattr(plan, "blocked_datasets") else False)
+
+    def test_dependency_plan_ignores_ad_words_in_spec_labels(self) -> None:
+        study_dir = _workspace_dir("phase7_spec_label_ad_words") / "demo_adam"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ads_adae_full.csv").write_text(
+            "Dataset,Variable,Label,Type,Source,Derivation\n"
+            "ADAE,AETERM,Adverse Event Term,Copied,SDTM.AE.AETERM,Copied from source\n"
+            "ADAE,TRTSDT,Treatment Start Date,Copied,ADSL.TRTSDT,Copied from ADSL\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADAE"], study_dir=study_dir)
+
+        self.assertEqual(plan.target_datasets, ["ADSL", "ADAE"])
+        self.assertEqual(plan.dependencies["ADAE"], ["ADSL"])
+        self.assertNotIn("ADVERSE", plan.target_datasets)
+
     def test_input_spec_is_authoritative_and_secondary_conflict_becomes_warning(self) -> None:
         study_dir = _workspace_dir("phase7_spec_conflict_dependency") / "PSY201"
         spec_dir = study_dir / "input_spec"

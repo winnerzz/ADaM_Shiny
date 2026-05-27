@@ -11,6 +11,7 @@ from adam_agent.downstream.diagnostics import diagnose_downstream_failure, write
 from adam_agent.llm.clients import LLMClient, LLMRequest, MockLLMClient
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.generated_code import LLMGeneratedCodeError, parse_generated_code_response, write_generated_code_artifacts
+from adam_agent.llm.mock_code import default_mock_generated_code_response
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
@@ -705,22 +706,7 @@ def _sample_row_counts(context: dict[str, Any]) -> dict[str, int]:
 
 
 def _default_mock_generated_code_response(target: str) -> str:
-    dataset = target.upper()
-    filename = dataset.lower()
-    r_code = f"""dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
-output <- data.frame(USUBJID = character(), stringsAsFactors = FALSE)
-write.csv(output, file = "outputs/{filename}.csv", row.names = FALSE)
-"""
-    return json.dumps(
-        {
-            "dataset": dataset,
-            "r_code": r_code,
-            "assumptions": ["Mock downstream runner writes an empty structural output."],
-            "risk_points": ["This is not a real ADaM derivation."],
-            "used_inputs": [],
-            "expected_outputs": [f"{filename}.csv"],
-        }
-    )
+    return default_mock_generated_code_response(target)
 
 
 def _validate_downstream_output(
@@ -853,3 +839,4 @@ def _write_validation_artifact(
         role="output",
         metadata={"attempt_label": attempt_label or "initial"},
     )
+

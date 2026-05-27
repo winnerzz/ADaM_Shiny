@@ -11,6 +11,7 @@ from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_ada
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
 from adam_agent.llm.clients import LLMProviderConfig, build_llm_client
+from adam_agent.llm.mock_code import default_mock_generated_code_response
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
@@ -218,23 +219,8 @@ def _provider_mode_default_mock_client(dataset: str):
     return MockLLMClient(fixed_response_text=_default_mock_generated_code_response(dataset))
 
 
-def _default_mock_generated_code_response(dataset: str) -> str:
-    target = dataset.upper()
-    filename = target.lower()
-    r_code = f"""dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
-output <- data.frame(USUBJID = character(), stringsAsFactors = FALSE)
-write.csv(output, file = "outputs/{filename}.csv", row.names = FALSE)
-"""
-    return json.dumps(
-        {
-            "dataset": target,
-            "r_code": r_code,
-            "assumptions": ["Mock provider-mode response writes an empty structural output."],
-            "risk_points": ["This is not a real ADaM derivation."],
-            "used_inputs": [],
-            "expected_outputs": [f"{filename}.csv"],
-        }
-    )
+def _default_mock_generated_code_response(target: str) -> str:
+    return default_mock_generated_code_response(target)
 
 
 def run_adsl_minimal_node(state: DatasetGraphState) -> DatasetGraphState:
@@ -586,3 +572,4 @@ def compile_dataset_graph():
     """Compile the dataset-level skeleton graph without its own checkpointer."""
 
     return build_dataset_graph().compile(name="dataset_graph")
+

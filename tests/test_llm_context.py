@@ -152,6 +152,32 @@ class LLMContextTests(unittest.TestCase):
         self.assertEqual(set(package.resolved_dependencies), {"ADSL"})
         self.assertNotIn("ADLB", package.resolved_dependencies)
 
+    def test_context_selects_ads_full_spec_filename(self) -> None:
+        study_dir = _workspace_dir("llm_context_ads_full_spec") / "demo_adam"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        reference_adam = study_dir / "reference_adam"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        reference_adam.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "ads_adae_full.csv").write_text(
+            "Dataset,Variable,Label,Type,Source,Derivation\n"
+            "ADAE,AETERM,Reported Term,Copied,SDTM.AE.AETERM,Copied from source\n",
+            encoding="utf-8",
+        )
+
+        package = build_target_llm_context(
+            study_id="PSY201",
+            run_id="run_context_ads_full_spec",
+            target_dataset="ADAE",
+            study_dir=study_dir,
+            dependency_resolution=[],
+        )
+
+        self.assertIsNotNone(package.target_spec)
+        self.assertTrue(package.target_spec["path"].endswith("ads_adae_full.csv"))
+
     def test_write_llm_context_package_creates_audit_artifact(self) -> None:
         study_dir = _study_with_adae_spec_and_adsl_dependency("llm_context_write")
         package = build_target_llm_context(

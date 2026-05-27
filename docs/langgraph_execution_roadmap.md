@@ -1387,7 +1387,7 @@ Phase 7.7 implementation notes:
   - execution mode: `llm_downstream_r_sandbox`
   - Rscript: `C:\Dev\R-4.5.2\bin\Rscript.exe`
   - result: `status = completed`, ADAE `validation_status = pass`
-  - output: `runs/run_gpt55_86gamestore_r_sandbox_retry/outputs/adae.csv`
+  - output: `runs/{private_live_smoke_run_id}/outputs/adae.csv`
   - audit risk flags: `external_relay`, `custom_base_url_approved`,
     `subject_level_data_sent`
 
@@ -1561,25 +1561,68 @@ Phase 8.2 implementation notes:
 
 - Added `src/adam_agent/api/web.py` with a static local HTML/CSS/JavaScript UI.
 - Added `GET /` to serve the page from the FastAPI app.
-- The page supports:
-  - study folder path
-  - run id
-  - target datasets
-  - execution mode
-  - config path
-  - optional Rscript path
-  - optional approved dependency datasets
-  - run summary table
-  - dependency, validation, diagnostics, audit, and context JSON views
+- Added `POST /demo-study` to prepare a local demo study for the UI.
+- The demo study preparation copies only root-level files from the original
+  Shiny demo sample:
+  `D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data`.
+- The prepared demo shape is:
+  - `input_sdtm/ae.csv`
+  - `input_sdtm/dm.csv`
+  - `input_sdtm/ex.csv`
+  - `input_spec/ads_adae_full.csv`
+  - `input_spec/ads_adsl_full.csv`
+  - `reference_adam/adsl.csv`
+  - `reference_adam/adae.csv`
+- Source meaning:
+  - `ae.csv`, `dm.csv`, and `ex.csv` are SDTM inputs
+  - `adsl.csv` and `adae.csv` are reference ADaM outputs for comparison
+  - `ads_adae_full.csv` and `ads_adsl_full.csv` are spec files, preserved with
+    their original filenames under `input_spec/`
+  - `PSY201/` is a separate project and is intentionally excluded from this
+    demo workflow
+- The UI was revised from an engineering form into a guided demo workflow:
+  - Create Demo Study
+  - Run Demo ADAE
+  - Review Results
+- Advanced settings remain available for study folder path, run id, targets,
+  execution mode, config path, Rscript path, and approved dependency datasets.
+- Artifact views remain available for dependency, validation, diagnostics,
+  audit, and LLM context JSON.
 - Added `docs/phase8_2_local_web_ui.md`.
 - Updated `README.md` with the local `uvicorn` start command.
 - Verification:
   - `python -m unittest tests.test_api_phase8`
-    `Ran 5 tests ... OK`
+    `Ran 7 tests ... OK`
   - `python -m unittest discover -s tests -p "test_*.py"`
     `Ran 112 tests ... OK`
   - temporary local `uvicorn adam_agent.api.app:app --host 127.0.0.1 --port 8000`
     returned `/health = ok` and `GET / = 200`.
+
+Phase 8.2 correction notes:
+
+- User review found the first browser UI was too backend-artifact oriented.
+  It showed dependency plan, manifest, and LLM context too prominently, which
+  did not match the intended product workflow.
+- Re-centered the UI on the original Shiny mental model:
+  - prepare SDTM/spec/reference inputs
+  - generate ADaM R code
+  - run the selected execution path
+  - review generated output, generated R code, validation, risk points, and
+    audit evidence
+- Added UI-friendly summary endpoints:
+  - `GET /study-inputs?study_dir=...`
+  - `GET /runs/{run_id}/review-summary?study_dir=...`
+- The UI now uses the summary endpoints for the primary review screen and keeps
+  raw dependency/manifest/context JSON under Advanced Audit.
+- Corrected the demo default execution path: if
+  `C:\Dev\R-4.5.2\bin\Rscript.exe` exists, the demo form defaults to
+  `llm_downstream_r_sandbox`; otherwise it defaults to
+  `llm_downstream_provider`.
+- The Shiny demo-data mapping remains:
+  - `ae.csv`, `dm.csv`, `ex.csv` -> SDTM inputs
+  - `ads_adae_full.csv`, `ads_adsl_full.csv` -> input specs
+  - `adae.csv`, `adsl.csv` -> reference ADaM comparison evidence
+  - `PSY201/` remains excluded from this demo workflow.
 
 ## Phase 9 - Standards and Production Hardening
 

@@ -54,6 +54,20 @@ Run the test suite:
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+Optional real LLM connectivity smoke test:
+
+```powershell
+$env:ADAM_AGENT_RUN_LIVE_LLM = "1"
+$env:ADAM_AGENT_LIVE_LLM_PROVIDER = "openai-compatible"
+$env:ADAM_AGENT_LIVE_LLM_MODEL = "gpt-5.5"
+$env:ADAM_AGENT_LIVE_LLM_BASE_URL = "https://your-relay.example/v1"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY_ENV = "ADAM_AGENT_LIVE_LLM_API_KEY"
+$env:ADAM_AGENT_LIVE_LLM_API_KEY = "<private key>"
+python -m unittest tests.test_live_llm_smoke
+```
+
+The live test is skipped unless `ADAM_AGENT_RUN_LIVE_LLM=1` is set.
+
 Run a study-level mock downstream smoke test:
 
 ```powershell
@@ -83,8 +97,10 @@ Expected study input shape:
 PSY201/
   input_sdtm/
     ae.csv
+    dm.csv
+    ex.csv
   input_spec/
-    adae.json
+    adae.json or adae.csv
   reference_adam/
     adsl.csv
   runs/
@@ -112,7 +128,7 @@ runs/{run_id}/
 Start the Phase 8 local API and browser UI:
 
 ```powershell
-uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Open:
@@ -121,8 +137,24 @@ Open:
 http://127.0.0.1:8000
 ```
 
-The current page can create a synchronous run and inspect dependency,
-validation, diagnostics, audit, and LLM context JSON artifacts.
+The page starts with a demo-first workflow:
+
+1. Prepare SDTM, spec, and optional reference ADaM inputs
+2. Generate ADaM R code
+3. Run the selected execution path
+4. Review generated output, generated R code, validation, risk points, and audit
+   artifacts
+
+The demo preparation endpoint copies only the root-level demo files from
+`D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data`
+when that sibling folder exists. In that source folder, `ae.csv`, `dm.csv`, and
+`ex.csv` are SDTM inputs; `adsl.csv` and `adae.csv` are reference ADaM outputs;
+and `ads_adae_full.csv` / `ads_adsl_full.csv` are the spec files. The separate
+`PSY201/` folder is not used by this demo workflow.
+
+The main UI is not meant to expose raw backend JSON first. Dependency plans,
+manifests, validation JSON, and LLM context files remain available under the
+advanced audit view.
 
 ## Data and API Safety
 

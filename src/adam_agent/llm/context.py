@@ -232,6 +232,8 @@ def _select_target_spec(input_specs: dict[str, ArtifactRef], target_dataset: str
     target = target_dataset.lower()
     preferred_keys = [
         target,
+        f"ads_{target}_full",
+        f"ads_{target}",
         f"{target}_spec",
         f"{target}_approved_spec",
         f"{target}_input_spec",
