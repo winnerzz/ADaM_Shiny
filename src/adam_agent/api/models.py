@@ -72,6 +72,57 @@ class GenerateCodeRequest(StrictBaseModel):
     study_id: str | None = None
     config_path: str | None = None
     approved_dependency_datasets: list[str] = Field(default_factory=list)
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class LLMProviderOverride(StrictBaseModel):
+    """Session-scoped LLM provider settings supplied by the browser UI."""
+
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: str | None = None
+    api_key_env: str | None = None
+    timeout_seconds: float | None = None
+    max_tokens: int | None = None
+    allow_custom_base_url: bool = False
+    custom_base_url_approved_by: str | None = None
+    anthropic_version: str | None = None
+
+
+class LLMExposureOverride(StrictBaseModel):
+    """Session-scoped LLM data exposure policy supplied by the browser UI."""
+
+    mode: str = "demo_rich_context"
+    data_classification: str = "processed_demo"
+    external_api_allowed: bool = False
+    approved_by: str | None = None
+    approval_note: str = ""
+    sample_rows_per_dataset: int | None = None
+    include_reference_rows: bool | None = None
+
+
+class LLMConnectionTestRequest(StrictBaseModel):
+    """Validate a browser-supplied LLM provider config without generating ADaM code."""
+
+    llm_provider: LLMProviderOverride
+    llm_exposure: LLMExposureOverride
+
+
+class LLMConnectionTestResponse(StrictBaseModel):
+    """Result of a one-shot provider connectivity check."""
+
+    status: str
+    provider: str
+    model: str
+    provider_alias: str | None = None
+    transport: str | None = None
+    provider_base_url: str | None = None
+    external_relay: bool = False
+    risk_flags: list[str] = Field(default_factory=list)
+    response_preview: str = ""
+    note: str = ""
 
 
 class GenerateCodeResponse(StrictBaseModel):

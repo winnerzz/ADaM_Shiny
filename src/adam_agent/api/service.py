@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from adam_agent.api.models import (
     CodeReviewResponse,
     DatasetCompareResponse,
@@ -20,6 +22,7 @@ from adam_agent.api.models import (
     ExecuteCodeResponse,
     FilePreview,
     GenerateCodeResponse,
+    LLMConnectionTestResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
     RunPlanRequest,
@@ -40,7 +43,14 @@ from adam_agent.graph.dependency_resolution import (
 )
 from adam_agent.graph.dependencies import plan_dataset_dependencies
 from adam_agent.graph.study_graph import compile_study_graph
-from adam_agent.llm.clients import LLMProviderConfig, LLMRequest, MockLLMClient, build_llm_client
+from adam_agent.llm.clients import (
+    LLMClientConfigError,
+    LLMProviderConfig,
+    LLMProviderResponseError,
+    LLMRequest,
+    MockLLMClient,
+    build_llm_client,
+)
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.generated_code import parse_generated_code_response, write_generated_code_artifacts
 from adam_agent.llm.mock_code import default_mock_generated_code_response
@@ -290,6 +300,47 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
     )
 
 
+def test_llm_connection(request: Any) -> LLMConnectionTestResponse:
+    """Run a minimal provider call using browser-supplied settings without persisting secrets."""
+
+    provider_config = _provider_config_from_override(request.llm_provider, fallback=LLMProviderConfig())
+    if provider_config.provider.strip().lower() == "mock":
+        raise ApiServiceError("Use a real provider for connection testing, not mock mode.")
+    exposure = _exposure_config_from_override(request.llm_exposure, fallback=LLMExposureConfig())
+    try:
+        client = build_llm_client(provider_config)
+        response = client.generate(
+            LLMRequest(
+                prompt="Reply with exactly: ADAM_AGENT_CONNECTION_OK",
+                system_prompt="You are testing provider connectivity. Keep the response short.",
+                provider=provider_config.provider,
+                model=provider_config.model,
+                exposure=exposure,
+                node="ui_llm_connection_test",
+                call_id="ui_llm_connection_test",
+                max_tokens=32,
+                prompt_artifact_id="ui_connection_test_prompt",
+                response_artifact_id="ui_connection_test_response",
+                redaction_policy="ui_connection_test_no_study_data",
+            )
+        )
+    except (LLMClientConfigError, LLMProviderResponseError) as exc:
+        raise ApiServiceError(str(exc)) from exc
+    record = response.call_record
+    return LLMConnectionTestResponse(
+        status="ok",
+        provider=provider_config.provider,
+        model=provider_config.model,
+        provider_alias=record.provider_alias,
+        transport=record.transport,
+        provider_base_url=record.provider_base_url,
+        external_relay=record.external_relay,
+        risk_flags=record.risk_flags,
+        response_preview=response.response_text[:200],
+        note="Connection test succeeded. No study data was sent.",
+    )
+
+
 def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCodeResponse:
     """Generate and persist R code for one dataset without executing it."""
 
@@ -308,8 +359,12 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     )
     plan = prepare_run_plan(plan_request)
 
-    provider_config = config.llm_provider
-    llm_client = build_llm_client(provider_config)
+    provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
+    exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
+    try:
+        llm_client = build_llm_client(provider_config)
+    except LLMClientConfigError as exc:
+        raise ApiServiceError(str(exc)) from exc
     if provider_config.provider.strip().lower() == "mock":
         llm_client = MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
     context = build_target_llm_context(
@@ -318,22 +373,25 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         target_dataset=target,
         study_dir=study_dir,
         dependency_resolution=plan.dependency_resolution,
-        exposure=config.llm_exposure,
+        exposure=exposure,
     )
     context_artifact = write_llm_context_package(context, study_dir)
     context_dict = context.as_dict()
-    llm_response = llm_client.generate(
-        _llm_request_for_code_generation(
-            prompt=_prompt_from_context(context_dict),
-            target=target,
-            study_id=study_id,
-            run_id=run_id,
-            provider_config=provider_config,
-            exposure=config.llm_exposure,
-            context_dict=context_dict,
-            context_artifact=context_artifact,
+    try:
+        llm_response = llm_client.generate(
+            _llm_request_for_code_generation(
+                prompt=_prompt_from_context(context_dict),
+                target=target,
+                study_id=study_id,
+                run_id=run_id,
+                provider_config=provider_config,
+                exposure=exposure,
+                context_dict=context_dict,
+                context_artifact=context_artifact,
+            )
         )
-    )
+    except (LLMClientConfigError, LLMProviderResponseError) as exc:
+        raise ApiServiceError(str(exc)) from exc
     package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
     artifacts = write_generated_code_artifacts(
         study_id=study_id,
@@ -752,6 +810,31 @@ def _runnable_datasets(
         if not missing and normalized not in runnable:
             runnable.append(normalized)
     return runnable
+
+
+def _provider_config_from_override(override: Any, *, fallback: LLMProviderConfig) -> LLMProviderConfig:
+    if override is None:
+        return fallback
+    payload = override.model_dump(exclude_none=True) if hasattr(override, "model_dump") else dict(override)
+    merged = {
+        key: value
+        for key, value in fallback.__dict__.items()
+        if value is not None
+    }
+    merged.update(payload)
+    return LLMProviderConfig(**merged)
+
+
+def _exposure_config_from_override(override: Any, *, fallback: LLMExposureConfig) -> LLMExposureConfig:
+    if override is None:
+        return fallback
+    payload = override.model_dump(exclude_none=True) if hasattr(override, "model_dump") else dict(override)
+    merged = fallback.model_dump(mode="json")
+    merged.update(payload)
+    try:
+        return LLMExposureConfig.model_validate(merged)
+    except ValidationError as exc:
+        raise ApiServiceError(str(exc)) from exc
 
 
 def _plan_review_status(

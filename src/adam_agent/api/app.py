@@ -18,6 +18,8 @@ from adam_agent.api.models import (
     FileUploadResponse,
     GenerateCodeRequest,
     GenerateCodeResponse,
+    LLMConnectionTestRequest,
+    LLMConnectionTestResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
     RunPlanRequest,
@@ -45,6 +47,7 @@ from adam_agent.api.service import (
     run_study_from_request,
     save_uploaded_file_bytes,
     summarize_study_inputs,
+    test_llm_connection,
 )
 from adam_agent.api.web import INDEX_HTML
 
@@ -134,6 +137,13 @@ def create_app() -> FastAPI:
     def generate_code(run_id: str, dataset: str, request: GenerateCodeRequest) -> GenerateCodeResponse:
         try:
             return generate_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/llm/test-connection", response_model=LLMConnectionTestResponse)
+    def llm_test_connection(request: LLMConnectionTestRequest) -> LLMConnectionTestResponse:
+        try:
+            return test_llm_connection(request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

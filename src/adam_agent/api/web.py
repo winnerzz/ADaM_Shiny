@@ -144,6 +144,21 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
     }
     input { height: 36px; }
+    select {
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #fff;
+      color: var(--text);
+      font-size: 13px;
+    }
+    input[type=checkbox] {
+      width: auto;
+      height: auto;
+      margin-right: 6px;
+    }
     input[type=file] { height: auto; padding: 7px; }
     textarea { min-height: 74px; resize: vertical; }
     .field { margin-bottom: 12px; }
@@ -578,6 +593,40 @@ INDEX_HTML = r"""<!doctype html>
                 <input id="configPath" value="studies\\_template\\configs\\mock_downstream.json">
               </div>
               <div class="field">
+                <label for="modelMode">Model mode</label>
+                <select id="modelMode">
+                  <option value="mock">Mock / offline</option>
+                  <option value="real">Real LLM API</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="llmProvider">Provider</label>
+                <select id="llmProvider">
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic / Claude</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="qwen">Qwen</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="llmModel">Model</label>
+                <input id="llmModel" value="gpt-5.5">
+              </div>
+              <div class="field">
+                <label for="llmBaseUrl">Base URL</label>
+                <input id="llmBaseUrl" placeholder="Optional, for a relay or compatible endpoint">
+              </div>
+              <div class="field">
+                <label for="llmApiKey">API key</label>
+                <input id="llmApiKey" type="password" placeholder="Used for this browser request only">
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <label><input id="llmAllowExternal" type="checkbox"> allow external API for demo data</label>
+                <button class="secondary" id="testLlmButton" type="button">Test Connection</button>
+              </div>
+              <div class="field">
                 <label for="rscriptPath">Rscript path</label>
                 <input id="rscriptPath" value="C:\\Dev\\R-4.5.2\\bin\\Rscript.exe">
               </div>
@@ -590,6 +639,7 @@ INDEX_HTML = r"""<!doctype html>
                 <input id="reviewNotes" value="Approved for local sandbox execution.">
               </div>
             </div>
+            <div id="llmStatus" class="note">Mock mode is active. No external LLM call will be made unless Real LLM API is selected.</div>
             <div id="advancedPane" class="note">Audit artifacts appear after a run.</div>
           </details>
         </div>
@@ -694,6 +744,97 @@ INDEX_HTML = r"""<!doctype html>
 
     function selectedTargets() {
       return state.selectedTarget ? [state.selectedTarget] : [];
+    }
+
+    function llmProviderOverride() {
+      if (byId('modelMode').value !== 'real') return null;
+      const provider = byId('llmProvider').value;
+      const model = byId('llmModel').value.trim();
+      const baseUrl = byId('llmBaseUrl').value.trim();
+      const apiKey = byId('llmApiKey').value.trim();
+      const approvedBy = byId('reviewer').value.trim() || 'local_user';
+      if (!model) {
+        throw new Error('Model is required for real LLM mode.');
+      }
+      if (!apiKey) {
+        throw new Error('API key is required for real LLM mode.');
+      }
+      return {
+        provider,
+        model,
+        base_url: baseUrl || null,
+        api_key: apiKey,
+        timeout_seconds: 90,
+        max_tokens: 4096,
+        allow_custom_base_url: Boolean(baseUrl),
+        custom_base_url_approved_by: baseUrl ? approvedBy : null
+      };
+    }
+
+    function llmExposureOverride() {
+      if (byId('modelMode').value !== 'real') return null;
+      const approvedBy = byId('reviewer').value.trim() || 'local_user';
+      return {
+        mode: 'demo_rich_context',
+        data_classification: 'processed_demo',
+        external_api_allowed: byId('llmAllowExternal').checked,
+        approved_by: approvedBy,
+        approval_note: 'Approved in local UI for processed demo data.',
+        sample_rows_per_dataset: 3,
+        include_reference_rows: true
+      };
+    }
+
+    function llmOverridePayload() {
+      if (byId('modelMode').value !== 'real') return {};
+      if (!byId('llmAllowExternal').checked) {
+        throw new Error('Real LLM mode requires explicit external API approval for demo data.');
+      }
+      return {
+        llm_provider_override: llmProviderOverride(),
+        llm_exposure_override: llmExposureOverride()
+      };
+    }
+
+    function updateLlmModeControls() {
+      const realMode = byId('modelMode').value === 'real';
+      for (const id of ['llmProvider', 'llmModel', 'llmBaseUrl', 'llmApiKey', 'llmAllowExternal', 'testLlmButton']) {
+        byId(id).disabled = !realMode;
+      }
+      byId('llmStatus').className = realMode ? 'note warn' : 'note';
+      byId('llmStatus').textContent = realMode
+        ? 'Real LLM mode is selected. Test the connection before generating code; the API key is used only for this browser request.'
+        : 'Mock mode is active. No external LLM call will be made unless Real LLM API is selected.';
+    }
+
+    async function testLlmConnection() {
+      if (byId('modelMode').value !== 'real') {
+        byId('llmStatus').className = 'note';
+        byId('llmStatus').textContent = 'Mock mode is active. There is no external connection to test.';
+        return;
+      }
+      byId('llmStatus').className = 'note warn';
+      byId('llmStatus').textContent = 'Testing provider connection...';
+      try {
+        if (!byId('llmAllowExternal').checked) {
+          throw new Error('Check external API approval before testing the provider.');
+        }
+        const payload = await api('/llm/test-connection', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            llm_provider: llmProviderOverride(),
+            llm_exposure: llmExposureOverride()
+          })
+        });
+        const relayNote = payload.external_relay ? ' Custom or relay endpoint approved.' : '';
+        byId('llmStatus').className = 'note strong';
+        byId('llmStatus').textContent = `Connection OK: ${payload.provider} / ${payload.model}.${relayNote} No study data was sent.`;
+        addEvent('LLM connection tested', `${payload.provider} responded successfully.`);
+      } catch (error) {
+        byId('llmStatus').className = 'note warn';
+        byId('llmStatus').textContent = String(error);
+      }
     }
 
     async function checkHealth() {
@@ -1080,6 +1221,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.plan) await preparePlan();
       setPill('codeStatus', 'running');
       try {
+        const overrides = llmOverridePayload();
         const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/generate-code`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -1087,7 +1229,8 @@ INDEX_HTML = r"""<!doctype html>
             study_dir: studyDir(),
             study_id: state.studyId,
             config_path: byId('configPath').value.trim() || null,
-            approved_dependency_datasets: []
+            approved_dependency_datasets: [],
+            ...overrides
           })
         });
         state.generated = payload;
@@ -1381,6 +1524,8 @@ INDEX_HTML = r"""<!doctype html>
     byId('generateCodeButton').addEventListener('click', generateCode);
     byId('approveButton').addEventListener('click', approveAndRun);
     byId('addTargetButton').addEventListener('click', addManualTarget);
+    byId('modelMode').addEventListener('change', updateLlmModeControls);
+    byId('testLlmButton').addEventListener('click', testLlmConnection);
     for (const button of document.querySelectorAll('[data-upload-role]')) {
       button.addEventListener('click', () => uploadRole(button.dataset.uploadRole));
     }
@@ -1391,6 +1536,7 @@ INDEX_HTML = r"""<!doctype html>
         renderPane();
       });
     }
+    updateLlmModeControls();
     checkHealth();
   </script>
 </body>

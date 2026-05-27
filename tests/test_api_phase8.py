@@ -8,6 +8,8 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
@@ -62,6 +64,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Upload Legacy Code", response.text)
         self.assertIn("Add another ADaM target", response.text)
         self.assertIn("addTargetButton", response.text)
+        self.assertIn("Real LLM API", response.text)
+        self.assertIn("testLlmButton", response.text)
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
 
@@ -253,6 +257,8 @@ class Phase8ApiTests(unittest.TestCase):
             json={
                 "study_dir": str(study_dir),
                 "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
             },
         )
         self.assertEqual(generated.status_code, 200, generated.text)
@@ -317,6 +323,74 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(download.status_code, 200, download.text)
         self.assertIn("USUBJID", download.text)
+
+    def test_llm_connection_test_rejects_mock_provider(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/llm/test-connection",
+            json={
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("real provider", response.json()["detail"])
+
+    def test_llm_connection_test_uses_browser_scoped_provider_settings(self) -> None:
+        client = TestClient(create_app())
+        requests = []
+
+        class FakeLLMClient:
+            def generate(self, request):
+                requests.append(request)
+                return SimpleNamespace(
+                    response_text="ADAM_AGENT_CONNECTION_OK",
+                    call_record=SimpleNamespace(
+                        provider_alias="openai-compatible",
+                        transport="fake-transport",
+                        provider_base_url="https://relay.example/v1",
+                        external_relay=True,
+                        risk_flags=["external_relay"],
+                    ),
+                )
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=FakeLLMClient()) as builder:
+            response = client.post(
+                "/llm/test-connection",
+                json={
+                    "llm_provider": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "base_url": "https://relay.example/v1",
+                        "api_key": "test-key",
+                        "allow_custom_base_url": True,
+                        "custom_base_url_approved_by": "tester",
+                    },
+                    "llm_exposure": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 3,
+                        "include_reference_rows": True,
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["model"], "gpt-5.5")
+        self.assertTrue(payload["external_relay"])
+        self.assertEqual(payload["risk_flags"], ["external_relay"])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].model, "gpt-5.5")
+        self.assertEqual(requests[0].exposure.mode, "demo_rich_context")
+        builder.assert_called_once()
+        provider_config = builder.call_args.args[0]
+        self.assertEqual(provider_config.api_key, "test-key")
 
     def test_create_run_and_read_artifacts(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_api_create_run")
