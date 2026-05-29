@@ -299,6 +299,49 @@ INDEX_HTML = r"""<!doctype html>
       50% { opacity: 1; }
       100% { opacity: 0.55; }
     }
+    .study-progress-panel {
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .study-progress-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .study-progress-title {
+      display: block;
+      margin: 2px 0 3px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .study-progress-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 7px;
+    }
+    .progress-step {
+      min-height: 46px;
+      display: grid;
+      align-content: center;
+      gap: 2px;
+      padding: 7px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .progress-step.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
+    .progress-step.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
+    .progress-step.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .progress-step span { display: block; color: inherit; font-size: 10px; font-weight: 700; }
     .graph-canvas {
       min-height: 180px;
       padding: 12px;
@@ -573,7 +616,7 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 1120px) {
       main { grid-template-columns: 1fr; }
       aside { position: static; }
-      .grid3, .grid5, .metric-grid { grid-template-columns: 1fr; }
+      .grid3, .grid5, .metric-grid, .study-progress-steps { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
@@ -625,6 +668,17 @@ INDEX_HTML = r"""<!doctype html>
               <span class="pill" id="operationStatus">idle</span>
             </div>
             <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
+          </div>
+          <div class="study-progress-panel" id="studyProgressPanel">
+            <div class="study-progress-head">
+              <div>
+                <span class="status-label">Study Progress</span>
+                <span class="study-progress-title" id="studyProgressTitle">No study loaded</span>
+                <div class="muted" id="studyProgressDetail">Load demo data or upload study files to start.</div>
+              </div>
+              <span class="pill warn" id="studyNextAction">setup</span>
+            </div>
+            <div class="study-progress-steps" id="studyProgressSteps"></div>
           </div>
           <div class="metric-grid">
             <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
@@ -910,8 +964,26 @@ INDEX_HTML = r"""<!doctype html>
       const node = byId(id);
       node.textContent = status;
       node.className = 'pill';
-      if (['failed', 'blocked', 'error', 'not started', 'unavailable'].includes(status)) node.classList.add('fail');
-      if (['waiting', 'not generated', 'running', 'review', 'warning', 'stale', 'draft review', 'checking'].includes(status)) node.classList.add('warn');
+      if (['failed', 'blocked', 'error', 'not started', 'unavailable', 'diagnose'].includes(status)) node.classList.add('fail');
+      if ([
+        'waiting',
+        'not generated',
+        'running',
+        'review',
+        'warning',
+        'stale',
+        'draft review',
+        'checking',
+        'setup',
+        'plan',
+        'dependency',
+        'choose target',
+        'spec review',
+        'generate code',
+        'regenerate',
+        'reload review',
+        'code review'
+      ].includes(status)) node.classList.add('warn');
     }
 
     function setOperation(status, title, detail) {
@@ -1812,8 +1884,122 @@ INDEX_HTML = r"""<!doctype html>
       byId('metricRunnable').textContent = String(runnable.length);
       byId('metricBlocked').textContent = String(blocked.length);
       setPill('graphStatus', blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+      renderStudyProgress(targets, runnable, blocked);
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
+    }
+
+    function renderStudyProgress(targets, runnable, blocked) {
+      const summary = studyProgressSummary(targets, runnable, blocked);
+      byId('studyProgressTitle').textContent = summary.title;
+      byId('studyProgressDetail').textContent = summary.detail;
+      setPill('studyNextAction', summary.action);
+      byId('studyProgressSteps').innerHTML = summary.steps.map((step) => `
+        <div class="progress-step ${step.state}">
+          ${escapeHtml(step.label)}
+          <span>${escapeHtml(step.detail)}</span>
+        </div>
+      `).join('');
+    }
+
+    function studyProgressSummary(targets, runnable, blocked) {
+      const inputCount =
+        (state.inputSummary?.sdtm?.length || 0) +
+        (state.inputSummary?.specs?.length || 0) +
+        (state.inputSummary?.reference_adam?.length || 0) +
+        (state.inputSummary?.define?.length || 0) +
+        (state.inputSummary?.legacy_code?.length || 0);
+      const active = state.selectedTarget || '';
+      const activeStatus = active ? datasetStatus(active, runnable, blocked) : 'not selected';
+      const activeNext = active ? nextActionText(active, activeStatus, Boolean((blocked || []).find((item) => item.dataset === active))) : 'Load or upload study evidence.';
+      const interrupt = graphInterruptLabel();
+      const steps = [
+        {label: 'Inputs', detail: inputCount ? `${inputCount} file(s)` : 'not loaded', state: inputCount ? 'done' : 'active'},
+        {label: 'Plan', detail: state.plan ? (blocked?.length ? 'needs action' : 'ready') : 'not prepared', state: state.plan ? (blocked?.length ? 'blocked' : 'done') : inputCount ? 'active' : ''},
+        {label: 'Spec', detail: active ? specGateLabel(active) : 'choose target', state: active && targetSpecGateSatisfied(active) ? 'done' : active ? 'active' : ''},
+        {label: 'Code Review', detail: active ? codeReviewLabel(active) : 'waiting', state: codeReviewStepState(active)},
+        {label: 'Run', detail: active ? runStepLabel(active) : 'waiting', state: runStepState(active)}
+      ];
+      return {
+        title: active
+          ? `${active} is ${activeStatus}`
+          : inputCount
+            ? 'Inputs recognized'
+            : 'No study loaded',
+        detail: [
+          state.graphState?.status ? `Graph status: ${state.graphState.status}.` : '',
+          interrupt ? `Open gate: ${interrupt}.` : '',
+          activeNext
+        ].filter(Boolean).join(' '),
+        action: studyNextActionPill(active, activeStatus, blocked, inputCount),
+        steps
+      };
+    }
+
+    function graphInterruptLabel() {
+      const interrupt = state.graphState?.current_interrupt;
+      if (!interrupt) return '';
+      if (typeof interrupt === 'string') return interrupt;
+      const name = interrupt.name || interrupt.interrupt || '';
+      const dataset = interrupt.dataset || '';
+      return [dataset, name].filter(Boolean).join(' / ');
+    }
+
+    function studyNextActionPill(active, activeStatus, blocked, inputCount) {
+      if (!inputCount) return 'setup';
+      if (!state.plan) return 'plan';
+      if ((blocked || []).length) return 'dependency';
+      if (!active) return 'choose target';
+      if (!targetSpecGateSatisfied(active)) return 'spec review';
+      if (!generatedFor(active)) return 'generate code';
+      if (generatedFor(active)?.status === 'stale') return 'regenerate';
+      if (!generatedFor(active)?.generated_code) return 'reload review';
+      if (!reviewFor(active) && !executionFor(active)) return 'code review';
+      if (executionFor(active)?.status === 'completed') return 'inspect output';
+      if (executionFor(active)?.status === 'terminal_failure') return 'diagnose';
+      return activeStatus || 'continue';
+    }
+
+    function specGateLabel(target) {
+      if (finalizedInputsFor(target)?.input_spec_available || targetHasInputSpec(target)) return 'input spec';
+      if (finalizedInputsFor(target)?.approved_draft_spec_available || draftSpecReviewFor(target)?.approved) return 'draft approved';
+      if (draftSpecFor(target)) return 'draft review';
+      return 'not finalized';
+    }
+
+    function codeReviewLabel(target) {
+      const generated = generatedFor(target);
+      if (!generated) return 'not generated';
+      if (generated.status === 'stale') return 'stale';
+      if (!generated.generated_code) return 'reload code';
+      if (reviewFor(target)) return 'approved';
+      return 'needs review';
+    }
+
+    function codeReviewStepState(target) {
+      if (!target) return '';
+      const generated = generatedFor(target);
+      if (!generated) return targetSpecGateSatisfied(target) ? 'active' : '';
+      if (generated.status === 'stale') return 'blocked';
+      if (!generated.generated_code) return 'active';
+      return reviewFor(target) ? 'done' : 'active';
+    }
+
+    function runStepLabel(target) {
+      const execution = executionFor(target);
+      if (!execution) return reviewFor(target) ? 'ready' : 'waiting';
+      if (execution.status === 'completed') return 'completed';
+      if (execution.status === 'terminal_failure') return 'failed';
+      return execution.status || 'running';
+    }
+
+    function runStepState(target) {
+      if (!target) return '';
+      const execution = executionFor(target);
+      if (!execution) return reviewFor(target) ? 'active' : '';
+      if (execution.status === 'completed') return 'done';
+      if (execution.status === 'terminal_failure' || execution.status === 'failed') return 'blocked';
+      return 'active';
     }
 
     function renderDependencyGraph(targets, runnable, blocked) {

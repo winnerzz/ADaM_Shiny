@@ -485,6 +485,15 @@ Design principle:
 
 - Static checks are a policy/rule-pack layer, not a growing list of one-off
   patches for PSY201, ADAE, ADSL, or any single demo variable.
+- The implementation must be layered:
+  - `StaticRuleEngine`: domain-neutral evaluator for artifact integrity,
+    execution safety, declared contracts, and rule-pack execution.
+  - `StaticRulePolicy`: run-specific configuration, such as required output
+    paths, current code hash, declared target dataset, and caller-provided
+    identifiers from approved specs.
+  - `StaticRulePack`: optional standards/company rules with explicit source,
+    version, scope, severity, and evidence. Clinical/domain knowledge enters
+    here, not inside the engine.
 - A static rule may inspect generic artifacts and contracts:
   - generated-code path/hash binding
   - expected output file contract
@@ -492,6 +501,11 @@ Design principle:
   - approved-spec variables, labels, and types
   - allowed/forbidden R execution primitives
   - reference rule identifiers supplied by a standards pack
+- Blocking rules should come only from:
+  - execution safety violations
+  - artifact integrity or hash/path mismatch
+  - explicit user-approved contracts
+  - versioned rule-pack rules with evidence and declared severity
 - A static rule must not invent clinical derivation logic from observed demo
   data. For example, it may say "a variable listed in the approved spec is not
   visibly produced by the generated code"; it must not say "this dataset must
@@ -500,6 +514,9 @@ Design principle:
 - Dataset-specific standards should enter as versioned rule packs with source,
   scope, severity, and evidence. The engine remains generic; the rule pack
   supplies domain knowledge.
+- Demo-discovered issues may create candidate rules only after being converted
+  into a source-backed rule-pack item. Until then they are implementation notes
+  or tests for generic contracts, not production static rules.
 - When a check is heuristic or incomplete, it must be warning/informational and
   must record that it does not prove clinical correctness.
 
@@ -519,6 +536,9 @@ Tasks:
   - spec/code consistency rules: caller-provided identifier visibility from
     approved spec variables, with warnings when code cannot be cheaply proven to
     produce expected variables
+  - rule-pack loader contract: load only explicit standards/company rules with
+    source/version/scope/severity/evidence metadata, and keep missing packs as a
+    visible limitation rather than silently replacing them with heuristics
   - future standards-pack rules: CDISC/P21/company-standard checks loaded from
     explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
@@ -1434,6 +1454,10 @@ Completed:
   - study-level audit `artifacts`, including `agent_summary_*`
 - The audit manifest metadata now embeds `agent_audit_summary` alongside raw
   `agent_decisions` and `risk_flags`.
+- After subagent review, fixed one medium traceability issue: the direct
+  `StudyGraph` batch path now groups `state.audit_artifacts` by dataset when
+  writing `agent_summary.json`, and regression coverage asserts that the direct
+  StudyGraph summary includes a dataset artifact id.
 
 Current boundary:
 
@@ -1463,25 +1487,69 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 
 Result: 172 tests passed.
 
+### 2026-05-30 - LG2.7 Study Progress Viewer Slice
+
+Completed:
+
+- Added a Study Dashboard progress panel in the local UI:
+  - study-level title and detail text
+  - next-action pill
+  - five compact stages: Inputs, Plan, Spec, Code Review, Run
+- The panel is derived from existing UI projections of canonical graph state:
+  - `state.graphState.status`
+  - `state.graphState.current_interrupt`
+  - dependency plan status
+  - per-dataset spec/code/review/execution maps
+- Added front-end contract tests to keep the progress panel tied to graph state
+  and active dataset state rather than a separate workflow implementation.
+- Kept the slice presentation-only. It does not change dependency planning,
+  generation gates, code review, execution, or repair routing.
+
+Current boundary:
+
+- The panel is a browser-side projection from graph state plus existing
+  per-dataset UI maps. It improves user orientation, but canonical workflow
+  truth remains `graph_state.json`.
+- This is not a full batch execution UI. Generation, review, and local execution
+  remain active-dataset actions.
+- Browser-plugin screenshot verification was not available in this tool
+  session; the page was verified through FastAPI HTTP response plus UI contract
+  tests.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 56 tests passed.
+
+```text
+GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
+```
+
 Subagent review:
 
-- A `gpt-5.5` subagent found no major architecture blocker.
-- It found one medium traceability issue: the direct `StudyGraph` batch path
-  wrote dataset agent summaries without dataset artifact ids.
-- Fixed by grouping `state.audit_artifacts` by dataset when writing
-  `agent_summary.json`, and by adding a regression assertion that the direct
-  StudyGraph summary includes a dataset artifact id.
+- Subagent review found no blocking issue for this presentation-only slice.
+- Low-risk observation: the Plan stage still reads the existing `state.plan`
+  browser projection cache rather than rebuilding entirely from
+  `graph_state.json`. This is acceptable for the current UI projection, but a
+  future pure graph-state resume view should derive it from canonical graph
+  state.
+- The static-rule wording was also reviewed as acceptable: it now requires a
+  generic engine, run policy, and source-backed rule packs rather than
+  demo-shaped static rules.
 
-After subagent review fix:
-
-```text
-python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
-```
-
-Result: 80 tests passed.
+Final verification:
 
 ```text
-python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/web.py tests/test_api_phase8.py
 ```
 
-Result: 172 tests passed.
+Result: no whitespace errors.
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 56 tests passed.

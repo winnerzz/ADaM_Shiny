@@ -76,6 +76,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Dataset Execution Cards", response.text)
         self.assertIn("operationBanner", response.text)
         self.assertIn("globalStatusDetail", response.text)
+        self.assertIn("studyProgressPanel", response.text)
+        self.assertIn("Study Progress", response.text)
+        self.assertIn("studyProgressSummary", response.text)
+        self.assertIn("studyNextActionPill", response.text)
+        self.assertIn("graphInterruptLabel", response.text)
         self.assertIn("generation plan", response.text)
         self.assertIn("nextActionText", response.text)
         self.assertIn("Try With Shiny Demo Data", response.text)
@@ -109,6 +114,22 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertNotIn("resetGeneratedState", response.text)
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
+
+    def test_index_exposes_graph_state_progress_panel(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        progress_body = html.split("function studyProgressSummary(targets, runnable, blocked)", 1)[1].split("function graphInterruptLabel()", 1)[0]
+        self.assertIn("state.graphState?.status", progress_body)
+        self.assertIn("graphInterruptLabel()", progress_body)
+        self.assertIn("datasetStatus(active, runnable, blocked)", progress_body)
+        self.assertIn("nextActionText(active, activeStatus", progress_body)
+        self.assertIn("targetSpecGateSatisfied(active)", html)
+        self.assertIn("generatedFor(active)?.status === 'stale'", html)
+        self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
 
     def test_index_keeps_planning_selection_separate_from_active_target_view(self) -> None:
         client = TestClient(create_app())

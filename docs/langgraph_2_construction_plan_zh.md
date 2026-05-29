@@ -414,6 +414,13 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 
 - 静态检查是 policy/rule-pack 层，不是不断追加 PSY201、ADAE、ADSL 或某个
   demo 变量特例的补丁清单。
+- 实现必须分层：
+  - `StaticRuleEngine`：领域中立的 evaluator，只负责 artifact 完整性、执行安
+    全、声明契约和 rule-pack 执行。
+  - `StaticRulePolicy`：当前 run 的配置，例如 required output path、当前 code
+    hash、声明 target dataset、approved spec 传入的 identifiers。
+  - `StaticRulePack`：可选的 standards/company rules，必须带 source、version、
+    scope、severity、evidence。临床/领域知识只能从这里进入，不能写死在 engine。
 - 静态规则可以检查通用 artifacts 和 contracts：
   - generated code 的 path/hash 绑定
   - expected output file contract
@@ -421,12 +428,20 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - approved spec 中的变量、label、type
   - R 执行边界中允许/禁止的 primitives
   - standards pack 提供的 reference rule id
+- Blocking rule 只能来自：
+  - execution safety violation
+  - artifact integrity 或 hash/path mismatch
+  - 用户已经 approved 的显式 contract
+  - 带 evidence 和 declared severity 的 versioned rule-pack rule
 - 静态规则不能从 demo 数据观察中发明临床推导逻辑。例如它可以说“approved
   spec 中列出的变量在 generated code 里不可见”；但不能说“这个数据集必须按
   某种固定方式推导 TRTEMFL”，除非这条规则来自明确的 approved spec、company
   standard 或带来源的 CDISC/P21 rule pack。
 - 数据集相关 standards 应该作为带版本、来源、适用范围、severity 和 evidence
   的 rule pack 输入。规则引擎保持通用，领域知识由 rule pack 提供。
+- demo 中发现的问题只能先形成 candidate rule。只有当它被转换成带来源的
+  rule-pack item 后，才能成为生产静态规则；在此之前只能作为实现备注或通用
+  contract 的测试，不应写成生产逻辑。
 - 任何启发式或不完整检查都只能作为 warning/informational，并且必须记录“不能
   证明临床推导正确”。
 
@@ -445,6 +460,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - spec/code consistency rules：从 approved spec variables 传入的 identifier
     可见性检查；当无法低成本证明 generated code 产出 expected variables 时，只
     给 warning
+  - rule-pack loader contract：只加载带 source/version/scope/severity/evidence
+    metadata 的显式 standards/company rules；缺失 rule pack 必须显示成限制，不
+    能用静默 heuristic 顶替
   - future standards-pack rules：从显式 references 加载 CDISC/P21/company
     standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
@@ -1283,6 +1301,10 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
   - study-level audit `artifacts`，其中包含 `agent_summary_*`
 - audit manifest metadata 现在同时包含原始 `agent_decisions`、`risk_flags`
   和派生出的 `agent_audit_summary`。
+- 根据子 agent 审查，修复了一个 medium traceability 问题：直接走
+  `StudyGraph` batch path 时，写 `agent_summary.json` 会按 dataset 汇总
+  `state.audit_artifacts`，并增加回归断言，确认 direct StudyGraph summary
+  里能看到 dataset artifact id。
 
 当前边界：
 
@@ -1311,24 +1333,64 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 
 结果：172 tests passed。
 
+### 2026-05-30 - LG2.7 Study Progress Viewer 切片
+
+已完成：
+
+- 在本地 UI 的 Study Dashboard 增加 study-level progress panel：
+  - study-level title/detail
+  - 下一步动作 pill
+  - 五个紧凑阶段：Inputs、Plan、Spec、Code Review、Run
+- 这个 panel 来自现有 graph state/UI projection：
+  - `state.graphState.status`
+  - `state.graphState.current_interrupt`
+  - dependency plan 状态
+  - 每个 dataset 的 spec/code/review/execution map
+- 增加前端契约测试，确保 progress panel 绑定 graph state 和 active dataset
+  state，而不是重新实现一套独立 workflow。
+- 本切片只做展示层，不改变 dependency planning、generation gate、code
+  review、execution 或 repair routing。
+
+当前边界：
+
+- 这个 panel 是 browser-side projection。它改善用户理解，但 workflow 真相仍然
+  是 `graph_state.json`。
+- 这不是完整批量执行 UI。generation、review、本地 execution 仍然是 active
+  dataset 动作。
+- 本轮工具环境没有暴露 Browser plugin 需要的控制接口，因此没有做浏览器截图验
+  证；已用 FastAPI HTTP response 和 UI contract tests 验证页面可访问和元素存在。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+结果：56 tests passed。
+
+```text
+GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
+```
+
 子 agent 审查：
 
-- `gpt-5.5` 子 agent 没有发现 major architecture blocker。
-- 它发现一个 medium traceability 问题：直接走 `StudyGraph` batch path 时，
-  dataset 的 agent summary 没有带上 dataset artifact ids。
-- 已修复：写 `agent_summary.json` 时按 dataset 汇总 `state.audit_artifacts`，
-  并增加回归断言，确认 direct StudyGraph summary 里能看到 dataset artifact id。
+- 子 agent 审查没有发现阻塞提交的问题。
+- 低风险观察：Plan 阶段仍读取现有 `state.plan` browser projection cache，而不
+  是完全从 `graph_state.json` 重建。对当前 UI projection 可以接受；以后如果做
+  纯 graph-state resume view，应从 canonical graph state 派生。
+- 静态规则 wording 也通过审查：现在要求 generic engine、run policy、带来源的
+  rule packs，而不是 demo-shaped static rules。
 
-根据子 agent 审查修复后：
-
-```text
-python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
-```
-
-结果：80 tests passed。
+最终验证：
 
 ```text
-python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/web.py tests/test_api_phase8.py
 ```
 
-结果：172 tests passed。
+结果：无 whitespace error。
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+结果：56 tests passed。
