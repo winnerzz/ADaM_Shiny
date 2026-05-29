@@ -43,6 +43,12 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.r_runner import LocalRRunner
+from adam_agent.tools.static_rules import (
+    StaticRuleError,
+    assert_no_blocking_static_findings,
+    run_generated_r_static_checks,
+    write_static_rule_report,
+)
 
 
 def _is_llm_downstream_mode(state: DatasetGraphState) -> bool:
@@ -425,14 +431,15 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             package=package,
             response_text=llm_response.response_text,
         )
-        static_check_path = _write_static_check_placeholder(
+        static_check_path = _write_static_check_report(
             study_dir=Path(study_dir),
             run_id=state["run_id"],
             study_id=state["study_id"],
             target=target,
             code_path=Path(artifacts.code_artifact.path),
+            required_identifiers=_required_identifiers_from_spec(target_spec),
         )
-    except (LLMGeneratedCodeError, LLMProviderResponseError, ValueError) as exc:
+    except (LLMGeneratedCodeError, LLMProviderResponseError, StaticRuleError, ValueError) as exc:
         return _product_failure("code_generation_error", str(exc), next_action="generate_code")
 
     return {
@@ -480,16 +487,16 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             record_agent_decision(
                 agent="static_review_agent",
                 node="generate_r_code_agent",
-                decision="placeholder_static_check_recorded",
+                decision="static_check_passed_for_review",
                 dataset=target,
                 status="warning",
-                reason="Only placeholder static checking is available in this build.",
+                reason="Limited deterministic static checks passed before human code review.",
                 outputs={"static_check_path": str(static_check_path.as_posix())},
-                risk_flags=["static_check_placeholder"],
+                risk_flags=["static_check_limited_scope"],
                 artifact_ids=[f"static_check_{target.lower()}"],
             ),
         ],
-        "risk_flags": package.risk_points + ["static_check_placeholder"],
+        "risk_flags": package.risk_points + ["static_check_limited_scope"],
     }
 
 
@@ -629,7 +636,7 @@ def _downstream_result_state(result: DownstreamRunResult) -> DatasetGraphState:
         "audit_artifacts": [
             artifact
             for key, artifact in result.artifacts.items()
-            if key in {"llm_context", "llm_response", "llm_parsed_response", "validation_report", "failure_report"}
+            if key in {"llm_context", "llm_response", "llm_parsed_response", "static_check", "validation_report", "failure_report"}
         ],
         "sandbox_runs": 1,
     }
@@ -1172,37 +1179,46 @@ def _sample_row_counts(context: dict[str, object]) -> dict[str, int]:
     return counts
 
 
-def _write_static_check_placeholder(
+def _write_static_check_report(
     *,
     study_dir: Path,
     run_id: str,
     study_id: str,
     target: str,
     code_path: Path,
+    required_identifiers: list[str] | None = None,
 ) -> Path:
     static_dir = study_dir / "runs" / run_id / "static_checks"
     static_dir.mkdir(parents=True, exist_ok=True)
     path = static_dir / f"{target.lower()}_static_check.json"
-    payload = {
-        "study_id": study_id,
-        "run_id": run_id,
-        "dataset": target,
-        "status": "warning_only",
-        "implemented": False,
-        "checked_at": utc_timestamp(),
-        "code_path": str(code_path.as_posix()),
-        "checks": [],
-        "warnings": [
-            "Static ADaM/CDISC rule checking is reserved for a later phase.",
-            "This placeholder does not prove CDISC compliance.",
-        ],
-        "notes": [
-            "The node exists so code review always occurs after a static-check stage in the workflow.",
-            "Future checks can add required variables, DTYPE, date, flag, and naming rules here.",
-        ],
-    }
-    _write_json(path, payload)
+    report = run_generated_r_static_checks(
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        code_path=code_path,
+        expected_output_path=f"outputs/{target.lower()}.csv",
+        required_identifiers=required_identifiers,
+    )
+    write_static_rule_report(report, path=path)
+    assert_no_blocking_static_findings(report)
     return path
+
+
+def _required_identifiers_from_spec(target_spec: dict[str, object] | None) -> list[str]:
+    if not isinstance(target_spec, dict):
+        return []
+    variables = target_spec.get("variables")
+    if not isinstance(variables, list):
+        return []
+    identifiers: list[str] = []
+    for item in variables:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("variable") or item.get("name") or item.get("Variable")
+        text = str(name or "").strip().upper()
+        if text and text not in identifiers:
+            identifiers.append(text)
+    return identifiers[:50]
 
 
 def _tool_log_artifact(state: DatasetGraphState, path: Path, *, kind_id: str) -> ArtifactRef:

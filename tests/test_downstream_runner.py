@@ -156,12 +156,47 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(failure_report["latest_root_cause"], "code_contract_error")
         self.assertEqual(failure_report["latest_recommended_route"], "repair_code")
 
+    def test_downstream_runner_blocks_static_rule_failure_before_r_execution(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_static_block")
+        response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nsystem('whoami')\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Unsafe code response."],
+                "risk_points": [],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["adae.csv"],
+            }
+        )
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_static_block",
+            target_dataset="ADAE",
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_static_block"),
+            llm_client=MockLLMClient(fixed_response_text=response),
+            r_runner=FailingStubRRunner(),
+            source_datasets=["AE"],
+            max_repair_attempts=0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation_status, "static_rule_error")
+        self.assertIsNone(result.r_result)
+        self.assertIn("static_check", result.artifacts)
+        self.assertEqual(result.failure_records[0].root_cause, "static_rule_violation")
+        self.assertEqual(result.failure_records[0].recommended_route, "repair_code")
+        static_report = json.loads(Path(result.artifacts["static_check"].path).read_text(encoding="utf-8"))
+        self.assertEqual(static_report["status"], "blocked")
+        self.assertTrue(any(item["rule_id"] == "R_FORBIDDEN_CALL" for item in static_report["blocking_errors"]))
+
     def test_downstream_runner_repairs_r_failure_once_and_passes(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_repair_pass")
         initial_response = json.dumps(
             {
                 "dataset": "ADAE",
-                "r_code": "stop('bad generated code')\n",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\nstop('bad generated code')\n",
                 "assumptions": ["Initial bad code."],
                 "risk_points": [],
                 "used_inputs": ["AE"],

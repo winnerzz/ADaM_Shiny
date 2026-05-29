@@ -20,6 +20,7 @@ try:
     from adam_agent.api.app import create_app
     from adam_agent.graph.workflow_state import input_fingerprint
     from adam_agent.tools.artifacts import sha256_file
+    from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -29,6 +30,7 @@ except ModuleNotFoundError:
     from adam_agent.api.app import create_app
     from adam_agent.graph.workflow_state import input_fingerprint
     from adam_agent.tools.artifacts import sha256_file
+    from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 
 
 def _workspace_dir(name: str) -> Path:
@@ -36,6 +38,20 @@ def _workspace_dir(name: str) -> Path:
     path = TMP_ROOT / f"{name}_{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=False)
     return path
+
+
+def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, code_path: Path) -> tuple[Path, str]:
+    target = dataset.strip().upper()
+    static_path = study_dir / "runs" / run_id / "static_checks" / f"{target.lower()}_static_check.json"
+    report = run_generated_r_static_checks(
+        study_id=study_dir.name,
+        run_id=run_id,
+        dataset=target,
+        code_path=code_path,
+        expected_output_path=f"outputs/{target.lower()}.csv",
+    )
+    write_static_rule_report(report, path=static_path)
+    return static_path, f"sha256:{sha256_file(static_path)}"
 
 
 class Phase8ApiTests(unittest.TestCase):
@@ -336,7 +352,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertTrue(generated_payload["static_check_path"].endswith("adae_static_check.json"))
         self.assertTrue(Path(generated_payload["static_check_path"]).exists())
         static_check = json.loads(Path(generated_payload["static_check_path"]).read_text(encoding="utf-8"))
-        self.assertEqual(static_check["status"], "warning_only")
+        self.assertEqual(static_check["status"], "pass")
+        self.assertTrue(static_check["implemented"])
+        self.assertIn("do not prove full CDISC", static_check["non_compliance_disclaimer"])
         workflow_state = json.loads((study_dir / "runs" / "run_split_flow" / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "needs_review")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
@@ -802,7 +820,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(generated.status_code, 200, generated.text)
         run_dir = study_dir / "runs" / "run_terminal"
         code_dir = run_dir / "code"
-        (code_dir / "build_adae.R").write_text("stop('forced failure')\n", encoding="utf-8")
+        (code_dir / "build_adae.R").write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
         review = client.post(
             "/runs/run_terminal/datasets/ADAE/code-review",
             json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
@@ -818,7 +836,9 @@ class Phase8ApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(generated.status_code, 200, generated.text)
-        (code_dir / "build_adae.R").write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -826,8 +846,10 @@ class Phase8ApiTests(unittest.TestCase):
             study_id=study_dir.name,
             run_id="run_terminal",
             dataset="ADAE",
-            code_path=code_dir / "build_adae.R",
-            code_sha256=f"sha256:{sha256_file(code_dir / 'build_adae.R')}",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -892,7 +914,8 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_retry_gate" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_retry_gate", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -902,6 +925,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -937,7 +962,8 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_repair_gate" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_repair_gate", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -947,6 +973,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -1012,7 +1040,8 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_retry_no_regenerate" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_retry_no_regenerate", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -1022,6 +1051,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -1070,7 +1101,8 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_skip_no_regenerate" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_skip_no_regenerate", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -1080,6 +1112,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -1128,7 +1162,8 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_revise_spec_gate" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_revise_spec_gate", "ADAE", code_path)
         from adam_agent.graph.gateway import GraphGateway
 
         GraphGateway().record_code_generation(
@@ -1138,6 +1173,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
         review = client.post(
@@ -1230,7 +1267,7 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(generated.status_code, 200, generated.text)
         code_path = study_dir / "runs" / "run_terminal_revise_approved_draft" / "code" / "build_adae.R"
-        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        code_path.write_text("dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
         from adam_agent.graph.gateway import GraphGateway
 
         graph_state = client.get(
@@ -1238,6 +1275,7 @@ class Phase8ApiTests(unittest.TestCase):
             params={"study_dir": str(study_dir)},
         ).json()
         code_state = graph_state["datasets"]["ADAE"]["code_state"]
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_revise_approved_draft", "ADAE", code_path)
         GraphGateway().record_code_generation(
             study_dir=study_dir,
             study_id=study_dir.name,
@@ -1245,6 +1283,8 @@ class Phase8ApiTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
             spec_source=code_state["spec_source"],
             spec_path=code_state["spec_path"],
             spec_sha256=code_state["spec_sha256"],

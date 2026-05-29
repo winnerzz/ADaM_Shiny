@@ -20,6 +20,7 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
+from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
 @dataclass(frozen=True)
@@ -599,10 +600,28 @@ class GraphGateway:
         if recorded_code_sha != code_sha256:
             raise ValueError("Generated code changed after graph code generation. Regenerate code before review.")
         recorded_static_sha = dataset_state.code_state.get("static_check_sha256")
-        if recorded_static_sha and not static_check_sha256:
+        recorded_static_path = dataset_state.code_state.get("static_check_path")
+        if not recorded_static_path or not recorded_static_sha:
+            raise ValueError("Generated-code graph state is missing the static-check artifact. Regenerate code before review.")
+        if not static_check_sha256:
             raise ValueError("Static-check artifact recorded during code generation is missing. Regenerate code before review.")
-        if static_check_sha256 and recorded_static_sha and static_check_sha256 != recorded_static_sha:
+        recorded_code_path = Path(str(dataset_state.code_state.get("code_path") or ""))
+        resolved_static = Path(str(recorded_static_path))
+        if not resolved_static.exists() or not resolved_static.is_file():
+            raise ValueError(f"Static-check artifact used during code generation no longer exists: {resolved_static}")
+        if f"sha256:{sha256_file(resolved_static)}" != recorded_static_sha:
             raise ValueError("Static-check artifact changed after graph code generation. Regenerate code before review.")
+        if static_check_sha256 != recorded_static_sha:
+            raise ValueError("Static-check artifact changed after graph code generation. Regenerate code before review.")
+        try:
+            validate_static_rule_report_artifact(
+                resolved_static,
+                dataset=target,
+                code_path=recorded_code_path,
+                code_sha256=recorded_code_sha,
+            )
+        except StaticRuleError as exc:
+            raise ValueError(str(exc)) from exc
         recorded_spec_path = dataset_state.code_state.get("spec_path")
         recorded_spec_sha = dataset_state.code_state.get("spec_sha256")
         if recorded_spec_path or recorded_spec_sha or spec_sha256:
@@ -676,12 +695,28 @@ class GraphGateway:
                 spec_sha256=spec_sha256,
                 input_fingerprint_payload=fingerprint,
             )
+        if static_check_path is None or not static_check_sha256:
+            raise ValueError("Generated-code graph state requires a static-check artifact and hash before code review.")
+        resolved_static_check = Path(static_check_path)
+        if not resolved_static_check.exists() or not resolved_static_check.is_file():
+            raise ValueError(f"Static-check artifact does not exist: {resolved_static_check}")
+        if f"sha256:{sha256_file(resolved_static_check)}" != static_check_sha256:
+            raise ValueError("Static-check artifact hash does not match the generated-code payload.")
+        try:
+            validate_static_rule_report_artifact(
+                resolved_static_check,
+                dataset=target,
+                code_path=Path(code_path),
+                code_sha256=code_sha256,
+            )
+        except StaticRuleError as exc:
+            raise ValueError(str(exc)) from exc
         dataset_state.code_state.update(
             {
                 "status": "generated",
                 "code_path": str(Path(code_path).as_posix()),
                 "code_sha256": code_sha256,
-                "static_check_path": str(Path(static_check_path).as_posix()) if static_check_path else None,
+                "static_check_path": str(resolved_static_check.as_posix()),
                 "static_check_sha256": static_check_sha256,
                 "spec_source": spec_source,
                 "spec_path": str(Path(spec_path).as_posix()) if spec_path else None,
@@ -700,8 +735,7 @@ class GraphGateway:
         dataset_state.status = "needs_review"
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "generated_code", "output", code_path, kind="generated_code"))
-        if static_check_path:
-            _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", static_check_path, kind="tool_log"))
+        _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", resolved_static_check, kind="tool_log"))
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -712,7 +746,7 @@ class GraphGateway:
                 spec_source=spec_source,
             ),
         )
-        _append_risk_flags(dataset_state, risk_flags or ["static_check_placeholder"])
+        _append_risk_flags(dataset_state, risk_flags or ["static_check_limited_scope"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         _sync_study_agent_decisions(next_state)
@@ -1545,15 +1579,15 @@ def _default_code_generation_agent_decisions(
             record_agent_decision(
                 agent="static_review_agent",
                 node="code_generation",
-                decision="placeholder_static_check_recorded",
+                decision="static_check_recorded",
                 dataset=target,
                 status="warning",
-                reason="Only placeholder static checking is available in this build.",
+                reason="A limited deterministic static-check artifact was recorded before human code review.",
                 outputs={
                     "record_source": "graph_gateway_default",
                     "static_check_path": str(Path(static_check_path).as_posix()),
                 },
-                risk_flags=["static_check_placeholder"],
+                risk_flags=["static_check_limited_scope"],
             )
         )
     return decisions

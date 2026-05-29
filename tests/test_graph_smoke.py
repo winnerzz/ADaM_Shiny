@@ -588,7 +588,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("evidence_agent", agents)
         self.assertIn("code_agent", agents)
         self.assertIn("static_review_agent", agents)
-        self.assertIn("static_check_placeholder", result["risk_flags"])
+        self.assertIn("static_check_limited_scope", result["risk_flags"])
         self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
         self.assertEqual(result["agent_audit_summary"]["summary_writer"]["agent"], "audit_agent")
         self.assertIn("ADAE", result["agent_audit_summary"]["datasets"])
@@ -1031,6 +1031,7 @@ class GraphSmokeTests(unittest.TestCase):
         artifact_ids = {artifact["artifact_id"] for artifact in manifest_payload["artifacts"]}
         self.assertIn("llm_context_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
         self.assertIn("llm_response_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
+        self.assertIn("static_check_psy201_run_phase74_graph_llm_downstream_adae", artifact_ids)
 
     def test_study_graph_runs_llm_downstream_provider_mode_with_mock_config(self) -> None:
         study_dir = _workspace_dir("phase76_graph_llm_provider_mock") / "PSY201"

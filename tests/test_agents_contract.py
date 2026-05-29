@@ -29,14 +29,14 @@ class AgentContractTests(unittest.TestCase):
             status="needs_review",
             reason="Generated code is waiting for human review.",
             outputs={"code_path": "runs/run/code/build_adae.R"},
-            risk_flags=["static_check_placeholder"],
+            risk_flags=["static_check_limited_scope"],
             artifact_ids=["generated_code_adae"],
         )
 
         self.assertEqual(record["agent"], "code_agent")
         self.assertEqual(record["dataset"], "ADAE")
         self.assertEqual(record["outputs"]["code_path"], "runs/run/code/build_adae.R")
-        self.assertEqual(record["risk_flags"], ["static_check_placeholder"])
+        self.assertEqual(record["risk_flags"], ["static_check_limited_scope"])
         self.assertTrue(record["created_at"].endswith("Z"))
         AgentDecision.model_validate(record)
 
@@ -61,7 +61,7 @@ class AgentContractTests(unittest.TestCase):
                 dataset="ADAE",
                 status="needs_review",
                 reason="Generated code requires review.",
-                risk_flags=["static_check_placeholder"],
+                risk_flags=["static_check_limited_scope"],
             ),
             record_agent_decision(
                 agent="execution_agent",
@@ -78,9 +78,9 @@ class AgentContractTests(unittest.TestCase):
             run_id="run_agent_summary",
             status="completed",
             target_datasets=["ADAE"],
-            datasets={"ADAE": {"status": "completed", "risk_flags": ["static_check_placeholder"]}},
+            datasets={"ADAE": {"status": "completed", "risk_flags": ["static_check_limited_scope"]}},
             agent_decisions=decisions,
-            risk_flags=["static_check_placeholder"],
+            risk_flags=["static_check_limited_scope"],
         )
 
         self.assertEqual(summary["summary_type"], "agent_audit_summary")
@@ -89,7 +89,7 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(summary["agent_counts"]["code_agent"], 1)
         self.assertEqual(summary["datasets"]["ADAE"]["decision_count"], 2)
         self.assertEqual(summary["datasets"]["ADAE"]["status"], "completed")
-        self.assertIn("static_check_placeholder", summary["datasets"]["ADAE"]["risk_flags"])
+        self.assertIn("static_check_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
         self.assertIn("graph_state.json", summary["limitations"][0])
 
 

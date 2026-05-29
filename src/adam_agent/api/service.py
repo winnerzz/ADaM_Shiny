@@ -56,7 +56,6 @@ from adam_agent.graph.workflow_state import (
     load_workflow_state,
     mark_workflow_inputs_current,
     update_workflow_state,
-    utc_timestamp,
 )
 from adam_agent.llm.clients import (
     LLMClientConfigError,
@@ -512,7 +511,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         risk_flags=list(result.get("risk_flags", [])),
     )
     warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings + [
-        "Static ADaM/CDISC rule checking is a placeholder in this build; review generated R code manually before execution."
+        "Static R checks are limited guardrails before human review; they do not prove full CDISC/ADaM IG/P21 compliance."
     ]
     return GenerateCodeResponse(
         study_id=study_id,
@@ -2400,39 +2399,6 @@ def _merge_json_artifact(path: Path, payload: dict[str, Any]) -> None:
     current = _read_json_if_exists(path)
     current.update(payload)
     _write_json(path, current)
-
-
-def _write_static_check_placeholder(
-    *,
-    study_dir: Path,
-    run_id: str,
-    study_id: str,
-    target: str,
-    code_path: Path,
-) -> Path:
-    static_dir = study_dir / "runs" / run_id / "static_checks"
-    static_dir.mkdir(parents=True, exist_ok=True)
-    path = static_dir / f"{target.lower()}_static_check.json"
-    payload = {
-        "study_id": study_id,
-        "run_id": run_id,
-        "dataset": target,
-        "status": "warning_only",
-        "implemented": False,
-        "checked_at": utc_timestamp(),
-        "code_path": str(code_path.as_posix()),
-        "checks": [],
-        "warnings": [
-            "Static ADaM/CDISC rule checking is reserved for a later phase.",
-            "This placeholder does not prove CDISC compliance.",
-        ],
-        "notes": [
-            "The node exists so code review always occurs after a static-check stage in the workflow.",
-            "Future checks can add required variables, DTYPE, date, flag, and naming rules here.",
-        ],
-    }
-    _write_json(path, payload)
-    return path
 
 
 def _read_text_if_exists(path: Path, *, limit_chars: int) -> str:

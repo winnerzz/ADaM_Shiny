@@ -23,6 +23,11 @@ from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.r_runner import RRunRequest, RRunResult
+from adam_agent.tools.static_rules import (
+    StaticRuleReport,
+    run_generated_r_static_checks,
+    write_static_rule_report,
+)
 
 
 @dataclass
@@ -128,6 +133,7 @@ def run_downstream_adam(
         )
 
     context_dict = context.as_dict()
+    required_identifiers = _required_identifiers_from_context(context_dict)
     prompt = compact_prompt_from_context(context_dict)
     prompt_artifact = write_compact_prompt_artifact(
         study_id=study_id,
@@ -172,6 +178,7 @@ def run_downstream_adam(
         model=model,
         artifacts=artifacts,
         repair_attempt=0,
+        required_identifiers=required_identifiers,
     )
 
     if attempt.failure_record is not None:
@@ -234,6 +241,7 @@ def run_downstream_adam(
             model=model,
             artifacts=artifacts,
             repair_attempt=1,
+            required_identifiers=required_identifiers,
             attempt_label="repair1",
         )
         if repair_attempt.failure_record is not None:
@@ -320,6 +328,7 @@ def _run_generated_response_attempt(
     model: str,
     artifacts: dict[str, ArtifactRef],
     repair_attempt: int,
+    required_identifiers: list[str],
     attempt_label: str | None = None,
 ) -> _AttemptResult:
     """Parse, write, execute, validate, and diagnose one LLM response."""
@@ -393,6 +402,67 @@ def _run_generated_response_attempt(
         artifacts["llm_response"] = generated_artifacts.response_artifact
         artifacts["generated_code"] = generated_artifacts.code_artifact
         artifacts["llm_parsed_response"] = generated_artifacts.package_artifact
+
+    static_report, static_artifact = _write_static_check_artifact(
+        study_dir=study_dir,
+        study_id=study_id,
+        run_id=run_id,
+        target=target,
+        code_path=Path(generated_artifacts.code_artifact.path),
+        required_identifiers=required_identifiers,
+        attempt_label=attempt_label,
+    )
+    artifacts[f"static_check{artifact_suffix}"] = static_artifact
+    if attempt_label is None:
+        artifacts["static_check"] = static_artifact
+    if static_report.blocking_errors:
+        static_errors = [finding.message for finding in static_report.blocking_errors]
+        validation_report = _validation_report(target, "static_rule_error", errors=static_errors)
+        validation_report["static_check"] = static_report.as_dict()
+        _add_attempt_metadata(
+            validation_report,
+            provider=provider,
+            model=model,
+            call_record=call_record,
+            stubbed_r_execution=isinstance(runner, StructuralStubRRunner),
+            repair_attempt=repair_attempt,
+            attempt_label=attempt_label,
+        )
+        failure_record = diagnose_downstream_failure(
+            dataset=target,
+            stage="static_check",
+            message="; ".join(static_errors),
+            validation_report=validation_report,
+            artifact_ids=[
+                generated_artifacts.response_artifact.artifact_id,
+                generated_artifacts.code_artifact.artifact_id,
+                generated_artifacts.package_artifact.artifact_id,
+                static_artifact.artifact_id,
+            ],
+            repair_attempt=repair_attempt,
+        )
+        validation_report["failure"] = failure_record.model_dump(mode="json")
+        validation_artifact = _write_validation_artifact(
+            study_dir,
+            study_id,
+            run_id,
+            target,
+            validation_report,
+            attempt_label=attempt_label,
+        )
+        artifacts[f"validation_report{artifact_suffix}"] = validation_artifact
+        artifacts["validation_report"] = validation_artifact
+        return _AttemptResult(
+            status="failed",
+            validation_status="static_rule_error",
+            call_record=call_record,
+            r_result=None,
+            validation_report=validation_report,
+            error="; ".join(static_errors),
+            failure_record=failure_record,
+            generated_code=generated_package.r_code,
+            raw_response_text=llm_response_text,
+        )
 
     preflight_errors = _real_r_preflight_errors(
         run_dir=run_dir,
@@ -804,6 +874,64 @@ def _output_artifact(study_id: str, run_id: str, target: str, output_path: Path)
         format=output_path.suffix.lower().lstrip("."),
         role="output",
     )
+
+
+def _write_static_check_artifact(
+    *,
+    study_dir: Path,
+    study_id: str,
+    run_id: str,
+    target: str,
+    code_path: Path,
+    required_identifiers: list[str],
+    attempt_label: str | None,
+) -> tuple[StaticRuleReport, ArtifactRef]:
+    target_lower = target.lower()
+    suffix = f"_{attempt_label}" if attempt_label else ""
+    static_path = study_dir / "runs" / run_id / "static_checks" / f"{target_lower}_static_check{suffix}.json"
+    report = run_generated_r_static_checks(
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        code_path=code_path,
+        expected_output_path=f"outputs/{target_lower}.csv",
+        required_identifiers=required_identifiers,
+    )
+    write_static_rule_report(report, path=static_path)
+    artifact = ArtifactRef(
+        artifact_id=f"static_check_{study_id.lower()}_{run_id}_{target_lower}{suffix}",
+        kind="tool_log",
+        path=str(static_path.as_posix()),
+        sha256=f"sha256:{sha256_file(static_path)}",
+        dataset=target,
+        format="json",
+        role="audit",
+        metadata={
+            "attempt_label": attempt_label or "initial",
+            "static_rule_status": report.status,
+            "blocking_error_count": len(report.blocking_errors),
+            "limited_scope": True,
+        },
+    )
+    return report, artifact
+
+
+def _required_identifiers_from_context(context: dict[str, Any]) -> list[str]:
+    target_spec = context.get("target_spec")
+    if not isinstance(target_spec, dict):
+        return []
+    variables = target_spec.get("variables")
+    if not isinstance(variables, list):
+        return []
+    identifiers: list[str] = []
+    for item in variables:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("variable") or item.get("name") or item.get("Variable")
+        text = str(name or "").strip().upper()
+        if text and text not in identifiers:
+            identifiers.append(text)
+    return identifiers[:50]
 
 
 def _validation_report(target: str, status: str, *, errors: list[str]) -> dict[str, Any]:

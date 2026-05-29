@@ -65,7 +65,6 @@ def parse_generated_code_response(response_text: str, *, expected_dataset: str |
         raise LLMGeneratedCodeError(f"LLM response dataset {dataset} does not match expected {expected_dataset}.")
 
     r_code = _required_str(payload, "r_code")
-    _reject_obvious_unsafe_code(r_code)
 
     return GeneratedCodePackage(
         dataset=dataset,
@@ -172,21 +171,3 @@ def _string_list(value: Any, key: str) -> list[str]:
         if text:
             result.append(text)
     return result
-
-
-def _reject_obvious_unsafe_code(r_code: str) -> None:
-    """Small MVP guardrail before the R sandbox executes generated code."""
-
-    lowered = r_code.lower()
-    forbidden_snippets = [
-        "system(",
-        "system2(",
-        "shell(",
-        "unlink(",
-        "file.remove(",
-        "download.file(",
-        "install.packages(",
-    ]
-    for snippet in forbidden_snippets:
-        if snippet in lowered:
-            raise LLMGeneratedCodeError(f"Generated R code uses forbidden call: {snippet}")

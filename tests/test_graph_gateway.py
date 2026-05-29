@@ -20,6 +20,7 @@ try:
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
+    from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -31,6 +32,7 @@ except ModuleNotFoundError:
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
+    from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 
 
 def _workspace_dir(name: str) -> Path:
@@ -38,6 +40,20 @@ def _workspace_dir(name: str) -> Path:
     path = TMP_ROOT / f"{name}_{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=False)
     return path
+
+
+def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, code_path: Path) -> tuple[Path, str]:
+    target = dataset.strip().upper()
+    static_path = study_dir / "runs" / run_id / "static_checks" / f"{target.lower()}_static_check.json"
+    report = run_generated_r_static_checks(
+        study_id=study_dir.name,
+        run_id=run_id,
+        dataset=target,
+        code_path=code_path,
+        expected_output_path=f"outputs/{target.lower()}.csv",
+    )
+    write_static_rule_report(report, path=static_path)
+    return static_path, f"sha256:{sha256_file(static_path)}"
 
 
 class GraphGatewayTests(unittest.TestCase):
@@ -268,12 +284,10 @@ class GraphGatewayTests(unittest.TestCase):
         static_dir.mkdir()
         code_path = code_dir / "build_adae.R"
         review_path = review_dir / "adae_code_review.json"
-        static_path = static_dir / "adae_static_check.json"
         code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
-        static_path.write_text(json.dumps({"status": "warning_only"}), encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_code_review", "ADAE", code_path)
         review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
         code_sha = f"sha256:{sha256_file(code_path)}"
-        static_sha = f"sha256:{sha256_file(static_path)}"
         gateway = GraphGateway()
         generated = gateway.record_code_generation(
             study_dir=study_dir,
@@ -290,7 +304,7 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("code_agent", generated_agents)
         self.assertIn("static_review_agent", generated_agents)
         self.assertEqual(generated_dataset.agent_decisions[0]["outputs"]["record_source"], "graph_gateway_default")
-        self.assertIn("static_check_placeholder", generated_dataset.risk_flags)
+        self.assertIn("static_check_limited_scope", generated_dataset.risk_flags)
 
         result = gateway.record_code_review(
             study_dir=study_dir,
@@ -630,14 +644,12 @@ class GraphGatewayTests(unittest.TestCase):
         spec_dir.mkdir(parents=True)
         code_path = code_dir / "build_adae.R"
         review_path = review_dir / "adae_code_review.json"
-        static_path = static_dir / "adae_static_check.json"
         spec_path = spec_dir / "adae.json"
         code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
-        static_path.write_text(json.dumps({"status": "warning_only"}), encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_spec_hash", "ADAE", code_path)
         spec_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
         review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
         code_sha = f"sha256:{sha256_file(code_path)}"
-        static_sha = f"sha256:{sha256_file(static_path)}"
         spec_sha = f"sha256:{sha256_file(spec_path)}"
         gateway = GraphGateway()
         gateway.record_code_generation(
@@ -696,6 +708,7 @@ class GraphGatewayTests(unittest.TestCase):
         code_path = code_dir / "build_adae.R"
         approved_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
         code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_codegen_requires_graph_draft", "ADAE", code_path)
 
         with self.assertRaisesRegex(ValueError, "recorded in graph state"):
             GraphGateway().record_code_generation(
@@ -705,9 +718,98 @@ class GraphGatewayTests(unittest.TestCase):
                 dataset="ADAE",
                 code_path=code_path,
                 code_sha256=f"sha256:{sha256_file(code_path)}",
+                static_check_path=static_path,
+                static_check_sha256=static_sha,
                 spec_source="approved_draft_spec",
                 spec_path=approved_path,
                 spec_sha256=f"sha256:{sha256_file(approved_path)}",
+            )
+
+    def test_gateway_code_generation_requires_static_check_artifact(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_codegen_requires_static") / "PSY201"
+        code_path = study_dir / "runs" / "run_lg2_codegen_requires_static" / "code" / "build_adae.R"
+        code_path.parent.mkdir(parents=True)
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "requires a static-check artifact"):
+            GraphGateway().record_code_generation(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_codegen_requires_static",
+                dataset="ADAE",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+            )
+
+    def test_gateway_code_generation_rejects_blocked_static_check(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_codegen_rejects_blocked_static") / "PSY201"
+        code_path = study_dir / "runs" / "run_lg2_codegen_rejects_blocked_static" / "code" / "build_adae.R"
+        code_path.parent.mkdir(parents=True)
+        code_path.write_text("system('whoami')\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_codegen_rejects_blocked_static", "ADAE", code_path)
+
+        with self.assertRaisesRegex(ValueError, "blocking findings"):
+            GraphGateway().record_code_generation(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_codegen_rejects_blocked_static",
+                dataset="ADAE",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+                static_check_path=static_path,
+                static_check_sha256=static_sha,
+            )
+
+    def test_gateway_code_generation_rejects_static_check_bound_to_other_code(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_codegen_static_bound_code") / "PSY201"
+        code_dir = study_dir / "runs" / "run_lg2_static_bound_code" / "code"
+        code_dir.mkdir(parents=True)
+        original_code = code_dir / "build_original.R"
+        current_code = code_dir / "build_adae.R"
+        original_code.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        current_code.write_text(
+            "system('whoami')\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_lg2_static_bound_code",
+            "ADAE",
+            original_code,
+        )
+
+        with self.assertRaisesRegex(ValueError, "not bound to the current generated R code"):
+            GraphGateway().record_code_generation(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_static_bound_code",
+                dataset="ADAE",
+                code_path=current_code,
+                code_sha256=f"sha256:{sha256_file(current_code)}",
+                static_check_path=static_path,
+                static_check_sha256=static_sha,
+            )
+
+    def test_gateway_code_generation_rejects_incomplete_static_check_artifact(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_codegen_incomplete_static") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_incomplete_static"
+        code_path = run_dir / "code" / "build_adae.R"
+        static_path = run_dir / "static_checks" / "adae_static_check.json"
+        code_path.parent.mkdir(parents=True)
+        static_path.parent.mkdir(parents=True)
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        static_path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "missing required fields"):
+            GraphGateway().record_code_generation(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_incomplete_static",
+                dataset="ADAE",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+                static_check_path=static_path,
+                static_check_sha256=f"sha256:{sha256_file(static_path)}",
             )
 
     def test_gateway_records_compare_summary_in_canonical_state(self) -> None:
@@ -1060,6 +1162,7 @@ class GraphGatewayTests(unittest.TestCase):
         code_path = study_dir / "runs" / "run_lg2_dependency_review_priority" / "code" / "build_adae.R"
         code_path.parent.mkdir(parents=True)
         code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_dependency_review_priority", "ADAE", code_path)
         gateway.record_code_generation(
             study_dir=study_dir,
             study_id="PSY201",
@@ -1067,6 +1170,8 @@ class GraphGatewayTests(unittest.TestCase):
             dataset="ADAE",
             code_path=code_path,
             code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
         )
         result = gateway.start_dependency_plan(
             study_dir=study_dir,

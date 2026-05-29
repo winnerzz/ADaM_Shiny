@@ -79,7 +79,7 @@ def build_agent_audit_summary(
         "limitations": [
             "This is a derived read model. Canonical truth remains graph_state.json.",
             "Agent decisions are append-only audit history, not a current-only rollback view.",
-            "Static review entries may be placeholder checks unless explicitly labeled otherwise.",
+            "Static review entries are limited-scope checks unless a stronger policy label is present.",
         ],
     }
 

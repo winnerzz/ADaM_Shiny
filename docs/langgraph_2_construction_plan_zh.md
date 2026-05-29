@@ -24,7 +24,7 @@ LangGraph-2 的核心原则：
 - `DatasetGraph` 里仍有早期 `*_stub` 节点，图还不是完整产品工作流。
 - 当前产品更像“受控流水线 + LLM 调用”，还不是明确专家角色分工的多智能体图。
 - UI 的 dataset card 和 target 切换仍更像单 target 控制器，不像多个持久 dataset run 的图状态视图。
-- Static ADaM/CDISC 检查还是 placeholder，不是规则引擎。
+- Static ADaM/CDISC 检查现在已有有限范围的 policy-driven gate，但还不是完整规则引擎。
 - R 执行仍是本地 `Rscript` 加应用层路径约束，不是强化沙盒。
 
 未完成的产品能力：
@@ -259,7 +259,7 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - `write_generated_code_artifacts`
   - `LocalRRunner`
   - `diagnose_downstream_failure`
-  - static-check placeholder
+  - limited static-check report
   - compare/download helpers
 
 可能涉及文件：
@@ -289,7 +289,7 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - 新增显式 `graph_product_generate_code` DatasetGraph mode。
   - `graph_product_generate_code` 可以使用用户 `input_spec`，也可以使用同一 run 内、已人工批准、且 input fingerprint 匹配的 draft spec。
   - stale 或缺少 fingerprint 的 approved draft spec 会在 code generation 前 fail closed。
-  - generated code、LLM 原始响应、parsed response、compact prompt、static-check placeholder 都会作为 audit artifacts 写出。
+  - generated code、LLM 原始响应、parsed response、compact prompt、limited static-check report 都会作为 audit artifacts 写出。
   - graph 会停在 `code_review`，这个 mode 不执行 R。
   - 旧 stub chain 只通过显式 legacy/test mode 保留；graph-product modes 会跳过 stub code generation 和 sandbox execution。
   - FastAPI `/datasets/{dataset}/finalize-inputs` 现在委托给 `graph_product_prepare`。
@@ -407,7 +407,8 @@ Agent 角色：
 
 目标：
 
-加入 standards-aware 检查，但不伪装成生产完整。
+加入 standards-aware 检查边界，但不伪装成生产完整。静态检查必须是通用
+policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则。
 
 任务：
 
@@ -418,17 +419,47 @@ Agent 角色：
   - `lookup_company_standard`
 - 先使用小型本地 fixtures 或 indexed markdown/PDF snippets。
 - 在人工 code review 前加入确定性 static checks：
-  - required output file path
-  - expected dataset name
-  - 适用时检查 `USUBJID` 等关键变量
+  - 调用方传入的 output file contract
+  - LLM parser 保证的 generated-code dataset contract
+  - 从 approved spec variables 传入的 identifier 可见性检查
   - 禁止危险 R calls
   - 禁止 network/system command calls
-  - 在便宜可做时检查 spec variable 与 generated code output 是否不一致
+  - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
 - 所有检查都标记置信等级：
   - blocking error
   - warning
   - informational
 - 不宣称 full CDISC compliance。
+
+LG2.5 当前 slice 已实现：
+
+- `StaticRulePolicy` 驱动 generated R checks。规则引擎本身不硬编码
+  ADAE、ADSL、PSY201 或 `USUBJID`。
+- `DatasetGraph` 和 downstream runner 都会在 code review 或 sandbox execution
+  前写出 `runs/{run_id}/static_checks/{dataset}_static_check.json`。
+- 当前 blocking checks 覆盖 forbidden R calls 与缺失调用方指定 output path。
+- Identifier checks 来自 approved spec context，只作为 warning 级“代码里是否可见”
+  检查，不能解释成推导正确性证明。
+- `LocalReferenceStore` 提供一个小型本地文件检索边界，后续可接 CDISC/P21/company
+  standards。
+- active service 里的旧空实现 static-check 路径已删除，GraphGateway 的措辞
+  改为 limited-scope static check。
+- 根据子 agent 审查意见，`GraphGateway.record_code_generation`、
+  `validate_code_review` 和 approved-code execution 现在都会 fail closed：
+  static-check artifact 缺失、hash 改变、schema 不完整、存在 blocking findings，
+  或没有绑定当前 generated R code 的 path/hash 时，不能进入审核/执行。
+- StudyGraph downstream audit manifest 现在保留 downstream runner 写出的
+  `static_check` artifact，不再在 dataset-result rollup 时丢失。
+- 测试使用 `CUSTOM`/`ANY` 这类通用数据集名，防止规则退化成 demo-shaped patch。
+- 测试还覆盖残缺 static report，以及拿另一份 R script 的 passing static report
+  冒充当前代码检查结果的绕过场景。
+
+LG2.5 当前 slice 验证：
+
+- `python -B -m unittest tests.test_downstream_runner -v`
+- `python -B -m unittest tests.test_graph_smoke -v`
+- `python -B -m unittest tests.test_static_rules tests.test_llm_generated_code tests.test_api_phase8 tests.test_graph_gateway tests.test_agents_contract -v`
+- `python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules -v`
 
 可能涉及文件：
 
@@ -1125,7 +1156,7 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
   - product context preparation 写入 `evidence_agent` 决策。
   - draft spec generation 写入 `spec_agent` 决策。
   - R code generation 写入 `code_agent` 决策。
-  - placeholder static checking 写入 `static_review_agent` warning。
+  - limited static checking 写入 `static_review_agent` warning。
   - approved R execution 写入 `execution_agent` 决策。
 - 通过 `GraphGateway` 把这些 decision 持久化到 canonical
   `graph_state.json`，并投影到当前 UI 使用的 `workflow_state.json`。
@@ -1147,8 +1178,8 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 - 本切片只完成“agent 角色和审计状态记录”的结构化落地；还没有实现
   tool-calling reference agent、完整 ADaM/CDISC 静态规则检查、或自主多步 repair
   planning。
-- `static_review_agent` 当前明确是 placeholder warning，不声称已经完成 CDISC
-  compliance 检查。
+- `static_review_agent` 当前明确是 limited-scope policy check，不声称已经完成
+  CDISC compliance 检查。
 - ADSL 仍走统一 ADaM split flow，没有重新引入 deterministic ADSL template
   特殊路径。
 - Reference ADaM 仍然只是 compare/output-shape evidence，本切片没有把它记录为
@@ -1215,8 +1246,8 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
   plan，也不改变 dataset execution。
 - summary 仍然反映 append-only decision history；还没有解决 rollback/replacement
   后区分 immutable audit history 和 current-only view 的未来问题。
-- `static_review_agent` 相关内容仍明确是 placeholder warning，除非后续 LG2.5
-  static rule layer 正式替换。
+- `static_review_agent` 相关内容现在是 limited-scope policy check，不证明完整
+  CDISC/P21/company-standard compliance。
 
 Focused verification：
 

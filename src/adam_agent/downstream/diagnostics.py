@@ -51,6 +51,17 @@ def diagnose_downstream_failure(
             repair_attempt=repair_attempt,
         )
 
+    if stage == "static_check":
+        return _record(
+            dataset=target,
+            failure_type="code_error",
+            message=combined_message or "Generated R code failed deterministic static checks.",
+            root_cause="static_rule_violation",
+            recommended_route="repair_code",
+            artifact_ids=artifact_ids,
+            repair_attempt=repair_attempt,
+        )
+
     if stage == "r_sandbox" and r_result is not None and not r_result.success:
         if _looks_like_r_environment_error(lower_message, r_result.exit_code):
             return _record(

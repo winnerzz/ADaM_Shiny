@@ -65,15 +65,15 @@ class LLMGeneratedCodeTests(unittest.TestCase):
                 expected_dataset="ADAE",
             )
 
-    def test_parse_generated_code_response_requires_r_code_and_rejects_obvious_unsafe_calls(self) -> None:
+    def test_parse_generated_code_response_requires_r_code_without_static_policy_checks(self) -> None:
         with self.assertRaises(LLMGeneratedCodeError):
             parse_generated_code_response(json.dumps({"dataset": "ADAE"}), expected_dataset="ADAE")
 
-        with self.assertRaises(LLMGeneratedCodeError):
-            parse_generated_code_response(
-                json.dumps({"dataset": "ADAE", "r_code": "system('whoami')"}),
-                expected_dataset="ADAE",
-            )
+        package = parse_generated_code_response(
+            json.dumps({"dataset": "ADAE", "r_code": "system('whoami')"}),
+            expected_dataset="ADAE",
+        )
+        self.assertIn("system", package.r_code)
 
     def test_write_generated_code_artifacts_writes_response_code_and_parsed_package(self) -> None:
         study_dir = _workspace_dir("llm_generated_code_artifacts") / "PSY201"

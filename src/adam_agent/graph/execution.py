@@ -14,6 +14,7 @@ from adam_agent.schemas.artifacts import ArtifactKind, ArtifactRef, ArtifactRole
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.r_runner import LocalRRunner, RRunRequest
+from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
 class GraphExecutionError(RuntimeError):
@@ -182,10 +183,22 @@ def assert_code_review_current(
 
     static_check_path = Path(str(payload.get("static_check_path") or ""))
     approved_static_sha = payload.get("static_check_sha256")
-    if static_check_path.exists() and approved_static_sha:
-        current_static_sha = f"sha256:{sha256_file(static_check_path)}"
-        if approved_static_sha != current_static_sha:
-            raise GraphExecutionError("Static-check artifact changed after approval. Review the generated code again.")
+    if not approved_static_sha or not str(static_check_path):
+        raise GraphExecutionError("Code approval is missing the static-check artifact. Review the generated code again.")
+    if not static_check_path.exists() or not static_check_path.is_file():
+        raise GraphExecutionError(f"Static-check artifact used for code approval no longer exists: {static_check_path}")
+    current_static_sha = f"sha256:{sha256_file(static_check_path)}"
+    if approved_static_sha != current_static_sha:
+        raise GraphExecutionError("Static-check artifact changed after approval. Review the generated code again.")
+    try:
+        validate_static_rule_report_artifact(
+            static_check_path,
+            dataset=target,
+            code_path=code_path,
+            code_sha256=approved_code_sha,
+        )
+    except StaticRuleError as exc:
+        raise GraphExecutionError(str(exc)) from exc
 
     spec_path = payload.get("spec_path")
     spec_sha = payload.get("spec_sha256")
@@ -258,9 +271,21 @@ def assert_graph_code_review_current(
         raise GraphExecutionError("Generated code changed after graph approval. Review the generated code again.")
     static_check_path = Path(str(code_state.get("static_check_path") or ""))
     graph_static_sha = code_state.get("static_check_sha256")
-    if static_check_path.exists() and graph_static_sha:
-        if graph_static_sha != f"sha256:{sha256_file(static_check_path)}":
-            raise GraphExecutionError("Static-check artifact changed after graph approval. Review the generated code again.")
+    if not graph_static_sha or not str(static_check_path):
+        raise GraphExecutionError("Graph code approval is missing the static-check artifact. Review the generated code again.")
+    if not static_check_path.exists() or not static_check_path.is_file():
+        raise GraphExecutionError(f"Static-check artifact used for graph code approval no longer exists: {static_check_path}")
+    if graph_static_sha != f"sha256:{sha256_file(static_check_path)}":
+        raise GraphExecutionError("Static-check artifact changed after graph approval. Review the generated code again.")
+    try:
+        validate_static_rule_report_artifact(
+            static_check_path,
+            dataset=target,
+            code_path=code_path,
+            code_sha256=graph_code_sha,
+        )
+    except StaticRuleError as exc:
+        raise GraphExecutionError(str(exc)) from exc
     graph_spec_path = code_state.get("spec_path")
     graph_spec_sha = code_state.get("spec_sha256")
     if graph_spec_path or graph_spec_sha:

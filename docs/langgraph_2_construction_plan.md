@@ -40,7 +40,8 @@ Current architectural deviations:
   multi-agent graph with explicit specialist roles.
 - UI dataset cards and target switching still behave more like a single-target
   controller than a graph view over multiple persistent dataset runs.
-- Static ADaM/CDISC checks are placeholders, not a rules engine.
+- Static ADaM/CDISC checks now have a limited policy-driven gate, but they are
+  not a full rules engine.
 - R execution is local `Rscript` with application-level path discipline, not a
   hardened sandbox.
 
@@ -309,7 +310,7 @@ Tasks:
   - `write_generated_code_artifacts`
   - `LocalRRunner`
   - `diagnose_downstream_failure`
-  - static-check placeholder
+  - limited static-check report
   - compare/download helpers
 
 Files likely involved:
@@ -346,7 +347,7 @@ Current implementation status:
   - Stale or fingerprint-missing approved draft specs fail closed before code
     generation.
   - Generated code, raw LLM response, parsed response, compact prompt, and a
-    static-check placeholder are written as audit artifacts.
+    limited static-check report are written as audit artifacts.
   - The graph stops at `code_review`; it does not execute R in this mode.
   - The old stub chain remains available only through explicit legacy/test
     modes, while graph-product modes skip stub code generation and sandbox
@@ -476,7 +477,9 @@ Exit criteria:
 
 Goal:
 
-Add standards-aware checks without pretending to be production complete.
+Add standards-aware check boundaries without pretending to be production
+complete. Static checks must be generic policy checks, not demo-specific ADaM
+derivation rules.
 
 Tasks:
 
@@ -487,17 +490,51 @@ Tasks:
   - `lookup_company_standard`
 - Start with small local fixtures or indexed markdown/PDF snippets.
 - Add deterministic static checks before human code review:
-  - required output file path
-  - expected dataset name
-  - key variable presence such as `USUBJID` when applicable
+  - caller-provided output file contract
+  - generated-code dataset contract from the LLM parser
+  - caller-provided identifier visibility from approved spec variables
   - no dangerous R calls
   - no network/system command calls
-  - spec variable vs generated code output mismatch where cheaply detectable
+  - later: spec variable vs generated code output mismatch where cheaply detectable
 - Keep all checks labeled by confidence:
   - blocking error
   - warning
   - informational
 - Do not claim full CDISC compliance.
+
+LG2.5 slice implemented:
+
+- `StaticRulePolicy` now drives generated R checks. The rule engine itself does
+  not hard-code ADAE, ADSL, PSY201, or `USUBJID`.
+- `DatasetGraph` and the downstream runner both write
+  `runs/{run_id}/static_checks/{dataset}_static_check.json` before code review
+  or sandbox execution.
+- Blocking checks currently cover forbidden R calls and missing caller-provided
+  output paths.
+- Identifier checks are warnings derived from the approved spec context. They
+  are visibility checks only and must not be interpreted as proof that the
+  derivation is correct.
+- `LocalReferenceStore` provides a small file-backed lookup boundary for future
+  CDISC/P21/company-standard references.
+- The old empty static-check implementation was removed from the active service
+  and graph gateway wording now records limited-scope static checks.
+- After subagent review, `GraphGateway.record_code_generation`,
+  `validate_code_review`, and approved-code execution now fail closed when the
+  static-check artifact is missing, changed, incomplete, has blocking findings,
+  or is not bound to the current generated R code path/hash.
+- StudyGraph downstream audit manifests now retain the downstream runner's
+  `static_check` artifact instead of dropping it during dataset-result rollup.
+- Tests cover generic `CUSTOM`/`ANY` datasets to prevent demo-shaped rules from
+  becoming the framework.
+- Tests also cover incomplete static reports and attempts to reuse a passing
+  static report from another R script.
+
+LG2.5 slice verification:
+
+- `python -B -m unittest tests.test_downstream_runner -v`
+- `python -B -m unittest tests.test_graph_smoke -v`
+- `python -B -m unittest tests.test_static_rules tests.test_llm_generated_code tests.test_api_phase8 tests.test_graph_gateway tests.test_agents_contract -v`
+- `python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules -v`
 
 Files likely involved:
 
@@ -1258,7 +1295,7 @@ Completed:
   - product context preparation records an `evidence_agent` decision
   - draft spec generation records a `spec_agent` decision
   - R code generation records a `code_agent` decision
-  - placeholder static checking records a `static_review_agent` warning
+  - limited static checking records a `static_review_agent` warning
   - approved R execution records an `execution_agent` decision
 - Persisted these decisions into canonical `graph_state.json` through
   `GraphGateway`, and projected them into `workflow_state.json` for the current
@@ -1285,8 +1322,8 @@ Current boundary:
 - This slice introduces auditable agent roles and state records. It does not yet
   implement tool-calling reference agents, full static ADaM/CDISC rule checks,
   or autonomous multi-step repair planning.
-- The `static_review_agent` decision is explicitly a placeholder warning. It
-  does not claim CDISC compliance.
+- The `static_review_agent` decision is explicitly a limited-scope policy check.
+  It does not claim CDISC compliance.
 - ADSL remains on the unified ADaM split flow; no deterministic ADSL template
   path was reintroduced.
 - Reference ADaM remains compare/output-shape evidence only and is not recorded
@@ -1357,8 +1394,8 @@ Current boundary:
 - The summary still reflects append-only decision history. It does not yet
   solve the future problem of separating immutable audit history from a
   current-only view after rollback/replacement.
-- Static review entries remain clearly labeled as placeholder warnings unless a
-  future LG2.5 static rule layer replaces them.
+- Static review entries are limited-scope policy checks. They do not prove full
+  CDISC/P21/company-standard compliance.
 
 Focused verification:
 
