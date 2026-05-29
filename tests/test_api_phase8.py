@@ -67,6 +67,19 @@ def _assert_compatibility_projection(testcase: unittest.TestCase, payload: dict)
     return graph_state, workflow_state
 
 
+def _assert_run_projection(testcase: unittest.TestCase, study_dir: Path, run_id: str) -> tuple[dict, dict]:
+    run_dir = study_dir / "runs" / run_id
+    graph_path = run_dir / "graph_state.json"
+    workflow_path = run_dir / "workflow_state.json"
+    testcase.assertTrue(graph_path.exists())
+    testcase.assertTrue(workflow_path.exists())
+    graph_state = json.loads(graph_path.read_text(encoding="utf-8"))
+    workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+    consistency = workflow_projection_consistency(workflow_state, graph_state)
+    testcase.assertTrue(consistency["consistent"], consistency["mismatches"])
+    return graph_state, workflow_state
+
+
 class Phase8ApiTests(unittest.TestCase):
     def test_health_endpoint(self) -> None:
         client = TestClient(create_app())
@@ -518,6 +531,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(adae_after_compare["compare_summary"]["status"], compare.json()["status"])
         self.assertEqual(adae_after_compare["result_summary"]["compare_status"], compare.json()["status"])
         self.assertTrue((study_dir / "runs" / "run_split_flow" / "compare" / "adae_compare_report.json").exists())
+        _assert_run_projection(self, study_dir, "run_split_flow")
 
         download = client.get(
             "/runs/run_split_flow/datasets/ADAE/download",
@@ -597,6 +611,7 @@ class Phase8ApiTests(unittest.TestCase):
             params={"study_dir": str(study_dir)},
         ).json()
         self.assertEqual(graph_state["datasets"]["ADAE"]["compare_summary"]["status"], "missing_reference")
+        _assert_run_projection(self, study_dir, "run_compare_missing_refresh")
 
     def test_adsl_uses_same_split_flow_as_other_adam_targets(self) -> None:
         study_dir = _study_with_adsl_inputs("phase8_adsl_split_flow")
@@ -988,6 +1003,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(adae_state["execution_state"]["terminal_failure_review"]["action"], "repair_code")
         self.assertEqual(adae_state["execution_state"]["next_action"], "repair_generated_code")
         self.assertEqual(adae_state["human_commands"][-1]["interrupt"], "terminal_failure")
+        _assert_run_projection(self, study_dir, "run_terminal")
 
     def test_execute_requires_terminal_failure_review_before_retry(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_retry_gate")
@@ -1175,6 +1191,7 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertNotEqual(workflow_state["last_node"], "generate_code_start")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
+        _assert_run_projection(self, study_dir, "run_terminal_retry_no_regenerate")
 
     def test_terminal_failure_skip_dataset_does_not_unlock_code_regeneration(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_skip_no_regenerate")
@@ -1236,6 +1253,7 @@ class Phase8ApiTests(unittest.TestCase):
             params={"study_dir": str(study_dir)},
         ).json()
         self.assertEqual(graph_state["datasets"]["ADAE"]["status"], "failed")
+        _assert_run_projection(self, study_dir, "run_terminal_skip_no_regenerate")
 
     def test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_revise_spec_gate")

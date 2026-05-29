@@ -414,6 +414,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 
 - 静态检查是 policy/rule-pack 层，不是不断追加 PSY201、ADAE、ADSL 或某个
   demo 变量特例的补丁清单。
+- 这是硬架构边界：通用 static-check engine 不能按 dataset 名、study 名、demo
+  文件夹或某个临床变量个案分支。demo 中观察到的问题只能变成通用 contract 的
+  测试，或进入带来源的 rule-pack item。
 - 实现必须分层：
   - `StaticRuleEngine`：领域中立的 evaluator，只负责 artifact 完整性、执行安
     全、声明契约和 rule-pack 执行。
@@ -442,6 +445,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - demo 中发现的问题只能先形成 candidate rule。只有当它被转换成带来源的
   rule-pack item 后，才能成为生产静态规则；在此之前只能作为实现备注或通用
   contract 的测试，不应写成生产逻辑。
+- rule-pack 准入是产品/治理决策，不是随手改代码。任何 clinical/static
+  standards rule 要能 block 一个 run，必须先有 source、version、scope、
+  severity 和 evidence。
 - 任何启发式或不完整检查都只能作为 warning/informational，并且必须记录“不能
   证明临床推导正确”。
 
@@ -466,6 +472,8 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - future standards-pack rules：从显式 references 加载 CDISC/P21/company
     standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
+- 增加回归保护：如果新增 static check 被实现成 dataset/study/demo 特例，而不
+  是通用 contract 或 rule-pack rule，应被测试拦截或显式标记。
 - 所有检查都标记置信等级：
   - blocking error
   - warning
@@ -1433,6 +1441,38 @@ python -B -m unittest tests.test_api_phase8 -v
 - 不改变 dependency planning、dependency review、generation gate、approval gate、
   DatasetGraph execution 或 sandbox behavior。
 - 它减少刷新/恢复后对临时浏览器 cache 的依赖，但还不是完整 pure graph-state UI。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+结果：58 tests passed。
+
+### 2026-05-30 - LG2.8 Graph-Mutating Endpoint Projection 切片
+
+已完成：
+
+- 新增 `_assert_run_projection()` 测试 helper，用来覆盖会修改 run、但 response
+  不返回 compatibility shim metadata 的 endpoint。
+- 该 helper 读取 `runs/{run_id}/graph_state.json` 和
+  `runs/{run_id}/workflow_state.json`，然后运行
+  `workflow_projection_consistency()`，确认 UI projection 仍然由 canonical graph
+  state 派生。
+- 增加代表性覆盖：
+  - 生成 compare report 后
+  - reference 文件消失后刷新 compare summary
+  - terminal-failure review 选择 `repair_code`
+  - terminal-failure review 选择 `retry_execution`
+  - terminal-failure review 选择 `skip_dataset`
+
+当前边界：
+
+- 这是 regression coverage，不把 `workflow_state.json` 变成 source of truth，也
+  不扩大 `workflow_projection_consistency()` 已定义的投影等价范围。
+- 它主要覆盖上一轮 LG2.8 compatibility metadata 切片没有覆盖的 graph-mutating
+  endpoint 类型。
 
 Focused verification：
 

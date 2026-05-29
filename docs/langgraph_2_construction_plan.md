@@ -485,6 +485,10 @@ Design principle:
 
 - Static checks are a policy/rule-pack layer, not a growing list of one-off
   patches for PSY201, ADAE, ADSL, or any single demo variable.
+- This is a hard architecture boundary: the generic static-check engine must
+  not branch on dataset names, study names, demo folders, or individual clinical
+  variable anecdotes. Those observations may only become tests for generic
+  contracts or source-backed rule-pack entries.
 - The implementation must be layered:
   - `StaticRuleEngine`: domain-neutral evaluator for artifact integrity,
     execution safety, declared contracts, and rule-pack execution.
@@ -517,6 +521,9 @@ Design principle:
 - Demo-discovered issues may create candidate rules only after being converted
   into a source-backed rule-pack item. Until then they are implementation notes
   or tests for generic contracts, not production static rules.
+- Rule-pack admission is a product/governance decision, not a quick code change:
+  every clinical/static standards rule needs a source, version, scope, severity,
+  and evidence before it can block a run.
 - When a check is heuristic or incomplete, it must be warning/informational and
   must record that it does not prove clinical correctness.
 - Every static finding must carry rule-governance metadata:
@@ -554,6 +561,9 @@ Tasks:
   - future standards-pack rules: CDISC/P21/company-standard checks loaded from
     explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
+- Add a regression guard that rejects or flags new static checks if they are
+  implemented as dataset/study/demo special cases instead of generic contracts
+  or rule-pack rules.
 - Keep all checks labeled by confidence:
   - blocking error
   - warning
@@ -1644,6 +1654,39 @@ Current boundary:
 - The equivalence check covers core projection fields already defined by
   `workflow_projection_consistency()`. It is not a full byte-for-byte equality
   check of every UI read-model field.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 58 tests passed.
+
+### 2026-05-30 - LG2.8 Graph-Mutating Endpoint Projection Slice
+
+Completed:
+
+- Added `_assert_run_projection()` test helper for endpoints that mutate a run
+  but do not return compatibility shim metadata.
+- The helper reads `runs/{run_id}/graph_state.json` and
+  `runs/{run_id}/workflow_state.json`, then runs
+  `workflow_projection_consistency()` so tests assert the UI projection is still
+  derived from canonical graph state.
+- Added representative coverage after:
+  - compare report generation
+  - compare-summary refresh when a reference file disappears
+  - terminal-failure review with `repair_code`
+  - terminal-failure review with `retry_execution`
+  - terminal-failure review with `skip_dataset`
+
+Current boundary:
+
+- This is regression coverage only. It does not make `workflow_state.json` a
+  source of truth and does not broaden the projection equivalence contract beyond
+  `workflow_projection_consistency()`.
+- It focuses on graph-mutating endpoint classes that previously lacked the
+  compatibility metadata response checked by the prior LG2.8 slice.
 
 Focused verification:
 
