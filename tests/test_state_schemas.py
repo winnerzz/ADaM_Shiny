@@ -19,6 +19,9 @@ try:
         LLMCallRecord,
         LLMExposureConfig,
         SpecVariable,
+        DatasetRunState,
+        InterruptState,
+        StudyRunState,
         StudyState,
     )
 except ModuleNotFoundError:
@@ -32,6 +35,9 @@ except ModuleNotFoundError:
         LLMCallRecord,
         LLMExposureConfig,
         SpecVariable,
+        DatasetRunState,
+        InterruptState,
+        StudyRunState,
         StudyState,
     )
 
@@ -193,6 +199,63 @@ class StateSchemaTests(unittest.TestCase):
                 kind="input_sdtm",
                 path="studies/PSY201/input_sdtm/dm.csv",
                 role="output",
+            )
+
+    def test_graph_native_study_run_state_round_trips_two_dataset_interrupts(self) -> None:
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_state",
+            status="needs_review",
+            requested_datasets=["ADAE", "ADCM"],
+            target_datasets=["ADAE", "ADCM"],
+            current_interrupt=InterruptState(name="dependency_review", reason="Review low-confidence plan."),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_state",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(
+                        name="draft_spec_review",
+                        dataset="ADAE",
+                        reason="No input spec was supplied.",
+                    ),
+                    risk_flags=["missing_input_spec"],
+                ),
+                "ADCM": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_state",
+                    dataset="ADCM",
+                    status="needs_review",
+                    current_interrupt=InterruptState(
+                        name="code_review",
+                        dataset="ADCM",
+                        reason="Generated R code requires human approval.",
+                    ),
+                    risk_flags=["generated_code_pending_review"],
+                ),
+            },
+            risk_flags=["dependency_review_required"],
+            evidence_bundle_id="evb_run_lg2_state",
+            reference_queries=[{"tool": "search_cdisc_reference", "query": "ADAE"}],
+            agent_decisions=[{"agent": "dependency_agent", "decision": "review_required"}],
+        )
+
+        restored = StudyRunState.model_validate_json(state.model_dump_json())
+
+        self.assertEqual(restored, state)
+        self.assertEqual(restored.current_interrupt.name, "dependency_review")
+        self.assertEqual(restored.datasets["ADAE"].current_interrupt.name, "draft_spec_review")
+        self.assertEqual(restored.datasets["ADCM"].current_interrupt.name, "code_review")
+
+    def test_graph_native_dataset_key_must_match_dataset_name(self) -> None:
+        with self.assertRaises(ValidationError):
+            StudyRunState(
+                study_id="PSY201",
+                run_id="run_lg2_bad_key",
+                datasets={
+                    "ADAE": DatasetRunState(study_id="PSY201", run_id="run_lg2_bad_key", dataset="ADSL")
+                },
             )
 
 

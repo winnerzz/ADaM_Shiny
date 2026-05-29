@@ -42,7 +42,7 @@ class PromptCompactionTests(unittest.TestCase):
         self.assertIn("Read path from R working directory: ../../input_sdtm/ae.csv", prompt)
         self.assertIn("Sample rows:", prompt)
         self.assertIn("### ADSL [csv; status=ok; rows=2; cols=2]", prompt)
-        self.assertIn("Read path from R working directory: ../../reference_adam/adsl.csv", prompt)
+        self.assertIn("Read path from R working directory: outputs/adsl.csv", prompt)
         self.assertIn("runtime_output_path: outputs/adae.csv", prompt)
         self.assertIn("csv_read_policy:", prompt)
         self.assertIn("colClasses", prompt)
@@ -127,7 +127,7 @@ def _context_with_csv_spec() -> dict:
                 "status": "ok",
                 "columns": ["USUBJID", "TRTSDT"],
                 "row_count": 2,
-                "read_path": "../../reference_adam/adsl.csv",
+                "read_path": "outputs/adsl.csv",
                 "sample_rows": [],
                 "message": "",
             }

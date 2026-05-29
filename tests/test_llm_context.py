@@ -58,9 +58,8 @@ class LLMContextTests(unittest.TestCase):
         self.assertNotIn("DM", payload["source_dataset_profiles"])
         self.assertEqual(payload["source_dataset_profiles"]["AE"]["sample_rows"], [])
         self.assertEqual(payload["source_dataset_profiles"]["AE"]["read_path"], "../../input_sdtm/ae.csv")
-        self.assertIn("ADSL", payload["resolved_dependencies"])
-        self.assertEqual(payload["resolved_dependencies"]["ADSL"]["sample_rows"], [])
-        self.assertEqual(payload["resolved_dependencies"]["ADSL"]["read_path"], "../../reference_adam/adsl.csv")
+        self.assertEqual(payload["resolved_dependencies"], {})
+        self.assertTrue(any("Reference ADaM ADSL is available only for comparison" in warning for warning in payload["warnings"]))
         self.assertEqual(payload["target_spec"]["json"]["dataset"], "ADAE")
         self.assertEqual(payload["runtime_contract"]["language"], "R")
         self.assertEqual(payload["runtime_contract"]["runtime_output_path"], "outputs/adae.csv")
@@ -97,7 +96,8 @@ class LLMContextTests(unittest.TestCase):
         payload = package.as_dict()
         self.assertEqual(payload["exposure"]["mode"], "demo_rich_context")
         self.assertEqual(payload["source_dataset_profiles"]["AE"]["sample_rows"], [{"USUBJID": "01", "AETERM": "HEADACHE"}])
-        self.assertEqual(payload["resolved_dependencies"]["ADSL"]["sample_rows"], [{"USUBJID": "01", "TRTSDT": "2024-01-01"}])
+        self.assertEqual(payload["resolved_dependencies"], {})
+        self.assertTrue(any("Reference ADaM ADSL is available only for comparison" in warning for warning in payload["warnings"]))
 
     def test_context_warns_on_missing_dependency_artifact_and_missing_spec(self) -> None:
         study_dir = _workspace_dir("llm_context_missing_dependency") / "PSY201"
@@ -123,7 +123,7 @@ class LLMContextTests(unittest.TestCase):
 
         self.assertEqual(package.resolved_dependencies, {})
         self.assertIsNone(package.target_spec)
-        self.assertTrue(any("Artifact missing" in warning for warning in package.warnings))
+        self.assertTrue(any("Reference ADaM ADSL is available only for comparison" in warning for warning in package.warnings))
         self.assertTrue(any("No input_spec artifact" in warning for warning in package.warnings))
 
     def test_context_uses_only_dependency_records_for_current_target(self) -> None:
@@ -154,8 +154,34 @@ class LLMContextTests(unittest.TestCase):
             source_datasets=["AE"],
         )
 
-        self.assertEqual(set(package.resolved_dependencies), {"ADSL"})
+        self.assertEqual(package.resolved_dependencies, {})
         self.assertNotIn("ADLB", package.resolved_dependencies)
+
+    def test_context_exposes_run_output_dependency_as_runtime_input(self) -> None:
+        study_dir = _study_with_adae_spec_and_adsl_dependency("llm_context_run_output_dependency")
+        run_output = study_dir / "runs" / "run_context_output_dependency" / "outputs"
+        run_output.mkdir(parents=True)
+        (run_output / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+
+        package = build_target_llm_context(
+            study_id="PSY201",
+            run_id="run_context_output_dependency",
+            target_dataset="ADAE",
+            study_dir=study_dir,
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "resolution_status": "available",
+                    "artifact_path": str((run_output / "adsl.csv").as_posix()),
+                    "artifact_source": "run_output",
+                }
+            ],
+            source_datasets=["AE"],
+        )
+
+        self.assertIn("ADSL", package.resolved_dependencies)
+        self.assertEqual(package.resolved_dependencies["ADSL"]["read_path"], "outputs/adsl.csv")
 
     def test_context_selects_ads_full_spec_filename(self) -> None:
         study_dir = _workspace_dir("llm_context_ads_full_spec") / "demo_adam"

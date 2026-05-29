@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from adam_agent.tools.artifacts import sha256_file
+
 
 ALLOWED_DEPENDENCY_ACTIONS = [
     "provide_existing_dataset",
@@ -22,6 +24,7 @@ class DependencyResolution:
     required_dataset: str
     available: bool
     artifact_path: str | None
+    artifact_sha256: str | None
     artifact_source: str | None
     resolution_status: str
     allowed_actions: list[str]
@@ -34,6 +37,7 @@ class DependencyResolution:
             "required_dataset": self.required_dataset,
             "available": self.available,
             "artifact_path": self.artifact_path,
+            "artifact_sha256": self.artifact_sha256,
             "artifact_source": self.artifact_source,
             "resolution_status": self.resolution_status,
             "allowed_actions": self.allowed_actions,
@@ -79,6 +83,7 @@ def resolve_dependency_availability(
                             required_dataset=required,
                             available=False,
                             artifact_path=str(artifact.path.as_posix()),
+                            artifact_sha256=_sha256_if_usable(artifact),
                             artifact_source=artifact.source,
                             resolution_status="found_but_unusable",
                             allowed_actions=list(ALLOWED_DEPENDENCY_ACTIONS),
@@ -93,6 +98,7 @@ def resolve_dependency_availability(
                         required_dataset=required,
                         available=True,
                         artifact_path=str(artifact.path.as_posix()),
+                        artifact_sha256=_sha256_if_usable(artifact),
                         artifact_source=artifact.source,
                         resolution_status="available",
                         allowed_actions=[],
@@ -108,6 +114,7 @@ def resolve_dependency_availability(
                         required_dataset=required,
                         available=False,
                         artifact_path=None,
+                        artifact_sha256=None,
                         artifact_source=None,
                         resolution_status="requested_for_system_generation",
                         allowed_actions=[],
@@ -123,6 +130,7 @@ def resolve_dependency_availability(
                         required_dataset=required,
                         available=False,
                         artifact_path=None,
+                        artifact_sha256=None,
                         artifact_source=None,
                         resolution_status="approved_for_system_generation",
                         allowed_actions=[],
@@ -137,6 +145,7 @@ def resolve_dependency_availability(
                     required_dataset=required,
                     available=False,
                     artifact_path=None,
+                    artifact_sha256=None,
                     artifact_source=None,
                     resolution_status="user_action_required",
                     allowed_actions=list(ALLOWED_DEPENDENCY_ACTIONS),
@@ -162,7 +171,11 @@ def available_dependency_targets(resolutions: list[DependencyResolution]) -> lis
 
     available: list[str] = []
     for record in resolutions:
-        if record.resolution_status == "available" and record.required_dataset not in available:
+        if (
+            record.resolution_status == "available"
+            and record.artifact_source != "reference_adam"
+            and record.required_dataset not in available
+        ):
             available.append(record.required_dataset)
     return available
 
@@ -252,11 +265,11 @@ def _find_dependency_artifact(
     lower = dataset.lower()
     upper = dataset.upper()
     for suffix in [".csv", ".sas7bdat"]:
-        candidates.append((root / "reference_adam" / f"{lower}{suffix}", "reference_adam"))
-        candidates.append((root / "reference_adam" / f"{upper}{suffix}", "reference_adam"))
         if run_id:
             candidates.append((root / "runs" / run_id / "outputs" / f"{lower}{suffix}", "run_output"))
             candidates.append((root / "runs" / run_id / "outputs" / f"{upper}{suffix}", "run_output"))
+        candidates.append((root / "reference_adam" / f"{lower}{suffix}", "reference_adam"))
+        candidates.append((root / "reference_adam" / f"{upper}{suffix}", "reference_adam"))
     for path, source in candidates:
         if path.exists() and path.is_file():
             return DependencyArtifactCandidate(
@@ -306,6 +319,15 @@ def _dependency_artifact_reason(dataset: str, path: Path) -> str:
             "but the CSV file could not be confirmed usable."
         )
     return f"{dependency} dependency artifact was found at {path.as_posix()}, but its format is not usable."
+
+
+def _sha256_if_usable(artifact: DependencyArtifactCandidate) -> str | None:
+    if not artifact.usable:
+        return None
+    try:
+        return f"sha256:{sha256_file(artifact.path)}"
+    except OSError:
+        return None
 
 
 def _normalize(values: list[str]) -> list[str]:

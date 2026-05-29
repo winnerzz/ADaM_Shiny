@@ -298,8 +298,8 @@ Example:
 Requested: ADAE
 Dependency check:
   ADAE requires ADSL
-  ADSL is available from reference_adam/adsl.csv
-Status: ready to generate ADAE
+  reference_adam/adsl.csv is available for comparison only
+Status: waiting for a generated/user-approved ADSL, or user approval to generate ADSL
 ```
 
 Or:

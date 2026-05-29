@@ -12,6 +12,8 @@ from adam_agent.api.models import (
     CodeReviewRequest,
     CodeReviewResponse,
     DatasetCompareResponse,
+    DependencyReviewRequest,
+    DependencyReviewResponse,
     DemoStudyResponse,
     DraftSpecRequest,
     DraftSpecResponse,
@@ -48,10 +50,12 @@ from adam_agent.api.service import (
     generate_dataset_draft_spec,
     generate_dataset_code,
     persist_code_review,
+    persist_dependency_review,
     persist_draft_spec_review,
     prepare_run_plan,
     prepare_demo_study,
     read_dataset_table_page,
+    read_run_graph_state,
     read_run_json_artifact,
     run_study_from_request,
     save_uploaded_file_bytes,
@@ -145,6 +149,13 @@ def create_app() -> FastAPI:
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/runs/{run_id}/dependency-review", response_model=DependencyReviewResponse)
+    def dependency_review(run_id: str, request: DependencyReviewRequest) -> DependencyReviewResponse:
+        try:
+            return persist_dependency_review(run_id, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/runs/{run_id}/datasets/{dataset}/generate-code", response_model=GenerateCodeResponse)
     def generate_code(run_id: str, dataset: str, request: GenerateCodeRequest) -> GenerateCodeResponse:
         try:
@@ -219,6 +230,16 @@ def create_app() -> FastAPI:
         study_dir: str = Query(..., description="Path to the local study folder."),
     ) -> dict[str, Any]:
         return _read_artifact(study_dir, run_id, "planning/dependency_plan.json")
+
+    @app.get("/runs/{run_id}/graph-state")
+    def graph_state(
+        run_id: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+    ) -> dict[str, Any]:
+        try:
+            return read_run_graph_state(study_dir, run_id)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/runs/{run_id}/audit-manifest")
     def audit_manifest(

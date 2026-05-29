@@ -53,7 +53,8 @@ DependencyPlanner:
   ADLB depends on ADSL
 
 DependencyAvailabilityChecker:
-  ADSL is available from reference_adam or prior run output
+  ADSL reference output is available only for comparison/output-shape evidence
+  ADSL runtime dependency is available only from prior run output or user-approved generated output
   ADLB is missing
 
 DependencyDecisionGate:

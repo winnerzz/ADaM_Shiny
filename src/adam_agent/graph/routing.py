@@ -8,6 +8,8 @@ from adam_agent.graph.state import DatasetGraphState, DatasetRoute
 def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
     """Route a dataset after stub risk assessment."""
 
+    if state.get("execution_mode") in {"graph_product_prepare", "graph_product_generate_code", "graph_product_execute"}:
+        return "human_review"
     if state.get("human_review_required", False):
         return "human_review"
     return "continue"

@@ -69,6 +69,28 @@ class RunPlanResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class DependencyReviewRequest(StrictBaseModel):
+    """Persist a human decision on the graph-native dependency plan."""
+
+    study_dir: NonEmptyStr
+    reviewer: str = "local_user"
+    decision: str
+    notes: str = ""
+    approved_dependency_datasets: list[str] = Field(default_factory=list)
+
+
+class DependencyReviewResponse(StrictBaseModel):
+    """Persisted dependency-review decision."""
+
+    study_id: str
+    run_id: str
+    decision: str
+    approved: bool
+    current_interrupt: str | None = None
+    graph_state_path: str
+    workflow_state_path: str
+
+
 class GenerateCodeRequest(StrictBaseModel):
     """Generate and persist R code for one dataset without executing it."""
 
@@ -76,7 +98,6 @@ class GenerateCodeRequest(StrictBaseModel):
     study_id: str | None = None
     config_path: str | None = None
     rscript_path: str | None = None
-    approved_dependency_datasets: list[str] = Field(default_factory=list)
     require_spec_approval: bool = True
     llm_provider_override: "LLMProviderOverride | None" = None
     llm_exposure_override: "LLMExposureOverride | None" = None
@@ -89,7 +110,6 @@ class DraftSpecRequest(StrictBaseModel):
     study_id: str | None = None
     config_path: str | None = None
     rscript_path: str | None = None
-    approved_dependency_datasets: list[str] = Field(default_factory=list)
     llm_provider_override: "LLMProviderOverride | None" = None
     llm_exposure_override: "LLMExposureOverride | None" = None
 
@@ -115,7 +135,6 @@ class FinalizeInputsRequest(StrictBaseModel):
     study_id: str | None = None
     config_path: str | None = None
     rscript_path: str | None = None
-    approved_dependency_datasets: list[str] = Field(default_factory=list)
     llm_provider_override: "LLMProviderOverride | None" = None
     llm_exposure_override: "LLMExposureOverride | None" = None
 
@@ -258,7 +277,6 @@ class ExecuteCodeRequest(StrictBaseModel):
     study_dir: NonEmptyStr
     study_id: str | None = None
     rscript_path: str | None = None
-    require_approval: bool = True
 
 
 class ExecuteCodeResponse(StrictBaseModel):

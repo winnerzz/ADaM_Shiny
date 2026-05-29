@@ -18,6 +18,8 @@ try:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
+    from adam_agent.graph.workflow_state import input_fingerprint
+    from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -25,6 +27,8 @@ except ModuleNotFoundError:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
+    from adam_agent.graph.workflow_state import input_fingerprint
+    from adam_agent.tools.artifacts import sha256_file
 
 
 def _workspace_dir(name: str) -> Path:
@@ -301,7 +305,8 @@ class Phase8ApiTests(unittest.TestCase):
         static_check = json.loads(Path(generated_payload["static_check_path"]).read_text(encoding="utf-8"))
         self.assertEqual(static_check["status"], "warning_only")
         workflow_state = json.loads((study_dir / "runs" / "run_split_flow" / "workflow_state.json").read_text(encoding="utf-8"))
-        self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "code_generated")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "needs_review")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
         self.assertTrue((study_dir / "runs" / "run_split_flow" / "code" / "build_adae.R").exists())
         self.assertTrue(generated_payload["generated_code"])
@@ -326,6 +331,15 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(review.status_code, 200, review.text)
         self.assertTrue(review.json()["approved"])
         self.assertTrue(review.json()["static_check_path"].endswith("adae_static_check.json"))
+        graph_state = client.get(
+            "/runs/run_split_flow/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        adae_graph_state = graph_state.json()["datasets"]["ADAE"]
+        self.assertEqual(adae_graph_state["code_state"]["status"], "approved")
+        self.assertEqual(adae_graph_state["human_commands"][-1]["interrupt"], "code_review")
+        self.assertEqual(adae_graph_state["human_commands"][-1]["action"], "approve")
 
         executed = client.post(
             "/runs/run_split_flow/datasets/ADAE/execute-approved-code",
@@ -472,6 +486,114 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(generated.status_code, 400)
         self.assertIn("Approved draft spec is stale", generated.json()["detail"])
 
+    def test_approved_draft_spec_is_invalidated_when_approved_file_changes(self) -> None:
+        study_dir = _workspace_dir("phase8_tampered_approved_draft_spec") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+
+        finalized = client.post(
+            "/runs/run_tampered_draft/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        review = client.post(
+            "/runs/run_tampered_draft/datasets/ADAE/draft-spec-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        approved_path = Path(review.json()["approved_spec_path"])
+        approved_payload = json.loads(approved_path.read_text(encoding="utf-8"))
+        approved_payload["variables"].append({"variable": "TAMPERED", "source_domains": ["AE"]})
+        approved_path.write_text(json.dumps(approved_payload), encoding="utf-8")
+
+        generated = client.post(
+            "/runs/run_tampered_draft/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+
+        self.assertEqual(generated.status_code, 400)
+        self.assertIn("Approved draft spec changed after approval", generated.json()["detail"])
+
+    def test_finalize_inputs_blocks_review_required_dependency_evidence(self) -> None:
+        study_dir = _workspace_dir("phase8_dependency_review_blocks_finalize") / "MY_STUDY"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        legacy_dir = study_dir / "legacy_code"
+        output_dir = study_dir / "runs" / "run_dependency_warning" / "outputs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        legacy_dir.mkdir()
+        output_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (output_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        (legacy_dir / "ADAE.sas").write_text("data adae; merge ae adsl; by usubjid; run;", encoding="utf-8")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_dependency_gate/datasets/ADAE/finalize-inputs",
+            json={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot continue until dependency issues are resolved", response.json()["detail"])
+
+    def test_finalize_inputs_blocks_dependency_warning(self) -> None:
+        study_dir = _workspace_dir("phase8_dependency_warning_blocks_finalize") / "MY_STUDY"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        legacy_dir = study_dir / "legacy_code"
+        output_dir = study_dir / "runs" / "run_dependency_warning" / "outputs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        legacy_dir.mkdir()
+        output_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (output_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (legacy_dir / "ADTTE.sas").write_text("data adtte; merge adlb adae; by usubjid; run;", encoding="utf-8")
+        client = TestClient(create_app())
+
+        prepared = client.post(
+            "/runs/prepare",
+            json={"study_dir": str(study_dir), "run_id": "run_dependency_warning", "target_datasets": ["ADTTE"]},
+        )
+        response = client.post(
+            "/runs/run_dependency_warning/datasets/ADTTE/finalize-inputs",
+            json={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        self.assertEqual(prepared.json()["dependency_review_status"], "warning")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("dependency plan has warnings", response.json()["detail"])
+
     def test_draft_spec_without_fingerprint_cannot_be_approved(self) -> None:
         study_dir = _workspace_dir("phase8_draft_without_fingerprint") / "MY_STUDY"
         run_dir = study_dir / "runs" / "run_no_fingerprint"
@@ -521,12 +643,47 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("missing its input fingerprint", generated.json()["detail"])
 
     def test_execute_approved_code_terminal_failure_is_explicit(self) -> None:
-        study_dir = _workspace_dir("phase8_terminal_failure") / "MY_STUDY"
+        study_dir = _study_with_adae_inputs("phase8_terminal_failure")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
         run_dir = study_dir / "runs" / "run_terminal"
         code_dir = run_dir / "code"
-        code_dir.mkdir(parents=True)
         (code_dir / "build_adae.R").write_text("stop('forced failure')\n", encoding="utf-8")
-        client = TestClient(create_app())
+        review = client.post(
+            "/runs/run_terminal/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 400, review.text)
+        self.assertIn("Generated code changed after graph code generation", review.json()["detail"])
+        generated = client.post(
+            "/runs/run_terminal/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        (code_dir / "build_adae.R").write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal",
+            dataset="ADAE",
+            code_path=code_dir / "build_adae.R",
+            code_sha256=f"sha256:{sha256_file(code_dir / 'build_adae.R')}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
         review = client.post(
             "/runs/run_terminal/datasets/ADAE/code-review",
             json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
@@ -615,6 +772,21 @@ class Phase8ApiTests(unittest.TestCase):
             "/runs/run_stale_code/datasets/ADAE/code-review",
             json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
         )
+        self.assertEqual(review_again.status_code, 400)
+        self.assertIn("Generated code must be recorded in graph state", review_again.json()["detail"])
+        regenerated = client.post(
+            "/runs/run_stale_code/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(regenerated.status_code, 200, regenerated.text)
+        review_again = client.post(
+            "/runs/run_stale_code/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
         self.assertEqual(review_again.status_code, 200, review_again.text)
         (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
 
@@ -624,6 +796,333 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(changed_inputs.status_code, 400)
         self.assertIn("Code approval is stale", changed_inputs.json()["detail"])
+
+    def test_code_review_does_not_write_approval_when_generated_code_changed(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_no_stale_code_review_file")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_no_stale_code_review_file/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_no_stale_code_review_file" / "code" / "build_adae.R"
+        review_path = study_dir / "runs" / "run_no_stale_code_review_file" / "review" / "adae_code_review.json"
+        code_path.write_text(code_path.read_text(encoding="utf-8") + "\n# changed before review\n", encoding="utf-8")
+
+        review = client.post(
+            "/runs/run_no_stale_code_review_file/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+
+        self.assertEqual(review.status_code, 400, review.text)
+        self.assertIn("Generated code changed after graph code generation", review.json()["detail"])
+        self.assertFalse(review_path.exists())
+
+    def test_code_review_does_not_write_approval_when_inputs_changed_after_code_generation(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_no_stale_input_review_file")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_no_stale_input_review_file/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        review_path = study_dir / "runs" / "run_no_stale_input_review_file" / "review" / "adae_code_review.json"
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        review = client.post(
+            "/runs/run_no_stale_input_review_file/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+
+        self.assertEqual(review.status_code, 400, review.text)
+        self.assertIn("Study inputs changed after graph code generation", review.json()["detail"])
+        self.assertFalse(review_path.exists())
+
+    def test_product_steps_do_not_reprepare_and_overwrite_existing_graph_dataset_state(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_no_reprepare_overwrite")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_no_reprepare_overwrite/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        before = client.get(
+            "/runs/run_no_reprepare_overwrite/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(before.status_code, 200, before.text)
+        before_code_state = before.json()["datasets"]["ADAE"]["code_state"]
+        self.assertEqual(before_code_state["status"], "generated")
+
+        finalized = client.post(
+            "/runs/run_no_reprepare_overwrite/datasets/ADAE/finalize-inputs",
+            json={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        after = client.get(
+            "/runs/run_no_reprepare_overwrite/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(after.status_code, 200, after.text)
+        after_code_state = after.json()["datasets"]["ADAE"]["code_state"]
+        self.assertEqual(after_code_state["status"], "generated")
+        self.assertEqual(after_code_state["code_sha256"], before_code_state["code_sha256"])
+
+    def test_public_prepare_does_not_overwrite_existing_graph_dataset_state(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_prepare_no_overwrite")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_prepare_no_overwrite/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        before = client.get(
+            "/runs/run_prepare_no_overwrite/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(before.status_code, 200, before.text)
+        before_code_state = before.json()["datasets"]["ADAE"]["code_state"]
+        self.assertEqual(before_code_state["status"], "generated")
+
+        prepared = client.post(
+            "/runs/prepare",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_prepare_no_overwrite",
+                "target_datasets": ["ADAE"],
+            },
+        )
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        after = client.get(
+            "/runs/run_prepare_no_overwrite/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(after.status_code, 200, after.text)
+        after_code_state = after.json()["datasets"]["ADAE"]["code_state"]
+        self.assertEqual(after_code_state["status"], "generated")
+        self.assertEqual(after_code_state["code_sha256"], before_code_state["code_sha256"])
+
+    def test_public_prepare_marks_existing_graph_dataset_state_stale_when_inputs_change(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_prepare_marks_stale")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_prepare_marks_stale/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        prepared = client.post(
+            "/runs/prepare",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_prepare_marks_stale",
+                "target_datasets": ["ADAE"],
+            },
+        )
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        graph_state = client.get(
+            "/runs/run_prepare_marks_stale/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        dataset_state = graph_state.json()["datasets"]["ADAE"]
+        self.assertEqual(dataset_state["status"], "needs_review")
+        self.assertEqual(dataset_state["current_interrupt"]["name"], "code_review")
+        self.assertEqual(dataset_state["code_state"]["status"], "stale")
+        self.assertIn("input_sdtm/ae.csv", dataset_state["code_state"]["input_diff"]["changed_files"])
+
+    def test_code_review_requires_graph_generated_code_state(self) -> None:
+        study_dir = _workspace_dir("phase8_code_review_requires_graph") / "MY_STUDY"
+        code_dir = study_dir / "runs" / "run_no_graph_generation" / "code"
+        code_dir.mkdir(parents=True)
+        (code_dir / "build_adae.R").write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        client = TestClient(create_app())
+
+        review = client.post(
+            "/runs/run_no_graph_generation/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+
+        self.assertEqual(review.status_code, 400)
+        self.assertIn("Generated code must be recorded in graph state", review.json()["detail"])
+
+    def test_execute_requires_graph_code_review_not_only_review_json(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_execute_requires_graph_review")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_execute_requires_graph_review/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        run_dir = study_dir / "runs" / "run_execute_requires_graph_review"
+        code_path = run_dir / "code" / "build_adae.R"
+        static_check_path = run_dir / "static_checks" / "adae_static_check.json"
+        review_dir = run_dir / "review"
+        review_dir.mkdir(exist_ok=True)
+        graph_state = client.get(
+            "/runs/run_execute_requires_graph_review/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        code_state = graph_state.json()["datasets"]["ADAE"]["code_state"]
+        (review_dir / "adae_code_review.json").write_text(
+            json.dumps(
+                {
+                    "study_id": study_dir.name,
+                    "run_id": "run_execute_requires_graph_review",
+                    "dataset": "ADAE",
+                    "decision": "approve",
+                    "approved": True,
+                    "reviewer": "tester",
+                    "input_fingerprint": input_fingerprint(study_dir),
+                    "code_path": str(code_path.as_posix()),
+                    "code_sha256": f"sha256:{sha256_file(code_path)}",
+                    "static_check_path": str(static_check_path.as_posix()),
+                    "static_check_sha256": f"sha256:{sha256_file(static_check_path)}",
+                    "spec_source": code_state.get("spec_source"),
+                    "spec_path": code_state.get("spec_path"),
+                    "spec_sha256": code_state.get("spec_sha256"),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        executed = client.post(
+            "/runs/run_execute_requires_graph_review/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+
+        self.assertEqual(executed.status_code, 400, executed.text)
+        self.assertIn("Graph state does not contain an approved code-review decision", executed.json()["detail"])
+
+    def test_execute_rejects_changed_graph_spec_artifact(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_execute_changed_graph_spec")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_changed_graph_spec/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        review = client.post(
+            "/runs/run_changed_graph_spec/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        spec_path = study_dir / "input_spec" / "adae.json"
+        spec_payload = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec_payload["variables"].append({"variable": "TAMPERED", "source_domains": ["AE"]})
+        spec_path.write_text(json.dumps(spec_payload), encoding="utf-8")
+
+        executed = client.post(
+            "/runs/run_changed_graph_spec/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+
+        self.assertEqual(executed.status_code, 400, executed.text)
+        self.assertIn("Code approval is stale", executed.json()["detail"])
+
+    def test_execute_rejects_changed_runtime_dependency_artifact(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_runtime_dependency_hash")
+        dependency_output_dir = study_dir / "runs" / "run_dependency_hash" / "outputs"
+        dependency_output_dir.mkdir(parents=True)
+        dependency_path = dependency_output_dir / "adsl.csv"
+        dependency_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (study_dir / "input_spec" / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        generated = client.post(
+            "/runs/run_dependency_hash/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        graph_state = client.get(
+            "/runs/run_dependency_hash/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        dependency_artifacts = graph_state.json()["datasets"]["ADAE"]["code_state"]["dependency_artifacts"]
+        self.assertEqual(dependency_artifacts[0]["required_dataset"], "ADSL")
+        self.assertTrue(dependency_artifacts[0]["artifact_path"].endswith("outputs/adsl.csv"))
+        review = client.post(
+            "/runs/run_dependency_hash/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        dependency_path.write_text("USUBJID,TRTSDT\n01,2024-02-02\n", encoding="utf-8")
+
+        executed = client.post(
+            "/runs/run_dependency_hash/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+
+        self.assertEqual(executed.status_code, 400, executed.text)
+        self.assertIn("Dependency artifact changed after graph approval", executed.json()["detail"])
+
+    def test_code_review_cleans_approval_json_when_graph_recording_fails(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_review_cleanup_on_graph_failure")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_review_cleanup/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        review_path = study_dir / "runs" / "run_review_cleanup" / "review" / "adae_code_review.json"
+
+        with patch("adam_agent.api.service.GraphGateway.record_code_review", side_effect=ValueError("forced graph failure")):
+            review = client.post(
+                "/runs/run_review_cleanup/datasets/ADAE/code-review",
+                json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+            )
+
+        self.assertEqual(review.status_code, 400, review.text)
+        self.assertIn("forced graph failure", review.json()["detail"])
+        self.assertFalse(review_path.exists())
+        graph_state = client.get(
+            "/runs/run_review_cleanup/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        self.assertEqual(graph_state.json()["datasets"]["ADAE"]["code_state"]["status"], "generated")
 
     def test_review_summary_recovers_multiple_outputs_from_same_run(self) -> None:
         study_dir = _workspace_dir("phase8_multi_output_review") / "MY_STUDY"

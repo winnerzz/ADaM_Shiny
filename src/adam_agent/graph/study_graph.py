@@ -125,7 +125,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         for block in dependency_blocks
     ]
 
-    return {
+    planned_state: StudyGraphState = {
         "requested_datasets": plan.requested_datasets,
         "target_datasets": plan.target_datasets,
         "auto_added_datasets": plan.auto_added_datasets,
@@ -148,6 +148,12 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         "dataset_results": unsupported_results + dependency_blocked_results,
         "blocked_datasets": unsupported_blocked + dependency_blocks,
     }
+    if state.get("graph_gateway_mode") == "plan_only":
+        planned_state["status"] = "needs_review" if _needs_dependency_review(planned_state) else "planned"
+        planned_state["current_interrupt"] = (
+            "dependency_review" if _needs_dependency_review(planned_state) else None
+        )
+    return planned_state
 
 
 def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
@@ -486,6 +492,18 @@ def _dependency_review_status(state: StudyGraphState) -> str:
     return "accepted"
 
 
+def _needs_dependency_review(state: StudyGraphState) -> bool:
+    return _dependency_review_status(state) in {"blocked", "warning", "review_required"}
+
+
+def route_after_plan(state: StudyGraphState) -> str:
+    """Allow graph-native gateway calls to stop after planning."""
+
+    if state.get("graph_gateway_mode") == "plan_only":
+        return "stop_after_plan"
+    return "run_batches"
+
+
 def _dependency_review_status_reason(state: StudyGraphState, review_status: str) -> str:
     if review_status == "blocked":
         return "Unsupported targets or unresolved dependency requirements need user action before a full run can be considered valid."
@@ -646,7 +664,14 @@ def build_study_graph():
 
     graph.add_edge(START, "initialize_study")
     graph.add_edge("initialize_study", "plan_datasets")
-    graph.add_edge("plan_datasets", "run_dependency_batches")
+    graph.add_conditional_edges(
+        "plan_datasets",
+        route_after_plan,
+        {
+            "stop_after_plan": END,
+            "run_batches": "run_dependency_batches",
+        },
+    )
     graph.add_edge("run_dependency_batches", "reduce_dataset_results")
     graph.add_edge("reduce_dataset_results", "write_audit_manifest_stub")
     graph.add_edge("write_audit_manifest_stub", END)

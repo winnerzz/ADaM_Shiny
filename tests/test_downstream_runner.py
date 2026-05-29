@@ -104,7 +104,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_success",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_success"),
             llm_client=MockLLMClient(fixed_response_text=response),
             r_runner=FileWritingStubRRunner(),
             source_datasets=["AE"],
@@ -139,7 +139,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_bad_llm",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_bad_llm"),
             llm_client=MockLLMClient(fixed_response_text="not json"),
             r_runner=FailingStubRRunner(),
             source_datasets=["AE"],
@@ -186,7 +186,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_repair_pass",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_repair_pass"),
             llm_client=llm_client,
             r_runner=r_runner,
             source_datasets=["AE"],
@@ -223,7 +223,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_missing_source",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_missing_source"),
             llm_client=llm_client,
             r_runner=MissingSourceVariableRRunner(),
             source_datasets=["AE"],
@@ -247,7 +247,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_r_failure",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_r_failure"),
             r_runner=FailingStubRRunner(),
             source_datasets=["AE"],
         )
@@ -261,7 +261,8 @@ class DownstreamRunnerTests(unittest.TestCase):
 
     def test_downstream_runner_fails_when_available_dependency_profile_is_not_usable(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_unusable_dependency", include_reference_adsl_csv=False)
-        sas7bdat_path = study_dir / "reference_adam" / "adsl.sas7bdat"
+        sas7bdat_path = study_dir / "runs" / "run_downstream_unusable_dependency" / "outputs" / "adsl.sas7bdat"
+        sas7bdat_path.parent.mkdir(parents=True)
         sas7bdat_path.write_text("not a real sas7bdat", encoding="utf-8")
 
         result = run_downstream_adam(
@@ -275,7 +276,7 @@ class DownstreamRunnerTests(unittest.TestCase):
                     "required_dataset": "ADSL",
                     "resolution_status": "available",
                     "artifact_path": str(sas7bdat_path.as_posix()),
-                    "artifact_source": "reference_adam",
+                    "artifact_source": "run_output",
                 }
             ],
             r_runner=FileWritingStubRRunner(),
@@ -286,6 +287,35 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(result.validation_status, "fail")
         self.assertTrue(any("Profile not fully available" in error for error in result.validation_report["errors"]))
         self.assertNotIn("output_adam", result.artifacts)
+
+    def test_downstream_runner_does_not_use_reference_adam_as_runtime_dependency(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_reference_not_runtime")
+
+        result = run_downstream_adam(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_downstream_reference_not_runtime",
+            target_dataset="ADAE",
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "resolution_status": "available",
+                    "artifact_path": str((study_dir / "reference_adam" / "adsl.csv").as_posix()),
+                    "artifact_source": "reference_adam",
+                }
+            ],
+            r_runner=FileWritingStubRRunner(),
+            source_datasets=["AE"],
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.llm_call_record.datasets_included, ["AE"])
+        context_payload = json.loads(Path(result.artifacts["llm_context"].path).read_text(encoding="utf-8"))
+        self.assertEqual(context_payload["resolved_dependencies"], {})
+        self.assertTrue(
+            any("Reference ADaM ADSL is available only for comparison" in warning for warning in context_payload["warnings"])
+        )
 
     def test_downstream_runner_respects_demo_rich_context_sample_rows(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_demo_context")
@@ -301,7 +331,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_demo_context",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_demo_context"),
             exposure=exposure,
             r_runner=FileWritingStubRRunner(),
             source_datasets=["AE"],
@@ -319,7 +349,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_default_stub",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_default_stub"),
             source_datasets=["AE"],
         )
 
@@ -364,7 +394,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_provider_client",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_provider_client"),
             llm_client=build_llm_client(provider_config, transport=fake_transport),
             exposure=exposure,
             provider=provider_config.provider,
@@ -390,7 +420,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_provider_without_client",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_provider_without_client"),
             provider="deepseek",
             model="deepseek-chat",
             source_datasets=["AE"],
@@ -421,7 +451,7 @@ class DownstreamRunnerTests(unittest.TestCase):
             study_id="PSY201",
             run_id="run_downstream_local_r",
             target_dataset="ADAE",
-            dependency_resolution=_available_adsl_resolution(study_dir),
+            dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_local_r"),
             llm_client=MockLLMClient(fixed_response_text=response),
             r_runner=LocalRRunner(str(LOCAL_RSCRIPT)),
             source_datasets=["AE"],
@@ -453,14 +483,17 @@ def _study_with_adae_inputs(name: str, *, include_reference_adsl_csv: bool = Tru
     return study_dir
 
 
-def _available_adsl_resolution(study_dir: Path) -> list[dict[str, str]]:
+def _available_adsl_resolution(study_dir: Path, run_id: str) -> list[dict[str, str]]:
+    output_dir = study_dir / "runs" / run_id / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n02,2024-01-02\n", encoding="utf-8")
     return [
         {
             "target_dataset": "ADAE",
             "required_dataset": "ADSL",
             "resolution_status": "available",
-            "artifact_path": str((study_dir / "reference_adam" / "adsl.csv").as_posix()),
-            "artifact_source": "reference_adam",
+            "artifact_path": str((output_dir / "adsl.csv").as_posix()),
+            "artifact_source": "run_output",
         }
     ]
 

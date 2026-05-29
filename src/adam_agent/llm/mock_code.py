@@ -17,7 +17,7 @@ def default_mock_generated_code_response(target: str) -> str:
         r_code = _mock_adae_r_code()
         assumptions = [
             "Mock mode uses deterministic demo R code so the UI can exercise code review, sandbox execution, and output preview without an API key.",
-            "ADAE is built from input_sdtm/ae.csv plus reference_adam/adsl.csv when available; otherwise it derives a minimal subject treatment context from DM/EX.",
+            "ADAE is built from input_sdtm/ae.csv and, when available, a run output ADSL or minimal DM/EX treatment context.",
         ]
         risk_points = [
             "This is demo-only code, not a production ADaM derivation.",
@@ -27,7 +27,7 @@ def default_mock_generated_code_response(target: str) -> str:
             "input_sdtm/ae.csv",
             "input_sdtm/dm.csv",
             "input_sdtm/ex.csv",
-            "reference_adam/adsl.csv",
+            "runs/{run_id}/outputs/adsl.csv",
         ]
     elif dataset == "ADSL":
         r_code = _mock_adsl_r_code()
@@ -145,7 +145,7 @@ tox_num <- function(x) {
 }
 
 build_adsl_context <- function() {
-  adsl <- read_table("reference_adam/adsl.csv")
+  adsl <- read_table("outputs/adsl.csv")
   if (nrow(adsl)) {
     return(first_by_subject(adsl, c("USUBJID", "SUBJID", "TRT01A", "TRT01AN", "TRT01P", "TRT01PN", "TRTSDT")))
   }

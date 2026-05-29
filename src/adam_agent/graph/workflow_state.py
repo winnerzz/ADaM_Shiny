@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from adam_agent.schemas.graph_state import DatasetRunState, StudyRunState
 from adam_agent.tools.artifacts import sha256_file
 
 
@@ -205,8 +206,126 @@ def mark_workflow_inputs_current(study_dir: str | Path, run_id: str, *, study_id
     )
 
 
+def project_graph_state_to_workflow(
+    study_dir: str | Path,
+    graph_state: StudyRunState | dict[str, Any],
+    *,
+    node: str = "graph_projection",
+) -> dict[str, Any]:
+    """Write a UI-facing projection from canonical graph state.
+
+    In LangGraph-2 this file is a read model for the current UI, not the source
+    of product truth.
+    """
+
+    state = graph_state if isinstance(graph_state, StudyRunState) else StudyRunState.model_validate(graph_state)
+    dataset_projection = {
+        dataset: _project_dataset_state(dataset_state)
+        for dataset, dataset_state in sorted(state.datasets.items())
+    }
+    current_interrupt = _interrupt_name(state.current_interrupt)
+    extra = {
+        "projection_source": "langgraph",
+        "projection_version": state.version,
+        "requested_datasets": list(state.requested_datasets),
+        "target_datasets": list(state.target_datasets),
+        "runnable_datasets": list(state.runnable_datasets),
+        "blocked_datasets": list(state.blocked_datasets),
+        "dependency_review_status": state.dependency_review_status,
+        "dependency_plan": dict(state.dependency_plan),
+        "dependency_decisions": list(state.dependency_decisions),
+        "dependency_resolution": list(state.dependency_resolution),
+        "datasets": dataset_projection,
+        "risk_flags": list(state.risk_flags),
+        "agent_decisions": list(state.agent_decisions),
+        "evidence_bundle_id": state.evidence_bundle_id,
+        "reference_queries": list(state.reference_queries),
+    }
+    return update_workflow_state(
+        study_dir,
+        state.run_id,
+        study_id=state.study_id,
+        node=node,
+        status=state.status,
+        current_interrupt=current_interrupt,
+        input_fingerprint_payload=state.input_fingerprint,
+        extra=extra,
+    )
+
+
+def workflow_projection_consistency(
+    workflow_state: dict[str, Any],
+    graph_state: StudyRunState | dict[str, Any],
+) -> dict[str, Any]:
+    """Compare core graph state fields against a workflow projection."""
+
+    state = graph_state if isinstance(graph_state, StudyRunState) else StudyRunState.model_validate(graph_state)
+    mismatches: list[str] = []
+    _compare_projection_field(mismatches, "study_id", workflow_state.get("study_id"), state.study_id)
+    _compare_projection_field(mismatches, "run_id", workflow_state.get("run_id"), state.run_id)
+    _compare_projection_field(mismatches, "status", workflow_state.get("status"), state.status)
+    _compare_projection_field(
+        mismatches,
+        "current_interrupt",
+        workflow_state.get("current_interrupt"),
+        _interrupt_name(state.current_interrupt),
+    )
+    _compare_projection_field(
+        mismatches,
+        "target_datasets",
+        workflow_state.get("target_datasets") or [],
+        list(state.target_datasets),
+    )
+    workflow_datasets = workflow_state.get("datasets") or {}
+    for dataset, dataset_state in state.datasets.items():
+        projected = workflow_datasets.get(dataset)
+        if not isinstance(projected, dict):
+            mismatches.append(f"datasets.{dataset}: missing")
+            continue
+        _compare_projection_field(mismatches, f"datasets.{dataset}.status", projected.get("status"), dataset_state.status)
+        _compare_projection_field(
+            mismatches,
+            f"datasets.{dataset}.current_interrupt",
+            projected.get("current_interrupt"),
+            _interrupt_name(dataset_state.current_interrupt),
+        )
+    return {"consistent": not mismatches, "mismatches": mismatches}
+
+
 def _workflow_state_path(study_dir: str | Path, run_id: str) -> Path:
     return Path(study_dir) / "runs" / run_id / "workflow_state.json"
+
+
+def _project_dataset_state(dataset_state: DatasetRunState) -> dict[str, Any]:
+    return {
+        "dataset": dataset_state.dataset,
+        "status": dataset_state.status,
+        "current_interrupt": _interrupt_name(dataset_state.current_interrupt),
+        "spec_state": dataset_state.spec_state,
+        "code_state": dataset_state.code_state,
+        "execution_state": dataset_state.execution_state,
+        "validation_summary": dataset_state.validation_summary,
+        "compare_summary": dataset_state.compare_summary,
+        "artifact_refs": [artifact.model_dump(mode="json") for artifact in dataset_state.artifacts],
+        "failure_ids": [failure.failure_id for failure in dataset_state.failures],
+        "risk_flags": list(dataset_state.risk_flags),
+        "agent_decisions": list(dataset_state.agent_decisions),
+        "evidence_bundle_id": dataset_state.evidence_bundle_id,
+        "reference_queries": list(dataset_state.reference_queries),
+    }
+
+
+def _interrupt_name(interrupt: Any) -> str | None:
+    if interrupt is None:
+        return None
+    if getattr(interrupt, "status", None) != "open":
+        return None
+    return getattr(interrupt, "name", None)
+
+
+def _compare_projection_field(mismatches: list[str], name: str, actual: Any, expected: Any) -> None:
+    if actual != expected:
+        mismatches.append(f"{name}: expected {expected!r}, got {actual!r}")
 
 
 def _fingerprint_digest(files: list[dict[str, Any]]) -> str:

@@ -17,6 +17,7 @@ from adam_agent.api.models import (
     CodeReviewResponse,
     DatasetCompareResponse,
     DatasetReview,
+    DependencyReviewResponse,
     DemoStudyResponse,
     DownloadItem,
     DraftSpecResponse,
@@ -36,7 +37,6 @@ from adam_agent.api.models import (
     StudyInputSummary,
     TablePageResponse,
 )
-from adam_agent.downstream.diagnostics import diagnose_downstream_failure, write_downstream_failure_report
 from adam_agent.downstream.runner import StructuralStubRRunner
 from adam_agent.graph.dependency_resolution import (
     available_dependency_targets,
@@ -45,6 +45,8 @@ from adam_agent.graph.dependency_resolution import (
     resolve_dependency_availability,
 )
 from adam_agent.graph.dependencies import plan_dataset_dependencies
+from adam_agent.graph.gateway import GraphGateway
+from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -63,6 +65,7 @@ from adam_agent.llm.clients import (
     MockLLMClient,
     build_llm_client,
 )
+from adam_agent.schemas.graph_state import HumanCommand
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.draft_spec import (
     DraftSpecGenerationError,
@@ -317,76 +320,79 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
     if not study_dir.exists() or not study_dir.is_dir():
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     study_id = request.study_id or study_dir.name
-    mark_workflow_inputs_current(study_dir, request.run_id, study_id=study_id, node="prepare_run_plan")
-    plan = plan_dataset_dependencies(request.target_datasets, study_dir=study_dir)
-    resolution_scope = _resolution_scope_datasets(plan.requested_datasets, request.approved_dependency_datasets)
-    resolutions = resolve_dependency_availability(
-        plan.dependencies,
-        requested_datasets=plan.requested_datasets,
-        resolution_scope_datasets=resolution_scope,
+    gateway_result = GraphGateway().start_dependency_plan(
         study_dir=study_dir,
+        study_id=study_id,
         run_id=request.run_id,
+        target_datasets=list(request.target_datasets),
         approved_dependency_datasets=request.approved_dependency_datasets,
     )
-    resolution_dicts = [record.as_dict() for record in resolutions]
-    satisfied_dependency_datasets = available_dependency_targets(resolutions)
-    runnable_datasets = _runnable_datasets(
-        plan.target_datasets,
-        set(plan.requested_datasets),
-        resolution_dicts,
-        dependencies=plan.dependencies,
-        satisfied_dependency_datasets=satisfied_dependency_datasets,
-    )
-    direct_blocks = missing_dependency_blocks(resolutions, reportable_datasets=resolution_scope)
-    blocks = direct_blocks + blocked_dependency_targets(
-        target_datasets=plan.target_datasets,
-        candidate_datasets=plan.requested_datasets,
-        runnable_datasets=runnable_datasets,
-        direct_blocks=direct_blocks,
-        dependencies=plan.dependencies,
-        satisfied_dependency_datasets=satisfied_dependency_datasets,
-    )
-    review_status = _plan_review_status(
-        blocked=bool(blocks or plan.unsupported_datasets),
-        warnings=plan.planning_warnings,
-        decisions=[decision.as_dict() for decision in plan.decisions],
-    )
-    update_workflow_state(
-        study_dir,
-        request.run_id,
-        study_id=study_id,
-        node="plan_datasets",
-        status="planned",
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        current_interrupt="dependency_review" if review_status in {"blocked", "warning", "review_required"} else None,
-        extra={
-            "requested_datasets": plan.requested_datasets,
-            "target_datasets": plan.target_datasets,
-            "runnable_datasets": runnable_datasets,
-            "blocked_datasets": blocks,
-            "dependency_review_status": review_status,
-            "dependency_decisions": [decision.as_dict() for decision in plan.decisions],
-            "dependency_resolution": resolution_dicts,
-            "dependency_warnings": plan.planning_warnings,
-            "plan_stale": False,
-            "stale_datasets": [],
-        },
-    )
+    graph_state = gateway_result.graph_state
+    plan_payload = graph_state.dependency_plan
+    blocked = list(graph_state.blocked_datasets)
+    unsupported = plan_payload.get("unsupported_datasets", [])
     return RunPlanResponse(
         study_id=study_id,
         run_id=request.run_id,
-        requested_datasets=plan.requested_datasets,
-        target_datasets=plan.target_datasets,
-        runnable_datasets=runnable_datasets,
-        blocked_datasets=blocks + [
+        requested_datasets=list(graph_state.requested_datasets),
+        target_datasets=list(graph_state.target_datasets),
+        runnable_datasets=list(graph_state.runnable_datasets),
+        blocked_datasets=blocked + [
             {"dataset": dataset, "reason": "unsupported_dataset", "blocked_by": "study_planner"}
-            for dataset in plan.unsupported_datasets
+            for dataset in unsupported
         ],
-        dependency_review_status=review_status,
-        dependency_decisions=[decision.as_dict() for decision in plan.decisions],
-        dependency_resolution=resolution_dicts,
-        dependency_warnings=plan.planning_warnings,
+        dependency_review_status=graph_state.dependency_review_status or "accepted",
+        dependency_decisions=list(graph_state.dependency_decisions),
+        dependency_resolution=list(graph_state.dependency_resolution),
+        dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
         workflow_state_path=str((study_dir / "runs" / request.run_id / "workflow_state.json").as_posix()),
+    )
+
+
+def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResponse:
+    """Persist a human decision for the graph-native dependency review gate."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    decision = request.decision.strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise ApiServiceError("Dependency review decision must be approve or reject.")
+    gateway = GraphGateway()
+    try:
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    if graph_state.current_interrupt is None or graph_state.current_interrupt.name != "dependency_review":
+        raise ApiServiceError("Current graph state is not waiting for dependency_review.")
+    result = gateway.resume(
+        study_dir=study_dir,
+        graph_state=graph_state,
+        command=HumanCommand(
+            interrupt="dependency_review",
+            action="approve" if decision == "approve" else "reject",
+            reviewer=request.reviewer,
+            notes=request.notes,
+            payload={
+                "approved_dependency_datasets": [
+                    str(item).strip().upper()
+                    for item in getattr(request, "approved_dependency_datasets", [])
+                    if str(item).strip()
+                ]
+            },
+        ),
+    )
+    current_interrupt = None
+    if result.graph_state.current_interrupt is not None and result.graph_state.current_interrupt.status == "open":
+        current_interrupt = result.graph_state.current_interrupt.name
+    return DependencyReviewResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        decision=decision,
+        approved=decision == "approve",
+        current_interrupt=current_interrupt,
+        graph_state_path=str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
+        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
     )
 
 
@@ -441,129 +447,82 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     study_id = request.study_id or study_dir.name
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="generate_code_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan_request = RunPlanRequest(
-        study_dir=str(study_dir),
+    plan = _get_or_start_dependency_plan_for_product_step(
+        study_dir=study_dir,
         study_id=study_id,
         run_id=run_id,
-        target_datasets=[target],
-        approved_dependency_datasets=request.approved_dependency_datasets,
+        target=target,
     )
-    plan = prepare_run_plan(plan_request)
-
+    _assert_target_dependency_gate_open_for_product_step(plan, target)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
-    try:
-        llm_client = build_llm_client(provider_config)
-    except LLMClientConfigError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    if provider_config.provider.strip().lower() == "mock":
-        llm_client = MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
-    context = build_target_llm_context(
-        study_id=study_id,
-        run_id=run_id,
-        target_dataset=target,
-        study_dir=study_dir,
-        dependency_resolution=plan.dependency_resolution,
-        exposure=exposure,
-        rscript_path=getattr(request, "rscript_path", None),
+    result = compile_dataset_graph().invoke(
+        {
+            "study_id": study_id,
+            "run_id": run_id,
+            "dataset": target,
+            "execution_mode": "graph_product_generate_code",
+            "study_dir": str(study_dir),
+            "rscript_path": getattr(request, "rscript_path", None) or "",
+            "dependency_resolution": plan.dependency_resolution,
+            "llm_provider": provider_config.__dict__,
+            "llm_exposure": exposure.model_dump(mode="json"),
+            "llm_client_builder": build_llm_client,
+            "target_context_builder": build_target_llm_context,
+            "audit_artifacts": [],
+        }
     )
-    context_dict = context.as_dict()
-    draft_spec_path: str | None = None
-    if context.target_spec is None:
-        approved_payload = _approved_draft_spec_payload(study_dir, run_id, target)
-        if approved_payload is None and getattr(request, "require_spec_approval", True):
-            raise ApiServiceError(
+    if result.get("status") == "failed":
+        message = str(result.get("real_run_error") or f"Code generation failed for {target}.")
+        if "No approved input_spec or approved draft spec is available" in message:
+            message = (
                 f"No approved input_spec or approved draft spec is available for {target}. "
                 "Generate and approve a draft spec before generating R code."
             )
-        if approved_payload is None:
-            raise ApiServiceError(
-                f"No approved input_spec is available for {target}; automatic draft spec generation is disabled."
-            )
-        context.target_spec = approved_payload
-        context.warnings.append("Generated code uses a user-approved draft spec because no approved input_spec was supplied.")
-        context_dict = context.as_dict()
-        draft_spec_path = approved_payload.get("path")
-    context_artifact = write_llm_context_package(context, study_dir)
-    compact_prompt = compact_prompt_from_context(context_dict)
-    prompt_artifact = write_compact_prompt_artifact(
+        raise ApiServiceError(message)
+    code_path = result.get("code_path")
+    generated_code = result.get("generated_code")
+    if not code_path or not generated_code:
+        raise ApiServiceError(f"Code generation did not produce a reviewable R script for {target}.")
+    code_sha = f"sha256:{sha256_file(Path(str(code_path)))}"
+    static_check_path = result.get("static_check_path")
+    static_check_sha = f"sha256:{sha256_file(Path(str(static_check_path)))}" if static_check_path else None
+    draft_spec_path = result.get("approved_spec_path") or result.get("input_spec_path") or result.get("draft_spec_path")
+    spec_sha = f"sha256:{sha256_file(Path(str(draft_spec_path)))}" if draft_spec_path else None
+    GraphGateway().record_code_generation(
+        study_dir=study_dir,
         study_id=study_id,
         run_id=run_id,
-        target_dataset=target,
-        study_dir=study_dir,
-        prompt=compact_prompt,
-        source_context_artifact_id=context_artifact.artifact_id,
+        dataset=target,
+        code_path=Path(str(code_path)),
+        code_sha256=code_sha,
+        static_check_path=Path(str(static_check_path)) if static_check_path else None,
+        static_check_sha256=static_check_sha,
+        spec_source=result.get("spec_source"),
+        spec_path=Path(str(draft_spec_path)) if draft_spec_path else None,
+        spec_sha256=spec_sha,
+        dependency_artifacts=_dependency_artifacts_for_dataset(plan.dependency_resolution, target),
+        input_fingerprint_payload=input_fingerprint(study_dir),
     )
-    try:
-        llm_response = llm_client.generate(
-            _llm_request_for_code_generation(
-                prompt=compact_prompt,
-                target=target,
-                study_id=study_id,
-                run_id=run_id,
-                provider_config=provider_config,
-                exposure=exposure,
-                context_dict=context_dict,
-                prompt_artifact=prompt_artifact,
-            )
-        )
-    except (LLMClientConfigError, LLMProviderResponseError) as exc:
-        raise ApiServiceError(str(exc)) from exc
-    try:
-        package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
-    except LLMGeneratedCodeError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    artifacts = write_generated_code_artifacts(
-        study_id=study_id,
-        run_id=run_id,
-        study_dir=study_dir,
-        package=package,
-        response_text=llm_response.response_text,
-    )
-    static_check_path = _write_static_check_placeholder(
-        study_dir=study_dir,
-        run_id=run_id,
-        study_id=study_id,
-        target=target,
-        code_path=Path(artifacts.code_artifact.path),
-    )
-    warnings = context.warnings + plan.dependency_warnings + [
+    warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings + [
         "Static ADaM/CDISC rule checking is a placeholder in this build; review generated R code manually before execution."
     ]
-    update_workflow_state(
-        study_dir,
-        run_id,
-        study_id=study_id,
-        node="generate_code",
-        dataset=target,
-        status="code_generated",
-        current_interrupt="code_review",
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        dataset_update={
-            "code_path": artifacts.code_artifact.path,
-            "static_check_path": str(static_check_path.as_posix()),
-            "llm_provider": provider_config.provider,
-            "llm_model": provider_config.model,
-            "mock_mode": provider_config.provider.strip().lower() == "mock",
-            "draft_spec_path": draft_spec_path,
-        },
-    )
     return GenerateCodeResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
         status="code_generated",
-        code_path=artifacts.code_artifact.path,
-        generated_code=package.r_code,
-        assumptions=package.assumptions,
-        risk_points=package.risk_points,
-        used_inputs=package.used_inputs,
-        expected_outputs=package.expected_outputs,
-        context_path=context_artifact.path,
+        code_path=str(code_path),
+        generated_code=str(generated_code),
+        assumptions=list(result.get("code_assumptions", [])),
+        risk_points=list(result.get("code_risk_points", [])),
+        used_inputs=list(result.get("code_used_inputs", [])),
+        expected_outputs=list(result.get("code_expected_outputs", [])),
+        context_path=result.get("product_context_artifact").path if result.get("product_context_artifact") else None,
         draft_spec_path=draft_spec_path,
-        response_path=artifacts.response_artifact.path,
-        parsed_response_path=artifacts.package_artifact.path,
-        static_check_path=str(static_check_path.as_posix()),
+        response_path=result.get("llm_response_path"),
+        parsed_response_path=result.get("parsed_response_path"),
+        static_check_path=static_check_path,
         dependency_review_status=plan.dependency_review_status,
         warnings=warnings,
     )
@@ -579,26 +538,36 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     study_id = request.study_id or study_dir.name
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="finalize_inputs_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan = prepare_run_plan(
-        RunPlanRequest(
-            study_dir=str(study_dir),
-            study_id=study_id,
-            run_id=run_id,
-            target_datasets=[target],
-            approved_dependency_datasets=request.approved_dependency_datasets,
-        )
-    )
-    exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
-    context = build_target_llm_context(
+    plan = _get_or_start_dependency_plan_for_product_step(
+        study_dir=study_dir,
         study_id=study_id,
         run_id=run_id,
-        target_dataset=target,
-        study_dir=study_dir,
-        dependency_resolution=plan.dependency_resolution,
-        exposure=exposure,
-        rscript_path=getattr(request, "rscript_path", None),
+        target=target,
     )
-    if context.target_spec is not None:
+    _assert_target_dependency_gate_open_for_product_step(plan, target)
+    provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
+    exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
+    result = compile_dataset_graph().invoke(
+        {
+            "study_id": study_id,
+            "run_id": run_id,
+            "dataset": target,
+            "execution_mode": "graph_product_prepare",
+            "study_dir": str(study_dir),
+            "rscript_path": getattr(request, "rscript_path", None) or "",
+            "dependency_resolution": plan.dependency_resolution,
+            "llm_provider": provider_config.__dict__,
+            "llm_exposure": exposure.model_dump(mode="json"),
+            "llm_client_builder": build_llm_client,
+            "target_context_builder": build_target_llm_context,
+            "audit_artifacts": [],
+        }
+    )
+    if result.get("status") == "failed":
+        raise ApiServiceError(str(result.get("real_run_error") or f"Could not finalize inputs for {target}."))
+    warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings
+    if result.get("spec_source") == "input_spec":
+        input_spec_path = result.get("input_spec_path")
         update_workflow_state(
             study_dir,
             run_id,
@@ -608,7 +577,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             status="input_spec_ready",
             current_interrupt=None,
             input_fingerprint_payload=input_fingerprint(study_dir),
-            dataset_update={"spec_source": "input_spec", "input_spec_path": context.target_spec.get("path")},
+            dataset_update={"spec_source": "input_spec", "input_spec_path": input_spec_path},
         )
         return FinalizeInputsResponse(
             study_id=study_id,
@@ -619,11 +588,11 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             draft_spec_required=False,
             next_action="generate_code",
             message=f"Approved input_spec found for {target}. Draft spec generation is not needed.",
-            input_spec_path=context.target_spec.get("path"),
-            warnings=context.warnings + plan.dependency_warnings,
+            input_spec_path=input_spec_path,
+            warnings=warnings,
         )
-    approved_payload = _approved_draft_spec_payload(study_dir, run_id, target)
-    if approved_payload is not None:
+    if result.get("spec_source") == "approved_draft_spec":
+        approved_spec_path = result.get("approved_spec_path")
         update_workflow_state(
             study_dir,
             run_id,
@@ -633,7 +602,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             status="approved_draft_spec_ready",
             current_interrupt=None,
             input_fingerprint_payload=input_fingerprint(study_dir),
-            dataset_update={"spec_source": "approved_draft_spec", "approved_spec_path": approved_payload.get("path")},
+            dataset_update={"spec_source": "approved_draft_spec", "approved_spec_path": approved_spec_path},
         )
         return FinalizeInputsResponse(
             study_id=study_id,
@@ -645,10 +614,23 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             approved_draft_spec_available=True,
             next_action="generate_code",
             message=f"A previously approved draft spec is available for {target}.",
-            approved_spec_path=approved_payload.get("path"),
-            warnings=context.warnings + plan.dependency_warnings,
+            approved_spec_path=approved_spec_path,
+            warnings=warnings,
         )
-    draft_response = generate_dataset_draft_spec(run_id, target, request)
+    draft_path = result.get("draft_spec_path")
+    if not draft_path:
+        raise ApiServiceError(f"Draft spec generation did not produce a reviewable spec for {target}.")
+    draft_response = DraftSpecResponse(
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="draft_spec_generated",
+        spec_path=draft_path,
+        prompt_path=result.get("draft_spec_prompt_path") or "",
+        response_path=result.get("draft_spec_response_path") or "",
+        variables=list(result.get("draft_spec_variables", [])),
+        warnings=warnings,
+    )
     update_workflow_state(
         study_dir,
         run_id,
@@ -688,14 +670,11 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
     study_id = request.study_id or study_dir.name
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="draft_spec_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan = prepare_run_plan(
-        RunPlanRequest(
-            study_dir=str(study_dir),
-            study_id=study_id,
-            run_id=run_id,
-            target_datasets=[target],
-            approved_dependency_datasets=request.approved_dependency_datasets,
-        )
+    plan = _get_or_start_dependency_plan_for_product_step(
+        study_dir=study_dir,
+        study_id=study_id,
+        run_id=run_id,
+        target=target,
     )
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
@@ -799,6 +778,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
     review_dir = run_dir / "reviews"
     review_dir.mkdir(parents=True, exist_ok=True)
     approved_path: Path | None = None
+    approved_spec_sha: str | None = None
     if decision == "approve":
         approved_dir = run_dir / "approved_specs"
         approved_dir.mkdir(parents=True, exist_ok=True)
@@ -812,6 +792,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
         approved_payload["input_fingerprint"] = current_fingerprint
         approved_payload["reference_adam_policy"] = "Reference ADaM is compare/output-shape evidence only, not derivation authority."
         _write_json(approved_path, approved_payload)
+        approved_spec_sha = f"sha256:{sha256_file(approved_path)}"
     review_path = review_dir / f"{target.lower()}_draft_spec_review.json"
     review_payload = {
         "study_id": request.study_id if hasattr(request, "study_id") else study_dir.name,
@@ -823,6 +804,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
         "notes": request.notes,
         "draft_spec_path": str(draft_path.as_posix()),
         "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
+        "approved_spec_sha256": approved_spec_sha,
         "input_fingerprint": current_fingerprint,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -875,6 +857,47 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
     static_check_path = study_dir / "runs" / run_id / "static_checks" / f"{target.lower()}_static_check.json"
     code_sha = f"sha256:{sha256_file(code_path)}"
     static_check_sha = f"sha256:{sha256_file(static_check_path)}" if static_check_path.exists() else None
+    graph_code_state = _graph_code_state(study_dir, run_id, target)
+    spec_path = graph_code_state.get("spec_path")
+    spec_sha = graph_code_state.get("spec_sha256")
+    if spec_path and not spec_sha:
+        raise ApiServiceError("Generated-code graph state is missing the approved spec hash. Regenerate code before review.")
+    if spec_path and spec_sha:
+        current_spec_path = Path(str(spec_path))
+        if not current_spec_path.exists() or not current_spec_path.is_file():
+            raise ApiServiceError(f"Approved spec used for code generation no longer exists: {current_spec_path}")
+        if f"sha256:{sha256_file(current_spec_path)}" != spec_sha:
+            raise ApiServiceError("Approved spec changed after code generation. Regenerate code before review.")
+    gateway = GraphGateway()
+    try:
+        gateway.validate_code_review(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset=target,
+            code_sha256=code_sha,
+            static_check_sha256=static_check_sha,
+            spec_sha256=spec_sha,
+            input_fingerprint_payload=current_fingerprint,
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    command = HumanCommand(
+        interrupt="code_review",
+        action="approve" if decision == "approve" else "reject",
+        dataset=target,
+        reviewer=request.reviewer,
+        notes=request.notes,
+        payload={
+            "review_path": str(review_path.as_posix()),
+            "code_path": str(code_path.as_posix()),
+            "code_sha256": code_sha,
+            "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
+            "static_check_sha256": static_check_sha,
+            "spec_source": graph_code_state.get("spec_source"),
+            "spec_path": spec_path,
+            "spec_sha256": spec_sha,
+        },
+    )
     payload = {
         "study_id": study_id,
         "run_id": run_id,
@@ -889,25 +912,31 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
         "code_sha256": code_sha,
         "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
         "static_check_sha256": static_check_sha,
+        "spec_source": graph_code_state.get("spec_source"),
+        "spec_path": spec_path,
+        "spec_sha256": spec_sha,
     }
     review_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    update_workflow_state(
-        study_dir,
-        run_id,
-        study_id=study_id,
-        node="code_review",
-        dataset=target,
-        status="code_approved" if decision == "approve" else "code_rejected",
-        current_interrupt=None if decision == "approve" else "code_review",
-        input_fingerprint_payload=current_fingerprint,
-        dataset_update={
-            "code_review_path": str(review_path.as_posix()),
-            "code_approved": decision == "approve",
-            "code_sha256": code_sha,
-            "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
-            "static_check_sha256": static_check_sha,
-        },
-    )
+    try:
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            command=command,
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_check_path if static_check_path.exists() else None,
+            static_check_sha256=static_check_sha,
+            input_fingerprint_payload=current_fingerprint,
+        )
+    except Exception as exc:
+        if not _graph_code_review_matches_review_path(study_dir, run_id, target, review_path):
+            review_path.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise ApiServiceError(str(exc)) from exc
+        raise
     return CodeReviewResponse(
         study_id=study_id,
         run_id=run_id,
@@ -927,93 +956,67 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    run_dir = study_dir / "runs" / run_id
-    code_path = run_dir / "code" / f"build_{target.lower()}.R"
-    output_path = run_dir / "outputs" / f"{target.lower()}.csv"
-    review_path = run_dir / "review" / f"{target.lower()}_code_review.json"
-    if not code_path.exists():
-        raise ApiServiceError(f"Generated R code does not exist: {code_path}")
-    if request.require_approval:
-        _assert_code_review_current(study_dir, run_id, target, review_path, code_path)
-    if output_path.exists():
-        output_path.unlink()
-
-    runner = LocalRRunner(request.rscript_path)
-    r_result = runner.run(
-        RRunRequest(
-            code="",
-            dataset=target,
-            run_id=run_id,
-            working_dir=str(run_dir),
-            script_path=str(code_path),
-        )
-    )
-    validation_report = _validate_executed_code(
-        target=target,
-        output_path=output_path,
-        r_exit_code=r_result.exit_code,
-        r_stdout=r_result.stdout,
-        r_stderr=r_result.stderr,
-    )
-    validation_path = run_dir / "validation" / f"{target.lower()}_validation_report.json"
-    validation_path.parent.mkdir(parents=True, exist_ok=True)
-    validation_path.write_text(json.dumps(validation_report, indent=2, sort_keys=True), encoding="utf-8")
-
-    diagnostics_path: Path | None = None
-    terminal_failure = validation_report["status"] == "fail"
-    usable_output_path = output_path if not terminal_failure and output_path.exists() else None
-    if validation_report["status"] == "fail":
-        failure = diagnose_downstream_failure(
-            dataset=target,
-            stage="r_sandbox" if r_result.exit_code != 0 else "validation",
-            message="; ".join(validation_report["errors"]),
-            r_result=r_result,
-            validation_report=validation_report,
-            artifact_ids=[],
-            repair_attempt=0,
-        )
-        failure_artifact = write_downstream_failure_report(
+    try:
+        plan = _read_dependency_plan_for_product_step(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
-            dataset=target,
-            failure_records=[failure],
-            validation_report=validation_report,
-            status="terminal_failure",
+            target=target,
         )
-        diagnostics_path = Path(failure_artifact.path)
-
-    response_status = "completed" if validation_report["status"] == "pass" else "terminal_failure"
-    update_workflow_state(
-        study_dir,
-        run_id,
+    except FileNotFoundError as exc:
+        raise ApiServiceError("Graph state does not exist for this run. Generate code through the graph flow before execution.") from exc
+    _assert_target_dependency_gate_open_for_product_step(plan, target)
+    result = compile_dataset_graph().invoke(
+        {
+            "study_id": study_id,
+            "run_id": run_id,
+            "dataset": target,
+            "execution_mode": "graph_product_execute",
+            "study_dir": str(study_dir),
+            "rscript_path": getattr(request, "rscript_path", None) or "",
+            "audit_artifacts": [],
+        }
+    )
+    if result.get("failure_type") == "input_error" and result.get("real_run_error"):
+        raise ApiServiceError(str(result["real_run_error"]))
+    response_status = str(result.get("response_status") or ("completed" if result.get("status") == "completed" else "terminal_failure"))
+    validation_report = result.get("validation_report") or {}
+    validation_status = str(result.get("real_validation_status") or validation_report.get("status") or "unknown")
+    terminal_failure = bool(result.get("terminal_failure"))
+    output_path = str(result.get("output_path") or "") or None
+    validation_report_path = str(result.get("validation_report_path") or "") or None
+    diagnostics_path = str(result.get("diagnostics_path") or "") or None
+    GraphGateway().record_execution(
+        study_dir=study_dir,
         study_id=study_id,
-        node="execute_approved_code",
+        run_id=run_id,
         dataset=target,
-        status=response_status,
-        current_interrupt="terminal_failure" if terminal_failure else None,
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        dataset_update={
-            "validation_status": validation_report["status"],
-            "output_path": str(usable_output_path.as_posix()) if usable_output_path else None,
-            "validation_report_path": str(validation_path.as_posix()),
-            "diagnostics_path": str(diagnostics_path.as_posix()) if diagnostics_path else None,
+        execution_state={
+            "status": response_status,
+            "validation_status": validation_status,
+            "output_path": output_path,
+            "validation_report_path": validation_report_path,
+            "diagnostics_path": diagnostics_path,
             "terminal_failure": terminal_failure,
             "partial_output_usable": not terminal_failure,
         },
+        validation_summary=validation_report,
+        artifacts=list((result.get("real_run_artifacts") or {}).values()),
+        failures=list(result.get("failure_records", [])),
+        input_fingerprint_payload=input_fingerprint(study_dir),
     )
     return ExecuteCodeResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
         status=response_status,
-        validation_status=validation_report["status"],
-        output_path=str(usable_output_path.as_posix()) if usable_output_path else None,
-        validation_report_path=str(validation_path.as_posix()),
-        diagnostics_path=str(diagnostics_path.as_posix()) if diagnostics_path else None,
+        validation_status=validation_status,
+        output_path=output_path,
+        validation_report_path=validation_report_path,
+        diagnostics_path=diagnostics_path,
         terminal_failure=terminal_failure,
-        errors=validation_report["errors"],
-        warnings=validation_report["warnings"],
+        errors=list(result.get("execution_errors", [])),
+        warnings=list(result.get("execution_warnings", [])),
     )
 
 
@@ -1030,6 +1033,16 @@ def read_run_json_artifact(study_dir: str | Path, run_id: str, relative_path: st
     if target_path.suffix.lower() != ".json":
         raise ApiServiceError("Only JSON artifacts are supported by this endpoint.")
     return json.loads(target_path.read_text(encoding="utf-8"))
+
+
+def read_run_graph_state(study_dir: str | Path, run_id: str) -> dict[str, Any]:
+    """Read the canonical graph state for one local run."""
+
+    try:
+        state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    return state.model_dump(mode="json")
 
 
 def read_dataset_table_page(
@@ -1417,6 +1430,172 @@ def _default_mock_generated_code_response(target: str) -> str:
     return default_mock_generated_code_response(target)
 
 
+def _assert_target_dependency_gate_open_for_product_step(plan: RunPlanResponse, target: str) -> None:
+    """Fail closed when a target still needs dependency review or user action."""
+
+    dataset = target.strip().upper()
+    blocked = [
+        block
+        for block in plan.blocked_datasets
+        if str(block.get("dataset", "")).strip().upper() == dataset
+    ]
+    if blocked:
+        reasons = ", ".join(str(block.get("reason") or "blocked") for block in blocked)
+        raise ApiServiceError(
+            f"{dataset} cannot continue until dependency issues are resolved: {reasons}. "
+            "Review the dependency plan before finalizing inputs or generating code."
+        )
+    if dataset not in [item.strip().upper() for item in plan.runnable_datasets]:
+        raise ApiServiceError(
+            f"{dataset} is not runnable in the current dependency plan. "
+            "Review the dependency plan before finalizing inputs or generating code."
+        )
+    if plan.dependency_review_status == "warning" or plan.dependency_warnings:
+        raise ApiServiceError(
+            f"{dataset} dependency plan has warnings that require review before this step. "
+            f"Warnings: {'; '.join(plan.dependency_warnings)}"
+        )
+    blocking_decisions = [
+        decision
+        for decision in plan.dependency_decisions
+        if str(decision.get("dataset", "")).strip().upper() == dataset
+        and decision.get("review_required") is True
+        and str(decision.get("source", "")) != "no_dependency_evidence"
+    ]
+    if blocking_decisions:
+        sources = ", ".join(str(decision.get("source") or "unknown") for decision in blocking_decisions)
+        raise ApiServiceError(
+            f"{dataset} dependency plan requires human review before this step. "
+            f"Review-required sources: {sources}."
+        )
+
+
+def _read_dependency_plan_for_product_step(
+    *,
+    study_dir: Path,
+    study_id: str,
+    run_id: str,
+    target: str,
+) -> RunPlanResponse:
+    """Read the last graph dependency plan without overwriting graph state."""
+
+    graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+    if graph_state.study_id != study_id:
+        raise ApiServiceError("Graph state study_id does not match the request.")
+    target_dataset = target.strip().upper()
+    if target_dataset not in [item.strip().upper() for item in graph_state.target_datasets]:
+        raise ApiServiceError(f"{target_dataset} is not part of the current graph dependency plan.")
+    plan_payload = graph_state.dependency_plan
+    unsupported = plan_payload.get("unsupported_datasets", [])
+    return RunPlanResponse(
+        study_id=study_id,
+        run_id=run_id,
+        requested_datasets=list(graph_state.requested_datasets),
+        target_datasets=list(graph_state.target_datasets),
+        runnable_datasets=list(graph_state.runnable_datasets),
+        blocked_datasets=list(graph_state.blocked_datasets)
+        + [
+            {"dataset": dataset, "reason": "unsupported_dataset", "blocked_by": "study_planner"}
+            for dataset in unsupported
+        ],
+        dependency_review_status=graph_state.dependency_review_status or "accepted",
+        dependency_decisions=list(graph_state.dependency_decisions),
+        dependency_resolution=list(graph_state.dependency_resolution),
+        dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
+        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
+    )
+
+
+def _get_or_start_dependency_plan_for_product_step(
+    *,
+    study_dir: Path,
+    study_id: str,
+    run_id: str,
+    target: str,
+) -> RunPlanResponse:
+    """Use the graph plan read model for product steps without clobbering dataset state."""
+
+    try:
+        return _read_dependency_plan_for_product_step(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+        )
+    except FileNotFoundError:
+        return prepare_run_plan(
+            RunPlanRequest(
+                study_dir=str(study_dir),
+                study_id=study_id,
+                run_id=run_id,
+                target_datasets=[target],
+            )
+        )
+
+
+def _graph_code_state(study_dir: Path, run_id: str, target: str) -> dict[str, Any]:
+    try:
+        graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError:
+        return {}
+    dataset_state = graph_state.datasets.get(target.strip().upper())
+    if dataset_state is None:
+        return {}
+    return dict(dataset_state.code_state)
+
+
+def _graph_code_review_matches_review_path(study_dir: Path, run_id: str, target: str, review_path: Path) -> bool:
+    code_state = _graph_code_state(study_dir, run_id, target)
+    return (
+        code_state.get("status") == "approved"
+        and code_state.get("decision") == "approve"
+        and str(Path(str(code_state.get("review_path") or "")).as_posix()) == str(review_path.as_posix())
+    )
+
+
+def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
+    target_dataset = target.strip().upper()
+    artifacts: list[dict[str, Any]] = []
+    for record in dependency_resolution:
+        if str(record.get("target_dataset", "")).strip().upper() != target_dataset:
+            continue
+        if record.get("resolution_status") != "available":
+            continue
+        if record.get("artifact_source") == "reference_adam":
+            continue
+        artifact_path = record.get("artifact_path")
+        artifact_sha = record.get("artifact_sha256")
+        if not artifact_path or not artifact_sha:
+            continue
+        artifacts.append(
+            {
+                "required_dataset": str(record.get("required_dataset", "")).strip().upper(),
+                "artifact_path": str(artifact_path),
+                "artifact_sha256": str(artifact_sha),
+                "artifact_source": record.get("artifact_source"),
+            }
+        )
+    return artifacts
+
+
+def _approved_dependencies_from_graph_state(study_dir: Path, run_id: str) -> list[str]:
+    """Return dependency generation approvals that were persisted by human review."""
+
+    try:
+        graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError:
+        return []
+    approved: list[str] = []
+    for command in graph_state.human_commands:
+        if command.interrupt != "dependency_review" or command.action != "approve":
+            continue
+        for item in command.payload.get("approved_dependency_datasets", []):
+            dataset = str(item).strip().upper()
+            if dataset and dataset not in approved:
+                approved.append(dataset)
+    return approved
+
+
 def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> dict[str, Any] | None:
     approved_path = study_dir / "runs" / run_id / "approved_specs" / f"{target.lower()}_approved_spec.json"
     review_path = study_dir / "runs" / run_id / "reviews" / f"{target.lower()}_draft_spec_review.json"
@@ -1441,6 +1620,15 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
             "Regenerate and approve the draft spec before generating R code. "
             f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; changed={diff.get('changed_files', [])}."
         )
+    approved_spec_sha = review.get("approved_spec_sha256")
+    if not approved_spec_sha:
+        raise ApiServiceError(
+            "Approved draft spec review is missing the approved spec hash. "
+            "Review and approve the draft spec again before generating R code."
+        )
+    current_spec_sha = f"sha256:{sha256_file(approved_path)}"
+    if approved_spec_sha != current_spec_sha:
+        raise ApiServiceError("Approved draft spec changed after approval. Review and approve the draft spec again.")
     return {
         "artifact_id": f"approved_draft_spec_{target.lower()}",
         "path": str(approved_path.as_posix()),
@@ -1452,81 +1640,6 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
         "approved": True,
         "source": "user_approved_draft_spec",
         "review_path": str(review_path.as_posix()),
-    }
-
-
-def _is_code_approved(review_path: Path) -> bool:
-    payload = _read_json_if_exists(review_path)
-    return payload.get("decision") == "approve" and payload.get("approved") is True
-
-
-def _assert_code_review_current(
-    study_dir: Path,
-    run_id: str,
-    target: str,
-    review_path: Path,
-    code_path: Path,
-) -> None:
-    payload = _read_json_if_exists(review_path)
-    if payload.get("decision") != "approve" or payload.get("approved") is not True:
-        raise ApiServiceError(f"Generated code must be approved before sandbox execution: {review_path}")
-    approved_fingerprint = payload.get("input_fingerprint")
-    current_fingerprint = input_fingerprint(study_dir)
-    if not approved_fingerprint or not approved_fingerprint.get("digest"):
-        raise ApiServiceError("Code approval is missing its input fingerprint. Review the generated code again.")
-    if approved_fingerprint.get("digest") != current_fingerprint.get("digest"):
-        diff = compare_fingerprints(approved_fingerprint, current_fingerprint)
-        raise ApiServiceError(
-            "Code approval is stale because study inputs changed after review. "
-            f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
-            f"changed={diff.get('changed_files', [])}."
-        )
-    approved_code_sha = payload.get("code_sha256")
-    if not approved_code_sha:
-        raise ApiServiceError("Code approval is missing the generated code hash. Review the generated code again.")
-    current_code_sha = f"sha256:{sha256_file(code_path)}"
-    if approved_code_sha != current_code_sha:
-        raise ApiServiceError("Generated code changed after approval. Review the generated code again.")
-    static_check_path = Path(str(payload.get("static_check_path") or ""))
-    approved_static_sha = payload.get("static_check_sha256")
-    if static_check_path.exists() and approved_static_sha:
-        current_static_sha = f"sha256:{sha256_file(static_check_path)}"
-        if approved_static_sha != current_static_sha:
-            raise ApiServiceError("Static-check artifact changed after approval. Review the generated code again.")
-
-
-def _validate_executed_code(
-    *,
-    target: str,
-    output_path: Path,
-    r_exit_code: int,
-    r_stdout: str,
-    r_stderr: str,
-) -> dict[str, Any]:
-    errors: list[str] = []
-    checks = [
-        {"name": "r_exit_code_zero", "pass": r_exit_code == 0},
-        {"name": "output_file_exists", "pass": output_path.exists() and output_path.is_file()},
-    ]
-    if r_exit_code != 0:
-        errors.append(r_stderr or "R execution failed.")
-    if not output_path.exists():
-        errors.append(f"Expected output file was not written: {output_path.as_posix()}")
-    terminal_failure = bool(errors)
-    return {
-        "dataset": target,
-        "status": "fail" if errors else "pass",
-        "checks": checks,
-        "warnings": [],
-        "errors": errors,
-        "output_path": str(output_path.as_posix()),
-        "r_exit_code": r_exit_code,
-        "r_stdout": r_stdout,
-        "r_stderr": r_stderr,
-        "stubbed_r_execution": False,
-        "not_real_derivation": False,
-        "terminal_failure": terminal_failure,
-        "partial_output_usable": not terminal_failure,
     }
 
 

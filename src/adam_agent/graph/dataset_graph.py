@@ -2,17 +2,44 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
+from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
-from adam_agent.llm.clients import LLMProviderConfig, build_llm_client
+from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, utc_timestamp
+from adam_agent.llm.clients import (
+    LLMClientConfigError,
+    LLMProviderConfig,
+    LLMProviderResponseError,
+    MockLLMClient,
+    build_llm_client,
+)
+from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
+from adam_agent.llm.draft_spec import (
+    DraftSpecGenerationError,
+    default_mock_draft_spec_response,
+    generate_draft_spec_from_evidence,
+)
+from adam_agent.llm.generated_code import (
+    LLMGeneratedCodeError,
+    parse_generated_code_response,
+    write_generated_code_artifacts,
+)
 from adam_agent.llm.mock_code import default_mock_generated_code_response
+from adam_agent.llm.prompt_compaction import (
+    MAX_SAMPLE_ROWS_IN_PROMPT,
+    compact_prompt_from_context,
+    write_compact_prompt_artifact,
+)
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
+from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.r_runner import LocalRRunner
 
 
@@ -28,13 +55,35 @@ def _is_retired_adsl_template_mode(state: DatasetGraphState) -> bool:
     return state.get("execution_mode") == "real_adsl_minimal"
 
 
+def _is_graph_product_prepare_mode(state: DatasetGraphState) -> bool:
+    return state.get("execution_mode") == "graph_product_prepare"
+
+
+def _is_graph_product_generate_code_mode(state: DatasetGraphState) -> bool:
+    return state.get("execution_mode") == "graph_product_generate_code"
+
+
+def _is_graph_product_execute_mode(state: DatasetGraphState) -> bool:
+    return state.get("execution_mode") == "graph_product_execute"
+
+
 def _skips_stub_nodes(state: DatasetGraphState) -> bool:
-    return _is_llm_downstream_mode(state) or _is_retired_adsl_template_mode(state)
+    return (
+        _is_llm_downstream_mode(state)
+        or _is_retired_adsl_template_mode(state)
+        or _is_graph_product_prepare_mode(state)
+        or _is_graph_product_generate_code_mode(state)
+        or _is_graph_product_execute_mode(state)
+    )
 
 
 def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Initialize one dataset run."""
 
+    if _is_graph_product_execute_mode(state):
+        return execute_approved_code_node(state)
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state):
+        return prepare_product_context_node(state)
     if state.get("execution_mode") == "llm_downstream_stubbed":
         return run_llm_downstream_stubbed_node(state)
     if state.get("execution_mode") == "llm_downstream_provider":
@@ -61,6 +110,339 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
         "repair_attempts": state.get("repair_attempts", 0),
         "max_repair_attempts": state.get("max_repair_attempts", 3),
         "sandbox_runs": state.get("sandbox_runs", 0),
+    }
+
+
+def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Prepare real product context and stop at the first spec gate."""
+
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": "execution_mode=graph_product_prepare requires study_dir",
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    try:
+        exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
+        context = _build_target_context_for_state(state)(
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            target_dataset=state["dataset"],
+            study_dir=study_dir,
+            dependency_resolution=state.get("dependency_resolution", []),
+            exposure=exposure,
+            rscript_path=state.get("rscript_path") or None,
+        )
+        context_artifact = write_llm_context_package(context, study_dir)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": str(exc),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    if context.target_spec is not None:
+        return {
+            "status": "needs_review",
+            "route": "human_review",
+            "current_interrupt": "code_generation_ready",
+            "product_context_ready": True,
+            "product_context_warnings": context.warnings,
+            "product_context_artifact": context_artifact,
+            "product_context": context.as_dict(),
+            "spec_source": "input_spec",
+            "input_spec_path": context.target_spec.get("path"),
+            "draft_spec_required": False,
+            "next_action": "generate_code",
+            "sandbox_runs": 0,
+        }
+
+    try:
+        approved_payload = _approved_draft_spec_payload(Path(study_dir), state["run_id"], state["dataset"])
+    except ValueError as exc:
+        return _product_failure(
+            "spec_error",
+            str(exc),
+            current_interrupt="draft_spec_review",
+            next_action="regenerate_draft_spec",
+        )
+    if approved_payload is not None:
+        context.target_spec = approved_payload
+        context.warnings.append(
+            "Generated code can use a user-approved draft spec because no approved input_spec was supplied."
+        )
+        context_artifact = write_llm_context_package(context, study_dir)
+        return {
+            "status": "needs_review",
+            "route": "human_review",
+            "current_interrupt": "code_generation_ready",
+            "product_context_ready": True,
+            "product_context_warnings": context.warnings,
+            "product_context_artifact": context_artifact,
+            "product_context": context.as_dict(),
+            "spec_source": "approved_draft_spec",
+            "draft_spec_required": True,
+            "approved_spec_path": approved_payload.get("path"),
+            "next_action": "generate_code",
+            "sandbox_runs": 0,
+        }
+
+    return {
+        "status": "needs_review",
+        "route": "human_review",
+        "current_interrupt": "draft_spec_review",
+        "product_context_ready": True,
+        "product_context_warnings": context.warnings,
+        "product_context_artifact": context_artifact,
+        "product_context": context.as_dict(),
+        "spec_source": "missing_input_spec",
+        "draft_spec_required": True,
+        "next_action": "draft_spec",
+        "sandbox_runs": 0,
+    }
+
+
+def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Generate a review-required draft spec from graph-prepared context."""
+
+    if not _is_graph_product_prepare_mode(state):
+        return {}
+    if not state.get("draft_spec_required"):
+        return {}
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_error": "draft_spec_agent requires study_dir",
+        }
+
+    target = state["dataset"]
+    context_dict = dict(state.get("product_context", {}))
+    try:
+        provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
+        exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
+        llm_client = _build_llm_client_for_state(state, provider_config)
+        if provider_config.provider.strip().lower() == "mock":
+            llm_client = MockLLMClient(fixed_response_text=default_mock_draft_spec_response(target, context_dict))
+        draft_result = generate_draft_spec_from_evidence(
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            target_dataset=target,
+            study_dir=study_dir,
+            context_dict=context_dict,
+            llm_client=llm_client,
+            provider=provider_config.provider,
+            model=provider_config.model,
+            exposure=exposure,
+            max_tokens=provider_config.max_tokens,
+        )
+    except (DraftSpecGenerationError, LLMClientConfigError, LLMProviderResponseError, ValueError) as exc:
+        return {
+            "status": "failed",
+            "failure_type": "draft_spec_error",
+            "route": "fail",
+            "real_run_error": str(exc),
+            "real_validation_status": "not_run",
+        }
+
+    fingerprint = input_fingerprint(study_dir)
+    _merge_json_artifact(
+        draft_result.spec_artifact.path,
+        {
+            "input_fingerprint": fingerprint,
+            "reference_adam_policy": "Reference ADaM is compare/output-shape evidence only, not derivation authority.",
+        },
+    )
+    spec_path = Path(draft_result.spec_artifact.path)
+    spec_artifact = draft_result.spec_artifact.model_copy(
+        update={"sha256": f"sha256:{sha256_file(spec_path)}"}
+    )
+    return {
+        "status": "needs_review",
+        "route": "human_review",
+        "current_interrupt": "draft_spec_review",
+        "spec_source": "draft_spec",
+        "draft_spec_required": True,
+        "draft_spec_path": spec_artifact.path,
+        "draft_spec_prompt_path": draft_result.prompt_artifact.path,
+        "draft_spec_response_path": draft_result.response_artifact.path,
+        "draft_spec_variables": [variable.model_dump(mode="json") for variable in draft_result.spec.variables],
+        "next_action": "review_draft_spec",
+        "product_context_warnings": state.get("product_context_warnings", []) + draft_result.warnings,
+        "audit_artifacts": [
+            draft_result.prompt_artifact,
+            draft_result.response_artifact,
+            spec_artifact,
+        ],
+    }
+
+
+def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Generate R code and stop at graph-native code review."""
+
+    if not _is_graph_product_generate_code_mode(state):
+        return {}
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return _product_failure("input_error", "generate_r_code_agent requires study_dir")
+    target = state["dataset"]
+    context_dict = dict(state.get("product_context", {}))
+    if not context_dict:
+        return _product_failure("input_error", "generate_r_code_agent requires product_context")
+
+    spec_source = state.get("spec_source")
+    if spec_source == "missing_input_spec":
+        return _product_failure(
+            "spec_error",
+            f"No approved input_spec or approved draft spec is available for {target}.",
+            current_interrupt="draft_spec_review",
+            next_action="review_draft_spec",
+        )
+    if spec_source == "draft_spec":
+        return _product_failure(
+            "spec_error",
+            f"Draft spec for {target} must be approved before code generation.",
+            current_interrupt="draft_spec_review",
+            next_action="review_draft_spec",
+        )
+    target_spec = context_dict.get("target_spec")
+    if spec_source not in {"input_spec", "approved_draft_spec"} or not isinstance(target_spec, dict):
+        return _product_failure(
+            "spec_error",
+            f"No approved input_spec or approved draft spec is available for {target}.",
+            current_interrupt="draft_spec_review",
+            next_action="review_draft_spec",
+        )
+
+    try:
+        provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
+        exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
+        llm_client = _build_llm_client_for_state(state, provider_config)
+        if provider_config.provider.strip().lower() == "mock":
+            llm_client = MockLLMClient(fixed_response_text=default_mock_generated_code_response(target))
+        compact_prompt = compact_prompt_from_context(context_dict)
+        prompt_artifact = write_compact_prompt_artifact(
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            target_dataset=target,
+            study_dir=study_dir,
+            prompt=compact_prompt,
+            source_context_artifact_id=_artifact_id(state.get("product_context_artifact")),
+        )
+        llm_response = llm_client.generate(
+            _llm_request_for_code_generation(
+                prompt=compact_prompt,
+                target=target,
+                study_id=state["study_id"],
+                run_id=state["run_id"],
+                provider_config=provider_config,
+                exposure=exposure,
+                context_dict=context_dict,
+                prompt_artifact=prompt_artifact,
+            )
+        )
+        package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
+        artifacts = write_generated_code_artifacts(
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            study_dir=study_dir,
+            package=package,
+            response_text=llm_response.response_text,
+        )
+        static_check_path = _write_static_check_placeholder(
+            study_dir=Path(study_dir),
+            run_id=state["run_id"],
+            study_id=state["study_id"],
+            target=target,
+            code_path=Path(artifacts.code_artifact.path),
+        )
+    except (LLMGeneratedCodeError, LLMProviderResponseError, ValueError) as exc:
+        return _product_failure("code_generation_error", str(exc), next_action="generate_code")
+
+    return {
+        "status": "needs_review",
+        "route": "human_review",
+        "current_interrupt": "code_review",
+        "generated_code": package.r_code,
+        "code_path": artifacts.code_artifact.path,
+        "llm_response_path": artifacts.response_artifact.path,
+        "parsed_response_path": artifacts.package_artifact.path,
+        "static_check_path": str(static_check_path.as_posix()),
+        "code_assumptions": package.assumptions,
+        "code_risk_points": package.risk_points,
+        "code_used_inputs": package.used_inputs,
+        "code_expected_outputs": package.expected_outputs,
+        "next_action": "review_code",
+        "audit_artifacts": [
+            prompt_artifact,
+            artifacts.response_artifact,
+            artifacts.package_artifact,
+            artifacts.code_artifact,
+            _tool_log_artifact(state, static_check_path, kind_id="static_check"),
+        ],
+    }
+
+
+def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Run approved generated R through the graph-owned execution boundary."""
+
+    if not _is_graph_product_execute_mode(state):
+        return {}
+    study_dir = state.get("study_dir")
+    if not study_dir:
+        return _product_failure("input_error", "execute_approved_code requires study_dir")
+    target = state["dataset"]
+    try:
+        result = execute_approved_r_code(
+            study_dir=study_dir,
+            study_id=state["study_id"],
+            run_id=state["run_id"],
+            dataset=target,
+            rscript_path=state.get("rscript_path") or None,
+        )
+    except GraphExecutionError as exc:
+        return _product_failure(
+            "input_error",
+            str(exc),
+            current_interrupt="code_review",
+            next_action="review_code",
+        )
+
+    return {
+        "status": "completed" if not result.terminal_failure else "failed",
+        "route": "success" if not result.terminal_failure else "fail",
+        "failure_type": "sandbox_error" if result.terminal_failure else None,
+        "response_status": result.response_status,
+        "real_run_completed": not result.terminal_failure,
+        "real_run_error": "; ".join(result.errors),
+        "real_validation_status": result.validation_status,
+        "real_run_artifacts": result.artifacts,
+        "failure_records": result.failure_records,
+        "output_path": result.output_path or "",
+        "validation_report_path": result.validation_report_path,
+        "diagnostics_path": result.diagnostics_path or "",
+        "terminal_failure": result.terminal_failure,
+        "execution_errors": result.errors,
+        "execution_warnings": result.warnings,
+        "validation_report": result.validation_report,
+        "current_interrupt": "terminal_failure" if result.terminal_failure else None,
+        "next_action": "review_diagnostics" if result.terminal_failure else "review_output",
+        "audit_artifacts": list(result.artifacts.values()),
+        "sandbox_runs": 1,
     }
 
 
@@ -271,6 +653,8 @@ def route_risk_stub(state: DatasetGraphState) -> DatasetGraphState:
 def human_review_stub(state: DatasetGraphState) -> DatasetGraphState:
     """Pretend a human review checkpoint approved the stub spec."""
 
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_execute_mode(state):
+        return {}
     return {"human_review_required": False, "route": "continue"}
 
 
@@ -356,6 +740,8 @@ def revise_spec_stub(state: DatasetGraphState) -> DatasetGraphState:
 def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Create the dataset-level summary returned to the study graph."""
 
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_execute_mode(state):
+        return summarize_product_prepare(state)
     if _is_llm_downstream_mode(state):
         return summarize_real_downstream(state)
 
@@ -399,6 +785,60 @@ def summarize_dataset(state: DatasetGraphState) -> DatasetGraphState:
         "status": status,
         "summary": summary,
         "audit_artifacts": [audit_artifact],
+    }
+
+
+def summarize_product_prepare(state: DatasetGraphState) -> DatasetGraphState:
+    """Summarize the graph-native product preparation gate without running R."""
+
+    dataset = state["dataset"]
+    status = state.get("status", "needs_review")
+    context_artifact = state.get("product_context_artifact")
+    output_artifact_ids = [context_artifact.artifact_id] if context_artifact is not None else []
+    failure_ids = []
+    if state.get("failure_type"):
+        failure_ids.append(f"failure_{dataset.lower()}_product_prepare")
+    summary = DatasetResultSummary(
+        dataset=dataset,
+        status=status,
+        output_artifact_ids=output_artifact_ids,
+        validation_status="not_run",
+        compare_status="not_run",
+        failure_ids=failure_ids,
+        metadata={
+            "graph_product_prepare": True,
+            "current_interrupt": state.get("current_interrupt"),
+            "spec_source": state.get("spec_source"),
+            "draft_spec_required": state.get("draft_spec_required", False),
+            "next_action": state.get("next_action"),
+            "input_spec_path": state.get("input_spec_path"),
+            "approved_spec_path": state.get("approved_spec_path"),
+            "draft_spec_path": state.get("draft_spec_path"),
+            "draft_spec_prompt_path": state.get("draft_spec_prompt_path"),
+            "draft_spec_response_path": state.get("draft_spec_response_path"),
+            "code_path": state.get("code_path"),
+            "llm_response_path": state.get("llm_response_path"),
+            "parsed_response_path": state.get("parsed_response_path"),
+            "static_check_path": state.get("static_check_path"),
+            "output_path": state.get("output_path"),
+            "validation_report_path": state.get("validation_report_path"),
+            "diagnostics_path": state.get("diagnostics_path"),
+            "response_status": state.get("response_status"),
+            "terminal_failure": state.get("terminal_failure", False),
+            "execution_errors": state.get("execution_errors", []),
+            "execution_warnings": state.get("execution_warnings", []),
+            "code_assumptions": state.get("code_assumptions", []),
+            "code_risk_points": state.get("code_risk_points", []),
+            "code_used_inputs": state.get("code_used_inputs", []),
+            "code_expected_outputs": state.get("code_expected_outputs", []),
+            "warnings": state.get("product_context_warnings", []),
+        },
+    )
+    artifacts = [context_artifact] if context_artifact is not None else []
+    return {
+        "status": status,
+        "summary": summary,
+        "audit_artifacts": artifacts,
     }
 
 
@@ -455,6 +895,9 @@ def build_dataset_graph():
 
     graph = StateGraph(DatasetGraphState)
     graph.add_node("prepare_dataset", prepare_dataset)
+    graph.add_node("draft_spec_agent", draft_spec_agent_node)
+    graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
+    graph.add_node("execute_approved_code", execute_approved_code_node)
     graph.add_node("draft_lineage_stub", draft_lineage_stub)
     graph.add_node("draft_spec_stub", draft_spec_stub)
     graph.add_node("route_risk_stub", route_risk_stub)
@@ -467,7 +910,20 @@ def build_dataset_graph():
     graph.add_node("summarize_dataset", summarize_dataset)
 
     graph.add_edge(START, "prepare_dataset")
-    graph.add_edge("prepare_dataset", "draft_lineage_stub")
+    graph.add_conditional_edges(
+        "prepare_dataset",
+        route_after_product_context,
+        {
+            "draft_spec_agent": "draft_spec_agent",
+            "generate_r_code_agent": "generate_r_code_agent",
+            "execute_approved_code": "execute_approved_code",
+            "summarize": "summarize_dataset",
+            "stub_chain": "draft_lineage_stub",
+        },
+    )
+    graph.add_edge("draft_spec_agent", "draft_lineage_stub")
+    graph.add_edge("generate_r_code_agent", "draft_lineage_stub")
+    graph.add_edge("execute_approved_code", "draft_lineage_stub")
     graph.add_edge("draft_lineage_stub", "draft_spec_stub")
     graph.add_edge("draft_spec_stub", "route_risk_stub")
     graph.add_conditional_edges(
@@ -478,7 +934,14 @@ def build_dataset_graph():
             "human_review": "human_review_stub",
         },
     )
-    graph.add_edge("human_review_stub", "generate_code_stub")
+    graph.add_conditional_edges(
+        "human_review_stub",
+        route_after_product_prepare_review,
+        {
+            "summarize": "summarize_dataset",
+            "continue": "generate_code_stub",
+        },
+    )
     graph.add_edge("generate_code_stub", "run_sandbox_stub")
     graph.add_edge("run_sandbox_stub", "classify_result_stub")
     graph.add_conditional_edges(
@@ -495,6 +958,268 @@ def build_dataset_graph():
     graph.add_edge("revise_spec_stub", "generate_code_stub")
     graph.add_edge("summarize_dataset", END)
     return graph
+
+
+def route_after_product_prepare_review(state: DatasetGraphState) -> str:
+    """Stop graph-native product preparation at its review gate."""
+
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_execute_mode(state):
+        return "summarize"
+    return "continue"
+
+
+def route_after_product_context(state: DatasetGraphState) -> str:
+    """Route missing-spec product contexts through draft spec generation."""
+
+    if state.get("status") == "failed":
+        return "summarize"
+    if _is_graph_product_execute_mode(state):
+        return "execute_approved_code"
+    if _is_graph_product_generate_code_mode(state):
+        return "generate_r_code_agent"
+    if _is_graph_product_prepare_mode(state) and state.get("draft_spec_required"):
+        return "draft_spec_agent"
+    return "stub_chain"
+
+
+def _llm_request_for_code_generation(
+    *,
+    prompt: str,
+    target: str,
+    study_id: str,
+    run_id: str,
+    provider_config: LLMProviderConfig,
+    exposure: LLMExposureConfig,
+    context_dict: dict[str, object],
+    prompt_artifact: ArtifactRef,
+):
+    from adam_agent.llm.clients import LLMRequest
+
+    return LLMRequest(
+        prompt=prompt,
+        system_prompt=(
+            "You generate R code for ADaM dataset creation. Return only JSON with keys "
+            "dataset, r_code, assumptions, risk_points, used_inputs, expected_outputs. "
+            "Do not include markdown fences. Do not use network, shell, install.packages, "
+            "or filesystem writes outside the runtime output path."
+        ),
+        provider=provider_config.provider,
+        model=provider_config.model,
+        exposure=exposure,
+        node="generate_downstream_code_for_review",
+        call_id=f"llm_{run_id}_{target.lower()}_generate_code",
+        max_tokens=provider_config.max_tokens,
+        datasets_included=_datasets_included(context_dict),
+        variables_included=_variables_included(context_dict),
+        sample_row_counts=_sample_row_counts(context_dict),
+        subject_level_data_included=bool(_sample_row_counts(context_dict)),
+        prompt_artifact_id=prompt_artifact.artifact_id,
+        response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}",
+        redaction_policy="phase8_code_generation_review_policy",
+    )
+
+
+def _datasets_included(context: dict[str, object]) -> list[str]:
+    datasets = list((context.get("source_dataset_profiles") or {}).keys())
+    datasets.extend((context.get("resolved_dependencies") or {}).keys())
+    return [str(dataset) for dataset in datasets]
+
+
+def _variables_included(context: dict[str, object]) -> list[str]:
+    variables: list[str] = []
+    for section in ["source_dataset_profiles", "resolved_dependencies"]:
+        profiles = context.get(section) or {}
+        if not isinstance(profiles, dict):
+            continue
+        for profile in profiles.values():
+            if not isinstance(profile, dict):
+                continue
+            for column in profile.get("columns", []):
+                column_name = str(column)
+                if column_name not in variables:
+                    variables.append(column_name)
+    return variables
+
+
+def _sample_row_counts(context: dict[str, object]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for section in ["source_dataset_profiles", "resolved_dependencies"]:
+        profiles = context.get(section) or {}
+        if not isinstance(profiles, dict):
+            continue
+        for dataset, profile in profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            sample_rows = profile.get("sample_rows", [])
+            if sample_rows:
+                counts[str(dataset)] = min(len(sample_rows), MAX_SAMPLE_ROWS_IN_PROMPT)
+    return counts
+
+
+def _write_static_check_placeholder(
+    *,
+    study_dir: Path,
+    run_id: str,
+    study_id: str,
+    target: str,
+    code_path: Path,
+) -> Path:
+    static_dir = study_dir / "runs" / run_id / "static_checks"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    path = static_dir / f"{target.lower()}_static_check.json"
+    payload = {
+        "study_id": study_id,
+        "run_id": run_id,
+        "dataset": target,
+        "status": "warning_only",
+        "implemented": False,
+        "checked_at": utc_timestamp(),
+        "code_path": str(code_path.as_posix()),
+        "checks": [],
+        "warnings": [
+            "Static ADaM/CDISC rule checking is reserved for a later phase.",
+            "This placeholder does not prove CDISC compliance.",
+        ],
+        "notes": [
+            "The node exists so code review always occurs after a static-check stage in the workflow.",
+            "Future checks can add required variables, DTYPE, date, flag, and naming rules here.",
+        ],
+    }
+    _write_json(path, payload)
+    return path
+
+
+def _tool_log_artifact(state: DatasetGraphState, path: Path, *, kind_id: str) -> ArtifactRef:
+    dataset = state["dataset"]
+    return ArtifactRef(
+        artifact_id=f"{kind_id}_{state['study_id'].lower()}_{state['run_id']}_{dataset.lower()}",
+        kind="tool_log",
+        path=str(path.as_posix()),
+        sha256=f"sha256:{sha256_file(path)}",
+        dataset=dataset,
+        format="json",
+        role="audit",
+        metadata={kind_id: True},
+    )
+
+
+def _artifact_id(value: object) -> str | None:
+    return value.artifact_id if isinstance(value, ArtifactRef) else None
+
+
+def _build_llm_client_for_state(state: DatasetGraphState, provider_config: LLMProviderConfig):
+    builder = state.get("llm_client_builder")
+    if builder is not None and callable(builder):
+        return builder(provider_config)
+    return build_llm_client(provider_config)
+
+
+def _build_target_context_for_state(state: DatasetGraphState):
+    builder = state.get("target_context_builder")
+    if builder is not None and callable(builder):
+        return builder
+    return build_target_llm_context
+
+
+def _product_failure(
+    failure_type: str,
+    message: str,
+    *,
+    current_interrupt: str | None = None,
+    next_action: str | None = None,
+) -> DatasetGraphState:
+    return {
+        "status": "failed",
+        "failure_type": failure_type,
+        "route": "fail",
+        "current_interrupt": current_interrupt,
+        "next_action": next_action or "fix_error",
+        "real_run_completed": False,
+        "real_run_error": message,
+        "real_run_artifacts": {},
+        "real_validation_status": "not_run",
+    }
+
+
+def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> dict[str, object] | None:
+    target_lower = target.strip().lower()
+    approved_path = study_dir / "runs" / run_id / "approved_specs" / f"{target_lower}_approved_spec.json"
+    review_path = study_dir / "runs" / run_id / "reviews" / f"{target_lower}_draft_spec_review.json"
+    if not approved_path.exists() or not approved_path.is_file():
+        return None
+    review = _read_json_if_exists(review_path)
+    if review.get("decision") != "approve" or review.get("approved") is not True:
+        return None
+    parsed = _read_json_if_exists(approved_path)
+    approved_fingerprint = parsed.get("input_fingerprint") or review.get("input_fingerprint")
+    current_fingerprint = input_fingerprint(study_dir)
+    if not isinstance(approved_fingerprint, dict) or not approved_fingerprint.get("digest"):
+        raise ValueError(
+            "Approved draft spec is missing its input fingerprint. "
+            "Regenerate and approve the draft spec before generating R code."
+        )
+    if approved_fingerprint.get("digest") != current_fingerprint.get("digest"):
+        diff = compare_fingerprints(approved_fingerprint, current_fingerprint)
+        raise ValueError(
+            "Approved draft spec is stale because study inputs changed after approval. "
+            "Regenerate and approve the draft spec before generating R code. "
+            f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
+            f"changed={diff.get('changed_files', [])}."
+        )
+    approved_spec_sha = review.get("approved_spec_sha256")
+    if not approved_spec_sha:
+        raise ValueError(
+            "Approved draft spec review is missing the approved spec hash. "
+            "Review and approve the draft spec again before generating R code."
+        )
+    current_spec_sha = f"sha256:{sha256_file(approved_path)}"
+    if approved_spec_sha != current_spec_sha:
+        raise ValueError("Approved draft spec changed after approval. Review and approve the draft spec again.")
+    return {
+        "artifact_id": f"approved_draft_spec_{target_lower}",
+        "path": str(approved_path.as_posix()),
+        "format": "json",
+        "sha256": f"sha256:{sha256_file(approved_path)}",
+        "text": _read_text_if_exists(approved_path, limit_chars=500000),
+        "json": parsed,
+        "draft": True,
+        "approved": True,
+        "source": "user_approved_draft_spec",
+        "review_path": str(review_path.as_posix()),
+    }
+
+
+def _read_json_if_exists(path: str | Path) -> dict[str, object]:
+    artifact_path = Path(path)
+    if not artifact_path.exists() or not artifact_path.is_file():
+        return {}
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_text_if_exists(path: str | Path, *, limit_chars: int) -> str:
+    artifact_path = Path(path)
+    if not artifact_path.exists() or not artifact_path.is_file():
+        return ""
+    try:
+        return artifact_path.read_text(encoding="utf-8", errors="replace")[:limit_chars]
+    except OSError:
+        return ""
+
+
+def _write_json(path: str | Path, payload: dict[str, object]) -> None:
+    artifact_path = Path(path)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _merge_json_artifact(path: str | Path, payload: dict[str, object]) -> None:
+    current = _read_json_if_exists(path)
+    current.update(payload)
+    _write_json(path, current)
 
 
 def compile_dataset_graph():

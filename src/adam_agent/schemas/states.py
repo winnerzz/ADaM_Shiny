@@ -16,7 +16,7 @@ from adam_agent.schemas.routing import FailureRecord, RouteDecision
 from adam_agent.schemas.specs import SpecDocument
 
 
-RunStatus = Literal["pending", "running", "needs_review", "completed", "completed_stub", "failed", "cancelled"]
+RunStatus = Literal["pending", "running", "needs_review", "completed", "completed_stub", "failed", "terminal_failure", "cancelled"]
 DatasetRole = Literal["subject_level", "event_level", "findings_level", "basic_data_structure", "other"]
 
 

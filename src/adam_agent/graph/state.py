@@ -10,7 +10,16 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 
 
-GraphRunStatus = Literal["pending", "running", "blocked", "completed", "completed_stub", "failed"]
+GraphRunStatus = Literal[
+    "pending",
+    "planned",
+    "running",
+    "needs_review",
+    "blocked",
+    "completed",
+    "completed_stub",
+    "failed",
+]
 StubScenario = Literal["success", "code_error_then_success", "spec_error_then_success", "fail_adsl"]
 DatasetRoute = Literal["continue", "human_review", "repair_code", "revise_spec", "success", "fail"]
 
@@ -61,9 +70,42 @@ class DatasetGraphState(TypedDict, total=False):
     execution_mode: str
     study_dir: str
     rscript_path: str
+    current_interrupt: str | None
+    product_context_ready: bool
+    product_context_warnings: list[str]
+    product_context_artifact: ArtifactRef
+    product_context: dict[str, object]
+    spec_source: str
+    input_spec_path: str
+    approved_spec_path: str
+    draft_spec_path: str
+    draft_spec_prompt_path: str
+    draft_spec_response_path: str
+    draft_spec_variables: list[dict[str, object]]
+    draft_spec_required: bool
+    generated_code: str
+    code_path: str
+    output_path: str
+    validation_report_path: str
+    diagnostics_path: str
+    response_status: str
+    terminal_failure: bool
+    execution_errors: list[str]
+    execution_warnings: list[str]
+    validation_report: dict[str, object]
+    llm_response_path: str
+    parsed_response_path: str
+    static_check_path: str
+    code_assumptions: list[str]
+    code_risk_points: list[str]
+    code_used_inputs: list[str]
+    code_expected_outputs: list[str]
+    next_action: str
     dependency_resolution: list[dict[str, object]]
     llm_exposure: dict[str, object]
     llm_provider: dict[str, object]
+    llm_client_builder: object
+    target_context_builder: object
     real_run_completed: bool
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]
@@ -91,6 +133,8 @@ class StudyGraphState(TypedDict, total=False):
     rscript_path: str
     llm_exposure: dict[str, object]
     llm_provider: dict[str, object]
+    graph_gateway_mode: str
+    current_interrupt: str | None
     dependency_graph: dict[str, list[str]]
     dataset_dependencies: dict[str, list[str]]
     dependency_decisions: list[dict[str, object]]

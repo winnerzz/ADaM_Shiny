@@ -156,7 +156,6 @@ class LiveUIWorkflowSmokeTests(unittest.TestCase):
                 "study_dir": demo_payload["study_dir"],
                 "study_id": demo_payload["study_id"],
                 "config_path": demo_payload["config_path"],
-                "approved_dependency_datasets": [],
                 "llm_provider_override": provider_payload,
                 "llm_exposure_override": exposure_payload,
             },
@@ -190,7 +189,6 @@ class LiveUIWorkflowSmokeTests(unittest.TestCase):
                 "study_dir": demo_payload["study_dir"],
                 "study_id": demo_payload["study_id"],
                 "rscript_path": rscript_path,
-                "require_approval": True,
             },
         )
         self.assertEqual(executed.status_code, 200, executed.text)

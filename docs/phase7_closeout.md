@@ -58,8 +58,9 @@ PSY201/
   runs/
 ```
 
-`reference_adam/adsl.csv` is used here as an available dependency artifact. It
-does not mean reference ADaM should define derivation logic by itself.
+`reference_adam/adsl.csv` is compare/output-shape evidence only. It does not
+satisfy ADAE's runtime dependency on a generated or user-approved upstream
+ADSL, and it must not define derivation logic by itself.
 
 ## Mock Downstream Smoke Command
 

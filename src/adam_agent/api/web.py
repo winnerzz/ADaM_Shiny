@@ -1500,7 +1500,6 @@ INDEX_HTML = r"""<!doctype html>
             study_id: state.studyId,
             config_path: byId('configPath').value.trim() || null,
             rscript_path: byId('rscriptPath').value.trim() || null,
-            approved_dependency_datasets: [],
             ...llmOverridePayload()
           })
         });
@@ -1773,7 +1772,6 @@ INDEX_HTML = r"""<!doctype html>
             study_id: state.studyId,
             config_path: byId('configPath').value.trim() || null,
             rscript_path: byId('rscriptPath').value.trim() || null,
-            approved_dependency_datasets: [],
             ...overrides
           })
         });
@@ -1821,8 +1819,7 @@ INDEX_HTML = r"""<!doctype html>
           body: JSON.stringify({
             study_dir: studyDir(),
             study_id: state.studyId,
-            rscript_path: byId('rscriptPath').value.trim() || null,
-            require_approval: true
+            rscript_path: byId('rscriptPath').value.trim() || null
           })
         });
         state.executionByDataset[generated.dataset] = state.execution;

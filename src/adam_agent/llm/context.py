@@ -199,6 +199,12 @@ def _resolved_dependency_profiles(
     for record in dependency_resolution:
         if record.get("resolution_status") != "available":
             continue
+        if record.get("artifact_source") == "reference_adam":
+            warnings.append(
+                f"Reference ADaM {record.get('required_dataset')} is available only for comparison/output-shape evidence; "
+                "it is not exposed as a derivation runtime dependency."
+            )
+            continue
         dataset = str(record.get("required_dataset", "")).strip().upper()
         artifact_path = record.get("artifact_path")
         if not dataset or not artifact_path or dataset in dependencies:

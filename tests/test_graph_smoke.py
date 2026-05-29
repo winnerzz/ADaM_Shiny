@@ -20,6 +20,7 @@ try:
     from adam_agent.graph.dataset_graph import compile_dataset_graph
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
+    from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -28,6 +29,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.dataset_graph import compile_dataset_graph
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
+    from adam_agent.tools.artifacts import sha256_file
 
 
 def _workspace_dir(name: str) -> Path:
@@ -424,6 +426,269 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adae["repair_attempts"], 1)
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
+
+    def test_dataset_graph_product_prepare_uses_input_spec_without_stub_code(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_prepare_spec") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "ads_adae_full.csv").write_text(
+            "Dataset,Variable,Label,Type,Source,Derivation\n"
+            "ADAE,USUBJID,Unique Subject Identifier,Copied,SDTM.AE.USUBJID,Copied from source\n",
+            encoding="utf-8",
+        )
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_prepare_spec",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_prepare",
+                "study_dir": str(study_dir),
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["current_interrupt"], "code_generation_ready")
+        self.assertEqual(result["spec_source"], "input_spec")
+        self.assertFalse(result["draft_spec_required"])
+        self.assertNotIn("generated_code", result)
+        self.assertTrue((study_dir / "runs" / "run_lg2_product_prepare_spec" / "llm" / "adae_context.json").exists())
+        summary = result["summary"]
+        self.assertEqual(summary.status, "needs_review")
+        self.assertEqual(summary.metadata["next_action"], "generate_code")
+        self.assertEqual(summary.metadata["spec_source"], "input_spec")
+
+    def test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_prepare_missing_spec") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_prepare_missing_spec",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_prepare",
+                "study_dir": str(study_dir),
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["current_interrupt"], "draft_spec_review")
+        self.assertEqual(result["spec_source"], "draft_spec")
+        self.assertTrue(result["draft_spec_required"])
+        self.assertTrue(result["draft_spec_path"].endswith("specs/adae_draft_spec.json"))
+        self.assertTrue(result["draft_spec_prompt_path"].endswith("llm/adae_draft_spec_prompt.txt"))
+        self.assertTrue(result["draft_spec_response_path"].endswith("llm/adae_draft_spec_response.json"))
+        self.assertTrue(result["draft_spec_variables"])
+        self.assertNotIn("generated_code", result)
+        draft_spec = json.loads(Path(result["draft_spec_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(draft_spec["dataset"], "ADAE")
+        self.assertEqual(draft_spec["status"], "draft")
+        self.assertIn("input_fingerprint", draft_spec)
+        self.assertEqual(
+            draft_spec["reference_adam_policy"],
+            "Reference ADaM is compare/output-shape evidence only, not derivation authority.",
+        )
+        summary = result["summary"]
+        self.assertEqual(summary.metadata["next_action"], "review_draft_spec")
+        self.assertEqual(summary.metadata["spec_source"], "draft_spec")
+
+    def test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_generate_code_spec") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_generate_code_spec",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["current_interrupt"], "code_review")
+        self.assertEqual(result["spec_source"], "input_spec")
+        self.assertIn("generated_code", result)
+        self.assertEqual(result["sandbox_runs"], 0)
+        self.assertTrue((study_dir / "runs" / "run_lg2_product_generate_code_spec" / "code" / "build_adae.R").exists())
+        self.assertTrue(
+            (study_dir / "runs" / "run_lg2_product_generate_code_spec" / "llm" / "adae_parsed_response.json").exists()
+        )
+        self.assertTrue(
+            (study_dir / "runs" / "run_lg2_product_generate_code_spec" / "static_checks" / "adae_static_check.json").exists()
+        )
+        summary = result["summary"]
+        self.assertEqual(summary.status, "needs_review")
+        self.assertEqual(summary.metadata["next_action"], "review_code")
+        self.assertEqual(summary.metadata["spec_source"], "input_spec")
+        self.assertTrue(summary.metadata["code_path"].endswith("code/build_adae.R"))
+        self.assertEqual(summary.validation_status, "not_run")
+
+    def test_dataset_graph_product_generate_code_requires_approved_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_generate_code_missing_spec") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        sdtm_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_generate_code_missing_spec",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "spec_error")
+        self.assertEqual(result["current_interrupt"], "draft_spec_review")
+        self.assertEqual(result["next_action"], "review_draft_spec")
+        self.assertNotIn("generated_code", result)
+        self.assertFalse((study_dir / "runs" / "run_lg2_product_generate_code_missing_spec" / "code").exists())
+        summary = result["summary"]
+        self.assertEqual(summary.status, "failed")
+        self.assertEqual(summary.metadata["next_action"], "review_draft_spec")
+
+    def test_dataset_graph_product_generate_code_uses_approved_draft_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_generate_code_approved_draft") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        approved_dir = study_dir / "runs" / "run_lg2_product_generate_code_approved_draft" / "approved_specs"
+        reviews_dir = study_dir / "runs" / "run_lg2_product_generate_code_approved_draft" / "reviews"
+        sdtm_dir.mkdir(parents=True)
+        approved_dir.mkdir(parents=True)
+        reviews_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        from adam_agent.graph.workflow_state import input_fingerprint
+
+        fingerprint = input_fingerprint(study_dir)
+        approved_path = approved_dir / "adae_approved_spec.json"
+        approved_path.write_text(
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "status": "approved_draft",
+                    "input_fingerprint": fingerprint,
+                    "variables": [{"variable": "AETERM", "source_domains": ["AE"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (reviews_dir / "adae_draft_spec_review.json").write_text(
+            json.dumps(
+                {
+                    "decision": "approve",
+                    "approved": True,
+                    "input_fingerprint": fingerprint,
+                    "approved_spec_sha256": f"sha256:{sha256_file(approved_path)}",
+                }
+            ),
+            encoding="utf-8",
+        )
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_generate_code_approved_draft",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["current_interrupt"], "code_review")
+        self.assertEqual(result["spec_source"], "approved_draft_spec")
+        self.assertEqual(result["approved_spec_path"], str(approved_path.as_posix()))
+        self.assertIn("generated_code", result)
+        summary = result["summary"]
+        self.assertEqual(summary.metadata["spec_source"], "approved_draft_spec")
+        self.assertEqual(summary.metadata["next_action"], "review_code")
+        self.assertEqual(summary.validation_status, "not_run")
+
+    def test_dataset_graph_product_generate_code_rejects_stale_approved_draft_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_product_generate_code_stale_draft") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        approved_dir = study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "approved_specs"
+        reviews_dir = study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "reviews"
+        sdtm_dir.mkdir(parents=True)
+        approved_dir.mkdir(parents=True)
+        reviews_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        from adam_agent.graph.workflow_state import input_fingerprint
+
+        fingerprint = input_fingerprint(study_dir)
+        approved_path = approved_dir / "adae_approved_spec.json"
+        approved_path.write_text(
+            json.dumps({"dataset": "ADAE", "status": "approved_draft", "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        (reviews_dir / "adae_draft_spec_review.json").write_text(
+            json.dumps(
+                {
+                    "decision": "approve",
+                    "approved": True,
+                    "input_fingerprint": fingerprint,
+                    "approved_spec_sha256": f"sha256:{sha256_file(approved_path)}",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,MED\n", encoding="utf-8")
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_product_generate_code_stale_draft",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "spec_error")
+        self.assertEqual(result["next_action"], "regenerate_draft_spec")
+        self.assertIn("stale", result["real_run_error"])
+        self.assertFalse((study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "code").exists())
 
     def test_adsl_unified_llm_flow_returns_structured_failure_for_missing_study_dir(self) -> None:
         study_dir = _workspace_dir("graph_unified_adsl_missing") / "PSY201"
@@ -965,8 +1230,8 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(payload["dataset_results"][0]["validation_status"], "pass")
         self.assertTrue((study_dir / "runs" / "run_phase77_cli_r" / "outputs" / "adae.csv").exists())
 
-    def test_sas7bdat_dependency_artifact_is_available_for_r_runtime(self) -> None:
-        study_dir = _workspace_dir("phase74_usable_sas7bdat_dependency") / "PSY201"
+    def test_reference_sas7bdat_dependency_artifact_does_not_satisfy_runtime_dependency(self) -> None:
+        study_dir = _workspace_dir("phase74_reference_sas7bdat_not_runtime_dependency") / "PSY201"
         reference_dir = study_dir / "reference_adam"
         spec_dir = study_dir / "input_spec"
         reference_dir.mkdir(parents=True)
@@ -981,7 +1246,7 @@ class GraphSmokeTests(unittest.TestCase):
         result = graph.invoke(
             {
                 "study_id": "PSY201",
-                "run_id": "run_phase74_usable_sas7bdat_dependency",
+                "run_id": "run_phase74_reference_sas7bdat_not_runtime_dependency",
                 "target_datasets": ["ADAE"],
                 "study_dir": str(study_dir),
                 "dataset_results": [],
@@ -990,16 +1255,50 @@ class GraphSmokeTests(unittest.TestCase):
             }
         )
 
-        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         resolution = result["dependency_resolution"][0]
-        self.assertEqual(result["runnable_datasets"], ["ADAE"])
-        self.assertFalse(result["dependency_action_required"])
+        self.assertEqual(result["runnable_datasets"], [])
+        self.assertTrue(result["dependency_action_required"])
         self.assertEqual(resolution["resolution_status"], "available")
         self.assertTrue(resolution["available"])
         self.assertTrue(resolution["artifact_path"].endswith("adsl.sas7bdat"))
-        self.assertEqual(summaries["ADAE"].status, "completed")
-        self.assertEqual(result["blocked_datasets"], [])
-        self.assertEqual(result["status"], "completed")
+        self.assertEqual(resolution["artifact_source"], "reference_adam")
+        self.assertEqual(result["blocked_datasets"][0]["dataset"], "ADAE")
+        self.assertEqual(result["blocked_datasets"][0]["blocked_by"], "ADSL")
+        self.assertEqual(result["status"], "failed")
+
+    def test_run_output_dependency_artifact_wins_over_reference_adam(self) -> None:
+        study_dir = _workspace_dir("phase74_run_output_dependency_priority") / "PSY201"
+        reference_dir = study_dir / "reference_adam"
+        spec_dir = study_dir / "input_spec"
+        output_dir = study_dir / "runs" / "run_phase74_run_output_dependency_priority" / "outputs"
+        reference_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        output_dir.mkdir(parents=True)
+        (reference_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n99,2099-01-01\n", encoding="utf-8")
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase74_run_output_dependency_priority",
+                "target_datasets": ["ADAE"],
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        resolution = result["dependency_resolution"][0]
+        self.assertEqual(resolution["artifact_source"], "run_output")
+        self.assertTrue(resolution["artifact_path"].endswith("runs/run_phase74_run_output_dependency_priority/outputs/adsl.csv"))
+        self.assertEqual(result["runnable_datasets"], ["ADAE"])
+        self.assertFalse(result["dependency_action_required"])
 
     def test_approved_dependency_generation_allows_running_dependency_once(self) -> None:
         graph = compile_study_graph()
