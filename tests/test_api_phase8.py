@@ -149,7 +149,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("generatedFor(target)", action_body)
         self.assertIn("executionFor(target)", action_body)
         self.assertIn("canApproveGeneratedCode(target)", action_body)
-        self.assertIn("Prepare the dependency plan first.", action_body)
+        self.assertIn("Clicking will prepare the dependency plan first", action_body)
         self.assertIn("Generated-code metadata exists", action_body)
         self.assertIn("function setButtonAvailability(id, item)", html)
         self.assertIn("button.setAttribute('aria-disabled-reason', item.reason)", html)
@@ -157,6 +157,25 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertNotIn("button.disabled = !item.ready", html)
         dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
         self.assertIn("renderActionAvailability()", dashboard_body)
+
+    def test_index_recovers_dependency_plan_projection_from_graph_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        apply_graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
+        self.assertIn("const recoveredPlan = planFromGraphState(graph);", apply_graph_body)
+        self.assertIn("state.plan = recoveredPlan;", apply_graph_body)
+        self.assertIn("renderPlan(recoveredPlan);", apply_graph_body)
+        plan_body = html.split("function planFromGraphState(graph)", 1)[1].split("function generatedFor(dataset)", 1)[0]
+        self.assertIn("graph.requested_datasets", plan_body)
+        self.assertIn("graph.target_datasets", plan_body)
+        self.assertIn("graph.runnable_datasets", plan_body)
+        self.assertIn("graph.blocked_datasets", plan_body)
+        self.assertIn("graph.dependency_decisions", plan_body)
+        self.assertIn("dependency_review_status", plan_body)
 
     def test_index_keeps_planning_selection_separate_from_active_target_view(self) -> None:
         client = TestClient(create_app())

@@ -1408,6 +1408,40 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：57 tests passed。
 
+### 2026-05-30 - LG2.7 Graph-State Plan Recovery 切片
+
+已完成：
+
+- 在本地 UI 中新增 `planFromGraphState()`，从 canonical graph state 字段恢复
+  dependency-plan read model：
+  - requested datasets
+  - target datasets
+  - runnable datasets
+  - blocked datasets
+  - dependency review status
+  - dependency decisions
+  - dependency plan / resolution payloads
+- `applyGraphState()` 现在会从 `graph_state.json` 恢复 `state.plan`，并在 active
+  target 恢复后重新渲染 dependency plan 面板。
+- 调整 action hint wording：当浏览器侧还没有 plan cache 时，提示点击动作会先
+  auto-prepare，和现有 handler 行为一致。
+
+当前边界：
+
+- 这是 UI read-model recovery 切片。canonical truth 仍是 `graph_state.json`；
+  浏览器侧 `state.plan` 只是 projection。
+- 不改变 dependency planning、dependency review、generation gate、approval gate、
+  DatasetGraph execution 或 sandbox behavior。
+- 它减少刷新/恢复后对临时浏览器 cache 的依赖，但还不是完整 pure graph-state UI。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+结果：58 tests passed。
+
 ```text
 GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
 ```

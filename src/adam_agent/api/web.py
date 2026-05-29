@@ -1538,6 +1538,11 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function applyGraphState(graph) {
+      const recoveredPlan = planFromGraphState(graph);
+      if (recoveredPlan) {
+        state.plan = recoveredPlan;
+        setPill('planStatus', recoveredPlan.dependency_review_status || 'planned');
+      }
       const graphTargets = graph?.target_datasets || [];
       if (graphTargets.length) {
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...graphTargets])).sort();
@@ -1628,6 +1633,29 @@ INDEX_HTML = r"""<!doctype html>
         }
       }
       syncActiveDatasetState();
+      if (recoveredPlan) {
+        renderPlan(recoveredPlan);
+      }
+    }
+
+    function planFromGraphState(graph) {
+      if (!graph) return null;
+      const requested = (graph.requested_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const targets = (graph.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const runnable = (graph.runnable_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const blocked = graph.blocked_datasets || [];
+      const decisions = graph.dependency_decisions || [];
+      if (!requested.length && !targets.length && !runnable.length && !blocked.length && !decisions.length) return null;
+      return {
+        requested_datasets: requested,
+        target_datasets: targets,
+        runnable_datasets: runnable,
+        blocked_datasets: blocked,
+        dependency_review_status: graph.dependency_review_status || (blocked.length ? 'blocked' : 'accepted'),
+        dependency_decisions: decisions,
+        dependency_plan: graph.dependency_plan || {},
+        dependency_resolution: graph.dependency_resolution || []
+      };
     }
 
     function generatedFor(dataset) {
@@ -1653,9 +1681,9 @@ INDEX_HTML = r"""<!doctype html>
       const draftReview = draftSpecReviewFor(target);
       const finalized = finalizedInputsFor(target);
       const hasSpecGate = targetSpecGateSatisfied(target);
-      const finalizeReady = Boolean(target && state.plan && !blocked);
+      const finalizeReady = Boolean(target && !blocked);
       const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
-      const generateReady = Boolean(target && state.plan && !blocked && hasSpecGate);
+      const generateReady = Boolean(target && !blocked && hasSpecGate);
       const approveReady = Boolean(canApproveGeneratedCode(target));
       return {
         finalize: {
@@ -1664,7 +1692,7 @@ INDEX_HTML = r"""<!doctype html>
           reason: !target
             ? 'Choose an ADaM output first.'
             : !state.plan
-              ? 'Prepare the dependency plan first.'
+              ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
               : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}. Resolve or approve the dependency plan first.`
                 : hasSpecGate
@@ -1690,7 +1718,7 @@ INDEX_HTML = r"""<!doctype html>
           reason: !target
             ? 'Choose an ADaM output first.'
             : !state.plan
-              ? 'Prepare the dependency plan first.'
+              ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
               : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
                 : !hasSpecGate

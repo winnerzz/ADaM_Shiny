@@ -1567,6 +1567,41 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 57 tests passed.
 
+### 2026-05-30 - LG2.7 Graph-State Plan Recovery Slice
+
+Completed:
+
+- Added `planFromGraphState()` in the local UI to rebuild the dependency-plan
+  read model from canonical graph state fields:
+  - requested datasets
+  - target datasets
+  - runnable datasets
+  - blocked datasets
+  - dependency review status
+  - dependency decisions
+  - dependency plan/resolution payloads
+- `applyGraphState()` now restores `state.plan` from `graph_state.json` and
+  rerenders the dependency plan panel after the active target is restored.
+- Adjusted action-hint wording so a missing browser-side plan says the click
+  will auto-prepare first, matching the existing handlers.
+
+Current boundary:
+
+- This is a UI read-model recovery slice only. Canonical truth remains
+  `graph_state.json`; the browser-side `state.plan` is a projection.
+- It does not change dependency planning, dependency review, generation gates,
+  approval gates, DatasetGraph execution, or sandbox behavior.
+- It reduces reliance on transient browser cache after refresh/resume, but it
+  is not yet a complete pure graph-state UI.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 58 tests passed.
+
 ```text
 GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
 ```
