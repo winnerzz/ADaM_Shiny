@@ -1638,26 +1638,19 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
-```text
-GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
-```
-
 Subagent review:
 
-- Subagent review found no blocking issue for this presentation-only slice.
-- Low-risk observation: the Plan stage still reads the existing `state.plan`
-  browser projection cache rather than rebuilding entirely from
-  `graph_state.json`. This is acceptable for the current UI projection, but a
-  future pure graph-state resume view should derive it from canonical graph
-  state.
-- The static-rule wording was also reviewed as acceptable: it now requires a
-  generic engine, run policy, and source-backed rule packs rather than
-  demo-shaped static rules.
+- Subagent review returned GO.
+- No major logic bug, schema/backcompat issue, or misleading metadata was
+  reported.
+- The reviewer confirmed the docs do not overclaim: this is compatibility
+  observability/deprecation metadata only, and does not change gates, execution
+  order, route paths, or sandbox behavior.
 
 Final verification:
 
 ```text
-git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/web.py tests/test_api_phase8.py
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/models.py src/adam_agent/api/service.py tests/test_api_phase8.py
 ```
 
 Result: no whitespace errors.
@@ -1666,4 +1659,4 @@ Result: no whitespace errors.
 python -B -m unittest tests.test_api_phase8 -v
 ```
 
-Result: 56 tests passed.
+Result: 58 tests passed.

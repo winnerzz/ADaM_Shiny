@@ -1476,23 +1476,17 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
-```text
-GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
-```
-
 子 agent 审查：
 
-- 子 agent 审查没有发现阻塞提交的问题。
-- 低风险观察：Plan 阶段仍读取现有 `state.plan` browser projection cache，而不
-  是完全从 `graph_state.json` 重建。对当前 UI projection 可以接受；以后如果做
-  纯 graph-state resume view，应从 canonical graph state 派生。
-- 静态规则 wording 也通过审查：现在要求 generic engine、run policy、带来源的
-  rule packs，而不是 demo-shaped static rules。
+- 子 agent 复审返回 GO。
+- 未报告 major logic bug、schema/backcompat issue 或 misleading metadata。
+- 审查确认文档没有 overclaim：这是 compatibility observability/deprecation
+  metadata，不改变 gates、execution order、route paths 或 sandbox behavior。
 
 最终验证：
 
 ```text
-git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/web.py tests/test_api_phase8.py
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md src/adam_agent/api/models.py src/adam_agent/api/service.py tests/test_api_phase8.py
 ```
 
 结果：无 whitespace error。
@@ -1501,4 +1495,4 @@ git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_const
 python -B -m unittest tests.test_api_phase8 -v
 ```
 
-结果：56 tests passed。
+结果：58 tests passed。
