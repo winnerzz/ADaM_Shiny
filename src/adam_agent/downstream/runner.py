@@ -305,6 +305,10 @@ def run_downstream_adam(
 class StructuralStubRRunner:
     """Stub runner for graph integration that writes the canonical output file."""
 
+    backend_name = "structural_stub"
+    hardened = False
+    network_disabled = False
+
     def run(self, request: RRunRequest) -> RRunResult:
         output_path = Path(request.working_dir) / "outputs" / f"{request.dataset.lower()}.csv"
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,6 +477,7 @@ def _run_generated_response_attempt(
     )
     if preflight_errors:
         validation_report = _validation_report(target, "r_sandbox_preflight_error", errors=preflight_errors)
+        validation_report["sandbox"] = _sandbox_boundary_payload(runner, run_dir)
         _add_attempt_metadata(
             validation_report,
             provider=provider,
@@ -526,6 +531,7 @@ def _run_generated_response_attempt(
             script_path=generated_artifacts.code_artifact.path,
         )
     )
+    sandbox_boundary = _sandbox_boundary_payload(runner, run_dir)
     validation_report = _validate_downstream_output(
         target=target,
         output_path=runtime_output_path,
@@ -536,6 +542,7 @@ def _run_generated_response_attempt(
         provider=provider,
         model=model,
         call_record=call_record,
+        sandbox_boundary=sandbox_boundary,
     )
     _add_attempt_metadata(
         validation_report,
@@ -790,6 +797,7 @@ def _validate_downstream_output(
     provider: str,
     model: str,
     call_record: LLMCallRecord | None,
+    sandbox_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = list(context_warnings)
@@ -834,6 +842,28 @@ def _validate_downstream_output(
         "external_relay": call_record.external_relay if call_record else False,
         "risk_flags": call_record.risk_flags if call_record else [],
         "not_real_derivation": stubbed_r_execution or provider == "mock",
+        "sandbox": sandbox_boundary
+        or {
+            "backend_name": "structural_stub" if stubbed_r_execution else "unknown",
+            "hardened": False,
+            "run_dir": str(output_path.parent.parent.as_posix()),
+            "network_disabled": False,
+            "notes": ["Sandbox boundary metadata was not provided by the runner."],
+        },
+    }
+
+
+def _sandbox_boundary_payload(runner: Any, run_dir: Path) -> dict[str, Any]:
+    if hasattr(runner, "boundary"):
+        boundary = runner.boundary()
+        if hasattr(boundary, "as_dict"):
+            return boundary.as_dict()
+    return {
+        "backend_name": getattr(runner, "backend_name", runner.__class__.__name__),
+        "hardened": bool(getattr(runner, "hardened", False)),
+        "run_dir": str(run_dir.as_posix()),
+        "network_disabled": bool(getattr(runner, "network_disabled", False)),
+        "notes": ["Sandbox runner does not expose detailed boundary metadata."],
     }
 
 

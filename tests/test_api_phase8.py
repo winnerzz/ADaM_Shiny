@@ -398,6 +398,10 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(executed.status_code, 200, executed.text)
         self.assertEqual(executed.json()["status"], "completed")
+        validation_payload = json.loads(Path(executed.json()["validation_report_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(validation_payload["sandbox"]["backend_name"], "local_rscript")
+        self.assertFalse(validation_payload["sandbox"]["hardened"])
+        self.assertFalse(validation_payload["sandbox"]["network_disabled"])
         output_path = study_dir / "runs" / "run_split_flow" / "outputs" / "adae.csv"
         self.assertTrue(output_path.exists())
         with output_path.open(newline="", encoding="utf-8") as handle:

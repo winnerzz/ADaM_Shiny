@@ -7,6 +7,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
@@ -17,6 +18,7 @@ try:
     from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
     from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
+    from adam_agent.tools.sandbox import LocalRscriptSandboxRunner
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
@@ -25,6 +27,7 @@ except ModuleNotFoundError:
     from adam_agent.llm.clients import LLMProviderConfig, MockLLMClient, build_llm_client
     from adam_agent.schemas.llm import LLMExposureConfig
     from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
+    from adam_agent.tools.sandbox import LocalRscriptSandboxRunner
 
 
 def _workspace_dir(name: str) -> Path:
@@ -190,6 +193,60 @@ class DownstreamRunnerTests(unittest.TestCase):
         static_report = json.loads(Path(result.artifacts["static_check"].path).read_text(encoding="utf-8"))
         self.assertEqual(static_report["status"], "blocked")
         self.assertTrue(any(item["rule_id"] == "R_FORBIDDEN_CALL" for item in static_report["blocking_errors"]))
+
+    def test_downstream_preflight_failure_records_sandbox_boundary(self) -> None:
+        study_dir = _study_with_adae_inputs("downstream_runner_preflight_sandbox")
+        outside_code = study_dir / "outside_code" / "build_adae.R"
+        outside_code.parent.mkdir(parents=True)
+        response = json.dumps(
+            {
+                "dataset": "ADAE",
+                "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+                "assumptions": ["Preflight failure test."],
+                "risk_points": [],
+                "used_inputs": ["AE"],
+                "expected_outputs": ["outputs/adae.csv"],
+            }
+        )
+
+        from adam_agent.downstream import runner as downstream_runner
+        from adam_agent.llm.generated_code import write_generated_code_artifacts as real_writer
+
+        def write_artifacts_outside_code(**kwargs):
+            artifacts = real_writer(**kwargs)
+            outside_code.write_text(Path(artifacts.code_artifact.path).read_text(encoding="utf-8"), encoding="utf-8")
+            return artifacts.__class__(
+                response_artifact=artifacts.response_artifact,
+                code_artifact=artifacts.code_artifact.model_copy(update={"path": str(outside_code.as_posix())}),
+                package_artifact=artifacts.package_artifact,
+            )
+
+        with patch.object(downstream_runner, "write_generated_code_artifacts", side_effect=write_artifacts_outside_code):
+            result = run_downstream_adam(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_downstream_preflight_sandbox",
+                target_dataset="ADAE",
+                dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_preflight_sandbox"),
+                llm_client=MockLLMClient(fixed_response_text=response),
+                r_runner=LocalRscriptSandboxRunner(
+                    run_dir=study_dir / "runs" / "run_downstream_preflight_sandbox",
+                    rscript_path=None,
+                    allowed_output_paths=[
+                        study_dir / "runs" / "run_downstream_preflight_sandbox" / "outputs" / "adae.csv"
+                    ],
+                ),
+                source_datasets=["AE"],
+                max_repair_attempts=0,
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation_status, "r_sandbox_preflight_error")
+        self.assertEqual(result.validation_report["sandbox"]["backend_name"], "local_rscript")
+        self.assertFalse(result.validation_report["sandbox"]["hardened"])
+        validation_payload = json.loads(Path(result.artifacts["validation_report"].path).read_text(encoding="utf-8"))
+        self.assertEqual(validation_payload["sandbox"]["backend_name"], "local_rscript")
+        self.assertFalse(validation_payload["sandbox"]["hardened"])
 
     def test_downstream_runner_repairs_r_failure_once_and_passes(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_repair_pass")
@@ -488,7 +545,11 @@ class DownstreamRunnerTests(unittest.TestCase):
             target_dataset="ADAE",
             dependency_resolution=_available_adsl_resolution(study_dir, "run_downstream_local_r"),
             llm_client=MockLLMClient(fixed_response_text=response),
-            r_runner=LocalRRunner(str(LOCAL_RSCRIPT)),
+            r_runner=LocalRscriptSandboxRunner(
+                run_dir=study_dir / "runs" / "run_downstream_local_r",
+                rscript_path=str(LOCAL_RSCRIPT),
+                allowed_output_paths=[study_dir / "runs" / "run_downstream_local_r" / "outputs" / "adae.csv"],
+            ),
             source_datasets=["AE"],
         )
 
@@ -496,6 +557,8 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(result.validation_status, "pass")
         self.assertFalse(result.validation_report["stubbed_r_execution"])
         self.assertTrue(result.validation_report["not_real_derivation"])
+        self.assertEqual(result.validation_report["sandbox"]["backend_name"], "local_rscript")
+        self.assertFalse(result.validation_report["sandbox"]["hardened"])
         self.assertFalse(any("expected_outputs" in warning for warning in result.validation_report["warnings"]))
         self.assertTrue((study_dir / "runs" / "run_downstream_local_r" / "outputs" / "adae.csv").exists())
 

@@ -13,7 +13,8 @@ from adam_agent.schemas.graph_state import StudyRunState
 from adam_agent.schemas.artifacts import ArtifactKind, ArtifactRef, ArtifactRole
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.r_runner import LocalRRunner, RRunRequest
+from adam_agent.tools.r_runner import RRunRequest
+from adam_agent.tools.sandbox import LocalRscriptSandboxRunner, SandboxRunner
 from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
@@ -48,6 +49,7 @@ def execute_approved_r_code(
     run_id: str,
     dataset: str,
     rscript_path: str | None = None,
+    sandbox_runner: SandboxRunner | None = None,
 ) -> ApprovedCodeExecutionResult:
     """Run approved generated R code and write validation/diagnostic artifacts."""
 
@@ -64,7 +66,18 @@ def execute_approved_r_code(
     if output_path.exists():
         output_path.unlink()
 
-    runner = LocalRRunner(rscript_path)
+    runner = sandbox_runner or LocalRscriptSandboxRunner(
+        run_dir=run_dir,
+        rscript_path=rscript_path,
+        allowed_output_paths=[output_path],
+    )
+    boundary = runner.boundary().as_dict() if hasattr(runner, "boundary") else {
+        "backend_name": getattr(runner, "backend_name", runner.__class__.__name__),
+        "hardened": bool(getattr(runner, "hardened", False)),
+        "run_dir": str(run_dir.as_posix()),
+        "network_disabled": False,
+        "notes": ["Sandbox runner does not expose detailed boundary metadata."],
+    }
     r_result = runner.run(
         RRunRequest(
             code="",
@@ -81,6 +94,7 @@ def execute_approved_r_code(
         r_stdout=r_result.stdout,
         r_stderr=r_result.stderr,
     )
+    validation_report["sandbox"] = boundary
     validation_path = run_dir / "validation" / f"{target.lower()}_validation_report.json"
     _write_json(validation_path, validation_report)
 

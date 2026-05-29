@@ -42,7 +42,7 @@ from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.r_runner import LocalRRunner
+from adam_agent.tools.sandbox import LocalRscriptSandboxRunner
 from adam_agent.tools.static_rules import (
     StaticRuleError,
     assert_no_blocking_static_findings,
@@ -677,7 +677,17 @@ def _run_llm_downstream_provider_node(state: DatasetGraphState, *, use_local_r: 
         llm_client = build_llm_client(provider_config)
         if provider_config.provider.strip().lower() == "mock":
             llm_client = _provider_mode_default_mock_client(state["dataset"])
-        r_runner = LocalRRunner(state.get("rscript_path") or None) if use_local_r else None
+        run_dir = Path(study_dir) / "runs" / state["run_id"]
+        output_path = run_dir / "outputs" / f"{state['dataset'].strip().lower()}.csv"
+        r_runner = (
+            LocalRscriptSandboxRunner(
+                run_dir=run_dir,
+                rscript_path=state.get("rscript_path") or None,
+                allowed_output_paths=[output_path],
+            )
+            if use_local_r
+            else None
+        )
         result = run_downstream_adam(
             study_dir=study_dir,
             study_id=state["study_id"],

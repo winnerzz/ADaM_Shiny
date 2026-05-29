@@ -481,6 +481,28 @@ Add standards-aware check boundaries without pretending to be production
 complete. Static checks must be generic policy checks, not demo-specific ADaM
 derivation rules.
 
+Design principle:
+
+- Static checks are a policy/rule-pack layer, not a growing list of one-off
+  patches for PSY201, ADAE, ADSL, or any single demo variable.
+- A static rule may inspect generic artifacts and contracts:
+  - generated-code path/hash binding
+  - expected output file contract
+  - declared target dataset
+  - approved-spec variables, labels, and types
+  - allowed/forbidden R execution primitives
+  - reference rule identifiers supplied by a standards pack
+- A static rule must not invent clinical derivation logic from observed demo
+  data. For example, it may say "a variable listed in the approved spec is not
+  visibly produced by the generated code"; it must not say "this dataset must
+  derive TRTEMFL this exact way" unless that rule comes from an explicit
+  approved spec, company standard, or referenced CDISC/P21 rule pack.
+- Dataset-specific standards should enter as versioned rule packs with source,
+  scope, severity, and evidence. The engine remains generic; the rule pack
+  supplies domain knowledge.
+- When a check is heuristic or incomplete, it must be warning/informational and
+  must record that it does not prove clinical correctness.
+
 Tasks:
 
 - Add reference tool interfaces:
@@ -490,11 +512,15 @@ Tasks:
   - `lookup_company_standard`
 - Start with small local fixtures or indexed markdown/PDF snippets.
 - Add deterministic static checks before human code review:
-  - caller-provided output file contract
-  - generated-code dataset contract from the LLM parser
-  - caller-provided identifier visibility from approved spec variables
-  - no dangerous R calls
-  - no network/system command calls
+  - contract rules: caller-provided output path, dataset name, code path/hash
+    binding, and generated-code dataset contract from the LLM parser
+  - execution-boundary rules: no dangerous R calls and no network/system command
+    calls
+  - spec/code consistency rules: caller-provided identifier visibility from
+    approved spec variables, with warnings when code cannot be cheaply proven to
+    produce expected variables
+  - future standards-pack rules: CDISC/P21/company-standard checks loaded from
+    explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
 - Keep all checks labeled by confidence:
   - blocking error
@@ -590,6 +616,30 @@ Exit criteria:
 - The graph calls a sandbox interface, not a hard-coded local runner.
 - Local runner remains available for development.
 - Production docs clearly mark local runner as non-hardened.
+
+LG2.6 current slice implemented:
+
+- Added `SandboxRunner` protocol and `LocalRscriptSandboxRunner` in
+  `src/adam_agent/tools/sandbox.py`.
+- Graph-owned approved-code execution now calls the sandbox interface instead
+  of constructing `LocalRRunner` directly.
+- The `llm_downstream_r_sandbox` path also uses `LocalRscriptSandboxRunner`
+  when local R execution is requested.
+- Validation reports now include sandbox boundary metadata:
+  backend name, whether the backend is hardened, run directory, network
+  isolation flag, and notes warning that local Rscript is developer mode only.
+- Local sandbox preflight blocks script paths outside the run directory and
+  mismatched working directories before Rscript is launched.
+- `LocalRRunner` now resolves relative `script_path` values under
+  `working_dir`, matching the sandbox contract and avoiding accidental
+  resolution against the caller's shell directory.
+
+LG2.6 current slice verification:
+
+- `python -B -m unittest tests.test_sandbox tests.test_downstream_runner -v`
+- `python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit -v`
+- `python -B -m unittest tests.test_tools_phase4 tests.test_phase5_adsl_loop tests.test_sandbox -v`
+- `python -B -m unittest tests.test_sandbox tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_static_rules tests.test_llm_generated_code tests.test_tools_phase4 tests.test_phase5_adsl_loop -v`
 
 ## 11. Phase LG2.7 - UI As Graph State Viewer
 

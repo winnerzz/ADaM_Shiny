@@ -410,6 +410,26 @@ Agent 角色：
 加入 standards-aware 检查边界，但不伪装成生产完整。静态检查必须是通用
 policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则。
 
+设计原则：
+
+- 静态检查是 policy/rule-pack 层，不是不断追加 PSY201、ADAE、ADSL 或某个
+  demo 变量特例的补丁清单。
+- 静态规则可以检查通用 artifacts 和 contracts：
+  - generated code 的 path/hash 绑定
+  - expected output file contract
+  - declared target dataset
+  - approved spec 中的变量、label、type
+  - R 执行边界中允许/禁止的 primitives
+  - standards pack 提供的 reference rule id
+- 静态规则不能从 demo 数据观察中发明临床推导逻辑。例如它可以说“approved
+  spec 中列出的变量在 generated code 里不可见”；但不能说“这个数据集必须按
+  某种固定方式推导 TRTEMFL”，除非这条规则来自明确的 approved spec、company
+  standard 或带来源的 CDISC/P21 rule pack。
+- 数据集相关 standards 应该作为带版本、来源、适用范围、severity 和 evidence
+  的 rule pack 输入。规则引擎保持通用，领域知识由 rule pack 提供。
+- 任何启发式或不完整检查都只能作为 warning/informational，并且必须记录“不能
+  证明临床推导正确”。
+
 任务：
 
 - 添加 reference tool interfaces：
@@ -419,11 +439,14 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - `lookup_company_standard`
 - 先使用小型本地 fixtures 或 indexed markdown/PDF snippets。
 - 在人工 code review 前加入确定性 static checks：
-  - 调用方传入的 output file contract
-  - LLM parser 保证的 generated-code dataset contract
-  - 从 approved spec variables 传入的 identifier 可见性检查
-  - 禁止危险 R calls
-  - 禁止 network/system command calls
+  - contract rules：调用方传入的 output path、dataset name、code path/hash
+    绑定，以及 LLM parser 保证的 generated-code dataset contract
+  - execution-boundary rules：禁止危险 R calls，禁止 network/system command calls
+  - spec/code consistency rules：从 approved spec variables 传入的 identifier
+    可见性检查；当无法低成本证明 generated code 产出 expected variables 时，只
+    给 warning
+  - future standards-pack rules：从显式 references 加载 CDISC/P21/company
+    standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
 - 所有检查都标记置信等级：
   - blocking error
@@ -515,6 +538,29 @@ LG2.5 当前 slice 验证：
 - Graph 调用 sandbox interface，而不是 hard-coded local runner。
 - Local runner 仍可用于开发。
 - 生产文档清楚标注 local runner 不是 hardened sandbox。
+
+LG2.6 当前 slice 已实现：
+
+- 新增 `src/adam_agent/tools/sandbox.py`，包含 `SandboxRunner` protocol 和
+  `LocalRscriptSandboxRunner`。
+- graph-owned approved-code execution 现在通过 sandbox interface 调用执行边界，
+  不再直接构造 `LocalRRunner`。
+- `llm_downstream_r_sandbox` 路径在需要本地 R 执行时也改用
+  `LocalRscriptSandboxRunner`。
+- validation report 现在会记录 sandbox boundary metadata：backend name、
+  是否 hardened、run directory、是否禁用网络，以及明确说明 local Rscript 只是
+  developer mode，不是生产级隔离。
+- local sandbox preflight 会在启动 Rscript 前拦截 run dir 外的 script path 和
+  不匹配的 working directory。
+- `LocalRRunner` 现在会把相对 `script_path` 解析到 `working_dir` 下，避免按调用
+  shell 的当前目录误解析。
+
+LG2.6 当前 slice 验证：
+
+- `python -B -m unittest tests.test_sandbox tests.test_downstream_runner -v`
+- `python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit -v`
+- `python -B -m unittest tests.test_tools_phase4 tests.test_phase5_adsl_loop tests.test_sandbox -v`
+- `python -B -m unittest tests.test_sandbox tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_static_rules tests.test_llm_generated_code tests.test_tools_phase4 tests.test_phase5_adsl_loop -v`
 
 ## 11. Phase LG2.7 - UI 作为 Graph State Viewer
 
