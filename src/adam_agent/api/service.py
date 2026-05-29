@@ -55,7 +55,6 @@ from adam_agent.graph.workflow_state import (
     invalidate_active_workflows,
     load_workflow_state,
     mark_workflow_inputs_current,
-    project_graph_state_to_workflow,
     update_workflow_state,
     utc_timestamp,
 )
@@ -447,6 +446,10 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
+    try:
+        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="generate_code")
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="generate_code_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     plan = _get_or_start_dependency_plan_for_product_step(
@@ -538,6 +541,10 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
+    try:
+        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="finalize_inputs")
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="finalize_inputs_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     plan = _get_or_start_dependency_plan_for_product_step(
@@ -570,17 +577,19 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings
     if result.get("spec_source") == "input_spec":
         input_spec_path = result.get("input_spec_path")
-        update_workflow_state(
-            study_dir,
-            run_id,
-            study_id=study_id,
-            node="finalize_inputs",
-            dataset=target,
-            status="input_spec_ready",
-            current_interrupt=None,
-            input_fingerprint_payload=input_fingerprint(study_dir),
-            dataset_update={"spec_source": "input_spec", "input_spec_path": input_spec_path},
-        )
+        if not input_spec_path:
+            raise ApiServiceError(f"Input spec detection did not return a path for {target}.")
+        try:
+            GraphGateway().record_input_spec_ready(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                input_spec_path=input_spec_path,
+                input_fingerprint_payload=input_fingerprint(study_dir),
+            )
+        except ValueError as exc:
+            raise ApiServiceError(str(exc)) from exc
         return FinalizeInputsResponse(
             study_id=study_id,
             run_id=run_id,
@@ -595,11 +604,19 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         )
     if result.get("spec_source") == "approved_draft_spec":
         approved_spec_path = result.get("approved_spec_path")
+        if not approved_spec_path:
+            raise ApiServiceError(f"Approved draft spec detection did not return a path for {target}.")
         try:
-            graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
-        except FileNotFoundError as exc:
-            raise ApiServiceError("Approved draft spec must be recorded in graph state before code generation.") from exc
-        project_graph_state_to_workflow(study_dir, graph_state, node="graph_gateway_finalize_inputs_approved_draft_spec")
+            GraphGateway().record_approved_draft_spec_ready(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                approved_spec_path=approved_spec_path,
+                input_fingerprint_payload=input_fingerprint(study_dir),
+            )
+        except ValueError as exc:
+            raise ApiServiceError(str(exc)) from exc
         return FinalizeInputsResponse(
             study_id=study_id,
             run_id=run_id,
@@ -665,6 +682,10 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
+    try:
+        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="draft_spec")
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="draft_spec_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     plan = _get_or_start_dependency_plan_for_product_step(

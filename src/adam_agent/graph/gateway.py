@@ -207,6 +207,12 @@ class GraphGateway:
             input_fingerprint_payload=fingerprint,
         )
         dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        terminal_followup = _assert_terminal_failure_step_allowed(dataset_state, step="draft_spec")
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "draft_spec"
+            dataset_state.execution_state.pop("terminal_failure_review", None)
+            dataset_state.execution_state.pop("terminal_failure_followup", None)
+            dataset_state.execution_state.pop("next_action", None)
         dataset_state.spec_state.update(
             {
                 "status": "draft_generated",
@@ -218,6 +224,7 @@ class GraphGateway:
                 "variables": variables or [],
                 "warnings": warnings or [],
                 "input_fingerprint": fingerprint,
+                "terminal_failure_followup": terminal_followup,
             }
         )
         dataset_state.current_interrupt = InterruptState(
@@ -239,6 +246,120 @@ class GraphGateway:
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="draft_spec_generation")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_generation")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def record_input_spec_ready(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        input_spec_path: str | Path,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Persist an available input spec into canonical graph state."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        spec_path = Path(input_spec_path)
+        if not spec_path.exists() or not spec_path.is_file():
+            raise ValueError(f"Input spec does not exist: {spec_path}")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        next_state = self._load_or_create_state(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            input_fingerprint_payload=fingerprint,
+        )
+        dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        terminal_followup = _assert_terminal_failure_step_allowed(dataset_state, step="finalize_inputs")
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "finalize_inputs"
+            dataset_state.execution_state.pop("terminal_failure_review", None)
+            dataset_state.execution_state.pop("terminal_failure_followup", None)
+            dataset_state.execution_state.pop("next_action", None)
+        dataset_state.spec_state.update(
+            {
+                "status": "input_spec_ready",
+                "spec_source": "input_spec",
+                "input_spec_path": str(spec_path.as_posix()),
+                "input_spec_sha256": f"sha256:{sha256_file(spec_path)}",
+                "input_fingerprint": fingerprint,
+                "terminal_failure_followup": terminal_followup,
+            }
+        )
+        dataset_state.current_interrupt = None
+        dataset_state.status = "pending"
+        dataset_state.updated_at = utc_now()
+        _upsert_artifact(dataset_state, _artifact_ref(target, "input_spec", "source", spec_path, kind="input_spec"))
+        next_state.datasets[target] = dataset_state
+        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
+        if next_state.current_interrupt:
+            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
+        else:
+            next_state.status = "running"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="input_spec_ready")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_input_spec_ready")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def record_approved_draft_spec_ready(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        approved_spec_path: str | Path,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Mark an already approved draft spec as ready after a terminal-failure follow-up."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        spec_path = Path(approved_spec_path)
+        if not spec_path.exists() or not spec_path.is_file():
+            raise ValueError(f"Approved draft spec does not exist: {spec_path}")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        next_state = self._load_or_create_state(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            input_fingerprint_payload=fingerprint,
+        )
+        dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        terminal_followup = _assert_terminal_failure_step_allowed(dataset_state, step="finalize_inputs")
+        _assert_approved_draft_spec_current(
+            dataset_state,
+            spec_path=spec_path,
+            spec_sha256=f"sha256:{sha256_file(spec_path)}",
+            input_fingerprint_payload=fingerprint,
+        )
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "finalize_inputs"
+            dataset_state.execution_state.pop("terminal_failure_review", None)
+            dataset_state.execution_state.pop("terminal_failure_followup", None)
+            dataset_state.execution_state.pop("next_action", None)
+        dataset_state.spec_state["terminal_failure_followup"] = terminal_followup
+        dataset_state.current_interrupt = None
+        dataset_state.status = "pending"
+        dataset_state.updated_at = utc_now()
+        _upsert_artifact(
+            dataset_state,
+            _artifact_ref(target, "approved_draft_spec", "source", spec_path, kind="input_spec"),
+        )
+        next_state.datasets[target] = dataset_state
+        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
+        if next_state.current_interrupt:
+            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
+        else:
+            next_state.status = "running"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="approved_draft_spec_ready")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_approved_draft_spec_ready")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
     def record_draft_spec_review(
@@ -470,6 +591,12 @@ class GraphGateway:
         )
         fingerprint = input_fingerprint_payload or input_fingerprint(root)
         dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        terminal_followup = _assert_terminal_failure_step_allowed(dataset_state, step="generate_code")
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "generate_code"
+            dataset_state.execution_state.pop("terminal_failure_review", None)
+            dataset_state.execution_state.pop("terminal_failure_followup", None)
+            dataset_state.execution_state.pop("next_action", None)
         if spec_source == "approved_draft_spec":
             _assert_approved_draft_spec_current(
                 dataset_state,
@@ -489,6 +616,7 @@ class GraphGateway:
                 "spec_sha256": spec_sha256,
                 "dependency_artifacts": dependency_artifacts or [],
                 "input_fingerprint": fingerprint,
+                "terminal_failure_followup": terminal_followup,
             }
         )
         dataset_state.current_interrupt = InterruptState(
@@ -541,8 +669,18 @@ class GraphGateway:
         )
         fingerprint = input_fingerprint_payload or input_fingerprint(root)
         dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        terminal_followup = _assert_terminal_failure_step_allowed(dataset_state, step="execute")
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "execute"
         terminal_failure = bool(execution_state.get("terminal_failure"))
+        if terminal_failure:
+            dataset_state.execution_state.pop("terminal_failure_review", None)
+            dataset_state.execution_state.pop("terminal_failure_followup", None)
+            dataset_state.execution_state.pop("terminal_failure_followup_consumed_by", None)
         dataset_state.execution_state.update(execution_state)
+        if terminal_followup is not None:
+            dataset_state.execution_state["terminal_failure_followup"] = terminal_followup
+            dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "execute"
         dataset_state.validation_summary.update(validation_summary)
         dataset_state.current_interrupt = (
             InterruptState(
@@ -705,6 +843,7 @@ class GraphGateway:
         dataset_state.human_commands.append(command)
         dataset_state.execution_state["terminal_failure_review"] = review_payload
         dataset_state.execution_state["next_action"] = _terminal_failure_next_action(command.action)
+        dataset_state.execution_state.pop("terminal_failure_followup_consumed_by", None)
         resolved_actions = {"retry_execution", "skip_dataset", "continue_other_datasets"}
         dataset_state.current_interrupt = None if command.action in resolved_actions else InterruptState(
             name="terminal_failure",
@@ -759,6 +898,27 @@ class GraphGateway:
         self._persist_graph_state(root, next_state, node="terminal_failure_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_terminal_failure_review")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def validate_product_step_start(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        step: str,
+    ) -> None:
+        """Fail closed when a product step would bypass terminal-failure triage."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError:
+            return
+        dataset_state = graph_state.datasets.get(target)
+        if dataset_state is None:
+            return
+        _assert_terminal_failure_step_allowed(dataset_state, step=step)
 
     def load_graph_state(self, *, study_dir: str | Path, run_id: str) -> StudyRunState:
         """Load the durable canonical graph state for a local run."""
@@ -1059,6 +1219,42 @@ def _terminal_failure_reason(action: str) -> str:
         "revise_spec": "Human determined the approved spec may need revision.",
         "request_new_input": "Human determined additional or corrected study input is required.",
     }.get(action, "Terminal failure still requires human triage.")
+
+
+def _assert_terminal_failure_step_allowed(dataset_state: DatasetRunState, *, step: str) -> dict[str, Any] | None:
+    interrupt = dataset_state.current_interrupt
+    has_terminal_interrupt = interrupt is not None and interrupt.name == "terminal_failure" and interrupt.status == "open"
+    status = dataset_state.status
+    review = dataset_state.execution_state.get("terminal_failure_review")
+    consumed_by = str(dataset_state.execution_state.get("terminal_failure_followup_consumed_by") or "").strip()
+    if not isinstance(review, dict):
+        if not has_terminal_interrupt and status != "terminal_failure":
+            return None
+        raise ValueError("Terminal failure must be reviewed before continuing this dataset.")
+    if consumed_by:
+        if has_terminal_interrupt or status == "terminal_failure":
+            raise ValueError("Terminal failure follow-up is inconsistent. Review the terminal failure again before continuing.")
+        return None
+    if not has_terminal_interrupt and status not in {"terminal_failure", "pending", "failed", "needs_review"}:
+        return None
+    action = str(review.get("action") or "").strip().lower()
+    allowed_by_step = {
+        "generate_code": {"repair_code"},
+        "finalize_inputs": {"revise_spec", "request_new_input"},
+        "draft_spec": {"revise_spec", "request_new_input"},
+        "execute": {"retry_execution"},
+    }
+    allowed = allowed_by_step.get(step, set())
+    if action not in allowed:
+        expected = ", ".join(sorted(allowed)) or "a supported terminal-failure action"
+        raise ValueError(
+            f"Terminal failure review action is {action or 'missing'}, but {step} requires {expected}."
+        )
+    return {
+        "action": action,
+        "reviewed_at": review.get("created_at") or review.get("reviewed_at"),
+        "next_action": dataset_state.execution_state.get("next_action"),
+    }
 
 
 def _graph_state_path(study_dir: str | Path, run_id: str) -> Path:

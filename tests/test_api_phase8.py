@@ -891,6 +891,367 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(second_execution.status_code, 400, second_execution.text)
         self.assertIn("Terminal failure must be reviewed before retrying execution", second_execution.json()["detail"])
 
+    def test_terminal_failure_requires_repair_code_before_regenerating_code(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_repair_gate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_repair_gate" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_repair_gate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        executed = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+
+        blocked = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.text)
+        self.assertIn("Terminal failure must be reviewed", blocked.json()["detail"])
+
+        triage = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/terminal-failure-review",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "repair_code",
+                "reviewer": "tester",
+                "notes": "Regenerate code from the approved spec.",
+            },
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+        repaired = client.post(
+            "/runs/run_terminal_repair_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(repaired.status_code, 200, repaired.text)
+        graph_state = client.get(
+            "/runs/run_terminal_repair_gate/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["current_interrupt"]["name"], "code_review")
+        self.assertEqual(adae_state["code_state"]["terminal_failure_followup"]["action"], "repair_code")
+
+    def test_terminal_failure_retry_execution_does_not_unlock_code_regeneration(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_retry_no_regenerate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_retry_no_regenerate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_retry_no_regenerate" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_retry_no_regenerate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_retry_no_regenerate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        executed = client.post(
+            "/runs/run_terminal_retry_no_regenerate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+        triage = client.post(
+            "/runs/run_terminal_retry_no_regenerate/datasets/ADAE/terminal-failure-review",
+            json={"study_dir": str(study_dir), "decision": "retry_execution", "reviewer": "tester"},
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+
+        blocked = client.post(
+            "/runs/run_terminal_retry_no_regenerate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.text)
+        self.assertIn("generate_code requires repair_code", blocked.json()["detail"])
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_terminal_retry_no_regenerate" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertNotEqual(workflow_state["last_node"], "generate_code_start")
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+
+    def test_terminal_failure_skip_dataset_does_not_unlock_code_regeneration(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_skip_no_regenerate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_skip_no_regenerate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_skip_no_regenerate" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_skip_no_regenerate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_skip_no_regenerate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        executed = client.post(
+            "/runs/run_terminal_skip_no_regenerate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+        triage = client.post(
+            "/runs/run_terminal_skip_no_regenerate/datasets/ADAE/terminal-failure-review",
+            json={"study_dir": str(study_dir), "decision": "skip_dataset", "reviewer": "tester"},
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+
+        blocked = client.post(
+            "/runs/run_terminal_skip_no_regenerate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.text)
+        self.assertIn("generate_code requires repair_code", blocked.json()["detail"])
+        graph_state = client.get(
+            "/runs/run_terminal_skip_no_regenerate/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        self.assertEqual(graph_state["datasets"]["ADAE"]["status"], "failed")
+
+    def test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_revise_spec_gate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_revise_spec_gate" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_revise_spec_gate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        executed = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+        triage = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/terminal-failure-review",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "revise_spec",
+                "reviewer": "tester",
+                "notes": "Spec must be checked before code repair.",
+            },
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+
+        blocked = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.text)
+        self.assertIn("generate_code requires repair_code", blocked.json()["detail"])
+
+        finalized = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        self.assertEqual(finalized.json()["status"], "input_spec_ready")
+        repaired = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(repaired.status_code, 200, repaired.text)
+        graph_state = client.get(
+            "/runs/run_terminal_revise_spec_gate/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["current_interrupt"]["name"], "code_review")
+        self.assertEqual(adae_state["spec_state"]["terminal_failure_followup"]["action"], "revise_spec")
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_followup_consumed_by"], "finalize_inputs")
+
+    def test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review(self) -> None:
+        study_dir = _workspace_dir("phase8_terminal_revise_approved_draft") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        finalized = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        approved = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/draft-spec-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        generated = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_revise_approved_draft" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        graph_state = client.get(
+            "/runs/run_terminal_revise_approved_draft/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        code_state = graph_state["datasets"]["ADAE"]["code_state"]
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_revise_approved_draft",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            spec_source=code_state["spec_source"],
+            spec_path=code_state["spec_path"],
+            spec_sha256=code_state["spec_sha256"],
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        executed = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+        triage = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/terminal-failure-review",
+            json={"study_dir": str(study_dir), "decision": "revise_spec", "reviewer": "tester"},
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+        refinalized = client.post(
+            "/runs/run_terminal_revise_approved_draft/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(refinalized.status_code, 200, refinalized.text)
+        self.assertEqual(refinalized.json()["status"], "draft_spec_review_required")
+        final_state = client.get(
+            "/runs/run_terminal_revise_approved_draft/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()["datasets"]["ADAE"]
+        self.assertEqual(final_state["current_interrupt"]["name"], "draft_spec_review")
+        self.assertEqual(final_state["status"], "needs_review")
+        self.assertEqual(final_state["execution_state"]["terminal_failure_followup_consumed_by"], "draft_spec")
+        self.assertNotIn("terminal_failure_review", final_state["execution_state"])
+
     def test_terminal_failure_output_is_not_previewed_or_downloadable(self) -> None:
         study_dir = _workspace_dir("phase8_terminal_failure_hidden_output") / "MY_STUDY"
         run_dir = study_dir / "runs" / "run_terminal_hidden"

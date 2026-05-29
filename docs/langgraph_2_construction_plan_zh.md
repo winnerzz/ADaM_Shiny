@@ -913,3 +913,71 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：155 tests passed。
+
+### 2026-05-29 - LG2.2 Terminal Failure 后续闸门切片
+
+已完成：
+
+- 在 terminal-failure triage 后增加 graph-owned 后续闸门：
+  - dataset 如果仍处于 `terminal_failure`，且没有记录 terminal-failure review
+    decision，后续产品步骤会 fail closed。
+  - 只有用户选择 `repair_code` 后，才允许重新 `generate-code`。
+  - 只有用户选择 `revise_spec` 或 `request_new_input` 后，才允许重新
+    `finalize-inputs` / `draft-spec`。
+  - `execute-approved-code` 仍然只有在 `retry_execution` 后才允许。
+- 复用现有产品流作为第一版 repair/revise 实现：
+  - `repair_code` 表示用户允许从当前 approved spec 重新生成 R code，然后重新进入
+    code review 和 execution。
+  - `revise_spec` 表示用户必须先重新走 input/spec finalization，再重新生成 code。
+  - 不伪造 repair 结果，也不绕过人工审核。
+- 新增 `GraphGateway.record_input_spec_ready()`，让基于 input_spec 的
+  finalization 写入 canonical graph state，而不是只更新 legacy workflow
+  projection。
+- 在 `spec_state` 和 `code_state` 中记录 terminal-failure follow-up provenance，
+  审计时可以看到是哪一个人工处置动作解锁了后续产品步骤。
+
+当前边界：
+
+- 实际 LLM code repair prompt 仍沿用普通 code-generation prompt；专门的 repair
+  prompt 留给后续 LG2.2/LG2.3。
+- `request_new_input` 在用户补充/修正输入后按 `revise_spec` 处理；上传后自动
+  re-plan 属于另一个 workflow 任务。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：70 tests passed。
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：子 agent 审查前 158 tests passed。
+
+子 agent 复审后的补充：
+
+- 新的 `gpt-5.5` 子 agent 复审未发现 major blocker。
+- 已修复一个 medium 问题：`generate-code`、`finalize-inputs`、`draft-spec`
+  现在会先通过 canonical graph terminal-failure gate，再调用
+  `mark_workflow_inputs_current()`。因此被 graph gate 拒绝的产品步骤不会先把
+  legacy `workflow_state.json` read model 写脏。
+- 已简化 terminal-failure gate helper，去掉重复状态判断。
+- 新增回归断言：`retry_execution` 后如果错误调用 `generate-code` 被拒绝，
+  `workflow_state.json` 不会被覆盖成 `generate_code_start`。
+
+最终验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：73 tests passed。
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：161 tests passed。

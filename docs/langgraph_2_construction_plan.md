@@ -1026,3 +1026,78 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 155 tests passed.
+
+### 2026-05-29 - LG2.2 Terminal Failure Follow-Up Gate Slice
+
+Completed:
+
+- Added graph-owned follow-up gates after terminal-failure triage:
+  - product steps now fail closed if a dataset is still at `terminal_failure`
+    without a recorded terminal-failure review decision
+  - `generate-code` is allowed only after the user chose `repair_code`
+  - `finalize-inputs` / `draft-spec` are allowed only after the user chose
+    `revise_spec` or `request_new_input`
+  - `execute-approved-code` remains allowed only after `retry_execution`
+- Reused the existing product flow as the first repair/revise implementation:
+  - `repair_code` means the user may regenerate R code from the current
+    approved spec, then re-enter code review and execution
+  - `revise_spec` means the user must rerun input/spec finalization before
+    regenerating code
+  - this does not invent a fake repair result or bypass review
+- Added `GraphGateway.record_input_spec_ready()` so input-spec based
+  finalization updates canonical graph state rather than only the legacy
+  workflow projection.
+- Recorded terminal-failure follow-up provenance in `spec_state` and
+  `code_state` so the audit trail shows which human triage action unlocked the
+  next product step.
+
+Current boundary:
+
+- The actual LLM code repair prompt is still the normal code-generation prompt;
+  a dedicated repair prompt remains future LG2.2/LG2.3 work.
+- `request_new_input` is treated like `revise_spec` once the user has supplied
+  or corrected input files; upload-triggered re-plan remains a separate
+  workflow concern.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 70 tests passed.
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 158 tests passed before subagent review.
+
+Post-review follow-up:
+
+- A fresh `gpt-5.5` subagent review found no major blocker in the
+  terminal-failure follow-up gate design.
+- One medium issue was fixed: `generate-code`, `finalize-inputs`, and
+  `draft-spec` now validate the canonical graph terminal-failure gate before
+  calling `mark_workflow_inputs_current()`. A rejected product step therefore
+  cannot dirty the legacy `workflow_state.json` read model before the graph gate
+  rejects it.
+- The terminal-failure gate helper was simplified to remove duplicate state
+  checks.
+- Regression coverage now asserts that a rejected `generate-code` call after
+  `retry_execution` does not overwrite the workflow projection with
+  `generate_code_start`.
+
+Final verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 73 tests passed.
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 161 tests passed.
