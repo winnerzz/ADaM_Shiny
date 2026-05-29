@@ -18,7 +18,7 @@ try:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
-    from adam_agent.graph.workflow_state import input_fingerprint
+    from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 except ModuleNotFoundError:
@@ -28,7 +28,7 @@ except ModuleNotFoundError:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
-    from adam_agent.graph.workflow_state import input_fingerprint
+    from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
 
@@ -52,6 +52,19 @@ def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, cod
     )
     write_static_rule_report(report, path=static_path)
     return static_path, f"sha256:{sha256_file(static_path)}"
+
+
+def _assert_compatibility_projection(testcase: unittest.TestCase, payload: dict) -> tuple[dict, dict]:
+    testcase.assertEqual(payload["workflow_control"], "graph_gateway_compatibility_shim")
+    graph_path = Path(payload["graph_state_path"])
+    workflow_path = Path(payload["workflow_state_path"])
+    testcase.assertTrue(graph_path.exists())
+    testcase.assertTrue(workflow_path.exists())
+    graph_state = json.loads(graph_path.read_text(encoding="utf-8"))
+    workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+    consistency = workflow_projection_consistency(workflow_state, graph_state)
+    testcase.assertTrue(consistency["consistent"], consistency["mismatches"])
+    return graph_state, workflow_state
 
 
 class Phase8ApiTests(unittest.TestCase):
@@ -416,16 +429,13 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(generated.status_code, 200, generated.text)
         generated_payload = generated.json()
         self.assertEqual(generated_payload["status"], "code_generated")
-        self.assertEqual(generated_payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(generated_payload["graph_state_path"]).exists())
-        self.assertTrue(Path(generated_payload["workflow_state_path"]).exists())
+        _, workflow_state = _assert_compatibility_projection(self, generated_payload)
         self.assertTrue(generated_payload["static_check_path"].endswith("adae_static_check.json"))
         self.assertTrue(Path(generated_payload["static_check_path"]).exists())
         static_check = json.loads(Path(generated_payload["static_check_path"]).read_text(encoding="utf-8"))
         self.assertEqual(static_check["status"], "pass")
         self.assertTrue(static_check["implemented"])
         self.assertIn("do not prove full CDISC", static_check["non_compliance_disclaimer"])
-        workflow_state = json.loads((study_dir / "runs" / "run_split_flow" / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "needs_review")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
@@ -452,9 +462,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(review.status_code, 200, review.text)
         review_payload = review.json()
         self.assertTrue(review_payload["approved"])
-        self.assertEqual(review_payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(review_payload["graph_state_path"]).exists())
-        self.assertTrue(Path(review_payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, review_payload)
         self.assertTrue(review_payload["static_check_path"].endswith("adae_static_check.json"))
         graph_state = client.get(
             "/runs/run_split_flow/graph-state",
@@ -473,9 +481,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(executed.status_code, 200, executed.text)
         executed_payload = executed.json()
         self.assertEqual(executed_payload["status"], "completed")
-        self.assertEqual(executed_payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(executed_payload["graph_state_path"]).exists())
-        self.assertTrue(Path(executed_payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, executed_payload)
         validation_payload = json.loads(Path(executed_payload["validation_report_path"]).read_text(encoding="utf-8"))
         self.assertEqual(validation_payload["sandbox"]["backend_name"], "local_rscript")
         self.assertFalse(validation_payload["sandbox"]["hardened"])
@@ -2221,16 +2227,12 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(draft_response.status_code, 200, draft_response.text)
         draft_payload = draft_response.json()
         self.assertEqual(draft_payload["status"], "draft_spec_generated")
-        self.assertEqual(draft_payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(draft_payload["graph_state_path"]).exists())
-        self.assertTrue(Path(draft_payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, draft_payload)
         self.assertTrue(draft_payload["spec_path"].endswith("specs/adae_draft_spec.json"))
         self.assertEqual(review_response.status_code, 200, review_response.text)
         review_payload = review_response.json()
         self.assertTrue(review_payload["approved"])
-        self.assertEqual(review_payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(review_payload["graph_state_path"]).exists())
-        self.assertTrue(Path(review_payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, review_payload)
         graph_state = client.get(
             "/runs/run_missing_spec_draft/graph-state",
             params={"study_dir": str(study_dir)},
@@ -2268,9 +2270,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "input_spec_ready")
-        self.assertEqual(payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(payload["graph_state_path"]).exists())
-        self.assertTrue(Path(payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, payload)
         self.assertTrue(payload["input_spec_available"])
         self.assertFalse(payload["draft_spec_required"])
         self.assertEqual(payload["next_action"], "generate_code")
@@ -2333,9 +2333,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "draft_spec_review_required")
-        self.assertEqual(payload["workflow_control"], "graph_gateway_compatibility_shim")
-        self.assertTrue(Path(payload["graph_state_path"]).exists())
-        self.assertTrue(Path(payload["workflow_state_path"]).exists())
+        _assert_compatibility_projection(self, payload)
         self.assertFalse(payload["input_spec_available"])
         self.assertTrue(payload["draft_spec_required"])
         self.assertTrue(payload["draft_spec_generated"])

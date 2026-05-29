@@ -1621,6 +1621,38 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.8 Compatibility Projection Equivalence Slice
+
+Completed:
+
+- Added API regression coverage that treats compatibility endpoint metadata as
+  a contract, not just paths on disk.
+- Representative compatibility responses now load their `graph_state_path` and
+  `workflow_state_path` and run `workflow_projection_consistency()`:
+  - finalize inputs with an existing input spec
+  - finalize inputs with generated draft spec
+  - draft spec generation
+  - draft spec review
+  - R code generation
+  - code review
+  - approved local execution
+
+Current boundary:
+
+- This is test coverage only. It does not change API routes, graph transitions,
+  generation, review gates, execution, compare, or sandbox behavior.
+- The equivalence check covers core projection fields already defined by
+  `workflow_projection_consistency()`. It is not a full byte-for-byte equality
+  check of every UI read-model field.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 58 tests passed.
+
 ### 2026-05-30 - LG2.8 Compatibility Shim Metadata Slice
 
 Completed:
