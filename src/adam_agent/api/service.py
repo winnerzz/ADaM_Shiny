@@ -36,6 +36,7 @@ from adam_agent.api.models import (
     StudyWorkspaceRequest,
     StudyInputSummary,
     TablePageResponse,
+    TerminalFailureReviewResponse,
 )
 from adam_agent.downstream.runner import StructuralStubRRunner
 from adam_agent.graph.dependency_resolution import (
@@ -1039,6 +1040,72 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         terminal_failure=terminal_failure,
         errors=list(result.get("execution_errors", [])),
         warnings=list(result.get("execution_warnings", [])),
+    )
+
+
+def persist_terminal_failure_review(run_id: str, dataset: str, request: Any) -> TerminalFailureReviewResponse:
+    """Persist human triage for a terminal execution failure."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    decision = request.decision.strip().lower()
+    allowed = {
+        "retry_execution",
+        "repair_code",
+        "revise_spec",
+        "request_new_input",
+        "skip_dataset",
+        "continue_other_datasets",
+    }
+    if decision not in allowed:
+        raise ApiServiceError(
+            "Terminal failure decision must be retry_execution, repair_code, revise_spec, "
+            "request_new_input, skip_dataset, or continue_other_datasets."
+        )
+    gateway = GraphGateway()
+    try:
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    dataset_state = graph_state.datasets.get(target)
+    if dataset_state is None:
+        raise ApiServiceError(f"Dataset is not part of this graph run: {target}")
+    interrupt = dataset_state.current_interrupt
+    if interrupt is None or interrupt.name != "terminal_failure" or interrupt.status != "open":
+        raise ApiServiceError("Current dataset graph state is not waiting for terminal_failure review.")
+    try:
+        result = gateway.record_terminal_failure_review(
+            study_dir=study_dir,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=target,
+            command=HumanCommand(
+                interrupt="terminal_failure",
+                action=decision,
+                dataset=target,
+                reviewer=request.reviewer,
+                notes=request.notes,
+                payload={"decision": decision},
+            ),
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    reviewed_dataset = result.graph_state.datasets[target]
+    current_interrupt = None
+    if reviewed_dataset.current_interrupt is not None and reviewed_dataset.current_interrupt.status == "open":
+        current_interrupt = reviewed_dataset.current_interrupt.name
+    return TerminalFailureReviewResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        dataset=target,
+        decision=decision,
+        current_interrupt=current_interrupt,
+        next_action=str(reviewed_dataset.execution_state.get("next_action") or ""),
+        graph_state_path=str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
+        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
     )
 
 

@@ -295,6 +295,28 @@ class ExecuteCodeResponse(StrictBaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class TerminalFailureReviewRequest(StrictBaseModel):
+    """Persist a human triage decision after terminal execution failure."""
+
+    study_dir: NonEmptyStr
+    reviewer: str = "local_user"
+    decision: str
+    notes: str = ""
+
+
+class TerminalFailureReviewResponse(StrictBaseModel):
+    """Persisted terminal-failure triage decision."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    decision: str
+    current_interrupt: str | None = None
+    next_action: str
+    graph_state_path: str
+    workflow_state_path: str
+
+
 class ArtifactReadRequest(StrictBaseModel):
     """Request a JSON artifact by path relative to the run directory."""
 

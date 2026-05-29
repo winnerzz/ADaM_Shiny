@@ -656,6 +656,110 @@ class GraphGateway:
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_compare_reference_output")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
+    def record_terminal_failure_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        command: HumanCommand,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Persist human triage for a graph-owned terminal failure interrupt."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            next_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
+        except FileNotFoundError as exc:
+            raise ValueError("Graph state must exist before terminal failure review.") from exc
+        if next_state.study_id != study_id:
+            raise ValueError("Terminal failure review study_id does not match graph state.")
+        dataset_state = next_state.datasets.get(target)
+        if dataset_state is None:
+            raise ValueError("Dataset must exist in graph state before terminal failure review.")
+        interrupt = dataset_state.current_interrupt
+        if interrupt is None or interrupt.name != "terminal_failure" or interrupt.status != "open":
+            raise ValueError("Current dataset graph state is not waiting for terminal_failure review.")
+        if command.interrupt != "terminal_failure" or command.dataset is None or command.dataset.strip().upper() != target:
+            raise ValueError("Terminal failure review command must target the failed dataset.")
+        allowed_actions = {
+            "retry_execution",
+            "repair_code",
+            "revise_spec",
+            "request_new_input",
+            "skip_dataset",
+            "continue_other_datasets",
+        }
+        if command.action not in allowed_actions:
+            raise ValueError("Terminal failure review action is not supported.")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        review_payload = {
+            "action": command.action,
+            "reviewer": command.reviewer,
+            "notes": command.notes,
+            "input_fingerprint": fingerprint,
+            "failure_ids": [failure.failure_id for failure in dataset_state.failures],
+        }
+        dataset_state.human_commands.append(command)
+        dataset_state.execution_state["terminal_failure_review"] = review_payload
+        dataset_state.execution_state["next_action"] = _terminal_failure_next_action(command.action)
+        resolved_actions = {"retry_execution", "skip_dataset", "continue_other_datasets"}
+        dataset_state.current_interrupt = None if command.action in resolved_actions else InterruptState(
+            name="terminal_failure",
+            dataset=target,
+            reason=_terminal_failure_reason(command.action),
+            payload={
+                **(interrupt.payload or {}),
+                "last_review": review_payload,
+                "next_action": _terminal_failure_next_action(command.action),
+            },
+        )
+        if command.action == "retry_execution":
+            dataset_state.status = "pending"
+        elif command.action == "skip_dataset":
+            dataset_state.status = "failed"
+        elif command.action == "continue_other_datasets":
+            dataset_state.status = "terminal_failure"
+        else:
+            dataset_state.status = "needs_review"
+        dataset_state.updated_at = utc_now()
+        existing_summary = dataset_state.result_summary
+        dataset_state.result_summary = DatasetResultSummary(
+            dataset=target,
+            status=dataset_state.status,
+            output_artifact_ids=existing_summary.output_artifact_ids if existing_summary else [],
+            audit_artifact_id=existing_summary.audit_artifact_id if existing_summary else None,
+            validation_status=(
+                existing_summary.validation_status
+                if existing_summary
+                else str(dataset_state.validation_summary.get("status") or "") or None
+            ),
+            compare_status=existing_summary.compare_status if existing_summary else None,
+            failure_ids=[failure.failure_id for failure in dataset_state.failures],
+            metadata={
+                **(existing_summary.metadata if existing_summary else {}),
+                "terminal_failure_review": review_payload,
+                "terminal_failure_next_action": _terminal_failure_next_action(command.action),
+            },
+        )
+        next_state.datasets[target] = dataset_state
+        next_state.human_commands.append(command)
+        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
+        if next_state.current_interrupt:
+            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
+        elif any(item.status == "terminal_failure" for item in next_state.datasets.values()):
+            next_state.status = "terminal_failure"
+        elif any(item.status == "failed" for item in next_state.datasets.values()):
+            next_state.status = "failed"
+        else:
+            next_state.status = "running"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="terminal_failure_review")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_terminal_failure_review")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
     def load_graph_state(self, *, study_dir: str | Path, run_id: str) -> StudyRunState:
         """Load the durable canonical graph state for a local run."""
 
@@ -935,6 +1039,26 @@ def _next_open_dataset_interrupt(state: StudyRunState) -> InterruptState | None:
         if interrupt is not None and interrupt.status == "open":
             return interrupt
     return None
+
+
+def _terminal_failure_next_action(action: str) -> str:
+    return {
+        "retry_execution": "retry_approved_execution",
+        "repair_code": "repair_generated_code",
+        "revise_spec": "revise_approved_spec",
+        "request_new_input": "request_new_study_input",
+        "skip_dataset": "skip_failed_dataset",
+        "continue_other_datasets": "continue_other_datasets",
+    }.get(action, "review_diagnostics")
+
+
+def _terminal_failure_reason(action: str) -> str:
+    return {
+        "retry_execution": "Human requested a retry after reviewing terminal failure diagnostics.",
+        "repair_code": "Human requested generated-code repair after terminal failure diagnostics.",
+        "revise_spec": "Human determined the approved spec may need revision.",
+        "request_new_input": "Human determined additional or corrected study input is required.",
+    }.get(action, "Terminal failure still requires human triage.")
 
 
 def _graph_state_path(study_dir: str | Path, run_id: str) -> Path:

@@ -18,6 +18,7 @@ try:
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
+    from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
@@ -28,6 +29,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
+    from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
 
 
@@ -794,6 +796,106 @@ class GraphGatewayTests(unittest.TestCase):
 
         self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
         self.assertIsNone(result.graph_state.current_interrupt.dataset)
+
+    def test_gateway_records_terminal_failure_review_in_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_review") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_review",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_review",
+        ).model_copy(deep=True)
+        failure = FailureRecord(
+            failure_id="failure_adae_runtime",
+            dataset="ADAE",
+            node="execute_approved_code",
+            failure_type="sandbox_error",
+            message="R execution failed.",
+            root_cause="r_runtime_error",
+            recommended_route="repair_code",
+        )
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].failures = [failure]
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure")
+
+        result = gateway.record_terminal_failure_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_review",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="terminal_failure",
+                action="repair_code",
+                dataset="ADAE",
+                reviewer="tester",
+                notes="Repair generated R code.",
+            ),
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_terminal_failure_review" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "terminal_failure")
+        self.assertEqual(dataset_state.execution_state["next_action"], "repair_generated_code")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_review"]["action"], "repair_code")
+        self.assertEqual(dataset_state.human_commands[-1].action, "repair_code")
+        self.assertEqual(dataset_state.result_summary.metadata["terminal_failure_next_action"], "repair_generated_code")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["current_interrupt"], "terminal_failure")
+
+    def test_gateway_skip_terminal_failure_marks_study_failed(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_skip") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_skip",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_skip",
+        ).model_copy(deep=True)
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_skip")
+
+        result = gateway.record_terminal_failure_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_skip",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="terminal_failure",
+                action="skip_dataset",
+                dataset="ADAE",
+                reviewer="tester",
+                notes="Do not use this failed output.",
+            ),
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        self.assertEqual(result.graph_state.datasets["ADAE"].status, "failed")
+        self.assertIsNone(result.graph_state.datasets["ADAE"].current_interrupt)
+        self.assertEqual(result.graph_state.status, "failed")
 
 
 if __name__ == "__main__":

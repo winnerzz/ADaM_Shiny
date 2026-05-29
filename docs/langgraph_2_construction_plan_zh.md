@@ -843,3 +843,73 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：151 tests passed。
+
+### 2026-05-29 - LG2.2 Terminal Failure Review 切片
+
+已完成：
+
+- 新增 graph-owned terminal-failure triage 记录：
+  - `GraphGateway.record_terminal_failure_review()` 记录执行进入
+    `terminal_failure` 后的人类处置决策。
+  - 允许的处置动作包括 `retry_execution`、`repair_code`、`revise_spec`、
+    `request_new_input`、`skip_dataset`、`continue_other_datasets`。
+  - 决策写入 dataset 和 study 两级 `human_commands`，并写入
+    `DatasetRunState.execution_state.terminal_failure_review`。
+  - gateway 会记录确定性的 `next_action`，但不会伪装 repair 或 spec
+    revision 已经发生。
+- 新增 FastAPI compatibility endpoint：
+  - `POST /runs/{run_id}/datasets/{dataset}/terminal-failure-review`
+  - 只有 dataset 当前处于 open graph-owned `terminal_failure` interrupt 时才允许写入。
+- 保留当前 MVP 边界：
+  - `repair_code`、`revise_spec`、`request_new_input` 会保留
+    `terminal_failure` interrupt，只是把下一步动作说清楚。
+  - `retry_execution` 会关闭当前 interrupt，把 dataset 放回 `pending`，但用户仍需显式再次执行。
+  - `skip_dataset` / `continue_other_datasets` 只记录决策，不会静默修复或产出数据。
+
+当前边界：
+
+- 本切片只把 terminal-failure triage 纳入 canonical graph state；还没有实现
+  graph-native repair-code 或 revise-spec 子流程。
+- UI 按钮仍是后续工作；后台/API 契约已经具备。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+结果：子 agent 审查前 focused tests 66 tests passed。
+
+子 agent 审查后的修复：
+
+- 在 approved-code execution 前增加 graph-owned 硬闸门：
+  - dataset 如果还有 open `terminal_failure` interrupt，不能直接再次调用执行接口。
+  - 必须先记录 terminal-failure review decision。
+  - `retry_execution` 会关闭 interrupt，并把 dataset 放回 `pending`；但再次执行仍必须由用户显式触发。
+- 防止失败后的 partial run output 被下游误当成可用依赖：
+  - dependency resolution 在信任 `runs/{run_id}/outputs/{dataset}.csv` 前，会检查
+    `runs/{run_id}/graph_state.json`。
+  - 如果生产该 output 的 dataset 是 `terminal_failure` 或 `failed`，或者
+    execution state 标记 `partial_output_usable=false`，该 artifact 会被标记为
+    `found_but_unusable`。
+  - 即使磁盘上存在 CSV，只要没有 canonical graph `output_adam` artifact 背书，
+    也不能作为可用 run output 依赖。
+  - 这可以防止失败 ADSL 写出的 partial `adsl.csv` 被 ADAE 或其他下游 ADaM 当作运行输入。
+- 收紧 terminal-failure triage 的状态语义：
+  - `skip_dataset` 后 dataset 保持 `failed`。
+  - 如果已经没有 open interrupt，但任一 dataset 是 `failed`，study-level graph
+    status 也会是 `failed`，不会伪装成 `running`。
+
+修复后最终验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke -v
+```
+
+结果：118 tests passed。
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：155 tests passed。

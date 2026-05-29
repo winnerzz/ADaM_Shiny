@@ -219,6 +219,21 @@ def assert_graph_code_review_current(
     dataset_state = graph_state.datasets.get(target.strip().upper())
     if dataset_state is None:
         raise GraphExecutionError(f"Graph state has no dataset state for {target}. Regenerate and approve code before execution.")
+    if dataset_state.current_interrupt is not None and dataset_state.current_interrupt.name == "terminal_failure":
+        raise GraphExecutionError(
+            "Terminal failure must be reviewed before retrying execution. "
+            "Record a terminal-failure review decision first."
+        )
+    if dataset_state.status == "terminal_failure":
+        raise GraphExecutionError(
+            "This dataset remains in terminal_failure state. "
+            "Choose retry_execution in terminal-failure review before running it again."
+        )
+    if dataset_state.status == "failed":
+        raise GraphExecutionError(
+            "This dataset was marked failed or skipped after terminal-failure review. "
+            "Regenerate or explicitly reopen the dataset before execution."
+        )
     code_state = dataset_state.code_state
     if code_state.get("status") != "approved" or code_state.get("decision") != "approve":
         raise GraphExecutionError("Graph state does not contain an approved code-review decision for this dataset.")

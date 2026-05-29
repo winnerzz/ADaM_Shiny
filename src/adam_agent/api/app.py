@@ -37,6 +37,8 @@ from adam_agent.api.models import (
     StudyWorkspaceRequest,
     StudyInputSummary,
     TablePageResponse,
+    TerminalFailureReviewRequest,
+    TerminalFailureReviewResponse,
 )
 from adam_agent.api.service import (
     ApiServiceError,
@@ -52,6 +54,7 @@ from adam_agent.api.service import (
     persist_code_review,
     persist_dependency_review,
     persist_draft_spec_review,
+    persist_terminal_failure_review,
     prepare_run_plan,
     prepare_demo_study,
     read_dataset_table_page,
@@ -202,6 +205,17 @@ def create_app() -> FastAPI:
     def execute_approved_code(run_id: str, dataset: str, request: ExecuteCodeRequest) -> ExecuteCodeResponse:
         try:
             return execute_approved_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/terminal-failure-review", response_model=TerminalFailureReviewResponse)
+    def terminal_failure_review(
+        run_id: str,
+        dataset: str,
+        request: TerminalFailureReviewRequest,
+    ) -> TerminalFailureReviewResponse:
+        try:
+            return persist_terminal_failure_review(run_id, dataset, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

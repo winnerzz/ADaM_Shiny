@@ -643,6 +643,38 @@ class Phase8ApiTests(unittest.TestCase):
         output_dir.mkdir(parents=True)
         (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
         (output_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+        from adam_agent.schemas.artifacts import ArtifactRef
+
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_dependency_warning",
+            target_datasets=["ADLB"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_dependency_warning").model_copy(deep=True)
+        adlb_path = output_dir / "adlb.csv"
+        state.datasets["ADLB"].status = "completed"
+        state.datasets["ADLB"].execution_state.update(
+            {
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(adlb_path.as_posix()),
+            }
+        )
+        state.datasets["ADLB"].artifacts.append(
+            ArtifactRef(
+                artifact_id="output_adam_my_study_run_dependency_warning_adlb",
+                kind="output_adam",
+                path=str(adlb_path.as_posix()),
+                sha256=f"sha256:{sha256_file(adlb_path)}",
+                dataset="ADLB",
+                format="csv",
+                role="output",
+            )
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_completed_dependency_output")
         (spec_dir / "adtte.json").write_text(
             json.dumps(
                 {
@@ -783,6 +815,81 @@ class Phase8ApiTests(unittest.TestCase):
         report = json.loads(Path(payload["validation_report_path"]).read_text(encoding="utf-8"))
         self.assertTrue(report["terminal_failure"])
         self.assertFalse(report["partial_output_usable"])
+        graph_state = client.get(
+            "/runs/run_terminal/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        self.assertEqual(graph_state.json()["datasets"]["ADAE"]["current_interrupt"]["name"], "terminal_failure")
+
+        reviewed = client.post(
+            "/runs/run_terminal/datasets/ADAE/terminal-failure-review",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "repair_code",
+                "reviewer": "tester",
+                "notes": "Generated code needs repair.",
+            },
+        )
+
+        self.assertEqual(reviewed.status_code, 200, reviewed.text)
+        self.assertEqual(reviewed.json()["decision"], "repair_code")
+        self.assertEqual(reviewed.json()["current_interrupt"], "terminal_failure")
+        self.assertEqual(reviewed.json()["next_action"], "repair_generated_code")
+        reviewed_state = client.get(
+            "/runs/run_terminal/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        adae_state = reviewed_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["status"], "needs_review")
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_review"]["action"], "repair_code")
+        self.assertEqual(adae_state["execution_state"]["next_action"], "repair_generated_code")
+        self.assertEqual(adae_state["human_commands"][-1]["interrupt"], "terminal_failure")
+
+    def test_execute_requires_terminal_failure_review_before_retry(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_retry_gate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_retry_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_retry_gate" / "code" / "build_adae.R"
+        code_path.write_text("stop('forced failure')\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_retry_gate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_retry_gate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        first_execution = client.post(
+            "/runs/run_terminal_retry_gate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(first_execution.status_code, 200, first_execution.text)
+        self.assertTrue(first_execution.json()["terminal_failure"])
+
+        second_execution = client.post(
+            "/runs/run_terminal_retry_gate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+
+        self.assertEqual(second_execution.status_code, 400, second_execution.text)
+        self.assertIn("Terminal failure must be reviewed before retrying execution", second_execution.json()["detail"])
 
     def test_terminal_failure_output_is_not_previewed_or_downloadable(self) -> None:
         study_dir = _workspace_dir("phase8_terminal_failure_hidden_output") / "MY_STUDY"
@@ -1137,11 +1244,47 @@ class Phase8ApiTests(unittest.TestCase):
         dependency_output_dir.mkdir(parents=True)
         dependency_path = dependency_output_dir / "adsl.csv"
         dependency_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+        from adam_agent.schemas.artifacts import ArtifactRef
+
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_dependency_hash",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_dependency_hash").model_copy(deep=True)
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state.update(
+            {
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(dependency_path.as_posix()),
+            }
+        )
+        state.datasets["ADSL"].artifacts.append(
+            ArtifactRef(
+                artifact_id="output_adam_psy201_run_dependency_hash_adsl",
+                kind="output_adam",
+                path=str(dependency_path.as_posix()),
+                sha256=f"sha256:{sha256_file(dependency_path)}",
+                dataset="ADSL",
+                format="csv",
+                role="output",
+            )
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_completed_dependency_output")
         (study_dir / "input_spec" / "adae.json").write_text(
             json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
             encoding="utf-8",
         )
         client = TestClient(create_app())
+        prepared = client.post(
+            "/runs/prepare",
+            json={"study_dir": str(study_dir), "run_id": "run_dependency_hash", "target_datasets": ["ADAE"]},
+        )
+        self.assertEqual(prepared.status_code, 200, prepared.text)
 
         generated = client.post(
             "/runs/run_dependency_hash/datasets/ADAE/generate-code",

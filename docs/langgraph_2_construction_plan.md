@@ -948,3 +948,81 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 151 tests passed.
+
+### 2026-05-29 - LG2.2 Terminal Failure Review Slice
+
+Completed:
+
+- Added graph-owned terminal-failure triage recording:
+  - `GraphGateway.record_terminal_failure_review()` records human decisions after
+    an execution reaches `terminal_failure`.
+  - Allowed triage actions are `retry_execution`, `repair_code`,
+    `revise_spec`, `request_new_input`, `skip_dataset`, and
+    `continue_other_datasets`.
+  - The decision is stored in dataset and study `human_commands`, plus
+    `DatasetRunState.execution_state.terminal_failure_review`.
+  - The gateway records a deterministic `next_action` but does not pretend that
+    repair or spec revision has already happened.
+- Added a FastAPI compatibility endpoint:
+  - `POST /runs/{run_id}/datasets/{dataset}/terminal-failure-review`
+  - It fails closed unless the dataset is currently waiting at an open
+    graph-owned `terminal_failure` interrupt.
+- Preserved the current MVP boundary:
+  - `repair_code`, `revise_spec`, and `request_new_input` keep a
+    `terminal_failure` interrupt open with a more specific next action.
+  - `retry_execution` resolves the interrupt and returns the dataset to
+    `pending`; the user still has to explicitly run execution again.
+  - `skip_dataset` / `continue_other_datasets` record the decision without
+    silently repairing or producing output.
+
+Current boundary:
+
+- This slice records terminal-failure triage in canonical graph state; it does
+  not yet implement graph-native repair-code or revise-spec subflows.
+- UI buttons for these decisions are still future work; the backend/API
+  contract is now available.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result: 66 tests passed before subagent review.
+
+Subagent review fixes applied:
+
+- Added a graph-owned hard gate before approved-code execution:
+  - a dataset with an open `terminal_failure` interrupt cannot be retried by
+    calling execution directly
+  - the user must first record a terminal-failure review decision
+  - `retry_execution` closes the interrupt and puts the dataset back into
+    `pending`; execution still requires an explicit user call
+- Prevented failed partial run outputs from satisfying downstream dependencies:
+  - dependency resolution now checks `runs/{run_id}/graph_state.json` before
+    trusting `runs/{run_id}/outputs/{dataset}.csv`
+  - outputs whose producer dataset is `terminal_failure` or `failed`, or whose
+    execution state says `partial_output_usable=false`, are marked
+    `found_but_unusable`
+  - run outputs without canonical graph `output_adam` artifact backing are also
+    treated as unusable, even if a CSV exists on disk
+  - this prevents a partial failed ADSL CSV from becoming the runtime ADSL input
+    for ADAE or other downstream ADaM datasets
+- Tightened terminal-failure triage state semantics:
+  - `skip_dataset` now leaves the dataset `failed`
+  - if no interrupt remains and any dataset is `failed`, the study-level graph
+    status becomes `failed`, not `running`
+
+Final verification after fixes:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke -v
+```
+
+Result: 118 tests passed.
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 155 tests passed.

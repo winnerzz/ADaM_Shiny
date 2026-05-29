@@ -26,6 +26,12 @@ HumanCommandAction = Literal[
     "retry",
     "revise",
     "approve_dependency_generation",
+    "retry_execution",
+    "repair_code",
+    "revise_spec",
+    "request_new_input",
+    "skip_dataset",
+    "continue_other_datasets",
 ]
 
 

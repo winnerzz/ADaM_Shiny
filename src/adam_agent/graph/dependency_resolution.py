@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from adam_agent.tools.artifacts import sha256_file
@@ -272,6 +273,16 @@ def _find_dependency_artifact(
         candidates.append((root / "reference_adam" / f"{upper}{suffix}", "reference_adam"))
     for path, source in candidates:
         if path.exists() and path.is_file():
+            if source == "run_output" and _run_output_blocked_by_graph_state(dataset, path, study_dir=root, run_id=run_id):
+                return DependencyArtifactCandidate(
+                    path=path,
+                    source=source,
+                    usable=False,
+                    reason=(
+                        f"{upper} dependency artifact was found at {path.as_posix()}, "
+                        "but the graph state marks its dataset execution as terminal_failure or failed."
+                    ),
+                )
             return DependencyArtifactCandidate(
                 path=path,
                 source=source,
@@ -279,6 +290,57 @@ def _find_dependency_artifact(
                 reason=_dependency_artifact_reason(dataset, path),
             )
     return None
+
+
+def _run_output_blocked_by_graph_state(
+    dataset: str,
+    path: Path,
+    *,
+    study_dir: Path,
+    run_id: str | None,
+) -> bool:
+    if not run_id:
+        return False
+    graph_state_path = study_dir / "runs" / run_id / "graph_state.json"
+    if not graph_state_path.exists() or not graph_state_path.is_file():
+        return True
+    try:
+        payload = json.loads(graph_state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return True
+    datasets = payload.get("datasets")
+    if not isinstance(datasets, dict):
+        return True
+    dataset_state = datasets.get(dataset.strip().upper())
+    if not isinstance(dataset_state, dict):
+        return True
+    if str(dataset_state.get("status") or "").strip().lower() in {"terminal_failure", "failed"}:
+        return True
+    current_interrupt = dataset_state.get("current_interrupt")
+    if isinstance(current_interrupt, dict) and current_interrupt.get("name") == "terminal_failure":
+        return True
+    execution_state = dataset_state.get("execution_state")
+    if isinstance(execution_state, dict):
+        if execution_state.get("terminal_failure") is True:
+            return True
+        if execution_state.get("partial_output_usable") is False:
+            return True
+        output_path = execution_state.get("output_path")
+        if output_path and str(Path(str(output_path)).as_posix()) != str(path.as_posix()):
+            return True
+    artifacts = dataset_state.get("artifacts")
+    if not isinstance(artifacts, list):
+        return True
+    normalized_path = str(path.as_posix())
+    has_output_artifact = any(
+        isinstance(artifact, dict)
+        and artifact.get("kind") == "output_adam"
+        and str(Path(str(artifact.get("path") or "")).as_posix()) == normalized_path
+        for artifact in artifacts
+    )
+    if not has_output_artifact:
+        return True
+    return False
 
 
 def _is_usable_dependency_artifact(path: Path) -> bool:
