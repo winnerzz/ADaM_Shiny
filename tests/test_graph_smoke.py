@@ -8,6 +8,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -18,6 +19,7 @@ LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 try:
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -30,6 +32,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -432,6 +435,32 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adae["repair_attempts"], 1)
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
+
+    def test_dataset_graph_product_nodes_do_not_flow_through_legacy_stub_chain(self) -> None:
+        graph = compile_dataset_graph().get_graph()
+        edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
+
+        for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
+            self.assertIn((product_node, "summarize_dataset", None), edges)
+            self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
+
+        self.assertIn(("prepare_dataset", "draft_lineage_stub", "stub_chain"), edges)
+
+    def test_graph_product_execute_prepare_does_not_run_r_before_execute_node(self) -> None:
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code") as execute:
+            result = prepare_dataset(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_graph_product_execute_prepare",
+                    "dataset": "ADAE",
+                    "execution_mode": "graph_product_execute",
+                    "audit_artifacts": [],
+                }
+            )
+
+        execute.assert_not_called()
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["sandbox_runs"], 0)
 
     def test_dataset_graph_product_prepare_uses_input_spec_without_stub_code(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_prepare_spec") / "PSY201"

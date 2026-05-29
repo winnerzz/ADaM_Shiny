@@ -349,6 +349,10 @@ Current implementation status:
   - Generated code, raw LLM response, parsed response, compact prompt, and a
     limited static-check report are written as audit artifacts.
   - The graph stops at `code_review`; it does not execute R in this mode.
+  - Product agent nodes now route directly to `summarize_dataset` instead of
+    passing through no-op legacy `*_stub` nodes.
+  - `graph_product_execute` no longer invokes R during `prepare_dataset`; R
+    execution happens only in the explicit `execute_approved_code` graph node.
   - The old stub chain remains available only through explicit legacy/test
     modes, while graph-product modes skip stub code generation and sandbox
     execution.
@@ -361,8 +365,8 @@ Current implementation status:
 - Still open:
   - Graph-native resume from `code_review` into R execution.
   - Graph-native validation, compare, terminal failure routing, and repair.
-  - Removal or deeper isolation of the old stub nodes after all product tests
-    use graph-product modes.
+  - Final removal of old stub nodes once legacy/test-mode coverage is no longer
+    useful.
 
 ## 7. Phase LG2.3 - StudyGraph Multi-Dataset Product Orchestration
 
@@ -960,7 +964,8 @@ Current boundary:
 
 - `workflow_state.json` is still updated directly by compatibility service wrappers after dataset actions.
 - `code-review` and `execute-approved-code` are still not fully graph-native interrupts.
-- Product modes still pass through some legacy stub node names before summary, although the stub nodes no-op for product modes.
+- Later LG2.2 work removed the product-mode pass-through via no-op legacy stub
+  nodes; this historical slice predates that cleanup.
 
 Verified with:
 
@@ -1630,6 +1635,39 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.2 Product Stub-Path Isolation Slice
+
+Completed:
+
+- Routed graph-product agent nodes directly to `summarize_dataset`:
+  - `draft_spec_agent`
+  - `generate_r_code_agent`
+  - `execute_approved_code`
+- Kept the legacy stub chain available only through the explicit
+  `stub_chain` branch from `prepare_dataset`.
+- Removed the early `graph_product_execute` call from `prepare_dataset`, so R
+  execution happens once in the explicit `execute_approved_code` graph node.
+- Preserved the terminal-failure `revise_spec` semantic: after a human chooses
+  to revise the spec, a later finalize/draft step must create a new draft spec
+  instead of reusing the old approved draft spec.
+- Added graph smoke tests that assert product nodes no longer flow through
+  `draft_lineage_stub`, and that prepare does not execute R in
+  `graph_product_execute` mode.
+
+Current boundary:
+
+- Legacy stub nodes still exist for explicit legacy/test modes.
+- Compatibility FastAPI endpoints still call graph modes one step at a time;
+  this slice only cleans the DatasetGraph product path itself.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review tests.test_graph_smoke -v
+```
+
+Result: 55 tests passed.
 
 ### 2026-05-30 - LG2.8 Compatibility Projection Equivalence Slice
 

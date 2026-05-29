@@ -88,8 +88,6 @@ def _skips_stub_nodes(state: DatasetGraphState) -> bool:
 def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Initialize one dataset run."""
 
-    if _is_graph_product_execute_mode(state):
-        return execute_approved_code_node(state)
     if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state):
         return prepare_product_context_node(state)
     if state.get("execution_mode") == "llm_downstream_stubbed":
@@ -189,15 +187,20 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "sandbox_runs": 0,
         }
 
-    try:
-        approved_payload = _approved_draft_spec_payload(Path(study_dir), state["run_id"], state["dataset"])
-    except ValueError as exc:
-        return _product_failure(
-            "spec_error",
-            str(exc),
-            current_interrupt="draft_spec_review",
-            next_action="regenerate_draft_spec",
-        )
+    force_new_draft_spec = _terminal_failure_requires_new_draft_spec(
+        Path(study_dir), state["run_id"], state["dataset"]
+    )
+    approved_payload = None
+    if not force_new_draft_spec:
+        try:
+            approved_payload = _approved_draft_spec_payload(Path(study_dir), state["run_id"], state["dataset"])
+        except ValueError as exc:
+            return _product_failure(
+                "spec_error",
+                str(exc),
+                current_interrupt="draft_spec_review",
+                next_action="regenerate_draft_spec",
+            )
     if approved_payload is not None:
         context.target_spec = approved_payload
         context.warnings.append(
@@ -1055,9 +1058,9 @@ def build_dataset_graph():
             "stub_chain": "draft_lineage_stub",
         },
     )
-    graph.add_edge("draft_spec_agent", "draft_lineage_stub")
-    graph.add_edge("generate_r_code_agent", "draft_lineage_stub")
-    graph.add_edge("execute_approved_code", "draft_lineage_stub")
+    graph.add_edge("draft_spec_agent", "summarize_dataset")
+    graph.add_edge("generate_r_code_agent", "summarize_dataset")
+    graph.add_edge("execute_approved_code", "summarize_dataset")
     graph.add_edge("draft_lineage_stub", "draft_spec_stub")
     graph.add_edge("draft_spec_stub", "route_risk_stub")
     graph.add_conditional_edges(
@@ -1107,12 +1110,16 @@ def route_after_product_context(state: DatasetGraphState) -> str:
 
     if state.get("status") == "failed":
         return "summarize"
+    if _is_llm_downstream_mode(state) or _is_retired_adsl_template_mode(state):
+        return "summarize"
     if _is_graph_product_execute_mode(state):
         return "execute_approved_code"
     if _is_graph_product_generate_code_mode(state):
         return "generate_r_code_agent"
-    if _is_graph_product_prepare_mode(state) and state.get("draft_spec_required"):
+    if _is_graph_product_prepare_mode(state) and state.get("spec_source") == "missing_input_spec":
         return "draft_spec_agent"
+    if _is_graph_product_prepare_mode(state):
+        return "summarize"
     return "stub_chain"
 
 
@@ -1356,6 +1363,26 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
         "source": "user_approved_draft_spec",
         "review_path": str(review_path.as_posix()),
     }
+
+
+def _terminal_failure_requires_new_draft_spec(study_dir: Path, run_id: str, target: str) -> bool:
+    graph_state_path = study_dir / "runs" / run_id / "graph_state.json"
+    if not graph_state_path.exists() or not graph_state_path.is_file():
+        return False
+    try:
+        graph_state = StudyRunState.model_validate_json(graph_state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    dataset_state = graph_state.datasets.get(target.strip().upper())
+    if dataset_state is None:
+        return False
+    if dataset_state.execution_state.get("terminal_failure_followup_consumed_by"):
+        return False
+    review = dataset_state.execution_state.get("terminal_failure_review")
+    if not isinstance(review, dict):
+        return False
+    action = str(review.get("action") or "").strip().lower()
+    return action in {"revise_spec", "request_new_input"}
 
 
 def _approved_draft_spec_state(study_dir: Path, run_id: str, target: str) -> dict[str, object]:

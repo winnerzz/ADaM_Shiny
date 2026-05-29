@@ -291,6 +291,10 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - stale 或缺少 fingerprint 的 approved draft spec 会在 code generation 前 fail closed。
   - generated code、LLM 原始响应、parsed response、compact prompt、limited static-check report 都会作为 audit artifacts 写出。
   - graph 会停在 `code_review`，这个 mode 不执行 R。
+  - product agent nodes 现在会直接进入 `summarize_dataset`，不再经过 no-op 的
+    legacy `*_stub` 节点。
+  - `graph_product_execute` 不再在 `prepare_dataset` 阶段执行 R；R execution
+    只发生在显式的 `execute_approved_code` graph node。
   - 旧 stub chain 只通过显式 legacy/test mode 保留；graph-product modes 会跳过 stub code generation 和 sandbox execution。
   - FastAPI `/datasets/{dataset}/finalize-inputs` 现在委托给 `graph_product_prepare`。
   - FastAPI `/datasets/{dataset}/generate-code` 现在委托给 `graph_product_generate_code`。
@@ -298,7 +302,7 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
 - 仍待完成：
   - 从 `code_review` graph-native resume 到 R execution。
   - graph-native validation、compare、terminal failure routing 和 repair。
-  - 等所有 product tests 都改用 graph-product modes 后，再移除或进一步隔离旧 stub nodes。
+  - 等 legacy/test-mode coverage 不再有用后，最终移除旧 stub nodes。
 
 ## 7. Phase LG2.3 - StudyGraph 多 Dataset 产品编排
 
@@ -831,7 +835,8 @@ python -B -m unittest tests.test_graph_smoke tests.test_api_phase8 tests.test_gr
 
 - dataset actions 后，compatibility service wrapper 仍会直接更新 `workflow_state.json`。
 - `code-review` 和 `execute-approved-code` 还没有完全迁移为 graph-native interrupt。
-- product modes 仍经过一些 legacy stub node 名称再 summary，不过这些 stub node 在 product mode 下是 no-op。
+- 后续 LG2.2 工作已经移除了 product mode 经过 no-op legacy stub node 再
+  summary 的路径；这里是当时切片的历史边界。
 
 已验证：
 
@@ -1449,6 +1454,37 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.2 Product Stub-Path Isolation 切片
+
+已完成：
+
+- graph-product agent nodes 现在直接进入 `summarize_dataset`：
+  - `draft_spec_agent`
+  - `generate_r_code_agent`
+  - `execute_approved_code`
+- legacy stub chain 只保留在 `prepare_dataset` 的显式 `stub_chain` 分支里。
+- 移除了 `prepare_dataset` 里对 `graph_product_execute` 的提前执行；R execution
+  只发生一次，并且只在显式 `execute_approved_code` graph node 中发生。
+- 保留 terminal-failure `revise_spec` 语义：用户选择 revise spec 后，后续
+  finalize/draft step 必须生成新的 draft spec，不能复用旧的 approved draft
+  spec。
+- 增加 graph smoke tests，确认 product nodes 不再流经 `draft_lineage_stub`，并
+  确认 `graph_product_execute` mode 下 prepare 不会执行 R。
+
+当前边界：
+
+- legacy stub nodes 仍保留给显式 legacy/test modes。
+- FastAPI compatibility endpoints 仍按单步调用 graph modes；本切片只清理
+  DatasetGraph 产品路径本身。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review tests.test_graph_smoke -v
+```
+
+结果：55 tests passed。
 
 ### 2026-05-30 - LG2.8 Graph-Mutating Endpoint Projection 切片
 
