@@ -893,3 +893,58 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 144 tests passed after the subagent review fixes.
+
+### 2026-05-29 - LG2.2 Compare Gateway Slice
+
+Completed:
+
+- Moved reference-compare result recording into `GraphGateway` canonical graph
+  state:
+  - `record_compare()` writes `DatasetRunState.compare_summary`.
+  - `DatasetResultSummary.compare_status` now reflects the latest graph-recorded
+    compare status.
+  - compare report artifacts are attached to the dataset artifact refs when a
+    report file exists.
+- Updated the FastAPI compatibility service so `/compare` still returns the
+  same `DatasetCompareResponse`, but now also projects the compare result from
+  graph state back to `workflow_state.json`.
+- Kept compare algorithm scope unchanged:
+  - still CSV-to-CSV structural and sampled cell comparison
+  - still not a clinical conformance validator
+  - still treats Reference ADaM as comparison evidence, not derivation authority
+- Preserved open graph interrupts while recording compare output:
+  - dataset-level interrupts remain open
+  - study-level dependency review is not cleared by a compare call
+- Addressed subagent review findings:
+  - compare recording no longer creates a canonical graph run when
+    `graph_state.json` does not exist
+  - compare recording no longer refreshes the dataset product
+    `input_fingerprint`; the current fingerprint is stored only inside
+    `compare_summary`
+  - study-level interrupts keep precedence when both study and dataset
+    interrupts are open
+  - missing generated/reference statuses are written back to existing graph
+    state so canonical compare state does not stay stale
+
+Current boundary:
+
+- Compare is now graph-owned state, but the comparison calculation itself is
+  still a service/tool helper.
+- Static ADaM/CDISC checks and repair routing are still future LG2.x / Phase 9
+  work.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result: 65 tests passed after the subagent review fixes.
+
+Core verification:
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 151 tests passed.

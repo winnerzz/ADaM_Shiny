@@ -794,3 +794,52 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：子 agent 审查修复后，核心测试 144 tests passed。
+
+### 2026-05-29 - LG2.2 Compare Gateway 切片
+
+已完成：
+
+- 把 reference compare 结果记录迁入 `GraphGateway` canonical graph state：
+  - `record_compare()` 写入 `DatasetRunState.compare_summary`。
+  - `DatasetResultSummary.compare_status` 现在反映 graph 中最新 compare
+    status。
+  - 如果 compare report 文件存在，会作为 dataset artifact ref 记录。
+- 更新 FastAPI compatibility service，使 `/compare` 仍返回原来的
+  `DatasetCompareResponse`，但同时把 compare 结果从 graph state 投影回
+  `workflow_state.json`。
+- compare 算法边界不变：
+  - 仍只是 CSV-to-CSV 的结构和抽样 cell comparison。
+  - 仍不是临床规则合规验证器。
+  - Reference ADaM 仍只是比较证据，不是推导逻辑来源。
+- 记录 compare 结果时保留打开的 graph interrupt：
+  - dataset-level interrupt 不被清掉。
+  - study-level dependency review 不会因为 compare call 被误清。
+- 根据子 agent 审查意见修复：
+  - `graph_state.json` 不存在时，compare recording 不再创建 canonical graph run。
+  - compare recording 不再刷新 dataset product `input_fingerprint`；当前
+    fingerprint 只写入 `compare_summary`。
+  - study-level interrupt 和 dataset-level interrupt 同时存在时，保留
+    study-level interrupt 的优先显示。
+  - missing generated/reference 状态也会写回已有 graph state，避免 canonical
+    compare state 停留在旧的 match/differences。
+
+当前边界：
+
+- compare 状态已经 graph-owned，但 compare 计算本身仍是 service/tool helper。
+- 静态 ADaM/CDISC 检查和 repair routing 仍是后续 LG2.x / Phase 9 工作。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+结果：子 agent 审查修复后 focused tests 65 tests passed。
+
+核心验证：
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：151 tests passed。

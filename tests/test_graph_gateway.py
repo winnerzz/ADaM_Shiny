@@ -651,6 +651,150 @@ class GraphGatewayTests(unittest.TestCase):
                 spec_sha256=f"sha256:{sha256_file(approved_path)}",
             )
 
+    def test_gateway_records_compare_summary_in_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare") / "PSY201"
+        compare_dir = study_dir / "runs" / "run_lg2_compare" / "compare"
+        compare_dir.mkdir(parents=True)
+        report_path = compare_dir / "adae_compare_report.json"
+        report_path.write_text(
+            json.dumps({"dataset": "ADAE", "status": "missing_reference"}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare",
+            dataset="ADAE",
+            compare_summary={
+                "dataset": "ADAE",
+                "status": "missing_reference",
+                "generated_file": "adae.csv",
+                "note": "No reference ADaM was found for this dataset.",
+            },
+            compare_report_path=report_path,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_compare" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.compare_summary["status"], "missing_reference")
+        self.assertEqual(dataset_state.result_summary.compare_status, "missing_reference")
+        self.assertIn("compare_report_adae", [artifact.artifact_id for artifact in dataset_state.artifacts])
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["compare_summary"]["status"], "missing_reference")
+
+    def test_gateway_compare_requires_existing_graph_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_requires_state") / "PSY201"
+        study_dir.mkdir(parents=True)
+
+        with self.assertRaisesRegex(ValueError, "Graph state must exist"):
+            GraphGateway().record_compare(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_compare_requires_state",
+                dataset="ADAE",
+                compare_summary={"dataset": "ADAE", "status": "missing_generated"},
+                input_fingerprint_payload=input_fingerprint(study_dir),
+            )
+
+    def test_gateway_compare_does_not_refresh_dataset_product_fingerprint(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_preserve_product_fingerprint") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        sdtm_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_product_fingerprint",
+            target_datasets=["ADAE"],
+        )
+        before = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_compare_preserve_product_fingerprint",
+        ).datasets["ADAE"].input_fingerprint
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+        current = input_fingerprint(study_dir)
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_product_fingerprint",
+            dataset="ADAE",
+            compare_summary={"dataset": "ADAE", "status": "missing_generated"},
+            input_fingerprint_payload=current,
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.input_fingerprint["digest"], before["digest"])
+        self.assertEqual(dataset_state.compare_summary["input_fingerprint"]["digest"], current["digest"])
+
+    def test_gateway_compare_preserves_open_study_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_preserve_interrupt") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_interrupt",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_interrupt",
+            dataset="ADAE",
+            compare_summary={"dataset": "ADAE", "status": "missing_generated"},
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
+        self.assertEqual(result.graph_state.status, "needs_review")
+
+    def test_gateway_compare_preserves_study_interrupt_over_dataset_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_preserve_study_interrupt") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_study_interrupt",
+            target_datasets=["ADAE", "ADCM"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_compare_preserve_study_interrupt",
+        ).model_copy(deep=True)
+        state.datasets["ADCM"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADCM",
+            reason="Review ADCM code.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_dataset_interrupt")
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_preserve_study_interrupt",
+            dataset="ADAE",
+            compare_summary={"dataset": "ADAE", "status": "missing_generated"},
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
+        self.assertIsNone(result.graph_state.current_interrupt.dataset)
+
 
 if __name__ == "__main__":
     unittest.main()

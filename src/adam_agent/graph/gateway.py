@@ -581,6 +581,81 @@ class GraphGateway:
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_execute_approved_code")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
+    def record_compare(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        compare_summary: dict[str, Any],
+        compare_report_path: str | Path | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Persist reference-compare results into canonical graph state."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            next_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
+        except FileNotFoundError as exc:
+            raise ValueError("Graph state must exist before compare results can be recorded.") from exc
+        if next_state.study_id != study_id:
+            raise ValueError("Compare result study_id does not match graph state.")
+        dataset_state = next_state.datasets.get(target)
+        if dataset_state is None:
+            raise ValueError("Dataset must exist in graph state before compare results can be recorded.")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        existing_run_interrupt = next_state.current_interrupt
+        summary = dict(compare_summary)
+        summary["input_fingerprint"] = fingerprint
+        dataset_state.compare_summary.update(summary)
+        if compare_report_path:
+            report_path = Path(compare_report_path)
+            if report_path.exists() and report_path.is_file():
+                _upsert_artifact(
+                    dataset_state,
+                    _artifact_ref(target, "compare_report", "output", report_path, kind="compare_report"),
+                )
+        existing_summary = dataset_state.result_summary
+        output_artifact_ids = [
+            artifact.artifact_id
+            for artifact in dataset_state.artifacts
+            if artifact.kind == "output_adam"
+        ]
+        dataset_state.result_summary = DatasetResultSummary(
+            dataset=target,
+            status=existing_summary.status if existing_summary else dataset_state.status,
+            output_artifact_ids=output_artifact_ids or (existing_summary.output_artifact_ids if existing_summary else []),
+            audit_artifact_id=existing_summary.audit_artifact_id if existing_summary else None,
+            validation_status=(
+                existing_summary.validation_status
+                if existing_summary
+                else str(dataset_state.validation_summary.get("status") or "") or None
+            ),
+            compare_status=str(summary.get("status") or ""),
+            failure_ids=[failure.failure_id for failure in dataset_state.failures],
+            metadata={
+                **(existing_summary.metadata if existing_summary else {}),
+                "graph_compare_recorded": True,
+                "compare_report_path": str(Path(compare_report_path).as_posix()) if compare_report_path else None,
+            },
+        )
+        dataset_state.updated_at = utc_now()
+        next_state.datasets[target] = dataset_state
+        if existing_run_interrupt is not None and existing_run_interrupt.status == "open" and existing_run_interrupt.dataset is None:
+            next_state.current_interrupt = existing_run_interrupt
+        else:
+            next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
+        if next_state.current_interrupt and next_state.current_interrupt.name == "terminal_failure":
+            next_state.status = "terminal_failure"
+        elif next_state.current_interrupt:
+            next_state.status = "needs_review"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="compare_reference_output")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_compare_reference_output")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
     def load_graph_state(self, *, study_dir: str | Path, run_id: str) -> StudyRunState:
         """Load the durable canonical graph state for a local run."""
 
