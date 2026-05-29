@@ -981,3 +981,69 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：161 tests passed。
+
+### 2026-05-29 - LG2.3 多 Target 状态汇总与 UI 恢复切片
+
+已完成：
+
+- 在 `GraphGateway` 中新增 graph-owned study status rollup，让 study-level
+  `status` 和 `current_interrupt` 从每个 dataset 的 durable state 汇总出来，
+  不再由各个 endpoint 分散手写。
+- 保留 public `/runs/prepare` 之后的多 target dataset 进度：
+  - 同一个 run 里，之后为另一个 target 重新 prepare，不会丢掉之前 dataset
+    已生成的 code state。
+  - 既有 product progress 会继续保存在 canonical `StudyRunState.datasets`
+    map 中。
+  - target list 会把已有进度的 target 与新计划 target 合并。
+- 根据子 agent 审查修复 interrupt 优先级：
+  - 新的 study-level `dependency_review` 优先于旧的 dataset interrupt。
+  - dataset `terminal_failure` 优先于普通 dataset review gate，比如
+    `code_review`。
+  - approve study-level dependency review 后，会清掉该 study interrupt。
+  - terminal-failure triage 会在重新汇总 study status 前清理过期的
+    dependency-review projection。
+- 更新本地 UI：dependency planning 后从 `/graph-state` 恢复 per-dataset 状态：
+  - draft spec、approved spec、generated-code metadata、code review、
+    execution、compare summary 都会恢复到 UI 的 per-dataset map。
+  - 切换 target 或重新 prepare 后，之前生成过的 dataset card 不会看起来像空状态。
+  - stale generated code 会显示为 `stale`，不会伪装成正常待审核 code。
+  - 如果 graph recovery 只有 code path、没有浏览器中可见的 code text，
+    approve/run 会被禁用，避免绕过真实人工 code review。
+- 新增回归测试覆盖：
+  - 同一个 run 中为新 target prepare 时，保留另一个 target 的 generated-code state。
+  - 记录 compare 时保留另一个 dataset 的 interrupt。
+  - terminal failure 优先于普通 code review。
+  - re-plan 后 dependency review 优先于旧 dataset interrupt。
+
+当前边界：
+
+- UI 的 `selectedTargets()` 仍只返回当前 active target。本切片完成的是多 target
+  状态持久化和可见性；完整批量选择与 graph-dispatched 多 dataset execution
+  仍留给后续 LG2.3。
+- UI 从 graph state 恢复的是 code metadata，不是 code text。浏览器刷新后必须先
+  加载 run review/code text，才允许 approve 本地执行。
+
+子 agent 审查：
+
+- `gpt-5.5` 子 agent 发现两个 major 和两个 medium UI 问题。
+- 已在提交前修复：
+  - terminal failure 不会再被字典序更靠前的普通 dataset interrupt 掩盖。
+  - re-plan 产生的新 dependency-review interrupt 不会被旧 dataset product
+    interrupt 覆盖。
+  - stale code 不再显示成普通 generated code。
+  - graph recovery 只有 code metadata、没有可审核 code text 时，approve/run
+    会被禁用。
+
+最终验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：77 tests passed。
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：165 tests passed。

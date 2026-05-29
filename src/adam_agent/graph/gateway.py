@@ -87,6 +87,13 @@ class GraphGateway:
         next_state = graph_state.model_copy(deep=True)
         next_state.human_commands.append(command)
         next_state.updated_at = utc_now()
+        if (
+            next_state.current_interrupt is not None
+            and next_state.current_interrupt.dataset is None
+            and next_state.current_interrupt.name == command.interrupt
+            and command.action == "approve"
+        ):
+            next_state.current_interrupt = None
         if command.dataset:
             dataset_key = command.dataset.strip().upper()
             dataset_state = next_state.datasets.get(dataset_key)
@@ -94,8 +101,9 @@ class GraphGateway:
                 dataset_state.human_commands.append(command)
                 dataset_state.current_interrupt = None if command.action == "approve" else dataset_state.current_interrupt
                 dataset_state.updated_at = utc_now()
-        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
-        next_state.status = "needs_review" if next_state.current_interrupt or command.action != "approve" else "running"
+        _roll_up_study_state(next_state)
+        if command.action != "approve" and next_state.status == "running":
+            next_state.status = "needs_review"
         self._persist_graph_state(study_dir, next_state, node=f"resume_{command.interrupt}")
         projection = project_graph_state_to_workflow(study_dir, next_state, node=f"graph_gateway_resume_{command.interrupt}")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
@@ -169,8 +177,7 @@ class GraphGateway:
             _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", static_check_path, kind="tool_log"))
         next_state.datasets[target] = dataset_state
         next_state.human_commands.append(command)
-        next_state.current_interrupt = dataset_state.current_interrupt or _next_open_dataset_interrupt(next_state)
-        next_state.status = "needs_review" if next_state.current_interrupt else "running"
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="code_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_code_review")
@@ -241,8 +248,7 @@ class GraphGateway:
         if response_path:
             _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_response", "audit", response_path, kind="llm_response"))
         next_state.datasets[target] = dataset_state
-        next_state.current_interrupt = dataset_state.current_interrupt
-        next_state.status = "needs_review"
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="draft_spec_generation")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_generation")
@@ -295,11 +301,7 @@ class GraphGateway:
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "input_spec", "source", spec_path, kind="input_spec"))
         next_state.datasets[target] = dataset_state
-        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
-        if next_state.current_interrupt:
-            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
-        else:
-            next_state.status = "running"
+        _roll_up_study_state(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="input_spec_ready")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_input_spec_ready")
@@ -352,11 +354,7 @@ class GraphGateway:
             _artifact_ref(target, "approved_draft_spec", "source", spec_path, kind="input_spec"),
         )
         next_state.datasets[target] = dataset_state
-        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
-        if next_state.current_interrupt:
-            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
-        else:
-            next_state.status = "running"
+        _roll_up_study_state(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="approved_draft_spec_ready")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_approved_draft_spec_ready")
@@ -436,8 +434,7 @@ class GraphGateway:
             )
         next_state.datasets[target] = dataset_state
         next_state.human_commands.append(command)
-        next_state.current_interrupt = dataset_state.current_interrupt or _next_open_dataset_interrupt(next_state)
-        next_state.status = "needs_review" if next_state.current_interrupt else "running"
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="draft_spec_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_review")
@@ -631,13 +628,7 @@ class GraphGateway:
         if static_check_path:
             _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", static_check_path, kind="tool_log"))
         next_state.datasets[target] = dataset_state
-        next_state.current_interrupt = InterruptState(
-            name="code_review",
-            dataset=target,
-            reason="Generated R code must be reviewed before local R execution.",
-            payload={"code_path": str(Path(code_path).as_posix())},
-        )
-        next_state.status = "needs_review"
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="code_generation")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_code_generation")
@@ -712,8 +703,7 @@ class GraphGateway:
             metadata={"graph_product_execute": True, **execution_state},
         )
         next_state.datasets[target] = dataset_state
-        next_state.current_interrupt = dataset_state.current_interrupt
-        next_state.status = "terminal_failure" if terminal_failure else "running"
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="execute_approved_code")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_execute_approved_code")
@@ -783,12 +773,9 @@ class GraphGateway:
         next_state.datasets[target] = dataset_state
         if existing_run_interrupt is not None and existing_run_interrupt.status == "open" and existing_run_interrupt.dataset is None:
             next_state.current_interrupt = existing_run_interrupt
-        else:
-            next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
-        if next_state.current_interrupt and next_state.current_interrupt.name == "terminal_failure":
-            next_state.status = "terminal_failure"
-        elif next_state.current_interrupt:
             next_state.status = "needs_review"
+        else:
+            _roll_up_study_state(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="compare_reference_output")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_compare_reference_output")
@@ -885,15 +872,9 @@ class GraphGateway:
         )
         next_state.datasets[target] = dataset_state
         next_state.human_commands.append(command)
-        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
-        if next_state.current_interrupt:
-            next_state.status = "terminal_failure" if next_state.current_interrupt.name == "terminal_failure" else "needs_review"
-        elif any(item.status == "terminal_failure" for item in next_state.datasets.values()):
-            next_state.status = "terminal_failure"
-        elif any(item.status == "failed" for item in next_state.datasets.values()):
-            next_state.status = "failed"
-        else:
-            next_state.status = "running"
+        if next_state.current_interrupt is not None and next_state.current_interrupt.name == "dependency_review":
+            next_state.current_interrupt = None
+        _roll_up_study_state(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="terminal_failure_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_terminal_failure_review")
@@ -1044,11 +1025,13 @@ class GraphGateway:
                 merged.target_datasets.append(dataset)
             if dataset not in merged.runnable_datasets and dataset in existing.runnable_datasets:
                 merged.runnable_datasets.append(dataset)
-        if existing.current_interrupt is not None and existing.current_interrupt.dataset:
+        if _open_study_interrupt(merged) is None and existing.current_interrupt is not None and existing.current_interrupt.dataset:
             dataset = existing.current_interrupt.dataset.strip().upper()
             if _has_dataset_product_progress(merged.datasets.get(dataset)):
                 merged.current_interrupt = existing.current_interrupt
                 merged.status = existing.status
+        if _open_study_interrupt(merged) is None:
+            _roll_up_study_state(merged)
         return merged
 
     @staticmethod
@@ -1193,11 +1176,85 @@ def _has_dataset_product_progress(dataset_state: DatasetRunState | None) -> bool
     return dataset_state.status not in {"pending", "planned"}
 
 
-def _next_open_dataset_interrupt(state: StudyRunState) -> InterruptState | None:
+def _next_open_dataset_interrupt(
+    state: StudyRunState,
+    *,
+    names: set[str] | None = None,
+    exclude_names: set[str] | None = None,
+) -> InterruptState | None:
     for dataset in sorted(state.datasets):
         interrupt = state.datasets[dataset].current_interrupt
+        if interrupt is None or interrupt.status != "open":
+            continue
+        if names is not None and interrupt.name not in names:
+            continue
+        if exclude_names is not None and interrupt.name in exclude_names:
+            continue
         if interrupt is not None and interrupt.status == "open":
             return interrupt
+    return None
+
+
+def _roll_up_study_state(
+    state: StudyRunState,
+    *,
+    preferred_interrupt: InterruptState | None = None,
+) -> None:
+    """Derive study-level status from durable per-dataset graph state."""
+
+    study_interrupt = _open_study_interrupt(state)
+    if study_interrupt is not None:
+        state.current_interrupt = study_interrupt
+        state.status = "needs_review"
+        return
+
+    terminal_interrupt = _next_open_dataset_interrupt(state, names={"terminal_failure"})
+    if terminal_interrupt is not None:
+        state.current_interrupt = terminal_interrupt
+        state.status = "terminal_failure"
+        return
+
+    if (
+        preferred_interrupt is not None
+        and preferred_interrupt.status == "open"
+        and preferred_interrupt.name != "terminal_failure"
+    ):
+        state.current_interrupt = preferred_interrupt
+    else:
+        state.current_interrupt = _next_open_dataset_interrupt(state, exclude_names={"terminal_failure"})
+
+    if state.current_interrupt is not None:
+        state.status = "terminal_failure" if state.current_interrupt.name == "terminal_failure" else "needs_review"
+        return
+
+    target_statuses = [
+        state.datasets[dataset].status
+        for dataset in state.target_datasets
+        if dataset in state.datasets
+    ]
+    if not target_statuses:
+        state.status = "pending"
+        return
+    if any(status == "terminal_failure" for status in target_statuses):
+        state.status = "terminal_failure"
+        return
+    completed_statuses = {"completed", "completed_stub"}
+    if all(status in completed_statuses for status in target_statuses):
+        state.status = "completed"
+        return
+    if any(status == "failed" for status in target_statuses):
+        state.status = "failed"
+        return
+    if any(status == "needs_review" for status in target_statuses):
+        state.status = "needs_review"
+        return
+    state.status = "running"
+
+
+def _open_study_interrupt(state: StudyRunState) -> InterruptState | None:
+    interrupt = state.current_interrupt
+    if interrupt is not None and interrupt.status == "open" and interrupt.dataset is None:
+        return interrupt
     return None
 
 

@@ -1101,3 +1101,76 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 161 tests passed.
+
+### 2026-05-29 - LG2.3 Multi-Target State Rollup and UI Recovery Slice
+
+Completed:
+
+- Added a graph-owned study status rollup in `GraphGateway` so study-level
+  `status` and `current_interrupt` are derived from durable per-dataset state
+  instead of being hand-written differently by each endpoint.
+- Preserved multi-target dataset progress across public `/runs/prepare` calls:
+  - a later prepare call for another target no longer drops generated-code
+    state for a previously touched dataset in the same run
+  - existing product progress remains attached to the canonical
+    `StudyRunState.datasets` map
+  - target lists merge existing progress targets with the newly planned target
+- Fixed interrupt priority after subagent review:
+  - open study-level `dependency_review` stays ahead of old dataset interrupts
+    created before the re-plan
+  - dataset `terminal_failure` is prioritized over normal dataset review gates
+    such as `code_review`
+  - approving a study-level dependency review clears that study interrupt
+  - terminal-failure triage clears stale dependency-review projection before
+    re-rolling the study status
+- Updated the local UI to recover per-dataset state from `/graph-state` after
+  dependency planning:
+  - draft spec, approved spec, generated-code metadata, code review,
+    execution, and compare summaries are restored into the UI's per-dataset
+    maps
+  - switching targets or re-preparing a plan no longer makes previously
+    generated dataset cards appear empty
+  - stale generated code is shown as `stale`, not as a normal review-ready
+    generated artifact
+  - approving/running is disabled when only a code path is known but the code
+    text is not loaded in the browser, preserving the human code-review gate
+- Added regression coverage for:
+  - preserving another target's generated-code state when preparing a new
+    target in the same run
+  - rollup preserving another dataset's interrupt while recording compare
+  - terminal failure outranking ordinary code review
+  - dependency review outranking old dataset interrupts after re-plan
+
+Current boundary:
+
+- `selectedTargets()` in the UI still returns the active target only. This
+  slice makes multi-target state durable and visible, but full batch selection
+  and graph-dispatched multi-dataset execution remain future LG2.3 work.
+- UI recovery from graph state restores code metadata, not code text. A fresh
+  browser must load the run review/code text before approving local execution.
+
+Subagent review:
+
+- A `gpt-5.5` subagent found two major issues and two medium UI issues.
+- Fixed before commit:
+  - terminal failure can no longer be hidden by a lexically earlier ordinary
+    dataset interrupt
+  - a new dependency-review interrupt from re-plan is no longer overwritten by
+    old dataset product interrupts
+  - stale code is no longer displayed as normal generated code
+  - approve/run is disabled when graph recovery only has code metadata but no
+    reviewable code text
+
+Final verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 77 tests passed.
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 165 tests passed.

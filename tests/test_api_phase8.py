@@ -80,6 +80,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("generatedByDataset", response.text)
         self.assertIn("reviewByDataset", response.text)
         self.assertIn("executionByDataset", response.text)
+        self.assertIn("refreshGraphState", response.text)
+        self.assertIn("canApproveGeneratedCode", response.text)
+        self.assertIn("Generated-code state exists", response.text)
         self.assertIn("data-card-target", response.text)
         self.assertIn("resetActiveDatasetView", response.text)
         self.assertNotIn("resetGeneratedState", response.text)
@@ -1467,6 +1470,47 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(after_code_state["status"], "generated")
         self.assertEqual(after_code_state["code_sha256"], before_code_state["code_sha256"])
 
+    def test_public_prepare_preserves_progress_for_other_target_in_same_run(self) -> None:
+        study_dir = _study_with_adae_adcm_inputs("phase8_prepare_preserves_other_target")
+        client = TestClient(create_app())
+        adae_generated = client.post(
+            "/runs/run_prepare_preserves_other_target/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(adae_generated.status_code, 200, adae_generated.text)
+        before = client.get(
+            "/runs/run_prepare_preserves_other_target/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(before.status_code, 200, before.text)
+        before_code_state = before.json()["datasets"]["ADAE"]["code_state"]
+        self.assertEqual(before_code_state["status"], "generated")
+
+        prepared = client.post(
+            "/runs/prepare",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_prepare_preserves_other_target",
+                "target_datasets": ["ADCM"],
+            },
+        )
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        after = client.get(
+            "/runs/run_prepare_preserves_other_target/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(after.status_code, 200, after.text)
+        state = after.json()
+        self.assertIn("ADCM", state["datasets"])
+        self.assertEqual(state["datasets"]["ADAE"]["code_state"]["status"], "generated")
+        self.assertEqual(state["datasets"]["ADAE"]["code_state"]["code_sha256"], before_code_state["code_sha256"])
+        self.assertIn("ADAE", state["target_datasets"])
+        self.assertIn("ADCM", state["target_datasets"])
+
     def test_public_prepare_marks_existing_graph_dataset_state_stale_when_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_prepare_marks_stale")
         client = TestClient(create_app())
@@ -2293,6 +2337,28 @@ def _study_with_adae_inputs(name: str) -> Path:
     (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
     (input_spec / "adae.json").write_text(
         json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+        encoding="utf-8",
+    )
+    (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+    return study_dir
+
+
+def _study_with_adae_adcm_inputs(name: str) -> Path:
+    study_dir = _workspace_dir(name) / "PSY201"
+    input_sdtm = study_dir / "input_sdtm"
+    input_spec = study_dir / "input_spec"
+    reference_adam = study_dir / "reference_adam"
+    input_sdtm.mkdir(parents=True)
+    input_spec.mkdir()
+    reference_adam.mkdir()
+    (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+    (input_sdtm / "cm.csv").write_text("USUBJID,CMTRT\n01,ASPIRIN\n", encoding="utf-8")
+    (input_spec / "adae.json").write_text(
+        json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+        encoding="utf-8",
+    )
+    (input_spec / "adcm.json").write_text(
+        json.dumps({"dataset": "ADCM", "variables": [{"variable": "CMTRT", "source_domains": ["CM"]}]}),
         encoding="utf-8",
     )
     (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")

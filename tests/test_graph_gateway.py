@@ -897,6 +897,132 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(result.graph_state.datasets["ADAE"].current_interrupt)
         self.assertEqual(result.graph_state.status, "failed")
 
+    def test_gateway_rolls_up_multi_dataset_status_without_losing_other_progress(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_multi_dataset_rollup") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_multi_dataset_rollup",
+            target_datasets=["ADAE", "ADCM"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_multi_dataset_rollup",
+        ).model_copy(deep=True)
+        state.datasets["ADAE"].status = "completed"
+        state.datasets["ADAE"].execution_state = {
+            "status": "completed",
+            "output_path": str((study_dir / "runs" / "run_lg2_multi_dataset_rollup" / "outputs" / "adae.csv").as_posix()),
+            "terminal_failure": False,
+        }
+        state.datasets["ADCM"].status = "needs_review"
+        state.datasets["ADCM"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADCM",
+            reason="Review ADCM generated code.",
+        )
+        state.current_interrupt = None
+        state.status = "needs_review"
+        gateway._persist_graph_state(study_dir, state, node="test_seed_multi_dataset_rollup")
+        report_path = study_dir / "runs" / "run_lg2_multi_dataset_rollup" / "compare" / "adae_compare.json"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text(json.dumps({"dataset": "ADAE", "status": "missing_reference"}), encoding="utf-8")
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_multi_dataset_rollup",
+            dataset="ADAE",
+            compare_summary={"dataset": "ADAE", "status": "missing_reference"},
+            compare_report_path=report_path,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        self.assertEqual(result.graph_state.datasets["ADAE"].status, "completed")
+        self.assertEqual(result.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
+        self.assertEqual(result.graph_state.current_interrupt.dataset, "ADCM")
+        self.assertEqual(result.graph_state.status, "needs_review")
+
+    def test_gateway_rollup_prioritizes_terminal_failure_over_code_review(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_rollup_priority") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_rollup_priority",
+            target_datasets=["ADAE", "ADCM"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_rollup_priority",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.datasets["ADAE"].status = "needs_review"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADAE",
+            reason="Review ADAE code.",
+        )
+        state.datasets["ADCM"].status = "terminal_failure"
+        state.datasets["ADCM"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADCM",
+            reason="ADCM execution failed.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_priority")
+        report_path = study_dir / "runs" / "run_lg2_terminal_rollup_priority" / "compare" / "adae_compare.json"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text(json.dumps({"dataset": "ADAE", "status": "missing_generated"}), encoding="utf-8")
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_rollup_priority",
+            dataset="ADAE",
+            compare_summary={"dataset": "ADAE", "status": "missing_generated"},
+            compare_report_path=report_path,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        self.assertEqual(result.graph_state.status, "terminal_failure")
+        self.assertEqual(result.graph_state.current_interrupt.name, "terminal_failure")
+        self.assertEqual(result.graph_state.current_interrupt.dataset, "ADCM")
+
+    def test_prepare_keeps_new_dependency_review_ahead_of_old_dataset_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_dependency_review_priority") / "PSY201"
+        input_spec = study_dir / "input_spec"
+        input_spec.mkdir(parents=True)
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        code_path = study_dir / "runs" / "run_lg2_dependency_review_priority" / "code" / "build_adae.R"
+        code_path.parent.mkdir(parents=True)
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_dependency_review_priority",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+        )
+        result = gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_dependency_review_priority",
+            target_datasets=["ADCM"],
+        )
+
+        self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
+        self.assertIsNone(result.graph_state.current_interrupt.dataset)
+        self.assertIn("ADAE", result.graph_state.datasets)
+        self.assertEqual(result.graph_state.datasets["ADAE"].current_interrupt.name, "code_review")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -818,6 +818,7 @@ INDEX_HTML = r"""<!doctype html>
       studyId: null,
       inputSummary: null,
       plan: null,
+      graphState: null,
       generated: null,
       review: null,
       execution: null,
@@ -1152,6 +1153,7 @@ INDEX_HTML = r"""<!doctype html>
     function invalidateUiStateAfterInputChange(payload) {
       if (!payload?.input_diff?.changed) return;
       state.plan = null;
+      state.graphState = null;
       state.generated = null;
       state.review = null;
       state.execution = null;
@@ -1322,6 +1324,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function resetRunState() {
       state.plan = null;
+      state.graphState = null;
       state.generated = null;
       state.review = null;
       state.execution = null;
@@ -1341,7 +1344,7 @@ INDEX_HTML = r"""<!doctype html>
       syncActiveDatasetState();
       state.selectedResultView = 'generated';
       setPill('codeStatus', codeStatusForActiveDataset());
-      byId('approveButton').disabled = !generatedFor(state.selectedTarget);
+      byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
       byId('finalizeInputsButton').disabled = !state.selectedTarget;
       renderDraftSpecPane();
       renderPane();
@@ -1354,8 +1357,111 @@ INDEX_HTML = r"""<!doctype html>
       state.execution = executionFor(state.selectedTarget);
     }
 
+    async function refreshGraphState() {
+      if (!studyDir() || !runId()) return null;
+      try {
+        const graph = await api(`/runs/${encodeURIComponent(runId())}/graph-state?study_dir=${encodeURIComponent(studyDir())}`);
+        state.graphState = graph;
+        applyGraphState(graph);
+        return graph;
+      } catch {
+        return null;
+      }
+    }
+
+    function applyGraphState(graph) {
+      const graphTargets = graph?.target_datasets || [];
+      if (graphTargets.length) {
+        state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...graphTargets])).sort();
+      }
+      for (const [dataset, datasetState] of Object.entries(graph?.datasets || {})) {
+        const target = dataset.toUpperCase();
+        const spec = datasetState.spec_state || {};
+        if (spec.status === 'draft_generated' && spec.draft_spec_path) {
+          state.draftSpecByDataset[target] = {
+            dataset: target,
+            status: 'draft',
+            spec_path: spec.draft_spec_path,
+            variables: spec.variables || [],
+            warnings: spec.warnings || []
+          };
+        }
+        if (spec.status === 'approved') {
+          state.draftSpecReviewByDataset[target] = {
+            dataset: target,
+            approved: true,
+            approved_spec_path: spec.approved_spec_path
+          };
+          state.finalizedInputsByDataset[target] = {
+            ...(state.finalizedInputsByDataset[target] || {}),
+            dataset: target,
+            status: 'approved_draft_spec_ready',
+            approved_draft_spec_available: true,
+            approved_spec_path: spec.approved_spec_path
+          };
+        }
+        if (spec.status === 'input_spec_ready') {
+          state.finalizedInputsByDataset[target] = {
+            ...(state.finalizedInputsByDataset[target] || {}),
+            dataset: target,
+            status: 'input_spec_ready',
+            input_spec_available: true,
+            input_spec_path: spec.input_spec_path
+          };
+        }
+        const code = datasetState.code_state || {};
+        if (code.code_path && code.status) {
+          const existingGenerated = state.generatedByDataset[target] || {};
+          state.generatedByDataset[target] = {
+            ...existingGenerated,
+            study_id: graph.study_id,
+            run_id: graph.run_id,
+            dataset: target,
+            status: code.status,
+            code_path: code.code_path,
+            static_check_path: code.static_check_path || null,
+            draft_spec_path: code.spec_source === 'approved_draft_spec' ? code.spec_path : null,
+            generated_code: existingGenerated.generated_code || '',
+            assumptions: existingGenerated.assumptions || [],
+            risk_points: existingGenerated.risk_points || [],
+            used_inputs: existingGenerated.used_inputs || [],
+            expected_outputs: existingGenerated.expected_outputs || []
+          };
+        }
+        if (code.status === 'approved') {
+          state.reviewByDataset[target] = {
+            dataset: target,
+            decision: code.decision || 'approve',
+            approved: true,
+            review_path: code.review_path || null
+          };
+        }
+        const execution = datasetState.execution_state || {};
+        if (execution.status) {
+          state.executionByDataset[target] = {
+            dataset: target,
+            status: execution.status,
+            validation_status: execution.validation_status || datasetState.validation_summary?.status || null,
+            output_path: execution.output_path || null,
+            validation_report_path: execution.validation_report_path || null,
+            diagnostics_path: execution.diagnostics_path || null,
+            terminal_failure: Boolean(execution.terminal_failure)
+          };
+        }
+        if (datasetState.compare_summary?.status) {
+          state.compareResults[target] = datasetState.compare_summary;
+        }
+      }
+      syncActiveDatasetState();
+    }
+
     function generatedFor(dataset) {
       return dataset ? state.generatedByDataset[dataset] || null : null;
+    }
+
+    function canApproveGeneratedCode(dataset) {
+      const generated = generatedFor(dataset);
+      return Boolean(generated && generated.status !== 'stale' && generated.generated_code);
     }
 
     function reviewFor(dataset) {
@@ -1402,7 +1508,10 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.selectedTarget) return 'not generated';
       const execution = executionFor(state.selectedTarget);
       if (execution) return execution.status;
-      if (generatedFor(state.selectedTarget)) return 'review';
+      const generated = generatedFor(state.selectedTarget);
+      if (generated?.status === 'stale') return 'stale';
+      if (generated?.generated_code) return 'review';
+      if (generated) return 'reload code';
       const persisted = datasetReviewFor(state.selectedTarget);
       if (persisted?.output_preview) return persisted.status || 'completed';
       if (persisted?.generated_code) return 'review';
@@ -1426,6 +1535,7 @@ INDEX_HTML = r"""<!doctype html>
           body: JSON.stringify(payload)
         });
         state.plan = plan;
+        await refreshGraphState();
         addEvent('Dependency plan prepared', `${state.selectedTarget} status: ${plan.dependency_review_status}.`);
         setPill('planStatus', plan.dependency_review_status || 'planned');
         renderPlan(plan);
@@ -1675,6 +1785,8 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.plan) return 'Next: prepare the dependency plan for this target.';
       if (!targetSpecGateSatisfied(target)) return 'Next: click Finalize Inputs / Draft Spec, then approve the draft spec if no uploaded spec exists.';
       if (!generatedFor(target)) return 'Next: click Generate R Code. This will not run R yet.';
+      if (generatedFor(target)?.status === 'stale') return 'Inputs changed after code generation. Regenerate R code before review or execution.';
+      if (!generatedFor(target)?.generated_code) return 'Generated-code state exists, but the code text is not loaded in this browser. Reload the run review before approving.';
       if (!reviewFor(target) && !executionFor(target)) return 'Next: review the generated R code, then approve local execution.';
       if (executionFor(target)?.status === 'completed') return 'Next: inspect the generated ADaM table, compare result, and downloads.';
       if (executionFor(target)?.status === 'terminal_failure') return 'Execution failed. Review diagnostics before retrying.';
@@ -1745,7 +1857,9 @@ INDEX_HTML = r"""<!doctype html>
       const persisted = datasetReviewFor(target);
       if (execution) return execution.status;
       if (persisted?.output_preview) return persisted.status || 'completed';
-      if (generatedFor(target) || persisted?.generated_code) return 'needs review';
+      if (generatedFor(target)?.status === 'stale') return 'stale';
+      if (generatedFor(target)?.generated_code || persisted?.generated_code) return 'needs review';
+      if (generatedFor(target)) return 'reload code';
       if (hasDatasetEvidence(target)) return 'reference';
       if ((runnable || []).includes(target)) return 'ready';
       if (state.plan) return 'waiting';
@@ -1853,7 +1967,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
-        byId('approveButton').disabled = !generatedFor(state.selectedTarget);
+        byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
         renderAdvanced();
         renderGraphAwareDashboard();
         renderPane();
