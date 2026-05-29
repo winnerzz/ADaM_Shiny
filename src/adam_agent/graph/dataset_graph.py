@@ -438,6 +438,7 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             target=target,
             code_path=Path(artifacts.code_artifact.path),
             required_identifiers=_required_identifiers_from_spec(target_spec),
+            required_identifier_source_id=_spec_source_id(target_spec),
         )
     except (LLMGeneratedCodeError, LLMProviderResponseError, StaticRuleError, ValueError) as exc:
         return _product_failure("code_generation_error", str(exc), next_action="generate_code")
@@ -1197,6 +1198,7 @@ def _write_static_check_report(
     target: str,
     code_path: Path,
     required_identifiers: list[str] | None = None,
+    required_identifier_source_id: str | None = None,
 ) -> Path:
     static_dir = study_dir / "runs" / run_id / "static_checks"
     static_dir.mkdir(parents=True, exist_ok=True)
@@ -1208,6 +1210,7 @@ def _write_static_check_report(
         code_path=code_path,
         expected_output_path=f"outputs/{target.lower()}.csv",
         required_identifiers=required_identifiers,
+        required_identifier_source_id=required_identifier_source_id,
     )
     write_static_rule_report(report, path=path)
     assert_no_blocking_static_findings(report)
@@ -1229,6 +1232,18 @@ def _required_identifiers_from_spec(target_spec: dict[str, object] | None) -> li
         if text and text not in identifiers:
             identifiers.append(text)
     return identifiers[:50]
+
+
+def _spec_source_id(target_spec: dict[str, object] | None) -> str | None:
+    if not isinstance(target_spec, dict):
+        return None
+    artifact_id = str(target_spec.get("artifact_id") or "").strip()
+    if artifact_id:
+        return artifact_id
+    path = str(target_spec.get("path") or "").strip()
+    if path:
+        return Path(path).as_posix()
+    return None
 
 
 def _tool_log_artifact(state: DatasetGraphState, path: Path, *, kind_id: str) -> ArtifactRef:

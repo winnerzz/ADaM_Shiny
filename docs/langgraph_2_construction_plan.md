@@ -519,6 +519,18 @@ Design principle:
   or tests for generic contracts, not production static rules.
 - When a check is heuristic or incomplete, it must be warning/informational and
   must record that it does not prove clinical correctness.
+- Every static finding must carry rule-governance metadata:
+  - `category`: one of `artifact_contract`, `execution_boundary`,
+    `spec_contract`, or `standards_pack`
+  - `source_type`: one of `system_contract`, `approved_spec`,
+    `standards_pack`, or `user_policy`
+  - optional `source_id`: spec artifact id, rule-pack id, or policy id
+- New blocking clinical rules are not allowed in the generic engine. They must
+  be added through a versioned standards/company rule pack with source, scope,
+  severity, and evidence, then reviewed as a rule-pack change.
+- Static-check artifacts without governance metadata are not silently
+  grandfathered for review/execution. They must be regenerated from the current
+  code/spec context so the audit trail can show each finding's source.
 
 Tasks:
 
@@ -574,6 +586,13 @@ LG2.5 slice implemented:
   becoming the framework.
 - Tests also cover incomplete static reports and attempts to reuse a passing
   static report from another R script.
+- Static-rule findings now include category/source metadata and policy
+  governance fields so anonymous demo-derived rules cannot be hidden inside the
+  generic checker.
+- `validate_static_rule_report_artifact` rejects findings with unknown
+  category/source/severity values and requires non-system sources such as
+  approved specs, standards packs, or user policy to carry a non-empty
+  `source_id`.
 
 LG2.5 slice verification:
 

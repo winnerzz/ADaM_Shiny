@@ -63,6 +63,7 @@ class StaticRuleTests(unittest.TestCase):
             code_path=code_path,
             expected_output_path="outputs/custom.csv",
             required_identifiers=["SUBJECT_ID"],
+            required_identifier_source_id="approved_spec:CUSTOM",
         )
 
         self.assertEqual(report.status, "pass")
@@ -89,7 +90,10 @@ class StaticRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(report.status, "blocked")
-        self.assertTrue(any(finding.rule_id == "R_FORBIDDEN_CALL" for finding in report.blocking_errors))
+        blocked = [finding for finding in report.blocking_errors if finding.rule_id == "R_FORBIDDEN_CALL"]
+        self.assertTrue(blocked)
+        self.assertEqual(blocked[0].category, "execution_boundary")
+        self.assertEqual(blocked[0].source_type, "system_contract")
         with self.assertRaises(StaticRuleError):
             assert_no_blocking_static_findings(report)
 
@@ -107,7 +111,10 @@ class StaticRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(report.status, "blocked")
-        self.assertTrue(any(finding.rule_id == "R_REQUIRED_OUTPUT_PATH" for finding in report.blocking_errors))
+        blocked = [finding for finding in report.blocking_errors if finding.rule_id == "R_REQUIRED_OUTPUT_PATH"]
+        self.assertTrue(blocked)
+        self.assertEqual(blocked[0].category, "artifact_contract")
+        self.assertEqual(blocked[0].source_type, "system_contract")
 
     def test_static_rules_required_identifier_is_policy_driven_warning(self) -> None:
         workspace = _workspace_dir("static_rules_identifier")
@@ -123,13 +130,35 @@ class StaticRuleTests(unittest.TestCase):
                 forbidden_calls=("system",),
                 required_output_paths=("outputs/any.csv",),
                 required_identifiers=("SUBJECT_ID",),
+                required_identifier_source_id="approved_spec:ANY",
             ),
         )
 
         self.assertEqual(report.status, "warning")
         self.assertFalse(report.blocking_errors)
-        self.assertTrue(any(finding.rule_id == "R_REQUIRED_IDENTIFIER_REFERENCE" for finding in report.findings))
+        identifier_findings = [
+            finding for finding in report.findings if finding.rule_id == "R_REQUIRED_IDENTIFIER_REFERENCE"
+        ]
+        self.assertTrue(identifier_findings)
+        self.assertEqual(identifier_findings[0].category, "spec_contract")
+        self.assertEqual(identifier_findings[0].source_type, "approved_spec")
+        self.assertEqual(identifier_findings[0].source_id, "approved_spec:ANY")
         self.assertIn("do not prove full CDISC", report.as_dict()["non_compliance_disclaimer"])
+
+    def test_static_rules_require_source_id_for_approved_spec_identifier_policy(self) -> None:
+        workspace = _workspace_dir("static_rules_identifier_source")
+        code_path = workspace / "build_any.R"
+        code_path.write_text("write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(StaticRuleError, "must include source_id"):
+            run_generated_r_static_checks(
+                study_id="STUDY",
+                run_id="run_static",
+                dataset="ANY",
+                code_path=code_path,
+                expected_output_path="outputs/any.csv",
+                required_identifiers=["SUBJECT_ID"],
+            )
 
     def test_static_rule_report_writes_policy_and_disclaimer(self) -> None:
         workspace = _workspace_dir("static_rules_report")
@@ -147,7 +176,29 @@ class StaticRuleTests(unittest.TestCase):
         payload = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertTrue(payload["implemented"])
         self.assertEqual(payload["policy"]["policy_id"], "generated_r_contract_v1")
+        self.assertEqual(payload["policy"]["rule_governance"]["engine_scope"], "generic_contracts_only")
+        self.assertIn("source-backed rule packs", payload["policy"]["rule_governance"]["demo_observation_policy"])
         self.assertIn("CDISC", payload["non_compliance_disclaimer"])
+
+    def test_static_rule_report_finding_metadata_prevents_anonymous_rules(self) -> None:
+        workspace = _workspace_dir("static_rules_metadata")
+        code_path = workspace / "build_any.R"
+        code_path.write_text("system('whoami')\n", encoding="utf-8")
+
+        report = run_generated_r_static_checks(
+            study_id="STUDY",
+            run_id="run_static",
+            dataset="ANY",
+            code_path=code_path,
+            expected_output_path="outputs/expected.csv",
+        )
+        payload = report.as_dict()
+
+        self.assertTrue(payload["findings"])
+        for finding in payload["findings"]:
+            self.assertIn(finding["category"], {"artifact_contract", "execution_boundary", "spec_contract", "standards_pack"})
+            self.assertIn(finding["source_type"], {"system_contract", "approved_spec", "standards_pack", "user_policy"})
+        self.assertFalse(any("ADAE" in json.dumps(finding) for finding in payload["findings"]))
 
     def test_static_rule_artifact_validation_rejects_incomplete_pass_report(self) -> None:
         workspace = _workspace_dir("static_rules_incomplete")
@@ -157,6 +208,102 @@ class StaticRuleTests(unittest.TestCase):
         report_path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
 
         with self.assertRaisesRegex(StaticRuleError, "missing required fields"):
+            validate_static_rule_report_artifact(
+                report_path,
+                dataset="ANY",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+            )
+
+    def test_static_rule_artifact_validation_rejects_anonymous_findings(self) -> None:
+        workspace = _workspace_dir("static_rules_anonymous_finding")
+        code_path = workspace / "build_any.R"
+        code_path.write_text("write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n", encoding="utf-8")
+        report = run_generated_r_static_checks(
+            study_id="STUDY",
+            run_id="run_static",
+            dataset="ANY",
+            code_path=code_path,
+            expected_output_path="outputs/missing.csv",
+        )
+        payload = report.as_dict()
+        payload["status"] = "warning"
+        payload["blocking_errors"] = []
+        payload["findings"] = [{"rule_id": "R_PATCHED_DEMO_RULE", "severity": "warning"}]
+        report_path = workspace / "static_report.json"
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(StaticRuleError, "rule-governance fields"):
+            validate_static_rule_report_artifact(
+                report_path,
+                dataset="ANY",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+            )
+
+    def test_static_rule_artifact_validation_rejects_invalid_finding_enums(self) -> None:
+        workspace = _workspace_dir("static_rules_invalid_enum")
+        code_path = workspace / "build_any.R"
+        code_path.write_text("write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n", encoding="utf-8")
+        report = run_generated_r_static_checks(
+            study_id="STUDY",
+            run_id="run_static",
+            dataset="ANY",
+            code_path=code_path,
+            expected_output_path="outputs/any.csv",
+        )
+        payload = report.as_dict()
+        payload["status"] = "warning"
+        payload["findings"] = [
+            {
+                "rule_id": "R_FAKE",
+                "severity": "warning",
+                "category": "demo_patch",
+                "source_type": "system_contract",
+                "confidence": "high",
+                "evidence": "demo observation",
+                "source_id": "",
+            }
+        ]
+        report_path = workspace / "static_report.json"
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(StaticRuleError, "invalid category"):
+            validate_static_rule_report_artifact(
+                report_path,
+                dataset="ANY",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+            )
+
+    def test_static_rule_artifact_validation_rejects_non_system_source_without_id(self) -> None:
+        workspace = _workspace_dir("static_rules_source_id")
+        code_path = workspace / "build_any.R"
+        code_path.write_text("write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n", encoding="utf-8")
+        report = run_generated_r_static_checks(
+            study_id="STUDY",
+            run_id="run_static",
+            dataset="ANY",
+            code_path=code_path,
+            expected_output_path="outputs/any.csv",
+        )
+        payload = report.as_dict()
+        payload["status"] = "warning"
+        payload["findings"] = [
+            {
+                "rule_id": "R_SPEC_VISIBILITY",
+                "severity": "warning",
+                "category": "spec_contract",
+                "source_type": "approved_spec",
+                "confidence": "medium",
+                "evidence": "SUBJECT_ID",
+                "source_id": "",
+            }
+        ]
+        report_path = workspace / "static_report.json"
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(StaticRuleError, "has no source_id"):
             validate_static_rule_report_artifact(
                 report_path,
                 dataset="ANY",

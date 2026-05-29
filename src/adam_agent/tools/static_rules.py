@@ -19,6 +19,13 @@ from adam_agent.tools.artifacts import sha256_file
 
 
 StaticRuleSeverity = Literal["error", "warning", "info"]
+StaticRuleCategory = Literal["artifact_contract", "execution_boundary", "spec_contract", "standards_pack"]
+StaticRuleSourceType = Literal["system_contract", "approved_spec", "standards_pack", "user_policy"]
+
+STATIC_RULE_SEVERITIES = {"error", "warning", "info"}
+STATIC_RULE_CATEGORIES = {"artifact_contract", "execution_boundary", "spec_contract", "standards_pack"}
+STATIC_RULE_SOURCE_TYPES = {"system_contract", "approved_spec", "standards_pack", "user_policy"}
+SOURCE_ID_REQUIRED_TYPES = {"approved_spec", "standards_pack", "user_policy"}
 
 
 class StaticRuleError(ValueError):
@@ -32,16 +39,22 @@ class StaticRuleFinding:
     rule_id: str
     severity: StaticRuleSeverity
     message: str
+    category: StaticRuleCategory
+    source_type: StaticRuleSourceType
     confidence: str = "high"
     evidence: str = ""
+    source_id: str = ""
 
     def as_dict(self) -> dict[str, str]:
         return {
             "rule_id": self.rule_id,
             "severity": self.severity,
             "message": self.message,
+            "category": self.category,
+            "source_type": self.source_type,
             "confidence": self.confidence,
             "evidence": self.evidence,
+            "source_id": self.source_id,
         }
 
 
@@ -54,6 +67,8 @@ class StaticRulePolicy:
     required_output_paths: tuple[str, ...] = ()
     required_identifiers: tuple[str, ...] = ()
     required_identifier_severity: StaticRuleSeverity = "warning"
+    required_identifier_source_type: StaticRuleSourceType = "approved_spec"
+    required_identifier_source_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +77,13 @@ class StaticRulePolicy:
             "required_output_paths": list(self.required_output_paths),
             "required_identifiers": list(self.required_identifiers),
             "required_identifier_severity": self.required_identifier_severity,
+            "required_identifier_source_type": self.required_identifier_source_type,
+            "required_identifier_source_id": self.required_identifier_source_id,
+            "rule_governance": {
+                "engine_scope": "generic_contracts_only",
+                "demo_observation_policy": "Demo observations can become static rules only after promotion into source-backed rule packs.",
+                "clinical_rule_policy": "clinical/domain rules require approved specs or versioned standards packs",
+            },
         }
 
 
@@ -123,6 +145,7 @@ def run_generated_r_static_checks(
     code_path: str | Path,
     expected_output_path: str | None = None,
     required_identifiers: list[str] | tuple[str, ...] | None = None,
+    required_identifier_source_id: str | None = None,
     policy: StaticRulePolicy | None = None,
 ) -> StaticRuleReport:
     """Run narrow static checks against generated R code."""
@@ -133,7 +156,9 @@ def run_generated_r_static_checks(
         policy,
         expected_output_path=expected_output_path,
         required_identifiers=required_identifiers,
+        required_identifier_source_id=required_identifier_source_id,
     )
+    _validate_policy_governance(active_policy)
     findings: list[StaticRuleFinding] = []
     if not path.exists() or not path.is_file():
         findings.append(
@@ -141,6 +166,8 @@ def run_generated_r_static_checks(
                 rule_id="R_FILE_EXISTS",
                 severity="error",
                 message=f"Generated R script does not exist: {path}",
+                category="artifact_contract",
+                source_type="system_contract",
                 evidence=str(path.as_posix()),
             )
         )
@@ -158,6 +185,8 @@ def run_generated_r_static_checks(
                     rule_id="R_REQUIRED_OUTPUT_PATH",
                     severity="error",
                     message=f"Generated R code does not visibly write required output path: {output_path}.",
+                    category="artifact_contract",
+                    source_type="system_contract",
                     evidence=output_path,
                 )
             )
@@ -168,8 +197,11 @@ def run_generated_r_static_checks(
                     rule_id="R_REQUIRED_IDENTIFIER_REFERENCE",
                     severity=active_policy.required_identifier_severity,
                     message=f"Generated R code does not visibly reference required identifier: {identifier}.",
+                    category="spec_contract",
+                    source_type=active_policy.required_identifier_source_type,
                     confidence="medium",
                     evidence=identifier,
+                    source_id=active_policy.required_identifier_source_id,
                 )
             )
     return _report(study_id, run_id, target, path, active_policy, findings)
@@ -246,6 +278,7 @@ def _merge_policy(
     *,
     expected_output_path: str | None,
     required_identifiers: list[str] | tuple[str, ...] | None,
+    required_identifier_source_id: str | None,
 ) -> StaticRulePolicy:
     base = policy or StaticRulePolicy(forbidden_calls=DEFAULT_FORBIDDEN_R_CALLS)
     output_paths = list(base.required_output_paths)
@@ -259,6 +292,8 @@ def _merge_policy(
         required_output_paths=tuple(dict.fromkeys(_normalize_output_path(path) for path in output_paths if str(path).strip())),
         required_identifiers=tuple(dict.fromkeys(identifiers)),
         required_identifier_severity=base.required_identifier_severity,
+        required_identifier_source_type=base.required_identifier_source_type,
+        required_identifier_source_id=str(required_identifier_source_id or base.required_identifier_source_id or "").strip(),
     )
 
 
@@ -273,6 +308,8 @@ def _dangerous_call_findings(code_without_strings: str, forbidden_calls: tuple[s
                     rule_id="R_FORBIDDEN_CALL",
                     severity="error",
                     message=f"Generated R code uses forbidden call: {call}().",
+                    category="execution_boundary",
+                    source_type="system_contract",
                     evidence=match.group(0),
                 )
             )
@@ -395,6 +432,9 @@ def _require_static_report_schema(payload: dict[str, Any]) -> None:
     for key in ("findings", "blocking_errors", "warnings", "notes"):
         if not isinstance(payload.get(key), list):
             raise StaticRuleError(f"Static-check artifact field must be a list: {key}.")
+    for key in ("findings", "blocking_errors"):
+        for index, item in enumerate(payload.get(key) or []):
+            _validate_static_finding_payload(item, field_path=f"{key}[{index}]")
 
 
 def _same_existing_path(left: Path, right: Path) -> bool:
@@ -404,6 +444,51 @@ def _same_existing_path(left: Path, right: Path) -> bool:
         return left.resolve() == right.resolve()
     except OSError:
         return left.as_posix() == right.as_posix()
+
+
+def _validate_policy_governance(policy: StaticRulePolicy) -> None:
+    source_type = str(policy.required_identifier_source_type or "").strip()
+    if source_type not in STATIC_RULE_SOURCE_TYPES:
+        raise StaticRuleError(f"Static-rule policy has invalid required identifier source_type: {source_type or '<missing>'}.")
+    if policy.required_identifier_severity not in STATIC_RULE_SEVERITIES:
+        raise StaticRuleError(
+            f"Static-rule policy has invalid required identifier severity: {policy.required_identifier_severity}."
+        )
+    if policy.required_identifiers and source_type in SOURCE_ID_REQUIRED_TYPES and not policy.required_identifier_source_id:
+        raise StaticRuleError(
+            "Static-rule policy required identifiers from approved_spec, standards_pack, or user_policy must include source_id. "
+            "Regenerate the static-check artifact from the current code/spec context."
+        )
+
+
+def _validate_static_finding_payload(item: Any, *, field_path: str) -> None:
+    if not isinstance(item, dict):
+        raise StaticRuleError(f"Static-check artifact {field_path} must be an object.")
+    missing = [
+        field
+        for field in ("rule_id", "severity", "category", "source_type", "confidence", "evidence")
+        if field not in item
+    ]
+    if missing:
+        raise StaticRuleError(
+            f"Static-check artifact {field_path} is missing rule-governance fields: {', '.join(missing)}. "
+            "Regenerate the static-check artifact with the current rule-governance schema."
+        )
+    severity = str(item.get("severity") or "").strip()
+    category = str(item.get("category") or "").strip()
+    source_type = str(item.get("source_type") or "").strip()
+    source_id = str(item.get("source_id") or "").strip()
+    if severity not in STATIC_RULE_SEVERITIES:
+        raise StaticRuleError(f"Static-check artifact {field_path} has invalid severity: {severity or '<missing>'}.")
+    if category not in STATIC_RULE_CATEGORIES:
+        raise StaticRuleError(f"Static-check artifact {field_path} has invalid category: {category or '<missing>'}.")
+    if source_type not in STATIC_RULE_SOURCE_TYPES:
+        raise StaticRuleError(f"Static-check artifact {field_path} has invalid source_type: {source_type or '<missing>'}.")
+    if source_type in SOURCE_ID_REQUIRED_TYPES and not source_id:
+        raise StaticRuleError(
+            f"Static-check artifact {field_path} uses source_type={source_type} but has no source_id. "
+            "Regenerate the static-check artifact from the current code/spec context."
+        )
 
 
 def _report(
@@ -434,6 +519,7 @@ def _report(
         notes=[
             "Blocking checks currently cover generic R safety calls and caller-provided output contracts.",
             "Identifier checks are caller-provided visibility checks, not proof of clinical derivation correctness.",
+            "Demo observations must be promoted into source-backed rule packs before becoming static rules.",
             "Additional standards-aware policies belong in later LG2.5 increments.",
         ],
     )

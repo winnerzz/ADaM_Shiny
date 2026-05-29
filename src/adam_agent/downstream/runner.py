@@ -134,6 +134,7 @@ def run_downstream_adam(
 
     context_dict = context.as_dict()
     required_identifiers = _required_identifiers_from_context(context_dict)
+    required_identifier_source_id = _target_spec_source_id_from_context(context_dict)
     prompt = compact_prompt_from_context(context_dict)
     prompt_artifact = write_compact_prompt_artifact(
         study_id=study_id,
@@ -179,6 +180,7 @@ def run_downstream_adam(
         artifacts=artifacts,
         repair_attempt=0,
         required_identifiers=required_identifiers,
+        required_identifier_source_id=required_identifier_source_id,
     )
 
     if attempt.failure_record is not None:
@@ -242,6 +244,7 @@ def run_downstream_adam(
             artifacts=artifacts,
             repair_attempt=1,
             required_identifiers=required_identifiers,
+            required_identifier_source_id=required_identifier_source_id,
             attempt_label="repair1",
         )
         if repair_attempt.failure_record is not None:
@@ -333,6 +336,7 @@ def _run_generated_response_attempt(
     artifacts: dict[str, ArtifactRef],
     repair_attempt: int,
     required_identifiers: list[str],
+    required_identifier_source_id: str | None,
     attempt_label: str | None = None,
 ) -> _AttemptResult:
     """Parse, write, execute, validate, and diagnose one LLM response."""
@@ -414,6 +418,7 @@ def _run_generated_response_attempt(
         target=target,
         code_path=Path(generated_artifacts.code_artifact.path),
         required_identifiers=required_identifiers,
+        required_identifier_source_id=required_identifier_source_id,
         attempt_label=attempt_label,
     )
     artifacts[f"static_check{artifact_suffix}"] = static_artifact
@@ -914,6 +919,7 @@ def _write_static_check_artifact(
     target: str,
     code_path: Path,
     required_identifiers: list[str],
+    required_identifier_source_id: str | None,
     attempt_label: str | None,
 ) -> tuple[StaticRuleReport, ArtifactRef]:
     target_lower = target.lower()
@@ -926,6 +932,7 @@ def _write_static_check_artifact(
         code_path=code_path,
         expected_output_path=f"outputs/{target_lower}.csv",
         required_identifiers=required_identifiers,
+        required_identifier_source_id=required_identifier_source_id,
     )
     write_static_rule_report(report, path=static_path)
     artifact = ArtifactRef(
@@ -962,6 +969,19 @@ def _required_identifiers_from_context(context: dict[str, Any]) -> list[str]:
         if text and text not in identifiers:
             identifiers.append(text)
     return identifiers[:50]
+
+
+def _target_spec_source_id_from_context(context: dict[str, Any]) -> str | None:
+    target_spec = context.get("target_spec")
+    if not isinstance(target_spec, dict):
+        return None
+    artifact_id = str(target_spec.get("artifact_id") or "").strip()
+    if artifact_id:
+        return artifact_id
+    path = str(target_spec.get("path") or "").strip()
+    if path:
+        return Path(path).as_posix()
+    return None
 
 
 def _validation_report(target: str, status: str, *, errors: list[str]) -> dict[str, Any]:
