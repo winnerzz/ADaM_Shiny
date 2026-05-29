@@ -36,6 +36,7 @@ from adam_agent.llm.prompt_compaction import (
     write_compact_prompt_artifact,
 )
 from adam_agent.schemas.artifacts import ArtifactRef
+from adam_agent.schemas.graph_state import StudyRunState
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
@@ -1143,6 +1144,7 @@ def _product_failure(
 
 def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> dict[str, object] | None:
     target_lower = target.strip().lower()
+    graph_spec_state = _approved_draft_spec_state(study_dir, run_id, target)
     approved_path = study_dir / "runs" / run_id / "approved_specs" / f"{target_lower}_approved_spec.json"
     review_path = study_dir / "runs" / run_id / "reviews" / f"{target_lower}_draft_spec_review.json"
     if not approved_path.exists() or not approved_path.is_file():
@@ -1150,6 +1152,14 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
     review = _read_json_if_exists(review_path)
     if review.get("decision") != "approve" or review.get("approved") is not True:
         return None
+    if not graph_spec_state:
+        raise ValueError("Approved draft spec must be recorded in graph state before code generation.")
+    graph_review_path = graph_spec_state.get("review_path")
+    graph_approved_path = graph_spec_state.get("approved_spec_path")
+    if str(Path(str(graph_review_path or "")).as_posix()) != str(review_path.as_posix()):
+        raise ValueError("Graph draft-spec approval points to a different review artifact. Review the draft spec again.")
+    if str(Path(str(graph_approved_path or "")).as_posix()) != str(approved_path.as_posix()):
+        raise ValueError("Graph draft-spec approval points to a different approved spec. Review the draft spec again.")
     parsed = _read_json_if_exists(approved_path)
     approved_fingerprint = parsed.get("input_fingerprint") or review.get("input_fingerprint")
     current_fingerprint = input_fingerprint(study_dir)
@@ -1175,6 +1185,9 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
     current_spec_sha = f"sha256:{sha256_file(approved_path)}"
     if approved_spec_sha != current_spec_sha:
         raise ValueError("Approved draft spec changed after approval. Review and approve the draft spec again.")
+    graph_approved_sha = graph_spec_state.get("approved_spec_sha256")
+    if graph_approved_sha != current_spec_sha:
+        raise ValueError("Graph draft-spec approval is stale. Review and approve the draft spec again.")
     return {
         "artifact_id": f"approved_draft_spec_{target_lower}",
         "path": str(approved_path.as_posix()),
@@ -1187,6 +1200,23 @@ def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> d
         "source": "user_approved_draft_spec",
         "review_path": str(review_path.as_posix()),
     }
+
+
+def _approved_draft_spec_state(study_dir: Path, run_id: str, target: str) -> dict[str, object]:
+    graph_state_path = study_dir / "runs" / run_id / "graph_state.json"
+    if not graph_state_path.exists() or not graph_state_path.is_file():
+        return {}
+    try:
+        graph_state = StudyRunState.model_validate_json(graph_state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    dataset_state = graph_state.datasets.get(target.strip().upper())
+    if dataset_state is None:
+        return {}
+    spec_state = dict(dataset_state.spec_state)
+    if spec_state.get("status") != "approved" or spec_state.get("decision") != "approve":
+        return {}
+    return spec_state
 
 
 def _read_json_if_exists(path: str | Path) -> dict[str, object]:

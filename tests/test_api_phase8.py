@@ -640,7 +640,7 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(generated.status_code, 400)
-        self.assertIn("missing its input fingerprint", generated.json()["detail"])
+        self.assertIn("recorded in graph state", generated.json()["detail"])
 
     def test_execute_approved_code_terminal_failure_is_explicit(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_failure")
@@ -1415,6 +1415,14 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertTrue(draft_payload["spec_path"].endswith("specs/adae_draft_spec.json"))
         self.assertEqual(review_response.status_code, 200, review_response.text)
         self.assertTrue(review_response.json()["approved"])
+        graph_state = client.get(
+            "/runs/run_missing_spec_draft/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        adae_state = graph_state.json()["datasets"]["ADAE"]
+        self.assertEqual(adae_state["spec_state"]["status"], "approved")
+        self.assertEqual(adae_state["human_commands"][-1]["interrupt"], "draft_spec_review")
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "code_generated")
@@ -1514,6 +1522,14 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(payload["draft_spec"]["variables"][0]["variable"], "AETERM")
         self.assertEqual([request.node for request in requests], ["draft_spec_from_evidence"])
         self.assertTrue((study_dir / "runs" / "run_finalize_missing_spec" / "specs" / "adae_draft_spec.json").exists())
+        graph_state = client.get(
+            "/runs/run_finalize_missing_spec/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        adae_state = graph_state.json()["datasets"]["ADAE"]
+        self.assertEqual(adae_state["current_interrupt"]["name"], "draft_spec_review")
+        self.assertEqual(adae_state["spec_state"]["status"], "draft_generated")
 
     def test_finalize_inputs_accepts_mock_model_alias_from_ui(self) -> None:
         study_dir = _study_without_spec_with_auxiliary_evidence("phase8_finalize_mock_alias")

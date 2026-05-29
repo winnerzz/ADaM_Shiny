@@ -838,3 +838,58 @@ Follow-up subagent review found two additional issues, now fixed:
 - dependency artifact lookup now prefers same-run generated outputs over same-named Reference ADaM
 
 Result: 126 tests passed.
+
+### 2026-05-29 - LG2.2 Draft Spec Gateway Slice
+
+Completed:
+
+- Moved generated draft spec state into `GraphGateway` canonical graph state:
+  - `record_draft_spec_generation()` records the generated draft spec path/hash,
+    LLM prompt/response artifacts, variables, warnings, and current input
+    fingerprint.
+  - The dataset enters a graph-owned `draft_spec_review` interrupt instead of
+    relying only on service-local `workflow_state.json`.
+- Moved draft spec review decisions into `GraphGateway`:
+  - `record_draft_spec_review()` records approve/reject commands into both the
+    dataset and study human-command history.
+  - The approved spec path/hash and review artifact are attached to
+    `DatasetRunState.spec_state`.
+- Added fail-closed graph validation before trusting a draft-spec review:
+  - review is rejected if no graph draft state exists
+  - review is rejected if the draft spec path differs from graph state
+  - review is rejected if the draft spec hash changed after generation
+  - review is rejected if the draft spec artifact itself has no input
+    fingerprint or the fingerprint is stale
+  - approve decisions require an approved spec artifact and hash
+  - approved spec hash must match the review payload
+- Tightened approved draft spec consumption:
+  - DatasetGraph code generation now refuses filesystem-only approved draft spec
+    files unless canonical graph state also has `spec_state.status == approved`
+  - `GraphGateway.record_code_generation()` rechecks the graph-approved draft
+    spec path/hash/fingerprint before recording generated code
+  - approving one dataset no longer clears another dataset's open run-level
+    interrupt
+- Updated the FastAPI compatibility service so `finalize-inputs`,
+  `draft-spec`, and `draft-spec-review` write through `GraphGateway`.
+- Added regression coverage for:
+  - graph-state showing `draft_spec_review` after draft generation
+  - graph-state showing approved draft spec review after approval
+  - graph gateway rejecting draft spec tampering before approval
+
+Current boundary:
+
+- `workflow_state.json` remains a UI projection for compatibility, but this
+  slice makes draft spec generation/review and approved-draft consumption
+  graph-owned.
+- Code review and execution are partly graph-owned already, but terminal
+  validation/compare/repair are still service-driven or compatibility-layer
+  paths.
+- DatasetGraph still has legacy stub nodes for non-product test modes.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 144 tests passed after the subagent review fixes.

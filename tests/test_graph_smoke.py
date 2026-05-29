@@ -18,8 +18,10 @@ LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 try:
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
+    from adam_agent.schemas.graph_state import HumanCommand
     from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
@@ -27,8 +29,10 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
+    from adam_agent.schemas.graph_state import HumanCommand
     from adam_agent.tools.artifacts import sha256_file
 
 
@@ -583,15 +587,29 @@ class GraphSmokeTests(unittest.TestCase):
     def test_dataset_graph_product_generate_code_uses_approved_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_approved_draft") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "runs" / "run_lg2_product_generate_code_approved_draft" / "specs"
         approved_dir = study_dir / "runs" / "run_lg2_product_generate_code_approved_draft" / "approved_specs"
         reviews_dir = study_dir / "runs" / "run_lg2_product_generate_code_approved_draft" / "reviews"
         sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
         approved_dir.mkdir(parents=True)
         reviews_dir.mkdir()
         (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
         from adam_agent.graph.workflow_state import input_fingerprint
 
         fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "status": "draft",
+                    "input_fingerprint": fingerprint,
+                    "variables": [{"variable": "AETERM", "source_domains": ["AE"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
         approved_path = approved_dir / "adae_approved_spec.json"
         approved_path.write_text(
             json.dumps(
@@ -604,7 +622,8 @@ class GraphSmokeTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (reviews_dir / "adae_draft_spec_review.json").write_text(
+        review_path = reviews_dir / "adae_draft_spec_review.json"
+        review_path.write_text(
             json.dumps(
                 {
                     "decision": "approve",
@@ -614,6 +633,33 @@ class GraphSmokeTests(unittest.TestCase):
                 }
             ),
             encoding="utf-8",
+        )
+        approved_sha = f"sha256:{sha256_file(approved_path)}"
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_product_generate_code_approved_draft",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        gateway.record_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_product_generate_code_approved_draft",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            draft_spec_path=draft_path,
+            approved_spec_path=approved_path,
+            approved_spec_sha256=approved_sha,
+            input_fingerprint_payload=fingerprint,
         )
         dataset_graph = compile_dataset_graph()
 
@@ -643,21 +689,29 @@ class GraphSmokeTests(unittest.TestCase):
     def test_dataset_graph_product_generate_code_rejects_stale_approved_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_stale_draft") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "specs"
         approved_dir = study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "approved_specs"
         reviews_dir = study_dir / "runs" / "run_lg2_product_generate_code_stale_draft" / "reviews"
         sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
         approved_dir.mkdir(parents=True)
         reviews_dir.mkdir()
         (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
         from adam_agent.graph.workflow_state import input_fingerprint
 
         fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "status": "draft", "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
         approved_path = approved_dir / "adae_approved_spec.json"
         approved_path.write_text(
             json.dumps({"dataset": "ADAE", "status": "approved_draft", "input_fingerprint": fingerprint}),
             encoding="utf-8",
         )
-        (reviews_dir / "adae_draft_spec_review.json").write_text(
+        review_path = reviews_dir / "adae_draft_spec_review.json"
+        review_path.write_text(
             json.dumps(
                 {
                     "decision": "approve",
@@ -667,6 +721,33 @@ class GraphSmokeTests(unittest.TestCase):
                 }
             ),
             encoding="utf-8",
+        )
+        approved_sha = f"sha256:{sha256_file(approved_path)}"
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_product_generate_code_stale_draft",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        gateway.record_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_product_generate_code_stale_draft",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            draft_spec_path=draft_path,
+            approved_spec_path=approved_path,
+            approved_spec_sha256=approved_sha,
+            input_fingerprint_payload=fingerprint,
         )
         (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,MED\n", encoding="utf-8")
         dataset_graph = compile_dataset_graph()

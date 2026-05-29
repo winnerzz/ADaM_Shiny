@@ -16,8 +16,8 @@ try:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway
-    from adam_agent.graph.workflow_state import workflow_projection_consistency
-    from adam_agent.schemas.graph_state import HumanCommand
+    from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
+    from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
@@ -26,8 +26,8 @@ except ModuleNotFoundError:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway
-    from adam_agent.graph.workflow_state import workflow_projection_consistency
-    from adam_agent.schemas.graph_state import HumanCommand
+    from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
+    from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.tools.artifacts import sha256_file
 
 
@@ -203,6 +203,48 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(workflow_state["current_interrupt"])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
 
+    def test_gateway_resume_preserves_other_dataset_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_resume_preserve_interrupt") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_resume_preserve_interrupt",
+            status="needs_review",
+            target_datasets=["ADAE", "ADCM"],
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_resume_preserve_interrupt",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="draft_spec_review", dataset="ADAE"),
+                ),
+                "ADCM": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_resume_preserve_interrupt",
+                    dataset="ADCM",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADCM"),
+                ),
+            },
+        )
+
+        result = GraphGateway().resume(
+            study_dir=study_dir,
+            graph_state=state,
+            command=HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+        )
+
+        self.assertIsNone(result.graph_state.datasets["ADAE"].current_interrupt)
+        self.assertEqual(result.graph_state.current_interrupt.name, "code_review")
+        self.assertEqual(result.graph_state.current_interrupt.dataset, "ADCM")
+        self.assertEqual(result.graph_state.status, "needs_review")
+
     def test_gateway_records_dataset_code_review_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_code_review") / "PSY201"
         code_dir = study_dir / "runs" / "run_lg2_code_review" / "code"
@@ -261,6 +303,260 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(dataset_state.current_interrupt)
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "approved")
+
+    def test_gateway_records_draft_spec_review_in_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_draft_spec_review") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_draft_spec_review"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        llm_dir = run_dir / "llm"
+        review_dir = run_dir / "reviews"
+        approved_dir = run_dir / "approved_specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        review_dir.mkdir()
+        approved_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        prompt_path = llm_dir / "adae_draft_prompt.txt"
+        response_path = llm_dir / "adae_draft_response.json"
+        prompt_path.write_text("draft ADAE spec", encoding="utf-8")
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+
+        gateway = GraphGateway()
+        generated = gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_draft_spec_review",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            prompt_path=prompt_path,
+            response_path=response_path,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        dataset_state = generated.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(generated.workflow_projection["datasets"]["ADAE"]["spec_state"]["status"], "draft_generated")
+        approved_path = approved_dir / "adae_approved_spec.json"
+        approved_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint, "status": "approved_draft"}),
+            encoding="utf-8",
+        )
+        approved_sha = f"sha256:{sha256_file(approved_path)}"
+        review_path = review_dir / "adae_draft_spec_review.json"
+        review_path.write_text(
+            json.dumps({"decision": "approve", "approved": True, "approved_spec_sha256": approved_sha}),
+            encoding="utf-8",
+        )
+
+        reviewed = gateway.record_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_draft_spec_review",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+                notes="Approved graph-native draft spec.",
+            ),
+            review_path=review_path,
+            draft_spec_path=draft_path,
+            approved_spec_path=approved_path,
+            approved_spec_sha256=approved_sha,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        dataset_state = reviewed.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_draft_spec_review" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.spec_state["approved_spec_sha256"], approved_sha)
+        self.assertEqual(dataset_state.human_commands[0].interrupt, "draft_spec_review")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+
+    def test_gateway_draft_spec_review_rejects_changed_draft_hash(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_draft_spec_hash") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_draft_spec_hash"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        review_dir = run_dir / "reviews"
+        approved_dir = run_dir / "approved_specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        approved_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        approved_path = approved_dir / "adae_approved_spec.json"
+        approved_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint, "status": "approved_draft"}),
+            encoding="utf-8",
+        )
+        approved_sha = f"sha256:{sha256_file(approved_path)}"
+        review_path = review_dir / "adae_draft_spec_review.json"
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_draft_spec_hash",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TAMPERED"}], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Draft spec changed after graph draft generation"):
+            gateway.record_draft_spec_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_draft_spec_hash",
+                dataset="ADAE",
+                command=HumanCommand(
+                    interrupt="draft_spec_review",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="tester",
+                ),
+                review_path=review_path,
+                draft_spec_path=draft_path,
+                approved_spec_path=approved_path,
+                approved_spec_sha256=approved_sha,
+                input_fingerprint_payload=fingerprint,
+            )
+
+    def test_gateway_draft_spec_approval_requires_approved_artifact_and_hash(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_draft_spec_no_artifact") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_draft_spec_no_artifact"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        review_dir = run_dir / "reviews"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        review_path = review_dir / "adae_draft_spec_review.json"
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_draft_spec_no_artifact",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires an approved spec artifact and hash"):
+            gateway.record_draft_spec_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_draft_spec_no_artifact",
+                dataset="ADAE",
+                command=HumanCommand(
+                    interrupt="draft_spec_review",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="tester",
+                ),
+                review_path=review_path,
+                draft_spec_path=draft_path,
+                input_fingerprint_payload=fingerprint,
+            )
+
+    def test_gateway_preserves_other_dataset_interrupt_after_draft_approval(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_preserve_interrupt") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_preserve_interrupt"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        review_dir = run_dir / "reviews"
+        approved_dir = run_dir / "approved_specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        approved_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        approved_path = approved_dir / "adae_approved_spec.json"
+        approved_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint, "status": "approved_draft"}),
+            encoding="utf-8",
+        )
+        approved_sha = f"sha256:{sha256_file(approved_path)}"
+        review_path = review_dir / "adae_draft_spec_review.json"
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_preserve_interrupt",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_preserve_interrupt").model_copy(deep=True)
+        state.datasets["ADCM"] = DatasetRunState(
+            study_id="PSY201",
+            run_id="run_lg2_preserve_interrupt",
+            dataset="ADCM",
+            status="needs_review",
+            current_interrupt=InterruptState(name="code_review", dataset="ADCM", reason="Review ADCM code."),
+            input_fingerprint=fingerprint,
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_other_interrupt")
+
+        reviewed = gateway.record_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_preserve_interrupt",
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            draft_spec_path=draft_path,
+            approved_spec_path=approved_path,
+            approved_spec_sha256=approved_sha,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        self.assertEqual(reviewed.graph_state.current_interrupt.name, "code_review")
+        self.assertEqual(reviewed.graph_state.current_interrupt.dataset, "ADCM")
 
     def test_gateway_code_review_rejects_changed_spec_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_spec_hash") / "PSY201"
@@ -328,6 +624,31 @@ class GraphGatewayTests(unittest.TestCase):
                 code_sha256=code_sha,
                 static_check_path=static_path,
                 static_check_sha256=static_sha,
+            )
+
+    def test_gateway_code_generation_requires_graph_approved_draft_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_codegen_requires_graph_draft") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_codegen_requires_graph_draft"
+        code_dir = run_dir / "code"
+        approved_dir = run_dir / "approved_specs"
+        code_dir.mkdir(parents=True)
+        approved_dir.mkdir()
+        approved_path = approved_dir / "adae_approved_spec.json"
+        code_path = code_dir / "build_adae.R"
+        approved_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv')\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "recorded in graph state"):
+            GraphGateway().record_code_generation(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_codegen_requires_graph_draft",
+                dataset="ADAE",
+                code_path=code_path,
+                code_sha256=f"sha256:{sha256_file(code_path)}",
+                spec_source="approved_draft_spec",
+                spec_path=approved_path,
+                spec_sha256=f"sha256:{sha256_file(approved_path)}",
             )
 
 

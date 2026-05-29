@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -85,8 +86,6 @@ class GraphGateway:
 
         next_state = graph_state.model_copy(deep=True)
         next_state.human_commands.append(command)
-        next_state.current_interrupt = None
-        next_state.status = "running" if command.action == "approve" else "needs_review"
         next_state.updated_at = utc_now()
         if command.dataset:
             dataset_key = command.dataset.strip().upper()
@@ -95,6 +94,8 @@ class GraphGateway:
                 dataset_state.human_commands.append(command)
                 dataset_state.current_interrupt = None if command.action == "approve" else dataset_state.current_interrupt
                 dataset_state.updated_at = utc_now()
+        next_state.current_interrupt = _next_open_dataset_interrupt(next_state)
+        next_state.status = "needs_review" if next_state.current_interrupt or command.action != "approve" else "running"
         self._persist_graph_state(study_dir, next_state, node=f"resume_{command.interrupt}")
         projection = project_graph_state_to_workflow(study_dir, next_state, node=f"graph_gateway_resume_{command.interrupt}")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
@@ -168,12 +169,215 @@ class GraphGateway:
             _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", static_check_path, kind="tool_log"))
         next_state.datasets[target] = dataset_state
         next_state.human_commands.append(command)
-        next_state.current_interrupt = None
-        next_state.status = "running" if command.action == "approve" else "needs_review"
+        next_state.current_interrupt = dataset_state.current_interrupt or _next_open_dataset_interrupt(next_state)
+        next_state.status = "needs_review" if next_state.current_interrupt else "running"
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="code_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_code_review")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def record_draft_spec_generation(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        draft_spec_path: str | Path,
+        prompt_path: str | Path | None = None,
+        response_path: str | Path | None = None,
+        variables: list[dict[str, Any]] | None = None,
+        warnings: list[str] | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Persist a generated draft spec and its review interrupt."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        draft_path = Path(draft_spec_path)
+        if not draft_path.exists() or not draft_path.is_file():
+            raise ValueError(f"Draft spec does not exist: {draft_path}")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        draft_sha = f"sha256:{sha256_file(draft_path)}"
+        next_state = self._load_or_create_state(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            input_fingerprint_payload=fingerprint,
+        )
+        dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        dataset_state.spec_state.update(
+            {
+                "status": "draft_generated",
+                "spec_source": "draft_spec",
+                "draft_spec_path": str(draft_path.as_posix()),
+                "draft_spec_sha256": draft_sha,
+                "prompt_path": str(Path(prompt_path).as_posix()) if prompt_path else None,
+                "response_path": str(Path(response_path).as_posix()) if response_path else None,
+                "variables": variables or [],
+                "warnings": warnings or [],
+                "input_fingerprint": fingerprint,
+            }
+        )
+        dataset_state.current_interrupt = InterruptState(
+            name="draft_spec_review",
+            dataset=target,
+            reason="Generated draft spec must be reviewed before R code generation.",
+            payload={"draft_spec_path": str(draft_path.as_posix())},
+        )
+        dataset_state.status = "needs_review"
+        dataset_state.updated_at = utc_now()
+        _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec", "intermediate", draft_path, kind="draft_spec"))
+        if prompt_path:
+            _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_prompt", "audit", prompt_path, kind="llm_prompt"))
+        if response_path:
+            _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_response", "audit", response_path, kind="llm_response"))
+        next_state.datasets[target] = dataset_state
+        next_state.current_interrupt = dataset_state.current_interrupt
+        next_state.status = "needs_review"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="draft_spec_generation")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_generation")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def record_draft_spec_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        command: HumanCommand,
+        review_path: str | Path,
+        draft_spec_path: str | Path,
+        approved_spec_path: str | Path | None = None,
+        approved_spec_sha256: str | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayResult:
+        """Persist a draft-spec review decision into canonical graph state."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        if command.action == "approve" and (not approved_spec_path or not approved_spec_sha256):
+            raise ValueError("Approved draft spec approval requires an approved spec artifact and hash.")
+        self.validate_draft_spec_review(
+            study_dir=root,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_spec_path,
+            approved_spec_path=approved_spec_path,
+            approved_spec_sha256=approved_spec_sha256,
+            input_fingerprint_payload=fingerprint,
+        )
+        try:
+            next_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
+        except FileNotFoundError as exc:
+            raise ValueError("Draft spec must be recorded in graph state before review.") from exc
+        next_state.input_fingerprint = fingerprint
+        if target not in next_state.target_datasets:
+            next_state.target_datasets.append(target)
+        if target not in next_state.runnable_datasets:
+            next_state.runnable_datasets.append(target)
+        dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        draft_path = Path(draft_spec_path)
+        review = Path(review_path)
+        dataset_state.human_commands.append(command)
+        dataset_state.spec_state.update(
+            {
+                "status": "approved" if command.action == "approve" else "rejected",
+                "decision": command.action,
+                "reviewer": command.reviewer,
+                "notes": command.notes,
+                "review_path": str(review.as_posix()),
+                "draft_spec_path": str(draft_path.as_posix()),
+                "draft_spec_sha256": f"sha256:{sha256_file(draft_path)}",
+                "approved_spec_path": str(Path(approved_spec_path).as_posix()) if approved_spec_path else None,
+                "approved_spec_sha256": approved_spec_sha256,
+                "input_fingerprint": fingerprint,
+            }
+        )
+        dataset_state.current_interrupt = None if command.action == "approve" else InterruptState(
+            name="draft_spec_review",
+            dataset=target,
+            reason="Generated draft spec was rejected and requires revision before R code generation.",
+            payload={"review_path": str(review.as_posix())},
+        )
+        dataset_state.status = "pending" if command.action == "approve" else "needs_review"
+        dataset_state.updated_at = utc_now()
+        _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_review", "audit", review, kind="tool_log"))
+        _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec", "intermediate", draft_path, kind="draft_spec"))
+        if approved_spec_path:
+            _upsert_artifact(
+                dataset_state,
+                _artifact_ref(target, "approved_spec", "intermediate", approved_spec_path, kind="approved_spec"),
+            )
+        next_state.datasets[target] = dataset_state
+        next_state.human_commands.append(command)
+        next_state.current_interrupt = dataset_state.current_interrupt or _next_open_dataset_interrupt(next_state)
+        next_state.status = "needs_review" if next_state.current_interrupt else "running"
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="draft_spec_review")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_review")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def validate_draft_spec_review(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        draft_spec_path: str | Path,
+        approved_spec_path: str | Path | None = None,
+        approved_spec_sha256: str | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Fail closed before a draft-spec review artifact is trusted."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ValueError("Draft spec must be recorded in graph state before review.") from exc
+        dataset_state = graph_state.datasets.get(target)
+        if dataset_state is None or dataset_state.spec_state.get("status") != "draft_generated":
+            raise ValueError("Draft spec must be recorded in graph state before review.")
+        recorded_draft_path = Path(str(dataset_state.spec_state.get("draft_spec_path") or ""))
+        draft_path = Path(draft_spec_path)
+        if str(recorded_draft_path.as_posix()) != str(draft_path.as_posix()):
+            raise ValueError("Graph draft spec state points to a different draft spec. Regenerate the draft spec before review.")
+        if not draft_path.exists() or not draft_path.is_file():
+            raise ValueError(f"Draft spec does not exist: {draft_path}")
+        recorded_draft_sha = dataset_state.spec_state.get("draft_spec_sha256")
+        if not recorded_draft_sha:
+            raise ValueError("Draft-spec graph state is missing the draft spec hash. Regenerate the draft spec before review.")
+        current_draft_sha = f"sha256:{sha256_file(draft_path)}"
+        if current_draft_sha != recorded_draft_sha:
+            raise ValueError("Draft spec changed after graph draft generation. Regenerate the draft spec before review.")
+        draft_payload = _read_json_if_exists(draft_path)
+        draft_fingerprint = draft_payload.get("input_fingerprint") or {}
+        if not draft_fingerprint.get("digest"):
+            raise ValueError("Draft spec cannot be approved because it has no input fingerprint. Regenerate the draft spec before approval.")
+        if draft_fingerprint.get("digest") != fingerprint.get("digest"):
+            diff = compare_fingerprints(draft_fingerprint, fingerprint)
+            raise ValueError(
+                "Draft spec is stale because study inputs changed after it was generated. "
+                "Regenerate and review the draft spec before approval. "
+                f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
+                f"changed={diff.get('changed_files', [])}."
+            )
+        if approved_spec_path:
+            approved_path = Path(approved_spec_path)
+            if not approved_path.exists() or not approved_path.is_file():
+                raise ValueError(f"Approved draft spec does not exist: {approved_path}")
+            current_approved_sha = f"sha256:{sha256_file(approved_path)}"
+            if not approved_spec_sha256:
+                raise ValueError("Approved draft spec approval requires an approved spec hash.")
+            if current_approved_sha != approved_spec_sha256:
+                raise ValueError("Approved draft spec hash does not match the review payload.")
 
     def validate_code_review(
         self,
@@ -266,6 +470,13 @@ class GraphGateway:
         )
         fingerprint = input_fingerprint_payload or input_fingerprint(root)
         dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        if spec_source == "approved_draft_spec":
+            _assert_approved_draft_spec_current(
+                dataset_state,
+                spec_path=spec_path,
+                spec_sha256=spec_sha256,
+                input_fingerprint_payload=fingerprint,
+            )
         dataset_state.code_state.update(
             {
                 "status": "generated",
@@ -594,6 +805,41 @@ def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: s
             raise ValueError(stale_message)
 
 
+def _assert_approved_draft_spec_current(
+    dataset_state: DatasetRunState,
+    *,
+    spec_path: str | Path | None,
+    spec_sha256: str | None,
+    input_fingerprint_payload: dict[str, Any],
+) -> None:
+    """Require graph-approved draft spec state before generated code can use it."""
+
+    spec_state = dataset_state.spec_state
+    if spec_state.get("status") != "approved" or spec_state.get("decision") != "approve":
+        raise ValueError("Approved draft spec must be recorded in graph state before code generation.")
+    if not spec_path or not spec_sha256:
+        raise ValueError("Approved draft spec code generation requires an approved spec path and hash.")
+    approved_path = Path(spec_path)
+    if not approved_path.exists() or not approved_path.is_file():
+        raise ValueError(f"Approved draft spec does not exist: {approved_path}")
+    graph_path = Path(str(spec_state.get("approved_spec_path") or ""))
+    if str(graph_path.as_posix()) != str(approved_path.as_posix()):
+        raise ValueError("Generated-code spec path does not match graph-approved draft spec.")
+    current_sha = f"sha256:{sha256_file(approved_path)}"
+    if current_sha != spec_sha256 or current_sha != spec_state.get("approved_spec_sha256"):
+        raise ValueError("Approved draft spec changed after graph approval. Review and approve the draft spec again.")
+    approved_fingerprint = spec_state.get("input_fingerprint") or {}
+    if not isinstance(approved_fingerprint, dict) or not approved_fingerprint.get("digest"):
+        raise ValueError("Graph-approved draft spec is missing its input fingerprint. Review and approve the draft spec again.")
+    if approved_fingerprint.get("digest") != input_fingerprint_payload.get("digest"):
+        diff = compare_fingerprints(approved_fingerprint, input_fingerprint_payload)
+        raise ValueError(
+            "Graph-approved draft spec is stale because study inputs changed after approval. "
+            f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
+            f"changed={diff.get('changed_files', [])}."
+        )
+
+
 def _has_dataset_product_progress(dataset_state: DatasetRunState | None) -> bool:
     if dataset_state is None:
         return False
@@ -608,8 +854,27 @@ def _has_dataset_product_progress(dataset_state: DatasetRunState | None) -> bool
     return dataset_state.status not in {"pending", "planned"}
 
 
+def _next_open_dataset_interrupt(state: StudyRunState) -> InterruptState | None:
+    for dataset in sorted(state.datasets):
+        interrupt = state.datasets[dataset].current_interrupt
+        if interrupt is not None and interrupt.status == "open":
+            return interrupt
+    return None
+
+
 def _graph_state_path(study_dir: str | Path, run_id: str) -> Path:
     return Path(study_dir) / "runs" / run_id / "graph_state.json"
+
+
+def _read_json_if_exists(path: str | Path) -> dict[str, Any]:
+    item = Path(path)
+    if not item.exists() or not item.is_file():
+        return {}
+    try:
+        payload = json.loads(item.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _write_graph_sqlite_checkpoint(

@@ -742,3 +742,55 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 - dependency artifact 查找现在优先使用同 run 生成的 output，再考虑同名 Reference ADaM。
 
 结果：126 tests passed。
+
+### 2026-05-29 - LG2.2 Draft Spec Gateway 切片
+
+已完成：
+
+- 把 generated draft spec 状态迁入 `GraphGateway` canonical graph state：
+  - `record_draft_spec_generation()` 记录 draft spec 路径/hash、LLM
+    prompt/response artifact、变量列表、warning、当前 input fingerprint。
+  - dataset 进入 graph-owned `draft_spec_review` interrupt，不再只依赖
+    service 层自己写 `workflow_state.json`。
+- 把 draft spec 审核决策迁入 `GraphGateway`：
+  - `record_draft_spec_review()` 把 approve/reject 写入 dataset 和 study 两级
+    human command history。
+  - approved spec 路径/hash 和 review artifact 写入
+    `DatasetRunState.spec_state`。
+- 在信任 draft spec review 前加入 fail-closed 校验：
+  - graph state 中没有 draft spec 记录时拒绝审核。
+  - 审核的 draft spec 路径和 graph state 不一致时拒绝。
+  - draft spec 在生成后被篡改时拒绝。
+  - draft spec artifact 自身缺少 input fingerprint 或 fingerprint 已过期时拒绝。
+  - approve 决策必须带 approved spec artifact 和 hash。
+  - approved spec hash 必须和 review payload 匹配。
+- 收紧 approved draft spec 的消费边界：
+  - DatasetGraph 代码生成现在拒绝只存在于文件系统里的 approved draft
+    spec，必须同时在 canonical graph state 里有 `spec_state.status ==
+    approved`。
+  - `GraphGateway.record_code_generation()` 会在记录 generated code 前再次校验
+    graph-approved draft spec 的路径/hash/fingerprint。
+  - 审核通过一个 dataset 时，不再清空另一个 dataset 仍然打开的 run-level
+    interrupt。
+- 更新 FastAPI compatibility service，使 `finalize-inputs`、`draft-spec`、
+  `draft-spec-review` 都通过 `GraphGateway` 写入状态。
+- 新增回归测试覆盖：
+  - draft spec 生成后 graph-state 显示 `draft_spec_review`。
+  - draft spec 审核通过后 graph-state 显示 approved spec state。
+  - draft spec 审核前被篡改会被 graph gateway 拦截。
+
+当前边界：
+
+- `workflow_state.json` 仍作为 UI 兼容投影保留，但本切片已经让 draft spec
+  生成/审核以及 approved draft spec 的消费成为 graph-owned 状态。
+- code review 和 execution 已经部分 graph-owned，但 terminal
+  validation/compare/repair 仍在 service 或 compatibility path 中。
+- DatasetGraph 仍保留 legacy stub node，供非产品测试模式使用。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：子 agent 审查修复后，核心测试 144 tests passed。

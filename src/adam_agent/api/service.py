@@ -54,6 +54,7 @@ from adam_agent.graph.workflow_state import (
     invalidate_active_workflows,
     load_workflow_state,
     mark_workflow_inputs_current,
+    project_graph_state_to_workflow,
     update_workflow_state,
     utc_timestamp,
 )
@@ -593,17 +594,11 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         )
     if result.get("spec_source") == "approved_draft_spec":
         approved_spec_path = result.get("approved_spec_path")
-        update_workflow_state(
-            study_dir,
-            run_id,
-            study_id=study_id,
-            node="finalize_inputs",
-            dataset=target,
-            status="approved_draft_spec_ready",
-            current_interrupt=None,
-            input_fingerprint_payload=input_fingerprint(study_dir),
-            dataset_update={"spec_source": "approved_draft_spec", "approved_spec_path": approved_spec_path},
-        )
+        try:
+            graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ApiServiceError("Approved draft spec must be recorded in graph state before code generation.") from exc
+        project_graph_state_to_workflow(study_dir, graph_state, node="graph_gateway_finalize_inputs_approved_draft_spec")
         return FinalizeInputsResponse(
             study_id=study_id,
             run_id=run_id,
@@ -631,16 +626,17 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         variables=list(result.get("draft_spec_variables", [])),
         warnings=warnings,
     )
-    update_workflow_state(
-        study_dir,
-        run_id,
+    GraphGateway().record_draft_spec_generation(
+        study_dir=study_dir,
         study_id=study_id,
-        node="finalize_inputs",
+        run_id=run_id,
         dataset=target,
-        status="draft_spec_review_required",
-        current_interrupt="draft_spec_review",
+        draft_spec_path=draft_response.spec_path,
+        prompt_path=draft_response.prompt_path,
+        response_path=draft_response.response_path,
+        variables=draft_response.variables,
+        warnings=draft_response.warnings,
         input_fingerprint_payload=input_fingerprint(study_dir),
-        dataset_update={"spec_source": "draft_spec", "draft_spec_path": draft_response.spec_path},
     )
     return FinalizeInputsResponse(
         study_id=study_id,
@@ -719,21 +715,18 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
             "reference_adam_policy": "Reference ADaM is compare/output-shape evidence only, not derivation authority.",
         },
     )
-    update_workflow_state(
-        study_dir,
-        run_id,
+    variables = [variable.model_dump(mode="json") for variable in draft_result.spec.variables]
+    GraphGateway().record_draft_spec_generation(
+        study_dir=study_dir,
         study_id=study_id,
-        node="draft_spec",
+        run_id=run_id,
         dataset=target,
-        status="draft_spec_review_required",
-        current_interrupt="draft_spec_review",
+        draft_spec_path=draft_result.spec_artifact.path,
+        prompt_path=draft_result.prompt_artifact.path,
+        response_path=draft_result.response_artifact.path,
+        variables=variables,
+        warnings=context.warnings + draft_result.warnings + plan.dependency_warnings,
         input_fingerprint_payload=fingerprint,
-        dataset_update={
-            "draft_spec_path": draft_result.spec_artifact.path,
-            "llm_provider": provider_config.provider,
-            "llm_model": provider_config.model,
-            "mock_mode": provider_config.provider.strip().lower() == "mock",
-        },
     )
     return DraftSpecResponse(
         study_id=study_id,
@@ -743,7 +736,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         spec_path=draft_result.spec_artifact.path,
         prompt_path=draft_result.prompt_artifact.path,
         response_path=draft_result.response_artifact.path,
-        variables=[variable.model_dump(mode="json") for variable in draft_result.spec.variables],
+        variables=variables,
         warnings=context.warnings + draft_result.warnings + plan.dependency_warnings,
     )
 
@@ -775,6 +768,17 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
             "Draft spec is stale because study inputs changed after it was generated. "
             "Regenerate and review the draft spec before approval."
         )
+    gateway = GraphGateway()
+    try:
+        gateway.validate_draft_spec_review(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=current_fingerprint,
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     review_dir = run_dir / "reviews"
     review_dir.mkdir(parents=True, exist_ok=True)
     approved_path: Path | None = None
@@ -809,21 +813,39 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     _write_json(review_path, review_payload)
-    update_workflow_state(
-        study_dir,
-        run_id,
-        study_id=study_dir.name,
-        node="draft_spec_review",
+    command = HumanCommand(
+        interrupt="draft_spec_review",
+        action="approve" if decision == "approve" else "reject",
         dataset=target,
-        status="approved_draft_spec_ready" if decision == "approve" else "draft_spec_rejected",
-        current_interrupt=None if decision == "approve" else "draft_spec_review",
-        input_fingerprint_payload=current_fingerprint,
-        dataset_update={
-            "draft_spec_review_path": str(review_path.as_posix()),
+        reviewer=request.reviewer,
+        notes=request.notes,
+        payload={
+            "review_path": str(review_path.as_posix()),
+            "draft_spec_path": str(draft_path.as_posix()),
             "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
-            "draft_spec_approved": decision == "approve",
+            "approved_spec_sha256": approved_spec_sha,
         },
     )
+    try:
+        gateway.record_draft_spec_review(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id=run_id,
+            dataset=target,
+            command=command,
+            review_path=review_path,
+            draft_spec_path=draft_path,
+            approved_spec_path=approved_path,
+            approved_spec_sha256=approved_spec_sha,
+            input_fingerprint_payload=current_fingerprint,
+        )
+    except Exception as exc:
+        review_path.unlink(missing_ok=True)
+        if approved_path:
+            approved_path.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise ApiServiceError(str(exc)) from exc
+        raise
     return DraftSpecReviewResponse(
         study_id=study_dir.name,
         run_id=run_id,
