@@ -493,6 +493,12 @@ Design principle:
   not branch on dataset names, study names, demo folders, or individual clinical
   variable anecdotes. Those observations may only become tests for generic
   contracts or source-backed rule-pack entries.
+- Static checks verify declared contracts; they do not decide what clinical
+  derivation contract should exist. For example, the engine can verify that
+  generated code visibly writes the approved output path or references a
+  caller-provided spec variable. It cannot decide that a dataset needs a
+  particular ADaM variable or derivation unless that requirement is supplied by
+  an approved spec or a source-backed rule pack.
 - The implementation must be layered:
   - `StaticRuleEngine`: domain-neutral evaluator for artifact integrity,
     execution safety, declared contracts, and rule-pack execution.
@@ -539,6 +545,9 @@ Design principle:
 - New blocking clinical rules are not allowed in the generic engine. They must
   be added through a versioned standards/company rule pack with source, scope,
   severity, and evidence, then reviewed as a rule-pack change.
+- The first LG2.5 hardening priority is therefore rule-pack admission and
+  provenance, not a broader list of clinical rules. Adding a new ADaM/CDISC
+  rule before the rule-pack contract exists is treated as a design error.
 - Static-check artifacts without governance metadata are not silently
   grandfathered for review/execution. They must be regenerated from the current
   code/spec context so the audit trail can show each finding's source.
@@ -562,12 +571,19 @@ Tasks:
   - rule-pack loader contract: load only explicit standards/company rules with
     source/version/scope/severity/evidence metadata, and keep missing packs as a
     visible limitation rather than silently replacing them with heuristics
+  - rule-pack admission checks: reject rule-pack items without a source,
+    version, scope, declared severity, and evidence pointer before they can
+    affect code review or execution
   - future standards-pack rules: CDISC/P21/company-standard checks loaded from
     explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
 - Add a regression guard that rejects or flags new static checks if they are
   implemented as dataset/study/demo special cases instead of generic contracts
   or rule-pack rules.
+- Add a source-level regression guard for the static-rule module: dataset names,
+  demo study names, and demo-derived clinical variable anecdotes may appear in
+  tests or rule-pack fixtures, but not as branching logic inside the generic
+  engine.
 - Keep all checks labeled by confidence:
   - blocking error
   - warning
@@ -1635,6 +1651,50 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.5 Static-Rule Governance Clarification And Retry Regression Slice
+
+Completed:
+
+- Tightened the LG2.5 static-rule plan around the user's review point: static
+  rules verify declared contracts and must not become a patch list of
+  demo/dataset-specific clinical observations.
+- Clarified that new blocking ADaM/CDISC/company-standard checks must first
+  enter through a source-backed rule-pack admission contract with source,
+  version, scope, declared severity, and evidence.
+- Added a source-level regression guard that keeps demo study names, dataset
+  names, and demo-derived clinical variable anecdotes out of the generic
+  `static_rules.py` engine.
+- Added a positive terminal-failure retry regression: after a human
+  `retry_execution` review, `/execute-approved-code` is allowed to enter the
+  graph-owned `graph_product_execute` path and records the retry follow-up as
+  consumed by execution.
+
+Current boundary:
+
+- The static-rule guard is intentionally about the generic engine. Dataset names
+  and standards terms may still appear in tests or future versioned rule-pack
+  fixtures.
+- The retry regression uses a mocked DatasetGraph return value. It proves the
+  compatibility wrapper gate and graph-state recording path, not real R
+  execution.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_retry_execution_review_allows_approved_code_execution_path tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules tests.test_sandbox -v
+```
+
+Result: 14 static-rule tests passed; 3 focused retry tests passed; 205 core
+tests passed.
+
+Subagent review:
+
+- Subagent review returned GO.
+- It reported no major logic flaw, no misleading architecture claim, and no
+  invalid retry regression.
 
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation Slice
 

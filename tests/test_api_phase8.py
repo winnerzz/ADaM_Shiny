@@ -1055,6 +1055,90 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Terminal failure must be reviewed before retrying execution", second_execution.json()["detail"])
         compile_graph.assert_not_called()
 
+    def test_retry_execution_review_allows_approved_code_execution_path(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_retry_allows_execute")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_retry_allows_execute/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_retry_allows_execute" / "code" / "build_adae.R"
+        code_path.write_text(
+            "dir.create('outputs', showWarnings = FALSE)\n"
+            "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_terminal_retry_allows_execute",
+            "ADAE",
+            code_path,
+        )
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_retry_allows_execute",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_retry_allows_execute/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        first_execution = client.post(
+            "/runs/run_terminal_retry_allows_execute/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(first_execution.status_code, 200, first_execution.text)
+        self.assertTrue(first_execution.json()["terminal_failure"])
+        triage = client.post(
+            "/runs/run_terminal_retry_allows_execute/datasets/ADAE/terminal-failure-review",
+            json={"study_dir": str(study_dir), "decision": "retry_execution", "reviewer": "tester"},
+        )
+        self.assertEqual(triage.status_code, 200, triage.text)
+
+        with patch("adam_agent.api.service.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass"},
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            second_execution = client.post(
+                "/runs/run_terminal_retry_allows_execute/datasets/ADAE/execute-approved-code",
+                json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+            )
+
+        self.assertEqual(second_execution.status_code, 200, second_execution.text)
+        self.assertEqual(second_execution.json()["status"], "completed")
+        compile_graph.assert_called_once()
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        self.assertEqual(invoked_state["execution_mode"], "graph_product_execute")
+        graph_state, _ = _assert_run_projection(self, study_dir, "run_terminal_retry_allows_execute")
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["status"], "completed")
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_followup"]["action"], "retry_execution")
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_followup_consumed_by"], "execute")
+
     def test_terminal_failure_requires_repair_code_before_regenerating_code(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_repair_gate")
         client = TestClient(create_app())

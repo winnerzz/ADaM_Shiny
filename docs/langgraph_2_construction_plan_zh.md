@@ -421,6 +421,10 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - 这是硬架构边界：通用 static-check engine 不能按 dataset 名、study 名、demo
   文件夹或某个临床变量个案分支。demo 中观察到的问题只能变成通用 contract 的
   测试，或进入带来源的 rule-pack item。
+- 静态检查只验证已经声明的 contract，不负责决定应该有什么临床推导 contract。
+  例如 engine 可以检查 generated code 是否明显写出了 approved output path，
+  或是否引用了调用方传入的 spec 变量；但它不能自己判断某个数据集必须有某个
+  ADaM 变量或某种推导，除非这个要求来自 approved spec 或带来源的 rule pack。
 - 实现必须分层：
   - `StaticRuleEngine`：领域中立的 evaluator，只负责 artifact 完整性、执行安
     全、声明契约和 rule-pack 执行。
@@ -452,6 +456,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - rule-pack 准入是产品/治理决策，不是随手改代码。任何 clinical/static
   standards rule 要能 block 一个 run，必须先有 source、version、scope、
   severity 和 evidence。
+- 所以 LG2.5 的第一优先级是 rule-pack 准入和 provenance，而不是继续增加临床
+  检查项。rule-pack contract 没有建立前就新增 ADaM/CDISC 规则，应视为设计错
+  误。
 - 任何启发式或不完整检查都只能作为 warning/informational，并且必须记录“不能
   证明临床推导正确”。
 
@@ -473,11 +480,16 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - rule-pack loader contract：只加载带 source/version/scope/severity/evidence
     metadata 的显式 standards/company rules；缺失 rule pack 必须显示成限制，不
     能用静默 heuristic 顶替
+  - rule-pack admission checks：没有 source、version、scope、declared severity
+    和 evidence pointer 的 rule-pack item，不能影响 code review 或 execution
   - future standards-pack rules：从显式 references 加载 CDISC/P21/company
     standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
 - 增加回归保护：如果新增 static check 被实现成 dataset/study/demo 特例，而不
   是通用 contract 或 rule-pack rule，应被测试拦截或显式标记。
+- 增加 source-level 回归保护：dataset 名、demo study 名、demo 中观察到的临床
+  变量个案可以出现在测试或 rule-pack fixture 中，但不能作为 generic engine 的
+  分支逻辑。
 - 所有检查都标记置信等级：
   - blocking error
   - warning
@@ -1454,6 +1466,45 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.5 Static-Rule Governance Clarification And Retry Regression 切片
+
+已完成：
+
+- 根据用户审查意见，收紧 LG2.5 static-rule 方案：静态规则只能验证已经声明的
+  contract，不能演变成 demo/dataset-specific 临床观察补丁清单。
+- 明确新的 blocking ADaM/CDISC/company-standard 检查必须先进入带来源的
+  rule-pack 准入 contract，包含 source、version、scope、declared severity 和
+  evidence。
+- 增加 source-level 回归保护，防止 demo study 名、dataset 名、demo 中观察到
+  的临床变量个案进入 generic `static_rules.py` engine。
+- 增加 terminal-failure retry 正向回归：人工选择 `retry_execution` 后，
+  `/execute-approved-code` 可以进入 graph-owned `graph_product_execute` 路径，
+  并在 graph state 中记录 retry follow-up 已由 execute 消费。
+
+当前边界：
+
+- static-rule guard 只针对 generic engine。dataset 名和 standards 术语仍可以
+  出现在测试或未来带版本的 rule-pack fixtures 中。
+- retry 回归使用 mocked DatasetGraph return value，证明的是 compatibility
+  wrapper gate 和 graph-state recording path，不是真实 R 执行。
+
+验证：
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_retry_execution_review_allows_approved_code_execution_path tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules tests.test_sandbox -v
+```
+
+结果：14 static-rule tests passed；3 focused retry tests passed；205 core tests
+passed。
+
+子 agent 审查：
+
+- 子 agent 复审返回 GO。
+- 未发现 major logic flaw、misleading architecture claim 或 invalid retry
+  regression。
 
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation 切片
 

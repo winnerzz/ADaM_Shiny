@@ -200,6 +200,23 @@ class StaticRuleTests(unittest.TestCase):
             self.assertIn(finding["source_type"], {"system_contract", "approved_spec", "standards_pack", "user_policy"})
         self.assertFalse(any("ADAE" in json.dumps(finding) for finding in payload["findings"]))
 
+    def test_static_rule_engine_does_not_embed_demo_or_dataset_specific_logic(self) -> None:
+        engine_source = (ROOT / "src" / "adam_agent" / "tools" / "static_rules.py").read_text(encoding="utf-8")
+
+        forbidden_engine_tokens = {
+            "PSY201",
+            "ADAE",
+            "ADSL",
+            "TRTEMFL",
+            "RELGR1",
+            "AETERM",
+            "TRTSDT",
+            "TRTEDT",
+            "USUBJID",
+        }
+        found = sorted(token for token in forbidden_engine_tokens if token in engine_source)
+        self.assertEqual(found, [], "Generic static-rule engine must not embed demo or dataset-specific ADaM logic.")
+
     def test_static_rule_artifact_validation_rejects_incomplete_pass_report(self) -> None:
         workspace = _workspace_dir("static_rules_incomplete")
         code_path = workspace / "build_any.R"
