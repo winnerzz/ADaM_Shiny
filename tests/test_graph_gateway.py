@@ -62,8 +62,12 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
         self.assertEqual(result.graph_state.target_datasets, ["ADAE"])
         self.assertIn("ADAE", result.graph_state.datasets)
+        self.assertEqual(result.graph_state.agent_decisions[0]["agent"], "dependency_agent")
+        self.assertEqual(result.graph_state.agent_decisions[0]["decision"], "dependency_plan_prepared")
+        self.assertEqual(result.graph_state.agent_decisions[0]["outputs"]["dependency_review_status"], "review_required")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
+        self.assertEqual(workflow_state["agent_decisions"][0]["agent"], "dependency_agent")
         self.assertTrue(consistency["consistent"], consistency["mismatches"])
 
     def test_gateway_checkpoint_can_be_read_from_same_graph_instance(self) -> None:
@@ -264,7 +268,7 @@ class GraphGatewayTests(unittest.TestCase):
         code_sha = f"sha256:{sha256_file(code_path)}"
         static_sha = f"sha256:{sha256_file(static_path)}"
         gateway = GraphGateway()
-        gateway.record_code_generation(
+        generated = gateway.record_code_generation(
             study_dir=study_dir,
             study_id="PSY201",
             run_id="run_lg2_code_review",
@@ -274,6 +278,12 @@ class GraphGatewayTests(unittest.TestCase):
             static_check_path=static_path,
             static_check_sha256=static_sha,
         )
+        generated_dataset = generated.graph_state.datasets["ADAE"]
+        generated_agents = [item["agent"] for item in generated_dataset.agent_decisions]
+        self.assertIn("code_agent", generated_agents)
+        self.assertIn("static_review_agent", generated_agents)
+        self.assertEqual(generated_dataset.agent_decisions[0]["outputs"]["record_source"], "graph_gateway_default")
+        self.assertIn("static_check_placeholder", generated_dataset.risk_flags)
 
         result = gateway.record_code_review(
             study_dir=study_dir,
@@ -346,7 +356,11 @@ class GraphGatewayTests(unittest.TestCase):
         dataset_state = generated.graph_state.datasets["ADAE"]
         self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.agent_decisions[0]["agent"], "spec_agent")
+        self.assertEqual(dataset_state.agent_decisions[0]["decision"], "draft_spec_generated")
+        self.assertEqual(generated.graph_state.agent_decisions[-1]["agent"], "spec_agent")
         self.assertEqual(generated.workflow_projection["datasets"]["ADAE"]["spec_state"]["status"], "draft_generated")
+        self.assertEqual(generated.workflow_projection["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "spec_agent")
         approved_path = approved_dir / "adae_approved_spec.json"
         approved_path.write_text(
             json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint, "status": "approved_draft"}),
@@ -388,6 +402,39 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(dataset_state.current_interrupt)
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+
+    def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+
+        result = gateway.record_execution(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_execution_agent_decision",
+            dataset="ADAE",
+            execution_state={
+                "status": "completed",
+                "validation_status": "passed",
+                "output_path": "runs/run_lg2_execution_agent_decision/outputs/adae.csv",
+                "terminal_failure": False,
+                "partial_output_usable": True,
+            },
+            validation_summary={"status": "passed"},
+            artifacts=[],
+            failures=[],
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_execution_agent_decision" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.status, "completed")
+        self.assertEqual(dataset_state.agent_decisions[0]["agent"], "execution_agent")
+        self.assertEqual(dataset_state.agent_decisions[0]["decision"], "r_execution_completed")
+        self.assertEqual(result.graph_state.agent_decisions[-1]["agent"], "execution_agent")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "execution_agent")
 
     def test_gateway_draft_spec_review_rejects_changed_draft_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_draft_spec_hash") / "PSY201"

@@ -115,6 +115,8 @@ class DatasetGraphState(TypedDict, total=False):
     recommended_route: str | None
     summary: DatasetResultSummary
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
+    agent_decisions: Annotated[list[dict[str, object]], operator.add]
+    risk_flags: Annotated[list[str], operator.add]
 
 
 class StudyGraphState(TypedDict, total=False):
@@ -157,4 +159,6 @@ class StudyGraphState(TypedDict, total=False):
     dataset_results: Annotated[list[DatasetResultSummary], operator.add]
     blocked_datasets: Annotated[list[BlockedDataset], operator.add]
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
+    agent_decisions: Annotated[list[dict[str, object]], operator.add]
+    risk_flags: Annotated[list[str], operator.add]
     audit_manifest: ArtifactRef

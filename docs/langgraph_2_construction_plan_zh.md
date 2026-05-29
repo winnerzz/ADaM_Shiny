@@ -1102,3 +1102,85 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：167 tests passed。
+
+### 2026-05-30 - LG2.4 Agent Decision Contract 切片
+
+已完成：
+
+- 新增 `src/adam_agent/agents/` 契约包。这里的 agent 是“有明确输入输出和审计记录的
+  LangGraph 节点”，不是可以任意操作文件的自由自治进程。
+- 定义了明确 agent 角色：
+  - `evidence_agent`
+  - `dependency_agent`
+  - `spec_agent`
+  - `code_agent`
+  - `static_review_agent`
+  - `execution_agent`
+  - `diagnosis_repair_agent`
+  - `audit_agent`
+- 给运行态 `DatasetGraphState` 和 `StudyGraphState` 增加
+  `agent_decisions`、`risk_flags` reducer。
+- 让已有 graph-owned 产品节点写入 agent decision：
+  - dependency planning 写入 `dependency_agent` 决策。
+  - product context preparation 写入 `evidence_agent` 决策。
+  - draft spec generation 写入 `spec_agent` 决策。
+  - R code generation 写入 `code_agent` 决策。
+  - placeholder static checking 写入 `static_review_agent` warning。
+  - approved R execution 写入 `execution_agent` 决策。
+- 通过 `GraphGateway` 把这些 decision 持久化到 canonical
+  `graph_state.json`，并投影到当前 UI 使用的 `workflow_state.json`。
+- FastAPI service 仍只是 graph transition 的调用方。它把 DatasetGraph 产生的
+  decisions 传给 `GraphGateway`，不成为 agent truth 的新来源。
+- 对旧状态做兼容：历史里比较松散的 `agent_decisions` dict 不会阻塞 graph-state
+  rollup；新写入的 decision 仍按严格 `AgentDecision` schema 校验。
+- 根据子 agent 审查意见，补上 StudyGraph batch execution path 对 dataset
+  subgraph `agent_decisions` 和 `risk_flags` 的收集，避免 LG2.4 只在 FastAPI
+  split-flow endpoint 中生效。
+- Gateway 生成的兼容默认 decision 现在会写入
+  `record_source: graph_gateway_default`，方便审计时区分“DatasetGraph 节点真实
+  产出的决策”和“Gateway 为兼容旧入口补记的默认记录”。
+- 增加测试覆盖 agent contract、dependency-plan agent decision、spec agent
+  decision、code/static-review agent decision、execution agent decision。
+
+当前边界：
+
+- 本切片只完成“agent 角色和审计状态记录”的结构化落地；还没有实现
+  tool-calling reference agent、完整 ADaM/CDISC 静态规则检查、或自主多步 repair
+  planning。
+- `static_review_agent` 当前明确是 placeholder warning，不声称已经完成 CDISC
+  compliance 检查。
+- ADSL 仍走统一 ADaM split flow，没有重新引入 deterministic ADSL template
+  特殊路径。
+- Reference ADaM 仍然只是 compare/output-shape evidence，本切片没有把它记录为
+  derivation authority。
+- 本切片里 study-level `agent_decisions` 是 append-only audit history，不是
+  dataset rollback/replacement 后重建出来的 “current-only view”。后续 audit-view
+  切片需要把 immutable history 和当前有效决策分开。
+
+验证：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway -v
+```
+
+结果：27 tests passed。
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：41 tests passed。
+
+根据子 agent 审查修复后：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+结果：79 tests passed。
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：171 tests passed。

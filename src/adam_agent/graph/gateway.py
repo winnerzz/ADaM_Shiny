@@ -11,6 +11,7 @@ from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 
+from adam_agent.agents import AgentDecision, record_agent_decision
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, project_graph_state_to_workflow
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -72,6 +73,7 @@ class GraphGateway:
         result = self._graph.invoke(payload, config=self._config(study_id, run_id))
         graph_state = self._canonical_state_from_plan(result, study_dir=root)
         graph_state = self._merge_existing_dataset_progress(root, graph_state)
+        _sync_study_agent_decisions(graph_state)
         self._persist_graph_state(root, graph_state, node="dependency_plan")
         projection = project_graph_state_to_workflow(root, graph_state, node="graph_gateway_plan")
         return GraphGatewayResult(graph_state=graph_state, workflow_projection=projection)
@@ -196,6 +198,8 @@ class GraphGateway:
         variables: list[dict[str, Any]] | None = None,
         warnings: list[str] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        agent_decisions: list[dict[str, Any]] | None = None,
+        risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist a generated draft spec and its review interrupt."""
 
@@ -247,8 +251,30 @@ class GraphGateway:
             _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_prompt", "audit", prompt_path, kind="llm_prompt"))
         if response_path:
             _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_response", "audit", response_path, kind="llm_response"))
+        _append_agent_decisions(
+            dataset_state,
+            agent_decisions
+            or [
+                record_agent_decision(
+                    agent="spec_agent",
+                    node="draft_spec_generation",
+                    decision="draft_spec_generated",
+                    dataset=target,
+                    status="needs_review",
+                    reason="Generated draft spec was recorded and routed to human review.",
+                    outputs={
+                        "record_source": "graph_gateway_default",
+                        "draft_spec_path": str(draft_path.as_posix()),
+                        "variable_count": len(variables or []),
+                    },
+                    risk_flags=["draft_spec_requires_human_review"],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, risk_flags or ["draft_spec_requires_human_review"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="draft_spec_generation")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_generation")
@@ -263,6 +289,8 @@ class GraphGateway:
         dataset: str,
         input_spec_path: str | Path,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        agent_decisions: list[dict[str, Any]] | None = None,
+        risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist an available input spec into canonical graph state."""
 
@@ -300,8 +328,29 @@ class GraphGateway:
         dataset_state.status = "pending"
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "input_spec", "source", spec_path, kind="input_spec"))
+        _append_agent_decisions(
+            dataset_state,
+            agent_decisions
+            or [
+                record_agent_decision(
+                    agent="evidence_agent",
+                    node="input_spec_ready",
+                    decision="input_spec_ready",
+                    dataset=target,
+                    status="pending",
+                    reason="User-supplied input_spec was accepted as the authoritative spec source.",
+                    outputs={
+                        "record_source": "graph_gateway_default",
+                        "input_spec_path": str(spec_path.as_posix()),
+                        "next_action": "generate_code",
+                    },
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, risk_flags or [])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="input_spec_ready")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_input_spec_ready")
@@ -316,6 +365,8 @@ class GraphGateway:
         dataset: str,
         approved_spec_path: str | Path,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        agent_decisions: list[dict[str, Any]] | None = None,
+        risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Mark an already approved draft spec as ready after a terminal-failure follow-up."""
 
@@ -353,8 +404,30 @@ class GraphGateway:
             dataset_state,
             _artifact_ref(target, "approved_draft_spec", "source", spec_path, kind="input_spec"),
         )
+        _append_agent_decisions(
+            dataset_state,
+            agent_decisions
+            or [
+                record_agent_decision(
+                    agent="evidence_agent",
+                    node="approved_draft_spec_ready",
+                    decision="approved_draft_spec_ready",
+                    dataset=target,
+                    status="pending",
+                    reason="Current graph-approved draft spec was accepted as the code-generation spec source.",
+                    outputs={
+                        "record_source": "graph_gateway_default",
+                        "approved_spec_path": str(spec_path.as_posix()),
+                        "next_action": "generate_code",
+                    },
+                    risk_flags=["uses_approved_draft_spec"],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, risk_flags or ["uses_approved_draft_spec"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="approved_draft_spec_ready")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_approved_draft_spec_ready")
@@ -574,6 +647,8 @@ class GraphGateway:
         spec_sha256: str | None = None,
         dependency_artifacts: list[dict[str, Any]] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        agent_decisions: list[dict[str, Any]] | None = None,
+        risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist generated-code review interrupt into canonical graph state."""
 
@@ -627,8 +702,20 @@ class GraphGateway:
         _upsert_artifact(dataset_state, _artifact_ref(target, "generated_code", "output", code_path, kind="generated_code"))
         if static_check_path:
             _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", static_check_path, kind="tool_log"))
+        _append_agent_decisions(
+            dataset_state,
+            agent_decisions
+            or _default_code_generation_agent_decisions(
+                target=target,
+                code_path=code_path,
+                static_check_path=static_check_path,
+                spec_source=spec_source,
+            ),
+        )
+        _append_risk_flags(dataset_state, risk_flags or ["static_check_placeholder"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="code_generation")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_code_generation")
@@ -646,6 +733,8 @@ class GraphGateway:
         artifacts: list[ArtifactRef],
         failures: list[FailureRecord] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        agent_decisions: list[dict[str, Any]] | None = None,
+        risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist graph-owned R execution result into canonical graph state."""
 
@@ -689,6 +778,29 @@ class GraphGateway:
             _upsert_artifact(dataset_state, artifact)
         if failures:
             dataset_state.failures = list(failures)
+        _append_agent_decisions(
+            dataset_state,
+            agent_decisions
+            or [
+                record_agent_decision(
+                    agent="execution_agent",
+                    node="execute_approved_code",
+                    decision="r_execution_terminal_failure" if terminal_failure else "r_execution_completed",
+                    dataset=target,
+                    status="terminal_failure" if terminal_failure else "completed",
+                    reason="Approved generated R code was executed through the graph-owned boundary.",
+                    outputs={
+                        "record_source": "graph_gateway_default",
+                        "terminal_failure": terminal_failure,
+                        "validation_status": validation_summary.get("status"),
+                        "output_path": execution_state.get("output_path"),
+                    },
+                    risk_flags=["terminal_failure"] if terminal_failure else [],
+                    artifact_ids=[artifact.artifact_id for artifact in artifacts],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, risk_flags or (["terminal_failure"] if terminal_failure else []))
         dataset_state.result_summary = DatasetResultSummary(
             dataset=target,
             status=dataset_state.status,
@@ -704,6 +816,7 @@ class GraphGateway:
         )
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="execute_approved_code")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_execute_approved_code")
@@ -980,6 +1093,30 @@ class GraphGateway:
             dependency_resolution=plan_state.get("dependency_resolution", []),
             dependency_review_status=dependency_review_status,
             datasets=datasets,
+            agent_decisions=[
+                record_agent_decision(
+                    agent="dependency_agent",
+                    node="dependency_plan",
+                    decision="dependency_plan_prepared",
+                    status=status,
+                    reason=_dependency_review_reason(dependency_review_status)
+                    if dependency_review_status != "accepted"
+                    else "Dependency plan was accepted without blocking review.",
+                    inputs={"requested_datasets": plan_state.get("requested_datasets", [])},
+                    outputs={
+                        "target_datasets": plan_state.get("target_datasets", []),
+                        "runnable_datasets": plan_state.get("runnable_datasets", []),
+                        "blocked_datasets": plan_state.get("blocked_datasets", []),
+                        "dependency_review_status": dependency_review_status,
+                    },
+                    risk_flags=[f"dependency_review_{dependency_review_status}"]
+                    if dependency_review_status != "accepted"
+                    else [],
+                )
+            ],
+            risk_flags=[f"dependency_review_{dependency_review_status}"]
+            if dependency_review_status != "accepted"
+            else [],
         )
 
     def _persist_graph_state(self, study_dir: str | Path, state: StudyRunState, *, node: str) -> None:
@@ -1375,6 +1512,121 @@ def _artifact_ref(dataset: str, artifact_id: str, role: str, path: str | Path, *
         role=role,
         metadata={"graph_gateway_recorded": True},
     )
+
+
+def _default_code_generation_agent_decisions(
+    *,
+    target: str,
+    code_path: str | Path,
+    static_check_path: str | Path | None,
+    spec_source: str | None,
+) -> list[dict[str, Any]]:
+    decisions = [
+        record_agent_decision(
+            agent="code_agent",
+            node="code_generation",
+            decision="r_code_generated",
+            dataset=target,
+            status="needs_review",
+            reason="Generated R code was recorded and routed to human code review.",
+            outputs={
+                "record_source": "graph_gateway_default",
+                "code_path": str(Path(code_path).as_posix()),
+                "spec_source": spec_source,
+                "next_action": "review_code",
+            },
+        )
+    ]
+    if static_check_path:
+        decisions.append(
+            record_agent_decision(
+                agent="static_review_agent",
+                node="code_generation",
+                decision="placeholder_static_check_recorded",
+                dataset=target,
+                status="warning",
+                reason="Only placeholder static checking is available in this build.",
+                outputs={
+                    "record_source": "graph_gateway_default",
+                    "static_check_path": str(Path(static_check_path).as_posix()),
+                },
+                risk_flags=["static_check_placeholder"],
+            )
+        )
+    return decisions
+
+
+def _append_agent_decisions(dataset_state: DatasetRunState, decisions: list[dict[str, Any]]) -> None:
+    existing = {
+        (
+            str(item.get("agent")),
+            str(item.get("node")),
+            str(item.get("decision")),
+            str(item.get("dataset")),
+            str(item.get("created_at")),
+        )
+        for item in dataset_state.agent_decisions
+        if isinstance(item, dict)
+    }
+    for decision in decisions:
+        normalized = AgentDecision.model_validate(decision).model_dump(mode="json")
+        key = (
+            str(normalized.get("agent")),
+            str(normalized.get("node")),
+            str(normalized.get("decision")),
+            str(normalized.get("dataset")),
+            str(normalized.get("created_at")),
+        )
+        if key not in existing:
+            dataset_state.agent_decisions.append(normalized)
+            existing.add(key)
+
+
+def _append_risk_flags(dataset_state: DatasetRunState, flags: list[str]) -> None:
+    existing = set(dataset_state.risk_flags)
+    for flag in flags:
+        normalized = str(flag or "").strip()
+        if normalized and normalized not in existing:
+            dataset_state.risk_flags.append(normalized)
+            existing.add(normalized)
+
+
+def _sync_study_agent_decisions(state: StudyRunState) -> None:
+    existing_decisions = {
+        (
+            str(item.get("agent")),
+            str(item.get("node")),
+            str(item.get("decision")),
+            str(item.get("dataset")),
+            str(item.get("created_at")),
+        )
+        for item in state.agent_decisions
+        if isinstance(item, dict)
+    }
+    for dataset_state in state.datasets.values():
+        for decision in dataset_state.agent_decisions:
+            try:
+                normalized = AgentDecision.model_validate(decision).model_dump(mode="json")
+            except ValueError:
+                continue
+            key = (
+                str(normalized.get("agent")),
+                str(normalized.get("node")),
+                str(normalized.get("decision")),
+                str(normalized.get("dataset")),
+                str(normalized.get("created_at")),
+            )
+            if key not in existing_decisions:
+                state.agent_decisions.append(normalized)
+                existing_decisions.add(key)
+
+    existing_risk_flags = set(state.risk_flags)
+    for dataset_state in state.datasets.values():
+        for flag in dataset_state.risk_flags:
+            normalized = str(flag or "").strip()
+            if normalized and normalized not in existing_risk_flags:
+                state.risk_flags.append(normalized)
+                existing_risk_flags.add(normalized)
 
 
 def _upsert_artifact(dataset_state: DatasetRunState, artifact: ArtifactRef) -> None:

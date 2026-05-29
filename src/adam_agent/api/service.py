@@ -508,6 +508,8 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         spec_sha256=spec_sha,
         dependency_artifacts=_dependency_artifacts_for_dataset(plan.dependency_resolution, target),
         input_fingerprint_payload=input_fingerprint(study_dir),
+        agent_decisions=list(result.get("agent_decisions", [])),
+        risk_flags=list(result.get("risk_flags", [])),
     )
     warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings + [
         "Static ADaM/CDISC rule checking is a placeholder in this build; review generated R code manually before execution."
@@ -587,6 +589,8 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
                 dataset=target,
                 input_spec_path=input_spec_path,
                 input_fingerprint_payload=input_fingerprint(study_dir),
+                agent_decisions=list(result.get("agent_decisions", [])),
+                risk_flags=list(result.get("risk_flags", [])),
             )
         except ValueError as exc:
             raise ApiServiceError(str(exc)) from exc
@@ -614,6 +618,8 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
                 dataset=target,
                 approved_spec_path=approved_spec_path,
                 input_fingerprint_payload=input_fingerprint(study_dir),
+                agent_decisions=list(result.get("agent_decisions", [])),
+                risk_flags=list(result.get("risk_flags", [])),
             )
         except ValueError as exc:
             raise ApiServiceError(str(exc)) from exc
@@ -655,6 +661,8 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         variables=draft_response.variables,
         warnings=draft_response.warnings,
         input_fingerprint_payload=input_fingerprint(study_dir),
+        agent_decisions=list(result.get("agent_decisions", [])),
+        risk_flags=list(result.get("risk_flags", [])),
     )
     return FinalizeInputsResponse(
         study_id=study_id,
@@ -1048,6 +1056,8 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         artifacts=list((result.get("real_run_artifacts") or {}).values()),
         failures=list(result.get("failure_records", [])),
         input_fingerprint_payload=input_fingerprint(study_dir),
+        agent_decisions=list(result.get("agent_decisions", [])),
+        risk_flags=list(result.get("risk_flags", [])),
     )
     return ExecuteCodeResponse(
         study_id=study_id,

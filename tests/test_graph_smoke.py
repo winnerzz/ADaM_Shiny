@@ -556,6 +556,41 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertTrue(summary.metadata["code_path"].endswith("code/build_adae.R"))
         self.assertEqual(summary.validation_status, "not_run")
 
+    def test_study_graph_batch_path_preserves_agent_decisions(self) -> None:
+        study_dir = _workspace_dir("lg2_study_graph_agent_decisions") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_study_graph_agent_decisions",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        agents = [item["agent"] for item in result["agent_decisions"]]
+        self.assertIn("evidence_agent", agents)
+        self.assertIn("code_agent", agents)
+        self.assertIn("static_review_agent", agents)
+        self.assertIn("static_check_placeholder", result["risk_flags"])
+        self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
+
     def test_dataset_graph_product_generate_code_requires_approved_spec(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_missing_spec") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

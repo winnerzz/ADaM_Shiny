@@ -163,6 +163,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
     dependencies = state.get("dataset_dependencies", {})
     dataset_results: list[DatasetResultSummary] = []
     audit_artifacts: list[ArtifactRef] = []
+    agent_decisions: list[dict[str, object]] = []
+    risk_flags: list[str] = []
     blocked_datasets = []
     completed: set[str] = set()
     failed: set[str] = set()
@@ -205,6 +207,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             summary = result["summary"]
             dataset_results.append(summary)
             audit_artifacts.extend(result.get("audit_artifacts", []))
+            agent_decisions.extend(result.get("agent_decisions", []))
+            risk_flags.extend(result.get("risk_flags", []))
             if summary.status in {"completed", "completed_stub"}:
                 completed.add(summary.dataset)
             else:
@@ -213,6 +217,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
     return {
         "dataset_results": dataset_results,
         "audit_artifacts": audit_artifacts,
+        "agent_decisions": agent_decisions,
+        "risk_flags": risk_flags,
         "blocked_datasets": blocked_datasets,
     }
 
@@ -279,6 +285,8 @@ def _write_study_audit_manifest(
         "dependency_review_status": planning_artifacts["review_status"],
         "dependency_plan_artifact_id": planning_artifacts["plan_artifact"].artifact_id,
         "dependency_review_artifact_id": planning_artifacts["review_artifact"].artifact_id,
+        "agent_decisions": state.get("agent_decisions", []),
+        "risk_flags": state.get("risk_flags", []),
     }
     study_dir = state.get("study_dir")
     relative_path = f"runs/{state['run_id']}/audit/manifest.json"

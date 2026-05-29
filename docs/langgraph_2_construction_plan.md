@@ -1234,3 +1234,92 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 167 tests passed.
+
+### 2026-05-30 - LG2.4 Agent Decision Contract Slice
+
+Completed:
+
+- Added a bounded agent contract package under `src/adam_agent/agents/`.
+  An agent decision is now a typed audit record, not an unbounded autonomous
+  process.
+- Added explicit roles for:
+  - `evidence_agent`
+  - `dependency_agent`
+  - `spec_agent`
+  - `code_agent`
+  - `static_review_agent`
+  - `execution_agent`
+  - `diagnosis_repair_agent`
+  - `audit_agent`
+- Added `agent_decisions` and `risk_flags` reducers to the in-flight
+  `DatasetGraphState` and `StudyGraphState`.
+- Recorded agent decisions from existing graph-owned product nodes:
+  - dependency planning records a `dependency_agent` decision
+  - product context preparation records an `evidence_agent` decision
+  - draft spec generation records a `spec_agent` decision
+  - R code generation records a `code_agent` decision
+  - placeholder static checking records a `static_review_agent` warning
+  - approved R execution records an `execution_agent` decision
+- Persisted these decisions into canonical `graph_state.json` through
+  `GraphGateway`, and projected them into `workflow_state.json` for the current
+  UI read model.
+- Kept the existing FastAPI service as a caller of graph transitions. It passes
+  graph-produced decisions into `GraphGateway`; it does not become the source of
+  agent truth.
+- Added compatibility handling so older loose `agent_decisions` dictionaries do
+  not break graph-state rollup. New decisions written by graph nodes are still
+  validated against the strict `AgentDecision` schema.
+- After subagent review, also wired the StudyGraph batch execution path to
+  collect dataset subgraph `agent_decisions` and `risk_flags`; this prevents
+  LG2.4 from working only through FastAPI split-flow endpoints.
+- Marked Gateway-created compatibility decisions with
+  `record_source: graph_gateway_default`, so audit readers can distinguish
+  default persistence records from decisions emitted directly by DatasetGraph
+  nodes.
+- Added tests for the agent contract, dependency-plan agent decisions, spec
+  agent decisions, code/static-review agent decisions, and execution agent
+  decisions.
+
+Current boundary:
+
+- This slice introduces auditable agent roles and state records. It does not yet
+  implement tool-calling reference agents, full static ADaM/CDISC rule checks,
+  or autonomous multi-step repair planning.
+- The `static_review_agent` decision is explicitly a placeholder warning. It
+  does not claim CDISC compliance.
+- ADSL remains on the unified ADaM split flow; no deterministic ADSL template
+  path was reintroduced.
+- Reference ADaM remains compare/output-shape evidence only and is not recorded
+  as derivation authority by this slice.
+- Study-level `agent_decisions` are append-only audit history in this slice.
+  They are not yet a rebuilt "current-only" view after dataset rollback or
+  replacement; a future audit-view slice should separate immutable history from
+  current active decisions.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway -v
+```
+
+Result: 27 tests passed.
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 41 tests passed.
+
+After subagent review fixes:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+Result: 79 tests passed.
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 171 tests passed.

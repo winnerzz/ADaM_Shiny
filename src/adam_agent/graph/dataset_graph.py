@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from langgraph.graph import END, START, StateGraph
 
+from adam_agent.agents import record_agent_decision
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
 from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
@@ -167,6 +168,18 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "input_spec_path": context.target_spec.get("path"),
             "draft_spec_required": False,
             "next_action": "generate_code",
+            "agent_decisions": [
+                record_agent_decision(
+                    agent="evidence_agent",
+                    node="prepare_product_context",
+                    decision="input_spec_ready",
+                    dataset=state["dataset"],
+                    status="needs_review",
+                    reason="A user-supplied input_spec was found; draft spec generation is not needed.",
+                    outputs={"spec_source": "input_spec", "next_action": "generate_code"},
+                    artifact_ids=[context_artifact.artifact_id],
+                )
+            ],
             "sandbox_runs": 0,
         }
 
@@ -197,6 +210,18 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "draft_spec_required": True,
             "approved_spec_path": approved_payload.get("path"),
             "next_action": "generate_code",
+            "agent_decisions": [
+                record_agent_decision(
+                    agent="evidence_agent",
+                    node="prepare_product_context",
+                    decision="approved_draft_spec_ready",
+                    dataset=state["dataset"],
+                    status="needs_review",
+                    reason="A graph-approved draft spec was found for code generation.",
+                    outputs={"spec_source": "approved_draft_spec", "next_action": "generate_code"},
+                    artifact_ids=[context_artifact.artifact_id],
+                )
+            ],
             "sandbox_runs": 0,
         }
 
@@ -211,6 +236,20 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
         "spec_source": "missing_input_spec",
         "draft_spec_required": True,
         "next_action": "draft_spec",
+        "agent_decisions": [
+            record_agent_decision(
+                agent="evidence_agent",
+                node="prepare_product_context",
+                decision="draft_spec_required",
+                dataset=state["dataset"],
+                status="needs_review",
+                reason="No approved input_spec or current approved draft spec was found.",
+                outputs={"spec_source": "missing_input_spec", "next_action": "draft_spec"},
+                risk_flags=["missing_input_spec"],
+                artifact_ids=[context_artifact.artifact_id],
+            )
+        ],
+        "risk_flags": ["missing_input_spec"],
         "sandbox_runs": 0,
     }
 
@@ -289,6 +328,28 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             draft_result.response_artifact,
             spec_artifact,
         ],
+        "agent_decisions": [
+            record_agent_decision(
+                agent="spec_agent",
+                node="draft_spec_agent",
+                decision="draft_spec_generated",
+                dataset=target,
+                status="needs_review",
+                reason="Generated a review-required draft spec from uploaded evidence.",
+                outputs={
+                    "draft_spec_path": spec_artifact.path,
+                    "variable_count": len(draft_result.spec.variables),
+                    "next_action": "review_draft_spec",
+                },
+                risk_flags=["draft_spec_requires_human_review"],
+                artifact_ids=[
+                    draft_result.prompt_artifact.artifact_id,
+                    draft_result.response_artifact.artifact_id,
+                    spec_artifact.artifact_id,
+                ],
+            )
+        ],
+        "risk_flags": ["draft_spec_requires_human_review"],
     }
 
 
@@ -395,6 +456,40 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             artifacts.code_artifact,
             _tool_log_artifact(state, static_check_path, kind_id="static_check"),
         ],
+        "agent_decisions": [
+            record_agent_decision(
+                agent="code_agent",
+                node="generate_r_code_agent",
+                decision="r_code_generated",
+                dataset=target,
+                status="needs_review",
+                reason="Generated R code from an approved spec and stopped before execution.",
+                outputs={
+                    "code_path": artifacts.code_artifact.path,
+                    "spec_source": spec_source,
+                    "next_action": "review_code",
+                },
+                risk_flags=package.risk_points,
+                artifact_ids=[
+                    prompt_artifact.artifact_id,
+                    artifacts.response_artifact.artifact_id,
+                    artifacts.package_artifact.artifact_id,
+                    artifacts.code_artifact.artifact_id,
+                ],
+            ),
+            record_agent_decision(
+                agent="static_review_agent",
+                node="generate_r_code_agent",
+                decision="placeholder_static_check_recorded",
+                dataset=target,
+                status="warning",
+                reason="Only placeholder static checking is available in this build.",
+                outputs={"static_check_path": str(static_check_path.as_posix())},
+                risk_flags=["static_check_placeholder"],
+                artifact_ids=[f"static_check_{target.lower()}"],
+            ),
+        ],
+        "risk_flags": package.risk_points + ["static_check_placeholder"],
     }
 
 
@@ -443,6 +538,24 @@ def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
         "current_interrupt": "terminal_failure" if result.terminal_failure else None,
         "next_action": "review_diagnostics" if result.terminal_failure else "review_output",
         "audit_artifacts": list(result.artifacts.values()),
+        "agent_decisions": [
+            record_agent_decision(
+                agent="execution_agent",
+                node="execute_approved_code",
+                decision="r_execution_completed" if not result.terminal_failure else "r_execution_terminal_failure",
+                dataset=target,
+                status="completed" if not result.terminal_failure else "terminal_failure",
+                reason="Executed approved generated R code in the configured R boundary.",
+                outputs={
+                    "output_path": result.output_path or "",
+                    "validation_status": result.validation_status,
+                    "terminal_failure": result.terminal_failure,
+                },
+                risk_flags=["terminal_failure"] if result.terminal_failure else [],
+                artifact_ids=[artifact.artifact_id for artifact in result.artifacts.values()],
+            )
+        ],
+        "risk_flags": ["terminal_failure"] if result.terminal_failure else [],
         "sandbox_runs": 1,
     }
 
@@ -833,6 +946,8 @@ def summarize_product_prepare(state: DatasetGraphState) -> DatasetGraphState:
             "code_used_inputs": state.get("code_used_inputs", []),
             "code_expected_outputs": state.get("code_expected_outputs", []),
             "warnings": state.get("product_context_warnings", []),
+            "agent_decisions": state.get("agent_decisions", []),
+            "risk_flags": state.get("risk_flags", []),
         },
     )
     artifacts = [context_artifact] if context_artifact is not None else []
