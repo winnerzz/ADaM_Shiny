@@ -256,10 +256,13 @@ def _dependency_decision(
         return DependencyDecision(
             dataset=dataset,
             dependencies=[],
-            source="mvp_foundation_default",
+            source="ad_target_no_adam_dependency",
             confidence=0.7 if is_auto_added else 0.8,
             review_required=False,
-            reason="ADSL is the Phase 7.1 foundation dataset for study orchestration.",
+            reason=(
+                "ADSL has no upstream ADaM dependency in the current plan, so it can run in the first execution batch "
+                "through the same unified ADaM spec/code/review/execute flow as other targets."
+            ),
             evidence_ids=[],
         )
     if _target_input_spec_present(study_dir, dataset):

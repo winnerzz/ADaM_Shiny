@@ -510,8 +510,8 @@
               </tr>
               <tr>
                 <td><code>DatasetGraph.prepare_dataset</code></td>
-                <td>根据 <code>execution_mode</code> 分流：ADSL minimal、LLM downstream stub/provider/R sandbox 或普通 stub。</td>
-                <td>真实 UI split flow 不通过这里完成 draft/code 审核；这些 gate 在 service API 中。</td>
+                <td>根据 <code>execution_mode</code> 分流：统一 LLM downstream stub/provider/R sandbox 或普通 stub。<code>real_adsl_minimal</code> 已从 DatasetGraph 退休。</td>
+                <td>真实 UI split flow 不通过 ADSL template；ADSL 和 ADAE/ADCM/ADLB 一样，走 spec/code-review/execute gate。</td>
               </tr>
               <tr>
                 <td><code>draft_lineage_stub</code> / <code>draft_spec_stub</code></td>
@@ -879,7 +879,7 @@
               <tr><td><code>src/adam_agent/llm/clients.py</code></td><td>mock、OpenAI-compatible、Anthropic、DeepSeek、Qwen 等 LLM 客户端。</td></tr>
               <tr><td><code>src/adam_agent/tools/sdtm_reader.py</code></td><td>读取/预览 CSV 和 sas7bdat；sas7bdat 依赖本地 Rscript + haven。</td></tr>
               <tr><td><code>src/adam_agent/downstream/runner.py</code></td><td>下游 ADaM：LLM 生成代码、R 执行、验证、repair。</td></tr>
-              <tr><td><code>src/adam_agent/adsl/runner.py</code></td><td>ADSL minimal 的本地 R 生成路径。</td></tr>
+              <tr><td><code>src/adam_agent/adsl/runner.py</code></td><td>历史 Phase 5 ADSL template 工具，仅作 legacy/regression/CLI 参考，不是当前产品主路径。</td></tr>
             </tbody>
           </table>
         </div>

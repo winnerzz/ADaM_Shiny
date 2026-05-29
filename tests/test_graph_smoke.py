@@ -347,12 +347,13 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["audit_manifest"].metadata["dependency_evidence"], "no_dependency_evidence")
         self.assertTrue(result["audit_manifest"].metadata["dependency_decisions"][1]["review_required"])
 
-    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
-    def test_study_graph_can_run_real_adsl_minimal_foundation(self) -> None:
-        study_dir = _workspace_dir("graph_real_adsl") / "PSY201"
+    def test_study_graph_runs_adsl_through_unified_llm_adam_flow(self) -> None:
+        study_dir = _workspace_dir("graph_unified_adsl") / "PSY201"
         input_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
         input_dir.mkdir(parents=True)
-        for folder in ["reference_adam", "input_spec", "input_define", "legacy_code", "runs"]:
+        spec_dir.mkdir()
+        for folder in ["reference_adam", "input_define", "legacy_code", "runs"]:
             (study_dir / folder).mkdir()
         (input_dir / "dm.csv").write_text(
             "STUDYID,USUBJID,AGE,SEX,ARM\nS1,01,34,F,Test Drug\nS1,02,41,M,Placebo\n",
@@ -362,16 +363,19 @@ class GraphSmokeTests(unittest.TestCase):
             "USUBJID,EXSTDTC,EXENDTC\n01,2024-01-01,2024-01-05\n",
             encoding="utf-8",
         )
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
         graph = compile_study_graph()
 
         result = graph.invoke(
             {
                 "study_id": "PSY201",
-                "run_id": "run_graph_real_adsl",
+                "run_id": "run_graph_unified_adsl",
                 "target_datasets": ["ADSL"],
-                "execution_mode": "real_adsl_minimal",
+                "execution_mode": "llm_downstream_stubbed",
                 "study_dir": str(study_dir),
-                "rscript_path": str(LOCAL_RSCRIPT),
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -381,16 +385,16 @@ class GraphSmokeTests(unittest.TestCase):
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         adsl_summary = summaries["ADSL"]
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(adsl_summary.status, "completed")
-        self.assertEqual(adsl_summary.validation_status, "pass")
-        self.assertEqual(adsl_summary.compare_status, "skipped")
-        self.assertEqual(adsl_summary.output_artifact_ids, ["adsl_output_csv"])
-        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "outputs" / "adsl.csv").exists())
-        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "manifest.json").exists())
-        self.assertTrue((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "adsl_manifest.json").exists())
-        study_manifest = json.loads((study_dir / "runs" / "run_graph_real_adsl" / "audit" / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(study_manifest["manifest_scope"], "study")
-        self.assertTrue(any(artifact["path"].endswith("adsl_manifest.json") for artifact in study_manifest["artifacts"]))
+        self.assertEqual(adsl_summary.status, "completed_stub")
+        self.assertEqual(adsl_summary.validation_status, "structural_stub_pass")
+        self.assertTrue(adsl_summary.metadata["stubbed_r_execution"])
+        self.assertEqual(adsl_summary.metadata["llm_provider"], "mock")
+        self.assertEqual(adsl_summary.output_artifact_ids, ["output_adam_psy201_run_graph_unified_adsl_adsl"])
+        self.assertTrue((study_dir / "runs" / "run_graph_unified_adsl" / "llm" / "adsl_context.json").exists())
+        self.assertTrue((study_dir / "runs" / "run_graph_unified_adsl" / "llm" / "adsl_response.json").exists())
+        self.assertTrue((study_dir / "runs" / "run_graph_unified_adsl" / "code" / "build_adsl.R").exists())
+        self.assertTrue((study_dir / "runs" / "run_graph_unified_adsl" / "outputs" / "adsl.csv").exists())
+        self.assertFalse((study_dir / "runs" / "run_graph_unified_adsl" / "audit" / "adsl_manifest.json").exists())
 
     def test_dataset_state_isolation_across_stub_runs(self) -> None:
         dataset_graph = compile_dataset_graph()
@@ -421,24 +425,42 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
 
-    def test_real_adsl_dataset_graph_returns_structured_failure_for_missing_inputs(self) -> None:
-        study_dir = _workspace_dir("graph_real_adsl_missing") / "PSY201"
+    def test_adsl_unified_llm_flow_returns_structured_failure_for_missing_study_dir(self) -> None:
+        study_dir = _workspace_dir("graph_unified_adsl_missing") / "PSY201"
         study_dir.mkdir(parents=True)
         dataset_graph = compile_dataset_graph()
 
         result = dataset_graph.invoke(
             {
                 "study_id": "PSY201",
-                "run_id": "run_graph_real_adsl_missing",
+                "run_id": "run_graph_unified_adsl_missing",
                 "dataset": "ADSL",
-                "execution_mode": "real_adsl_minimal",
-                "study_dir": str(study_dir),
-                "rscript_path": str(LOCAL_RSCRIPT),
+                "execution_mode": "llm_downstream_stubbed",
                 "audit_artifacts": [],
             }
         )
 
         self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["real_run_error"], "execution_mode=llm_downstream_stubbed requires study_dir")
+
+    def test_real_adsl_minimal_mode_is_retired_from_dataset_graph(self) -> None:
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_graph_retired_adsl_template",
+                "dataset": "ADSL",
+                "execution_mode": "real_adsl_minimal",
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"].status, "failed")
+        self.assertEqual(result["summary"].validation_status, "not_run_stub")
+        self.assertIn("retired from DatasetGraph", result["real_run_error"])
+        self.assertFalse(result.get("real_run_completed"))
 
     def test_non_ad_target_is_blocked_as_unsupported_not_completed_stub(self) -> None:
         graph = compile_study_graph()
@@ -461,30 +483,38 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["audit_manifest"].metadata["unsupported_datasets"], ["LB"])
 
-    def test_real_adsl_spec_error_records_route_without_stub_revision(self) -> None:
-        study_dir = _workspace_dir("graph_real_adsl_spec_error") / "PSY201"
+    def test_adsl_unified_llm_flow_failure_records_route_without_stub_revision(self) -> None:
+        study_dir = _workspace_dir("graph_unified_adsl_failure") / "PSY201"
         input_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
         input_dir.mkdir(parents=True)
-        (input_dir / "dm.csv").write_text("STUDYID,AGE\nS1,34\n", encoding="utf-8")
-        (input_dir / "ex.csv").write_text("USUBJID,EXSTDTC\n01,2024-01-01\n", encoding="utf-8")
+        spec_dir.mkdir()
+        (input_dir / "dm.csv").write_text("STUDYID,USUBJID\nS1,01\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
         dataset_graph = compile_dataset_graph()
 
         result = dataset_graph.invoke(
             {
                 "study_id": "PSY201",
-                "run_id": "run_graph_real_adsl_spec_error",
+                "run_id": "run_graph_unified_adsl_failure",
                 "dataset": "ADSL",
-                "execution_mode": "real_adsl_minimal",
+                "execution_mode": "llm_downstream_r_sandbox",
                 "study_dir": str(study_dir),
-                "rscript_path": str(LOCAL_RSCRIPT),
+                "rscript_path": "C:/not/a/real/Rscript.exe",
+                "llm_exposure": {},
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
                 "audit_artifacts": [],
             }
         )
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["summary"].status, "failed")
-        self.assertEqual(result["failure_records"][0].failure_type, "spec_error")
-        self.assertEqual(result["failure_records"][0].recommended_route, "revise_spec")
+        self.assertEqual(result["summary"].validation_status, "fail")
+        self.assertEqual(result["failure_records"][0].root_cause, "r_environment_error")
+        self.assertEqual(result["failure_records"][0].recommended_route, "human_review")
         self.assertEqual(result.get("repair_attempts", 0), 0)
         self.assertNotEqual(result.get("draft_spec_ready"), True)
 
@@ -649,6 +679,50 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summaries["ADAE"].metadata["provider_alias"], "mock")
         self.assertTrue(summaries["ADAE"].metadata["stubbed_r_execution"])
         self.assertTrue((study_dir / "runs" / "run_phase76_graph_llm_provider_mock" / "code" / "build_adae.R").exists())
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_study_graph_runs_adsl_llm_r_sandbox_with_mock_config(self) -> None:
+        study_dir = _workspace_dir("phase8_adsl_unified_r_sandbox") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        (input_sdtm / "dm.csv").write_text(
+            "STUDYID,USUBJID,SUBJID,ARM,ACTARM\nS1,01,1001,Placebo,Placebo\n",
+            encoding="utf-8",
+        )
+        (input_sdtm / "ex.csv").write_text("USUBJID,EXSTDTC,EXENDTC\n01,2024-01-01,2024-01-05\n", encoding="utf-8")
+        (input_spec / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_phase8_adsl_unified_r",
+                "target_datasets": ["ADSL"],
+                "execution_mode": "llm_downstream_r_sandbox",
+                "study_dir": str(study_dir),
+                "rscript_path": str(LOCAL_RSCRIPT),
+                "llm_exposure": {},
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(summaries["ADSL"].status, "completed")
+        self.assertEqual(summaries["ADSL"].validation_status, "pass")
+        self.assertFalse(summaries["ADSL"].metadata["stubbed_r_execution"])
+        self.assertTrue(summaries["ADSL"].metadata["not_real_derivation"])
+        self.assertTrue((study_dir / "runs" / "run_phase8_adsl_unified_r" / "code" / "build_adsl.R").exists())
+        self.assertTrue((study_dir / "runs" / "run_phase8_adsl_unified_r" / "outputs" / "adsl.csv").exists())
+        self.assertFalse((study_dir / "runs" / "run_phase8_adsl_unified_r" / "audit" / "adsl_manifest.json").exists())
 
     def test_study_graph_provider_mode_fails_closed_without_external_approval(self) -> None:
         study_dir = _workspace_dir("phase76_graph_provider_fail_closed") / "PSY201"

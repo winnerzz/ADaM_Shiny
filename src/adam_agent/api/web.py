@@ -50,6 +50,38 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
       line-height: 1.45;
     }
+    .header-status {
+      display: grid;
+      gap: 7px;
+      min-width: 340px;
+      max-width: 460px;
+    }
+    .status-card {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .status-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .status-detail {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
     main {
       display: grid;
       grid-template-columns: 280px minmax(700px, 1fr);
@@ -187,6 +219,58 @@ INDEX_HTML = r"""<!doctype html>
       border-color: var(--line);
     }
     .target-button.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    .operation-banner {
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .operation-banner.busy {
+      border-color: #a7d8cf;
+      background: #eef8f6;
+    }
+    .operation-banner.fail {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    .operation-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .operation-title {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .progress-track {
+      height: 9px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e4e9f0;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    .operation-banner.busy .progress-bar {
+      width: 68%;
+      animation: progressPulse 1.2s ease-in-out infinite;
+    }
+    .operation-banner.done .progress-bar { width: 100%; background: var(--ok); }
+    .operation-banner.fail .progress-bar { width: 100%; background: var(--danger); }
+    @keyframes progressPulse {
+      0% { opacity: 0.55; }
+      50% { opacity: 1; }
+      100% { opacity: 0.55; }
+    }
     .graph-canvas {
       min-height: 180px;
       padding: 12px;
@@ -215,6 +299,62 @@ INDEX_HTML = r"""<!doctype html>
     .graph-node.target { border-color: rgba(15, 118, 110, 0.45); background: #eef8f6; color: var(--accent-dark); }
     .graph-node.blocked { border-color: #e3b0aa; background: #fff2f0; color: var(--danger); }
     .graph-arrow { color: var(--muted); font-weight: 800; }
+    .dependency-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      margin-bottom: 10px;
+    }
+    .dependency-card.active {
+      border-color: rgba(15, 118, 110, 0.35);
+      background: #fbfffe;
+    }
+    .dependency-card.blocked {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    .dependency-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .dependency-steps {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .dependency-steps li {
+      display: grid;
+      grid-template-columns: 25px 1fr;
+      gap: 8px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .step-dot {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .dependency-note {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
     .dataset-board { display: grid; gap: 8px; }
     .dataset-card {
       padding: 11px;
@@ -409,6 +549,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
+      .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
     }
   </style>
@@ -419,7 +560,15 @@ INDEX_HTML = r"""<!doctype html>
       <h1>ADaM Agent Studio</h1>
       <div class="subtitle">Upload study evidence, generate reviewable R code, then run it locally after approval.</div>
     </div>
-    <div class="status-line" id="health">Checking API...</div>
+    <div class="header-status">
+      <div class="status-card">
+        <div class="status-row">
+          <span class="status-label">System</span>
+          <span class="pill warn" id="health">Checking API...</span>
+        </div>
+        <div class="status-detail" id="globalStatusDetail">Waiting for the local API health check.</div>
+      </div>
+    </div>
   </header>
 
   <main>
@@ -439,6 +588,16 @@ INDEX_HTML = r"""<!doctype html>
           <span class="pill warn" id="graphStatus">waiting</span>
         </div>
         <div class="section-body">
+          <div class="operation-banner" id="operationBanner">
+            <div class="operation-head">
+              <div>
+                <span class="operation-title" id="operationTitle">Ready for study setup</span>
+                <div class="muted" id="operationDetail">No long-running operation is active.</div>
+              </div>
+              <span class="pill" id="operationStatus">idle</span>
+            </div>
+            <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
+          </div>
           <div class="metric-grid">
             <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
             <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
@@ -721,8 +880,42 @@ INDEX_HTML = r"""<!doctype html>
       const node = byId(id);
       node.textContent = status;
       node.className = 'pill';
-      if (['failed', 'blocked', 'error', 'not started'].includes(status)) node.classList.add('fail');
-      if (['waiting', 'not generated', 'running', 'review', 'warning'].includes(status)) node.classList.add('warn');
+      if (['failed', 'blocked', 'error', 'not started', 'unavailable'].includes(status)) node.classList.add('fail');
+      if (['waiting', 'not generated', 'running', 'review', 'warning', 'stale', 'draft review', 'checking'].includes(status)) node.classList.add('warn');
+    }
+
+    function setOperation(status, title, detail) {
+      const banner = byId('operationBanner');
+      const statusNode = byId('operationStatus');
+      byId('operationTitle').textContent = title;
+      byId('operationDetail').textContent = detail;
+      statusNode.textContent = status;
+      statusNode.className = 'pill';
+      banner.className = 'operation-banner';
+      if (status === 'running') {
+        banner.classList.add('busy');
+        statusNode.classList.add('warn');
+      } else if (status === 'failed') {
+        banner.classList.add('fail');
+        statusNode.classList.add('fail');
+      } else if (status === 'done') {
+        banner.classList.add('done');
+      } else if (status === 'waiting') {
+        statusNode.classList.add('warn');
+      }
+      byId('globalStatusDetail').textContent = detail;
+    }
+
+    function beginOperation(title, detail) {
+      setOperation('running', title, detail);
+    }
+
+    function completeOperation(title, detail) {
+      setOperation('done', title, detail);
+    }
+
+    function failOperation(title, error) {
+      setOperation('failed', title, String(error));
     }
 
     function setStep(index) {
@@ -826,6 +1019,7 @@ INDEX_HTML = r"""<!doctype html>
         byId('llmStatus').textContent = 'Mock mode is active. There is no external connection to test.';
         return;
       }
+      beginOperation('Testing LLM connection', 'Sending a short provider health request. No study data is included.');
       byId('llmStatus').className = 'note warn';
       byId('llmStatus').textContent = 'Testing provider connection...';
       try {
@@ -843,23 +1037,30 @@ INDEX_HTML = r"""<!doctype html>
         const relayNote = payload.external_relay ? ' Custom or relay endpoint approved.' : '';
         byId('llmStatus').className = 'note strong';
         byId('llmStatus').textContent = `Connection OK: ${payload.provider} / ${payload.model}.${relayNote} No study data was sent.`;
+        completeOperation('LLM connection OK', `${payload.provider} responded. No study data was sent.`);
         addEvent('LLM connection tested', `${payload.provider} responded successfully.`);
       } catch (error) {
         byId('llmStatus').className = 'note warn';
         byId('llmStatus').textContent = String(error);
+        failOperation('LLM connection failed', error);
       }
     }
 
     async function checkHealth() {
       try {
         const payload = await api('/health');
-        byId('health').textContent = payload.status === 'ok' ? 'API ready' : 'API unavailable';
+        setPill('health', payload.status === 'ok' ? 'API ready' : 'unavailable');
+        byId('globalStatusDetail').textContent = payload.status === 'ok'
+          ? 'Local API is running. Choose demo data or upload study files.'
+          : 'Local API responded but is not ready.';
       } catch {
-        byId('health').textContent = 'API unavailable';
+        setPill('health', 'unavailable');
+        failOperation('API unavailable', 'The browser cannot reach the local FastAPI service.');
       }
     }
 
     async function startUploadWorkspace() {
+      beginOperation('Creating workspace', 'Preparing the local study folders for uploaded files.');
       byId('uploadPanel').classList.remove('hidden');
       byId('uploadChoice').classList.add('active');
       byId('demoChoice').classList.remove('active');
@@ -872,14 +1073,17 @@ INDEX_HTML = r"""<!doctype html>
         addEvent('Workspace created', 'A local study workspace is ready for uploads.');
         setPill('workspaceStatus', 'ready');
         byId('workspaceMessage').textContent = 'Workspace ready. Upload SDTM and spec files by role.';
+        completeOperation('Workspace ready', 'Upload SDTM, specs, reference ADaM, define, or legacy code by role.');
         setStep(2);
       } catch (error) {
         setPill('workspaceStatus', 'error');
         byId('workspaceMessage').textContent = String(error);
+        failOperation('Workspace creation failed', error);
       }
     }
 
     async function createDemoStudy() {
+      beginOperation('Loading demo study', 'Copying demo SDTM, spec, and reference ADaM files into a local workspace.');
       byId('demoChoice').classList.add('active');
       byId('uploadChoice').classList.remove('active');
       byId('uploadPanel').classList.add('hidden');
@@ -892,10 +1096,12 @@ INDEX_HTML = r"""<!doctype html>
         addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
         setPill('workspaceStatus', 'ready');
         byId('workspaceMessage').textContent = 'Demo loaded. Files are already organized by role.';
+        completeOperation('Demo study ready', 'Demo inputs are organized. Choose a target and review the dependency plan.');
         setStep(3);
       } catch (error) {
         setPill('workspaceStatus', 'error');
         byId('workspaceMessage').textContent = String(error);
+        failOperation('Demo load failed', error);
       }
     }
 
@@ -918,6 +1124,7 @@ INDEX_HTML = r"""<!doctype html>
         byId('workspaceMessage').textContent = `Choose at least one ${role} file first.`;
         return;
       }
+      beginOperation(`Uploading ${role}`, 'Saving files, rescanning study inputs, and invalidating stale plans if needed.');
       byId('workspaceMessage').textContent = `Uploading ${role} file(s)...`;
       const form = new FormData();
       for (const file of input.files) form.append('files', file);
@@ -933,10 +1140,12 @@ INDEX_HTML = r"""<!doctype html>
         addEvent(`${role} uploaded`, uploadDiffMessage(payload));
         byId(uploadStatus[role]).textContent = `${payload.saved_files.length} file(s) uploaded.`;
         byId('workspaceMessage').textContent = `Uploaded ${payload.saved_files.length} file(s). ${uploadDiffMessage(payload)}`;
+        completeOperation(`${role} upload complete`, uploadDiffMessage(payload));
         setStep(2);
       } catch (error) {
         byId(uploadStatus[role]).textContent = 'Upload failed.';
         byId('workspaceMessage').textContent = String(error);
+        failOperation(`${role} upload failed`, error);
       }
     }
 
@@ -1202,6 +1411,7 @@ INDEX_HTML = r"""<!doctype html>
 
     async function preparePlan() {
       if (!studyDir() || !state.selectedTarget) return;
+      beginOperation('Preparing dependency plan', `Checking whether ${state.selectedTarget} needs upstream ADaM datasets.`);
       const payload = {
         study_dir: studyDir(),
         study_id: state.studyId,
@@ -1221,16 +1431,18 @@ INDEX_HTML = r"""<!doctype html>
         renderPlan(plan);
         renderDraftSpecPane();
         renderGraphAwareDashboard();
+        completeOperation('Dependency plan ready', dependencyPlanSummary(plan));
         setStep(4);
       } catch (error) {
         setPill('planStatus', 'failed');
         byId('planView').textContent = String(error);
+        failOperation('Dependency planning failed', error);
       }
     }
 
     function renderPlan(plan) {
-      const blocks = (plan.blocked_datasets || []).map((item) => `<li>${escapeHtml(item.dataset)} needs ${escapeHtml(item.blocked_by)}: ${escapeHtml(item.reason)}</li>`).join('');
-      const decisions = (plan.dependency_decisions || []).map((item) => `<li>${escapeHtml(item.dataset)} depends on ${escapeHtml((item.dependencies || []).join(', ') || 'nothing currently detected')}.</li>`).join('');
+      const blocks = (plan.blocked_datasets || []).map((item) => `<li>${escapeHtml(item.dataset)} needs ${escapeHtml(item.blocked_by)}: ${humanDependencyReason(item.reason)}</li>`).join('');
+      const decisions = (plan.dependency_decisions || []).map((item) => `<li>${escapeHtml(item.dataset)}: ${dependencyDecisionText(item)}</li>`).join('');
       byId('planView').innerHTML = `
         <p><strong>Selected target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
         <p><strong>Runnable now:</strong> ${escapeHtml((plan.runnable_datasets || []).join(', ') || 'None')}</p>
@@ -1239,9 +1451,44 @@ INDEX_HTML = r"""<!doctype html>
       `;
     }
 
+    function dependencyPlanSummary(plan) {
+      const blocked = plan?.blocked_datasets || [];
+      const runnable = plan?.runnable_datasets || [];
+      if (blocked.length) {
+        return `${blocked.length} dataset(s) need action before generation. Review the dependency plan below.`;
+      }
+      if (runnable.length) {
+        return `${runnable.join(', ')} can proceed. Continue with Finalize Inputs / Draft Spec.`;
+      }
+      return 'No runnable target yet. Review input evidence and target selection.';
+    }
+
+    function humanDependencyReason(reason) {
+      const value = String(reason || '');
+      if (value === 'dependency_user_action_required') return 'missing upstream ADaM; provide it or approve system generation later';
+      if (value === 'unsupported_dataset') return 'not an ADaM target supported by this prototype';
+      if (value === 'blocked_by_dependency') return 'another required dataset is not ready';
+      return escapeHtml(value || 'review required');
+    }
+
+    function dependencyDecisionText(decision) {
+      const dependencies = decision.dependencies || [];
+      if (!dependencies.length) {
+        if (decision.source === 'no_dependency_evidence') {
+          return 'no upstream ADaM was detected; human review should confirm this is correct.';
+        }
+        if (decision.source === 'input_spec_no_adam_dependency') {
+          return 'user spec did not show an upstream ADaM dependency.';
+        }
+        return 'no upstream ADaM dependency currently detected.';
+      }
+      return `uses upstream ADaM ${dependencies.join(', ')}. Source: ${String(decision.source || 'evidence').replaceAll('_', ' ')}.`;
+    }
+
     async function finalizeInputsForDraftSpec() {
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
+      beginOperation('Finalizing inputs', `Checking whether ${state.selectedTarget} has an approved spec or needs a draft spec.`);
       byId('draftSpecPane').innerHTML = '<p class="note warn">Finalizing uploaded inputs...</p>';
       setPill('codeStatus', 'running');
       try {
@@ -1271,16 +1518,19 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', payload.next_action === 'review_draft_spec' ? 'draft review' : 'not generated');
         byId('approveDraftSpecButton').disabled = payload.next_action !== 'review_draft_spec';
         addEvent('Inputs finalized', payload.message);
+        completeOperation('Inputs finalized', payload.message);
         renderDraftSpecPane();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Finalize inputs failed', error);
       }
     }
 
     async function approveDraftSpec() {
       const draft = draftSpecFor(state.selectedTarget);
       if (!draft) return;
+      beginOperation('Approving draft spec', `Recording approval for ${draft.dataset} draft spec in this run.`);
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/draft-spec-review`, {
           method: 'POST',
@@ -1295,9 +1545,11 @@ INDEX_HTML = r"""<!doctype html>
         state.draftSpecReviewByDataset[payload.dataset] = payload;
         setPill('codeStatus', 'not generated');
         addEvent('Draft spec approved', `${payload.dataset} draft spec can now be used for R code generation.`);
+        completeOperation('Draft spec approved', `${payload.dataset} can now use the approved draft spec for code generation.`);
         renderDraftSpecPane();
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Draft spec approval failed', error);
       }
     }
 
@@ -1376,27 +1628,59 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const blockedNames = new Set((blocked || []).map((item) => item.dataset));
-      const rows = [];
-      if (sdtm.length) {
-        rows.push(`
-          <div class="graph-row">
-            ${sdtm.slice(0, 8).map((name) => `<div class="graph-node source">${escapeHtml(name)}</div>`).join('')}
-            <span class="graph-arrow">to</span>
-            <div class="graph-node target">ADaM Spec</div>
-          </div>
-        `);
-      }
-      for (const target of targets) {
+      const orderedTargets = [
+        ...(state.selectedTarget ? [state.selectedTarget] : []),
+        ...targets.filter((target) => target !== state.selectedTarget)
+      ];
+      const rows = orderedTargets.map((target) => {
         const dependencies = dependenciesForTarget(target);
-        rows.push(`
-          <div class="graph-row">
-            ${dependencies.map((dependency) => `<div class="graph-node ${dependencyAvailable(dependency, runnable, targets) ? 'target' : 'blocked'}">${escapeHtml(dependency)}</div><span class="graph-arrow">to</span>`).join('')}
-            <div class="graph-node ${blockedNames.has(target) ? 'blocked' : 'target'}">${escapeHtml(target)}</div>
-            <span class="pill ${runnable.includes(target) ? '' : blockedNames.has(target) ? 'fail' : 'warn'}">${escapeHtml(datasetStatus(target, runnable, blocked))}</span>
+        const status = datasetStatus(target, runnable, blocked);
+        const isBlocked = blockedNames.has(target);
+        const depItems = dependencies.length
+          ? dependencies.map((dependency, index) => dependencyStepHtml(dependency, index, runnable, targets)).join('')
+          : `<li><span class="step-dot">2</span><span>No upstream ADaM dependency is currently detected. This is an evidence-based planning result, not a clinical guarantee.</span></li>`;
+        const decision = dependencyDecisionFor(target);
+        return `
+          <div class="dependency-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''}">
+            <div class="dependency-title">
+              <span>${escapeHtml(target)} generation plan</span>
+              <span class="pill ${isBlocked || status === 'failed' ? 'fail' : status === 'ready' || status === 'completed' || status === 'reference' ? '' : 'warn'}">${escapeHtml(status)}</span>
+            </div>
+            <ul class="dependency-steps">
+              <li><span class="step-dot">1</span><span>Use uploaded SDTM evidence${sdtm.length ? `: ${escapeHtml(sdtm.slice(0, 8).join(', '))}${sdtm.length > 8 ? ', ...' : ''}` : '. No SDTM source has been recognized yet.'}</span></li>
+              ${depItems}
+              <li><span class="step-dot">3</span><span>${nextActionText(target, status, isBlocked)}</span></li>
+            </ul>
+            <div class="dependency-note">${escapeHtml(decision?.reason || 'Prepare a dependency plan to explain why this target is ready or blocked.')}</div>
           </div>
-        `);
-      }
+        `;
+      });
       node.innerHTML = rows.join('') || '<div class="muted">No dependency graph yet.</div>';
+    }
+
+    function dependencyStepHtml(dependency, index, runnable, targets) {
+      const available = dependencyAvailable(dependency, runnable, targets);
+      const evidence = hasDatasetEvidence(dependency) ? 'provided in Reference ADaM' : (runnable || []).includes(dependency) ? 'planned/runnable in this run' : (targets || []).includes(dependency) ? 'selected as a target' : 'missing';
+      return `<li><span class="step-dot">${index + 2}</span><span>Requires upstream ADaM <strong>${escapeHtml(dependency)}</strong>: ${available ? 'available' : 'needs user action'} (${escapeHtml(evidence)}).</span></li>`;
+    }
+
+    function dependencyDecisionFor(target) {
+      return (state.plan?.dependency_decisions || []).find((item) => item.dataset === target) || null;
+    }
+
+    function nextActionText(target, status, isBlocked) {
+      if (isBlocked) {
+        const block = (state.plan?.blocked_datasets || []).find((item) => item.dataset === target);
+        return `Action required before generation: ${block ? `${block.dataset} needs ${block.blocked_by}` : 'resolve blocked dependencies'}.`;
+      }
+      if (!state.plan) return 'Next: prepare the dependency plan for this target.';
+      if (!targetSpecGateSatisfied(target)) return 'Next: click Finalize Inputs / Draft Spec, then approve the draft spec if no uploaded spec exists.';
+      if (!generatedFor(target)) return 'Next: click Generate R Code. This will not run R yet.';
+      if (!reviewFor(target) && !executionFor(target)) return 'Next: review the generated R code, then approve local execution.';
+      if (executionFor(target)?.status === 'completed') return 'Next: inspect the generated ADaM table, compare result, and downloads.';
+      if (executionFor(target)?.status === 'terminal_failure') return 'Execution failed. Review diagnostics before retrying.';
+      if (status === 'reference') return 'This dataset is available as reference evidence. Select another output target if you want to generate code.';
+      return 'Next: continue with the active review step shown below.';
     }
 
     function renderDatasetBoard(targets, runnable, blocked) {
@@ -1477,6 +1761,7 @@ INDEX_HTML = r"""<!doctype html>
         byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
       }
+      beginOperation('Generating R code', `Calling the selected LLM/code generator for ${state.selectedTarget}. This may take a few minutes.`);
       setPill('codeStatus', 'running');
       try {
         const overrides = llmOverridePayload();
@@ -1501,12 +1786,14 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', 'review');
         byId('approveButton').disabled = false;
         addEvent('R code generated', `${payload.dataset} code is ready for review.`);
+        completeOperation('R code generated', `${payload.dataset} code is ready for review. R has not been executed yet.`);
         renderGraphAwareDashboard();
         setStep(5);
         renderPane();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('R code generation failed', error);
       }
     }
 
@@ -1514,6 +1801,7 @@ INDEX_HTML = r"""<!doctype html>
       const generated = generatedFor(state.selectedTarget);
       if (!generated) return;
       state.generated = generated;
+      beginOperation('Running approved R code', `Approving ${generated.dataset} code, then executing it with local Rscript.`);
       setPill('codeStatus', 'running');
       try {
         state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
@@ -1541,6 +1829,11 @@ INDEX_HTML = r"""<!doctype html>
         await loadReviewSummary(generated.run_id);
         addEvent('Sandbox completed', `${generated.dataset} finished with status ${state.execution.status}.`);
         setPill('codeStatus', state.execution.status);
+        if (state.execution.status === 'completed') {
+          completeOperation('R sandbox completed', `${generated.dataset} output passed structural validation and is ready for review.`);
+        } else {
+          failOperation('R sandbox finished with failure', `${generated.dataset} status: ${state.execution.status}. Check diagnostics.`);
+        }
         state.selectedView = 'output';
         setActiveTab();
         setStep(6);
@@ -1549,6 +1842,7 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Approve and run failed', error);
       }
     }
 

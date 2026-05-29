@@ -16,14 +16,14 @@ def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
 def route_after_sandbox(state: DatasetGraphState) -> DatasetRoute:
     """Route a dataset after stub sandbox execution."""
 
-    if state.get("execution_mode") == "real_adsl_minimal" and state.get("dataset") == "ADSL":
-        return "success" if state.get("real_run_completed") else "fail"
     if state.get("execution_mode") in {
         "llm_downstream_stubbed",
         "llm_downstream_provider",
         "llm_downstream_r_sandbox",
-    } and state.get("dataset") != "ADSL":
+    }:
         return "success" if state.get("real_run_completed") else "fail"
+    if state.get("execution_mode") == "real_adsl_minimal":
+        return "fail"
 
     failure_type = state.get("failure_type")
     if failure_type == "code_error":

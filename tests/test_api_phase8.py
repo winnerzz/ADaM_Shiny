@@ -54,6 +54,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Study Dashboard", response.text)
         self.assertIn("Dependency Map", response.text)
         self.assertIn("Dataset Execution Cards", response.text)
+        self.assertIn("operationBanner", response.text)
+        self.assertIn("globalStatusDetail", response.text)
+        self.assertIn("generation plan", response.text)
+        self.assertIn("nextActionText", response.text)
         self.assertIn("Try With Shiny Demo Data", response.text)
         self.assertIn("Use My Study Files", response.text)
         self.assertIn("Generate R Code", response.text)
@@ -359,6 +363,78 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(download.status_code, 200, download.text)
         self.assertIn("USUBJID", download.text)
+
+    def test_adsl_uses_same_split_flow_as_other_adam_targets(self) -> None:
+        study_dir = _study_with_adsl_inputs("phase8_adsl_split_flow")
+        client = TestClient(create_app())
+
+        plan = client.post(
+            "/runs/prepare",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_adsl_split_flow",
+                "target_datasets": ["ADSL"],
+            },
+        )
+        self.assertEqual(plan.status_code, 200, plan.text)
+        self.assertEqual(plan.json()["runnable_datasets"], ["ADSL"])
+
+        finalized = client.post(
+            "/runs/run_adsl_split_flow/datasets/ADSL/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        self.assertEqual(finalized.json()["status"], "input_spec_ready")
+
+        generated = client.post(
+            "/runs/run_adsl_split_flow/datasets/ADSL/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        generated_payload = generated.json()
+        self.assertEqual(generated_payload["status"], "code_generated")
+        self.assertTrue(generated_payload["code_path"].endswith("code/build_adsl.R"))
+        self.assertTrue(generated_payload["static_check_path"].endswith("adsl_static_check.json"))
+        self.assertIn("mock ADSL generation", generated_payload["generated_code"])
+        self.assertFalse((study_dir / "runs" / "run_adsl_split_flow" / "outputs" / "adsl.csv").exists())
+        self.assertFalse((study_dir / "runs" / "run_adsl_split_flow" / "audit" / "adsl_manifest.json").exists())
+
+        blocked_execute = client.post(
+            "/runs/run_adsl_split_flow/datasets/ADSL/execute-approved-code",
+            json={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(blocked_execute.status_code, 400)
+        self.assertIn("must be approved", blocked_execute.json()["detail"])
+
+        review = client.post(
+            "/runs/run_adsl_split_flow/datasets/ADSL/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        self.assertTrue(review.json()["approved"])
+
+        executed = client.post(
+            "/runs/run_adsl_split_flow/datasets/ADSL/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertEqual(executed.json()["status"], "completed")
+        output_path = study_dir / "runs" / "run_adsl_split_flow" / "outputs" / "adsl.csv"
+        self.assertTrue(output_path.exists())
+        with output_path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["USUBJID"], "01")
+        self.assertTrue((study_dir / "runs" / "run_adsl_split_flow" / "llm" / "adsl_context.json").exists())
+        self.assertTrue((study_dir / "runs" / "run_adsl_split_flow" / "llm" / "adsl_response.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_adsl_split_flow" / "audit" / "adsl_manifest.json").exists())
 
     def test_approved_draft_spec_is_invalidated_when_inputs_change(self) -> None:
         study_dir = _workspace_dir("phase8_stale_draft_spec") / "MY_STUDY"
@@ -1117,6 +1193,27 @@ def _study_with_adae_inputs(name: str) -> Path:
     (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
     (input_spec / "adae.json").write_text(
         json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+        encoding="utf-8",
+    )
+    (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+    return study_dir
+
+
+def _study_with_adsl_inputs(name: str) -> Path:
+    study_dir = _workspace_dir(name) / "PSY201"
+    input_sdtm = study_dir / "input_sdtm"
+    input_spec = study_dir / "input_spec"
+    reference_adam = study_dir / "reference_adam"
+    input_sdtm.mkdir(parents=True)
+    input_spec.mkdir()
+    reference_adam.mkdir()
+    (input_sdtm / "dm.csv").write_text(
+        "STUDYID,USUBJID,SUBJID,ARM,ACTARM\nS1,01,1001,Placebo,Placebo\n",
+        encoding="utf-8",
+    )
+    (input_sdtm / "ex.csv").write_text("USUBJID,EXSTDTC,EXENDTC\n01,2024-01-01,2024-01-05\n", encoding="utf-8")
+    (input_spec / "adsl.json").write_text(
+        json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
         encoding="utf-8",
     )
     (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")

@@ -19,7 +19,7 @@ boundary, and preserve audit evidence.
   artifact or explicit user approval for system generation.
 - Dataset state is isolated. One dataset failure does not mutate another
   dataset's repair count or result.
-- Non-ADSL downstream datasets can build an LLM context package.
+- ADaM targets, including ADSL, can build an LLM context package.
 - The LLM layer is provider-isolated.
 - Generated downstream R code is persisted before execution.
 - Downstream execution can be stubbed or run through local `Rscript`.
@@ -32,10 +32,16 @@ boundary, and preserve audit evidence.
 | Mode | Meaning | Real R execution | Typical status |
 |---|---|---:|---|
 | `stub` | Phase 3 graph skeleton behavior | no | `completed` or `failed` |
-| `real_adsl_minimal` | deterministic ADSL starter loop | yes | `completed` or `failed` |
+| `real_adsl_minimal` | retired legacy ADSL template mode; no longer accepted by DatasetGraph | no product path | `failed` |
 | `llm_downstream_stubbed` | mock LLM plus structural stub R runner | no | `completed_stub` |
 | `llm_downstream_provider` | configured LLM provider plus structural stub R runner | no | `completed_stub` |
 | `llm_downstream_r_sandbox` | configured LLM provider plus local `Rscript` | yes | `completed` or `failed` |
+
+ADSL is no longer a special deterministic-template branch in the current
+product architecture. It follows the same ADaM flow as ADAE/ADCM/ADLB:
+approved input spec or approved draft spec, LLM-generated R, human code review,
+approved R execution, validation, and audit artifacts. The old
+`src/adam_agent/adsl/` package remains only as Phase 5 legacy/regression code.
 
 ## Minimal Study Shape For Downstream Runs
 

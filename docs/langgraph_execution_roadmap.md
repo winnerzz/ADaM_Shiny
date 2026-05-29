@@ -1674,6 +1674,18 @@ Phase 8.5 implementation notes:
 - Fixed generated-code request construction so `LLMProviderConfig.max_tokens`
   is passed through to the provider call.
 
+Phase 8 ADSL unified-flow correction:
+
+- Retired `execution_mode = real_adsl_minimal` from `DatasetGraph`.
+- ADSL now uses the same current ADaM product path as other AD targets:
+  approved input spec or approved draft spec -> LLM-generated R -> code review
+  -> approved R execution -> validation/audit.
+- Kept `src/adam_agent/adsl/` only as legacy Phase 5/regression/explicit CLI
+  code. It must not be wired back into StudyGraph, DatasetGraph, or the
+  FastAPI/UI split flow.
+- Updated smoke/API tests to assert that ADSL produces LLM/code artifacts and
+  does not write the old `adsl_manifest.json` product artifact.
+
 ## Phase 9 - Standards and Production Hardening
 
 Goal:

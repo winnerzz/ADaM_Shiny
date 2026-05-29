@@ -44,7 +44,7 @@ Write the smallest implementation that satisfies the current phase goal.
 
 For this project, prefer:
 
-- deterministic templates before provider-dependent code generation
+- mock/provider-isolated LLM contracts before broad provider integration
 - focused validators before broad compliance claims
 - explicit artifact manifests before complex persistence layers
 
@@ -117,14 +117,16 @@ Important current files and directories:
 - `src/adam_agent/graph/study_graph.py`: study-level orchestration, dependency
   planning, dataset dispatch, result reduction, and study audit artifacts.
 - `src/adam_agent/graph/dataset_graph.py`: isolated per-dataset graph. Current
-  real deterministic execution is limited to the Phase 5 ADSL minimal path;
-  Phase 7.6 also wires configured LLM provider calls into downstream code
-  generation behind explicit execution modes.
+  ADaM product execution uses the unified downstream path for all AD targets,
+  including ADSL: approved input spec or approved draft spec -> LLM-generated R
+  -> review gate -> R execution boundary -> validation/audit. The older
+  `real_adsl_minimal` mode is retired from DatasetGraph.
 - `src/adam_agent/graph/dependencies.py`: Phase 7 dependency planner. It is an
   orchestration planner, not a complete production ADaM dependency engine.
-- `src/adam_agent/adsl/`: Phase 5 deterministic ADSL starter loop, including
-  spec builder, R code template, local R runner integration, validation, and
-  failure diagnosis.
+- `src/adam_agent/adsl/`: legacy Phase 5 deterministic ADSL starter loop. It may
+  remain for regression tests or explicit CLI experiments, but it is not the
+  main product path and must not be wired back into StudyGraph, DatasetGraph, or
+  the FastAPI/UI split flow.
 - `src/adam_agent/tools/`: deterministic tool boundaries for study input scan,
   artifact hashing/manifests, SDTM profiling, R execution, and config.
 - `src/adam_agent/llm/`: isolated mock/provider boundary. OpenAI-compatible,
