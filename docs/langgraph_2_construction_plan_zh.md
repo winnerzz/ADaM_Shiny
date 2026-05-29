@@ -1368,6 +1368,46 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：56 tests passed。
 
+### 2026-05-30 - LG2.7 Disabled Action Reason 切片
+
+已完成：
+
+- 在主要审核按钮旁边增加可见 action hints：
+  - Finalize Inputs / Draft Spec
+  - Approve Draft Spec
+  - Generate R Code
+  - Approve And Run Locally
+- 将按钮可用性说明集中到 `actionAvailability()`，并且只从现有 graph/run UI
+  projection 推导：
+  - 当前选择的 target
+  - dependency plan 和 active blocked dependency
+  - input spec / approved draft spec gate
+  - generated code state
+  - review/execution state
+- 给按钮增加 `title`、`aria-disabled-reason` 和 `data-action-ready`，让 UI 能解释
+  缺什么，但不拥有 workflow gating。
+- 本切片只做 UI projection，不改变 API 行为、graph transition、button gating、
+  generation gate、approval gate 或 sandbox execution。
+
+当前边界：
+
+- action hints 是浏览器侧解释层。workflow 真相仍然是 graph state 和已有 run
+  artifacts。
+- hint renderer 不能设置 `button.disabled`。实际 transition 仍由已有 handler
+  和 backend/graph checks 负责，包括现有的 auto-prepare 行为。
+- 当前 compatibility buttons 仍然是 one-dataset-at-a-time action。
+- 一些旧的直接 `button.disabled = ...` 赋值仍在 legacy UI path 中，但
+  `renderActionAvailability()` 已从 dashboard 和 active target refresh path 调用，
+  作为可见原因层的统一覆盖。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+结果：57 tests passed。
+
 ```text
 GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
 ```

@@ -1524,6 +1524,49 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 56 tests passed.
 
+### 2026-05-30 - LG2.7 Disabled Action Reason Slice
+
+Completed:
+
+- Added visible action hints beside the main review buttons:
+  - Finalize Inputs / Draft Spec
+  - Approve Draft Spec
+  - Generate R Code
+  - Approve And Run Locally
+- Centralized action availability text in `actionAvailability()`, derived from
+  existing UI projections of graph/run state:
+  - selected target
+  - dependency plan and active blocked dependency
+  - input-spec / approved-draft-spec gate
+  - generated-code state
+  - review/execution state
+- Added button `title`, `aria-disabled-reason`, and `data-action-ready`
+  attributes so the UI can explain what is missing without owning workflow
+  gating.
+- Kept this as UI projection only. It does not change API behavior, graph
+  transitions, button gating, generation gates, approval gates, or sandbox
+  execution.
+
+Current boundary:
+
+- The action hints are browser-side explanations. Canonical workflow truth
+  remains graph state plus existing run artifacts.
+- The hint renderer must not set `button.disabled`. Existing handlers and
+  backend/graph checks remain responsible for actual transitions, including
+  their auto-prepare behavior.
+- Existing compatibility buttons are still one-dataset-at-a-time actions.
+- Some older direct `button.disabled = ...` assignments remain in legacy UI
+  paths, but `renderActionAvailability()` is called from dashboard and active
+  target refresh paths to make the visible reason layer authoritative.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 57 tests passed.
+
 ```text
 GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
 ```

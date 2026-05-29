@@ -213,6 +213,31 @@ INDEX_HTML = r"""<!doctype html>
     }
     button.secondary:hover { background: #edf3f8; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .action-hints {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .action-hint {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      font-size: 12px;
+    }
+    .action-hint strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .action-hint span { color: var(--muted); }
+    .action-hint.ready { border-color: #b8dfc9; background: #f2fbf5; }
+    .action-hint.blocked { border-color: #e8b2ac; background: #fff8f7; }
+    .action-hint.waiting { background: #fbfdff; }
     .target-option {
       display: inline-flex;
       align-items: center;
@@ -802,6 +827,7 @@ INDEX_HTML = r"""<!doctype html>
             <button class="secondary" id="finalizeInputsButton" disabled>Finalize Inputs / Draft Spec</button>
             <button class="secondary" id="approveDraftSpecButton" disabled>Approve Draft Spec</button>
           </div>
+          <div id="specActionHints" class="action-hints"></div>
           <div id="draftSpecPane" class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</div>
         </div>
       </section>
@@ -816,6 +842,7 @@ INDEX_HTML = r"""<!doctype html>
             <button id="generateCodeButton" disabled>Generate R Code</button>
             <button id="approveButton" disabled>Approve And Run Locally</button>
           </div>
+          <div id="generationActionHints" class="action-hints"></div>
           <p class="note">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
           <div class="tabs">
             <button class="tab active" data-view="summary">Summary</button>
@@ -1489,6 +1516,7 @@ INDEX_HTML = r"""<!doctype html>
       renderDraftSpecPane();
       renderPane();
       renderGraphAwareDashboard();
+      renderActionAvailability();
     }
 
     function syncActiveDatasetState() {
@@ -1609,6 +1637,122 @@ INDEX_HTML = r"""<!doctype html>
     function canApproveGeneratedCode(dataset) {
       const generated = generatedFor(dataset);
       return Boolean(generated && generated.status !== 'stale' && generated.generated_code);
+    }
+
+    function activeDependencyBlock() {
+      if (!state.selectedTarget) return null;
+      return (state.plan?.blocked_datasets || []).find((item) => item.dataset === state.selectedTarget) || null;
+    }
+
+    function actionAvailability() {
+      const target = state.selectedTarget;
+      const blocked = activeDependencyBlock();
+      const generated = generatedFor(target);
+      const execution = executionFor(target);
+      const draft = draftSpecFor(target);
+      const draftReview = draftSpecReviewFor(target);
+      const finalized = finalizedInputsFor(target);
+      const hasSpecGate = targetSpecGateSatisfied(target);
+      const finalizeReady = Boolean(target && state.plan && !blocked);
+      const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
+      const generateReady = Boolean(target && state.plan && !blocked && hasSpecGate);
+      const approveReady = Boolean(canApproveGeneratedCode(target));
+      return {
+        finalize: {
+          ready: finalizeReady,
+          label: 'Finalize Inputs / Draft Spec',
+          reason: !target
+            ? 'Choose an ADaM output first.'
+            : !state.plan
+              ? 'Prepare the dependency plan first.'
+              : blocked
+                ? `${target} is blocked by ${blocked.blocked_by}. Resolve or approve the dependency plan first.`
+                : hasSpecGate
+                  ? `${target} already has an input spec or approved draft spec; finalizing again is optional.`
+                  : `Ready to check whether ${target} has an input spec or needs a draft spec.`
+        },
+        approveDraft: {
+          ready: draftApprovalReady,
+          label: 'Approve Draft Spec',
+          reason: !target
+            ? 'Choose an ADaM output first.'
+            : finalized?.input_spec_available || targetHasInputSpec(target)
+              ? `${target} has an uploaded input spec, so no draft-spec approval is needed.`
+              : draftReview?.approved || finalized?.approved_draft_spec_available
+                ? `${target} draft spec is already approved for this run.`
+                : draft
+                  ? `Review the generated draft spec for ${target}; approve it before code generation.`
+                  : 'Finalize inputs first. If no uploaded spec exists, the app will create a draft spec for review.'
+        },
+        generate: {
+          ready: generateReady,
+          label: 'Generate R Code',
+          reason: !target
+            ? 'Choose an ADaM output first.'
+            : !state.plan
+              ? 'Prepare the dependency plan first.'
+              : blocked
+                ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
+                : !hasSpecGate
+                  ? 'Approve an uploaded input spec path or review/approve the generated draft spec first.'
+                  : generated?.status === 'stale'
+                    ? 'Inputs changed after code generation; regenerate R code before review.'
+                    : generated
+                      ? `${target} already has generated code. Regenerate only if the current code is stale or rejected.`
+                      : `Ready to call the selected code generator for ${target}.`
+        },
+        approveRun: {
+          ready: approveReady,
+          label: 'Approve And Run Locally',
+          pill: execution?.status === 'completed' ? 'rerun' : execution?.status === 'terminal_failure' || execution?.status === 'failed' ? 'diagnose' : null,
+          reason: !target
+            ? 'Choose an ADaM output first.'
+            : execution?.status === 'completed'
+              ? `${target} already completed local execution. Approval remains available only if you intentionally rerun the same generated code.`
+              : execution?.status === 'terminal_failure' || execution?.status === 'failed'
+                ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
+                : !generated
+                  ? 'Generate R code first.'
+                  : generated.status === 'stale'
+                    ? 'Generated code is stale because inputs changed; regenerate before approval.'
+                    : !generated.generated_code
+                      ? 'Generated-code metadata exists, but the code text is not loaded in this browser. Reload the run review before approving.'
+                      : `Ready for human code approval and local R execution for ${target}.`
+        }
+      };
+    }
+
+    function renderActionAvailability() {
+      const availability = actionAvailability();
+      setButtonAvailability('finalizeInputsButton', availability.finalize);
+      setButtonAvailability('approveDraftSpecButton', availability.approveDraft);
+      setButtonAvailability('generateCodeButton', availability.generate);
+      setButtonAvailability('approveButton', availability.approveRun);
+      renderActionHints('specActionHints', [availability.finalize, availability.approveDraft]);
+      renderActionHints('generationActionHints', [availability.generate, availability.approveRun]);
+    }
+
+    function setButtonAvailability(id, item) {
+      const button = byId(id);
+      if (!button) return;
+      button.title = item.reason;
+      button.setAttribute('aria-disabled-reason', item.reason);
+      button.dataset.actionReady = String(Boolean(item.ready));
+    }
+
+    function renderActionHints(id, items) {
+      const node = byId(id);
+      if (!node) return;
+      node.innerHTML = items.map((item) => {
+        const stateClass = item.ready ? 'ready' : 'blocked';
+        const pill = item.pill || (item.ready ? 'ready' : 'waiting');
+        return `
+          <div class="action-hint ${stateClass}">
+            <div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.reason)}</span></div>
+            <span class="pill ${item.ready ? '' : 'warn'}">${pill}</span>
+          </div>
+        `;
+      }).join('');
     }
 
     function reviewFor(dataset) {
@@ -1788,6 +1932,7 @@ INDEX_HTML = r"""<!doctype html>
         addEvent('Inputs finalized', payload.message);
         completeOperation('Inputs finalized', payload.message);
         renderDraftSpecPane();
+        renderActionAvailability();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
@@ -1815,6 +1960,7 @@ INDEX_HTML = r"""<!doctype html>
         addEvent('Draft spec approved', `${payload.dataset} draft spec can now be used for R code generation.`);
         completeOperation('Draft spec approved', `${payload.dataset} can now use the approved draft spec for code generation.`);
         renderDraftSpecPane();
+        renderActionAvailability();
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Draft spec approval failed', error);
@@ -1887,6 +2033,7 @@ INDEX_HTML = r"""<!doctype html>
       renderStudyProgress(targets, runnable, blocked);
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
+      renderActionAvailability();
     }
 
     function renderStudyProgress(targets, runnable, blocked) {
@@ -2504,6 +2651,7 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
     updateLlmModeControls();
+    renderActionAvailability();
     checkHealth();
   </script>
 </body>

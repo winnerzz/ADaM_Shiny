@@ -77,9 +77,13 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("operationBanner", response.text)
         self.assertIn("globalStatusDetail", response.text)
         self.assertIn("studyProgressPanel", response.text)
+        self.assertIn("specActionHints", response.text)
+        self.assertIn("generationActionHints", response.text)
         self.assertIn("Study Progress", response.text)
         self.assertIn("studyProgressSummary", response.text)
         self.assertIn("studyNextActionPill", response.text)
+        self.assertIn("renderActionAvailability", response.text)
+        self.assertIn("aria-disabled-reason", response.text)
         self.assertIn("graphInterruptLabel", response.text)
         self.assertIn("generation plan", response.text)
         self.assertIn("nextActionText", response.text)
@@ -130,6 +134,29 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("targetSpecGateSatisfied(active)", html)
         self.assertIn("generatedFor(active)?.status === 'stale'", html)
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
+
+    def test_index_explains_disabled_actions_from_existing_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        action_body = html.split("function actionAvailability()", 1)[1].split("function reviewFor(dataset)", 1)[0]
+        self.assertIn("state.plan", action_body)
+        self.assertIn("activeDependencyBlock()", action_body)
+        self.assertIn("targetSpecGateSatisfied(target)", action_body)
+        self.assertIn("generatedFor(target)", action_body)
+        self.assertIn("executionFor(target)", action_body)
+        self.assertIn("canApproveGeneratedCode(target)", action_body)
+        self.assertIn("Prepare the dependency plan first.", action_body)
+        self.assertIn("Generated-code metadata exists", action_body)
+        self.assertIn("function setButtonAvailability(id, item)", html)
+        self.assertIn("button.setAttribute('aria-disabled-reason', item.reason)", html)
+        self.assertIn("button.dataset.actionReady = String(Boolean(item.ready))", html)
+        self.assertNotIn("button.disabled = !item.ready", html)
+        dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
+        self.assertIn("renderActionAvailability()", dashboard_body)
 
     def test_index_keeps_planning_selection_separate_from_active_target_view(self) -> None:
         client = TestClient(create_app())
