@@ -65,9 +65,16 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.agent_decisions[0]["agent"], "dependency_agent")
         self.assertEqual(result.graph_state.agent_decisions[0]["decision"], "dependency_plan_prepared")
         self.assertEqual(result.graph_state.agent_decisions[0]["outputs"]["dependency_review_status"], "review_required")
+        self.assertEqual(result.graph_state.agent_audit_summary["summary_writer"]["agent"], "audit_agent")
+        self.assertEqual(result.graph_state.agent_audit_summary["agent_counts"]["dependency_agent"], 1)
+        self.assertTrue((study_dir / "runs" / "run_lg2_gateway_plan" / "audit" / "agent_summary.json").exists())
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
         self.assertEqual(workflow_state["agent_decisions"][0]["agent"], "dependency_agent")
+        self.assertEqual(workflow_state["agent_audit_summary"]["summary_type"], "agent_audit_summary")
+        self.assertTrue(
+            any(artifact["artifact_id"] == "agent_summary_psy201_run_lg2_gateway_plan" for artifact in workflow_state["artifacts"])
+        )
         self.assertTrue(consistency["consistent"], consistency["mismatches"])
 
     def test_gateway_checkpoint_can_be_read_from_same_graph_instance(self) -> None:
@@ -434,7 +441,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.agent_decisions[0]["agent"], "execution_agent")
         self.assertEqual(dataset_state.agent_decisions[0]["decision"], "r_execution_completed")
         self.assertEqual(result.graph_state.agent_decisions[-1]["agent"], "execution_agent")
+        self.assertEqual(result.graph_state.agent_audit_summary["datasets"]["ADAE"]["status"], "completed")
+        self.assertEqual(dataset_state.agent_audit_summary["agent_counts"]["execution_agent"], 1)
         self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "execution_agent")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_audit_summary"]["decision_count"], 1)
 
     def test_gateway_draft_spec_review_rejects_changed_draft_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_draft_spec_hash") / "PSY201"

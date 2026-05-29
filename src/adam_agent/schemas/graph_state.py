@@ -79,6 +79,7 @@ class DatasetRunState(StrictBaseModel):
     human_commands: list[HumanCommand] = Field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
+    agent_audit_summary: dict[str, Any] = Field(default_factory=dict)
     evidence_bundle_id: str | None = None
     reference_queries: list[dict[str, Any]] = Field(default_factory=list)
     result_summary: DatasetResultSummary | None = None
@@ -108,6 +109,7 @@ class StudyRunState(StrictBaseModel):
     human_commands: list[HumanCommand] = Field(default_factory=list)
     agent_decisions: list[dict[str, Any]] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
+    agent_audit_summary: dict[str, Any] = Field(default_factory=dict)
     evidence_bundle_id: str | None = None
     reference_queries: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)

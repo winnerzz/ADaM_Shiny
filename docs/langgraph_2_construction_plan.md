@@ -1323,3 +1323,78 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 ```
 
 Result: 171 tests passed.
+
+### 2026-05-30 - LG2.4 Audit Agent Summary Slice
+
+Completed:
+
+- Added `src/adam_agent/agents/audit.py` as the bounded audit-agent summary
+  layer.
+- The new audit summary is a derived read model from canonical graph state:
+  `agent_decisions`, `risk_flags`, dataset status, current interrupts, and
+  artifact ids.
+- `GraphGateway` now writes `runs/{run_id}/audit/agent_summary.json` whenever
+  it persists canonical `graph_state.json`.
+- `StudyGraph` batch execution now writes the same
+  `audit/agent_summary.json` artifact before writing the study-level
+  `audit/manifest.json`.
+- `StudyRunState` and `DatasetRunState` now carry `agent_audit_summary` so the
+  UI/API projection can expose a human-readable agent summary without parsing
+  raw decision lists.
+- `workflow_state.json` now includes:
+  - study-level `agent_audit_summary`
+  - dataset-level `agent_audit_summary`
+  - study-level audit `artifacts`, including `agent_summary_*`
+- The audit manifest metadata now embeds `agent_audit_summary` alongside raw
+  `agent_decisions` and `risk_flags`.
+
+Current boundary:
+
+- `agent_summary.json` is not a workflow state source. Canonical truth remains
+  `graph_state.json`.
+- The summary is intentionally human/audit facing. It does not unlock workflow
+  gates, change dependency planning, or alter dataset execution.
+- The summary still reflects append-only decision history. It does not yet
+  solve the future problem of separating immutable audit history from a
+  current-only view after rollback/replacement.
+- Static review entries remain clearly labeled as placeholder warnings unless a
+  future LG2.5 static rule layer replaces them.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+Result: 80 tests passed.
+
+Full core verification:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 172 tests passed.
+
+Subagent review:
+
+- A `gpt-5.5` subagent found no major architecture blocker.
+- It found one medium traceability issue: the direct `StudyGraph` batch path
+  wrote dataset agent summaries without dataset artifact ids.
+- Fixed by grouping `state.audit_artifacts` by dataset when writing
+  `agent_summary.json`, and by adding a regression assertion that the direct
+  StudyGraph summary includes a dataset artifact id.
+
+After subagent review fix:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+Result: 80 tests passed.
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 172 tests passed.

@@ -11,7 +11,7 @@ from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from adam_agent.agents import AgentDecision, record_agent_decision
+from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_state, record_agent_decision, write_agent_audit_summary
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, project_graph_state_to_workflow
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -1120,6 +1120,9 @@ class GraphGateway:
         )
 
     def _persist_graph_state(self, study_dir: str | Path, state: StudyRunState, *, node: str) -> None:
+        root = Path(study_dir)
+        _sync_study_agent_decisions(state)
+        _update_agent_audit_summary(root, state)
         path = _graph_state_path(study_dir, state.run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
@@ -1627,6 +1630,33 @@ def _sync_study_agent_decisions(state: StudyRunState) -> None:
             if normalized and normalized not in existing_risk_flags:
                 state.risk_flags.append(normalized)
                 existing_risk_flags.add(normalized)
+
+
+def _update_agent_audit_summary(study_dir: Path, state: StudyRunState) -> None:
+    """Persist the derived audit-agent summary into state and audit artifacts."""
+
+    artifact_id = f"agent_summary_{state.study_id.lower()}_{state.run_id}"
+    summary_path = study_dir / "runs" / state.run_id / "audit" / "agent_summary.json"
+    summary = build_agent_audit_summary_from_state(
+        state,
+        summary_artifact_id=artifact_id,
+        summary_path=summary_path,
+    )
+    artifact = write_agent_audit_summary(summary, path=summary_path, artifact_id=artifact_id)
+    state.agent_audit_summary = summary
+    _upsert_study_artifact(state, artifact)
+    for dataset, dataset_state in state.datasets.items():
+        dataset_summary = summary.get("datasets", {}).get(dataset)
+        if isinstance(dataset_summary, dict):
+            dataset_state.agent_audit_summary = dataset_summary
+
+
+def _upsert_study_artifact(state: StudyRunState, artifact: ArtifactRef) -> None:
+    state.artifacts = [
+        existing
+        for existing in state.artifacts
+        if existing.artifact_id != artifact.artifact_id
+    ] + [artifact]
 
 
 def _upsert_artifact(dataset_state: DatasetRunState, artifact: ArtifactRef) -> None:

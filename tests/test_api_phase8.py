@@ -461,7 +461,7 @@ class Phase8ApiTests(unittest.TestCase):
         audit_dir = run_dir / "audit"
         output_dir.mkdir(parents=True)
         validation_dir.mkdir()
-        audit_dir.mkdir()
+        audit_dir.mkdir(exist_ok=True)
         (output_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
         (validation_dir / "adae_validation_report.json").write_text(
             json.dumps({"dataset": "ADAE", "status": "pass"}),

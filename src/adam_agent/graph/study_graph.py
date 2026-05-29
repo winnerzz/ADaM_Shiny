@@ -9,6 +9,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.dependency_resolution import (
     approved_dependency_targets,
@@ -237,22 +238,26 @@ def write_audit_manifest_stub(state: StudyGraphState) -> StudyGraphState:
     """Represent a study-level audit manifest as an artifact reference."""
 
     planning_artifacts = _write_dependency_planning_artifacts(state)
+    agent_summary, agent_summary_artifact = _write_agent_audit_summary(state)
     artifact = _write_study_audit_manifest(
         state,
         planning_artifacts=planning_artifacts,
         audit_artifacts=state.get("audit_artifacts", [])
-        + [planning_artifacts["plan_artifact"], planning_artifacts["review_artifact"]],
+        + [planning_artifacts["plan_artifact"], planning_artifacts["review_artifact"], agent_summary_artifact],
+        agent_audit_summary=agent_summary,
     )
     return {
         "audit_manifest": artifact,
         "audit_artifacts": [
             planning_artifacts["plan_artifact"],
             planning_artifacts["review_artifact"],
+            agent_summary_artifact,
             artifact,
         ],
         "dependency_review_status": planning_artifacts["review_status"],
         "dependency_plan_artifact": planning_artifacts["plan_artifact"],
         "dependency_review_artifact": planning_artifacts["review_artifact"],
+        "agent_audit_summary": agent_summary,
     }
 
 
@@ -261,6 +266,7 @@ def _write_study_audit_manifest(
     *,
     planning_artifacts: dict[str, Any],
     audit_artifacts: list[ArtifactRef],
+    agent_audit_summary: dict[str, Any],
 ) -> ArtifactRef:
     """Write the study-level audit manifest when a study directory is available."""
 
@@ -287,6 +293,7 @@ def _write_study_audit_manifest(
         "dependency_review_artifact_id": planning_artifacts["review_artifact"].artifact_id,
         "agent_decisions": state.get("agent_decisions", []),
         "risk_flags": state.get("risk_flags", []),
+        "agent_audit_summary": agent_audit_summary,
     }
     study_dir = state.get("study_dir")
     relative_path = f"runs/{state['run_id']}/audit/manifest.json"
@@ -321,6 +328,61 @@ def _write_study_audit_manifest(
         role="audit",
         metadata={**metadata, "stub": True},
     )
+
+
+def _write_agent_audit_summary(state: StudyGraphState) -> tuple[dict[str, Any], ArtifactRef]:
+    """Write a derived audit-agent summary for the study run."""
+
+    relative_path = f"runs/{state['run_id']}/audit/agent_summary.json"
+    artifact_id = f"agent_summary_{state['study_id'].lower()}_{state['run_id']}"
+    study_dir = state.get("study_dir")
+    summary_path = Path(study_dir) / relative_path if study_dir else Path(relative_path)
+    summary = build_agent_audit_summary(
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        status=state.get("status", "unknown"),
+        target_datasets=state.get("target_datasets", []),
+        datasets={
+            result.dataset: {
+                "status": result.status,
+                "current_interrupt": None,
+                "risk_flags": result.metadata.get("risk_flags", []) if result.metadata else [],
+                "artifacts": _artifacts_for_dataset(state.get("audit_artifacts", []), result.dataset),
+            }
+            for result in state.get("dataset_results", [])
+        },
+        agent_decisions=state.get("agent_decisions", []),
+        risk_flags=state.get("risk_flags", []),
+        current_interrupt=state.get("current_interrupt"),
+        summary_artifact_id=artifact_id,
+        summary_path=summary_path,
+    )
+    if study_dir:
+        artifact = write_agent_audit_summary(summary, path=summary_path, artifact_id=artifact_id)
+    else:
+        artifact = ArtifactRef(
+            artifact_id=artifact_id,
+            kind="tool_log",
+            path=relative_path,
+            format="json",
+            role="audit",
+            metadata={
+                "agent": "audit_agent",
+                "summary_type": "agent_audit_summary",
+                "summary_source": "graph_state",
+                "stub": True,
+            },
+        )
+    return summary, artifact
+
+
+def _artifacts_for_dataset(artifacts: list[ArtifactRef], dataset: str) -> list[dict[str, Any]]:
+    target = dataset.strip().upper()
+    return [
+        artifact.model_dump(mode="json")
+        for artifact in artifacts
+        if artifact.dataset and artifact.dataset.strip().upper() == target
+    ]
 
 
 def _write_dependency_planning_artifacts(state: StudyGraphState) -> dict[str, Any]:

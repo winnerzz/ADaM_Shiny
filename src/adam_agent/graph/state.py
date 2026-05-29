@@ -161,4 +161,5 @@ class StudyGraphState(TypedDict, total=False):
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
     agent_decisions: Annotated[list[dict[str, object]], operator.add]
     risk_flags: Annotated[list[str], operator.add]
+    agent_audit_summary: dict[str, object]
     audit_manifest: ArtifactRef

@@ -1184,3 +1184,74 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 ```
 
 结果：171 tests passed。
+
+### 2026-05-30 - LG2.4 Audit Agent Summary 切片
+
+已完成：
+
+- 新增 `src/adam_agent/agents/audit.py`，作为受控的 audit agent summary
+  层。
+- 新的 audit summary 是从 canonical graph state 派生出来的只读摘要：
+  `agent_decisions`、`risk_flags`、dataset 状态、当前 interrupt、artifact id。
+- `GraphGateway` 每次持久化 canonical `graph_state.json` 时，会同步写
+  `runs/{run_id}/audit/agent_summary.json`。
+- `StudyGraph` batch execution 路径也会在写 study-level
+  `audit/manifest.json` 前，写同样结构的 `audit/agent_summary.json` artifact。
+- `StudyRunState` 和 `DatasetRunState` 增加 `agent_audit_summary`，让 UI/API
+  projection 可以直接显示“哪个 agent 做了什么”，不需要自己解析原始 decision
+  list。
+- `workflow_state.json` 现在包含：
+  - study-level `agent_audit_summary`
+  - dataset-level `agent_audit_summary`
+  - study-level audit `artifacts`，其中包含 `agent_summary_*`
+- audit manifest metadata 现在同时包含原始 `agent_decisions`、`risk_flags`
+  和派生出的 `agent_audit_summary`。
+
+当前边界：
+
+- `agent_summary.json` 不是 workflow state source。系统真相仍然是
+  `graph_state.json`。
+- 这个 summary 只面向人工阅读和审计，不解锁 workflow gate，不改变 dependency
+  plan，也不改变 dataset execution。
+- summary 仍然反映 append-only decision history；还没有解决 rollback/replacement
+  后区分 immutable audit history 和 current-only view 的未来问题。
+- `static_review_agent` 相关内容仍明确是 placeholder warning，除非后续 LG2.5
+  static rule layer 正式替换。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+结果：80 tests passed。
+
+完整核心验证：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：172 tests passed。
+
+子 agent 审查：
+
+- `gpt-5.5` 子 agent 没有发现 major architecture blocker。
+- 它发现一个 medium traceability 问题：直接走 `StudyGraph` batch path 时，
+  dataset 的 agent summary 没有带上 dataset artifact ids。
+- 已修复：写 `agent_summary.json` 时按 dataset 汇总 `state.audit_artifacts`，
+  并增加回归断言，确认 direct StudyGraph summary 里能看到 dataset artifact id。
+
+根据子 agent 审查修复后：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_graph_smoke -v
+```
+
+结果：80 tests passed。
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：172 tests passed。

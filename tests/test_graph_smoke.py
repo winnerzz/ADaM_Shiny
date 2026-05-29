@@ -590,6 +590,14 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("static_review_agent", agents)
         self.assertIn("static_check_placeholder", result["risk_flags"])
         self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
+        self.assertEqual(result["agent_audit_summary"]["summary_writer"]["agent"], "audit_agent")
+        self.assertIn("ADAE", result["agent_audit_summary"]["datasets"])
+        self.assertIn(
+            "llm_context_psy201_run_lg2_study_graph_agent_decisions_adae",
+            result["agent_audit_summary"]["datasets"]["ADAE"]["artifact_ids"],
+        )
+        self.assertEqual(result["audit_manifest"].metadata["agent_audit_summary"]["summary_type"], "agent_audit_summary")
+        self.assertTrue((study_dir / "runs" / "run_lg2_study_graph_agent_decisions" / "audit" / "agent_summary.json").exists())
 
     def test_dataset_graph_product_generate_code_requires_approved_spec(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_missing_spec") / "PSY201"
