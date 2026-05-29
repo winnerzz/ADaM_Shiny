@@ -59,6 +59,61 @@ class StaticRuleFinding:
 
 
 @dataclass(frozen=True)
+class StaticRulePackItem:
+    """One admitted source-backed rule-pack item.
+
+    This object records rule provenance only. Rule execution remains a separate
+    later step so clinical requirements cannot slip into the generic engine.
+    """
+
+    rule_id: str
+    description: str
+    severity: StaticRuleSeverity
+    source: str
+    version: str
+    scope: tuple[str, ...]
+    evidence: str
+    enabled: bool = True
+
+    @property
+    def source_id(self) -> str:
+        return f"{self.source}:{self.version}:{self.rule_id}"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "description": self.description,
+            "severity": self.severity,
+            "source": self.source,
+            "version": self.version,
+            "scope": list(self.scope),
+            "evidence": self.evidence,
+            "enabled": self.enabled,
+            "source_id": self.source_id,
+        }
+
+
+@dataclass(frozen=True)
+class StaticRulePack:
+    """Admitted standards/company rule pack with explicit provenance."""
+
+    pack_id: str
+    source: str
+    version: str
+    scope: tuple[str, ...]
+    rules: tuple[StaticRulePackItem, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "pack_id": self.pack_id,
+            "source": self.source,
+            "version": self.version,
+            "scope": list(self.scope),
+            "rules": [rule.as_dict() for rule in self.rules],
+        }
+
+
+@dataclass(frozen=True)
 class StaticRulePolicy:
     """Configurable rule policy for one generated-code contract."""
 
@@ -225,6 +280,39 @@ def assert_no_blocking_static_findings(report: StaticRuleReport) -> None:
         raise StaticRuleError(message)
 
 
+def load_static_rule_pack(path: str | Path) -> StaticRulePack:
+    """Load and validate one explicit static rule pack."""
+
+    pack_path = Path(path)
+    if not pack_path.exists() or not pack_path.is_file():
+        raise StaticRuleError(f"Static rule pack does not exist: {pack_path}")
+    try:
+        payload = json.loads(pack_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise StaticRuleError(f"Static rule pack is not valid JSON: {pack_path}") from exc
+    return validate_static_rule_pack_payload(payload)
+
+
+def validate_static_rule_pack_payload(payload: Any) -> StaticRulePack:
+    """Validate rule-pack admission metadata before any rule can affect a run."""
+
+    if not isinstance(payload, dict):
+        raise StaticRuleError("Static rule pack must be a JSON object.")
+    pack_id = _required_text(payload, "pack_id", context="Static rule pack")
+    source = _required_text(payload, "source", context=f"Static rule pack {pack_id}")
+    version = _required_text(payload, "version", context=f"Static rule pack {pack_id}")
+    scope = _required_scope(payload.get("scope"), context=f"Static rule pack {pack_id}")
+    rules_payload = payload.get("rules")
+    if not isinstance(rules_payload, list) or not rules_payload:
+        raise StaticRuleError(f"Static rule pack {pack_id} must include at least one rule item.")
+    rules = tuple(_validate_rule_pack_item(item, pack_id=pack_id, index=index) for index, item in enumerate(rules_payload))
+    rule_ids = [rule.rule_id for rule in rules]
+    duplicates = sorted({rule_id for rule_id in rule_ids if rule_ids.count(rule_id) > 1})
+    if duplicates:
+        raise StaticRuleError(f"Static rule pack {pack_id} has duplicate rule_id values: {', '.join(duplicates)}.")
+    return StaticRulePack(pack_id=pack_id, source=source, version=version, scope=scope, rules=rules)
+
+
 def validate_static_rule_report_artifact(
     path: str | Path,
     *,
@@ -271,6 +359,55 @@ def validate_static_rule_report_artifact(
     if not isinstance(policy, dict) or not str(policy.get("policy_id") or "").strip():
         raise StaticRuleError("Static-check artifact is missing its static-rule policy.")
     return payload
+
+
+def _validate_rule_pack_item(item: Any, *, pack_id: str, index: int) -> StaticRulePackItem:
+    context = f"Static rule pack {pack_id} rule[{index}]"
+    if not isinstance(item, dict):
+        raise StaticRuleError(f"{context} must be an object.")
+    rule_id = _required_text(item, "rule_id", context=context)
+    description = _required_text(item, "description", context=context)
+    severity = _required_text(item, "severity", context=context)
+    if severity not in STATIC_RULE_SEVERITIES:
+        raise StaticRuleError(f"{context} has invalid severity: {severity}.")
+    source = _required_text(item, "source", context=context)
+    version = _required_text(item, "version", context=context)
+    scope = _required_scope(item.get("scope"), context=context)
+    evidence = _required_text(item, "evidence", context=context)
+    enabled = item.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise StaticRuleError(f"{context} enabled must be a boolean.")
+    return StaticRulePackItem(
+        rule_id=rule_id,
+        description=description,
+        severity=severity,  # type: ignore[arg-type]
+        source=source,
+        version=version,
+        scope=scope,
+        evidence=evidence,
+        enabled=enabled,
+    )
+
+
+def _required_text(payload: dict[str, Any], key: str, *, context: str) -> str:
+    raw_value = payload.get(key)
+    if not isinstance(raw_value, str):
+        raise StaticRuleError(f"{context} must include {key} as a non-empty string.")
+    value = raw_value.strip()
+    if not value:
+        raise StaticRuleError(f"{context} must include {key} as a non-empty string.")
+    return value
+
+
+def _required_scope(value: Any, *, context: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise StaticRuleError(f"{context} must include scope as a non-empty list.")
+    if any(not isinstance(item, str) for item in value):
+        raise StaticRuleError(f"{context} scope values must be strings.")
+    scope = tuple(item.strip() for item in value if item.strip())
+    if not scope:
+        raise StaticRuleError(f"{context} must include scope as a non-empty list.")
+    return scope
 
 
 def _merge_policy(

@@ -1506,6 +1506,33 @@ passed。
 - 未发现 major logic flaw、misleading architecture claim 或 invalid retry
   regression。
 
+### 2026-05-30 - LG2.5 Rule-Pack Admission Contract 切片
+
+已完成：
+
+- 新增通用 `StaticRulePack` 和 `StaticRulePackItem` contract。
+- 新增 `validate_static_rule_pack_payload()` 和 `load_static_rule_pack()`，
+  后续 standards/company rules 必须先通过 provenance 准入，才能在未来切片中
+  被使用。
+- 当前准入要求 source、version、scope、declared severity、evidence，以及
+  唯一的 `rule_id`。
+- scope value 必须是明确字符串，避免 object-shaped scope payload 变成隐藏的
+  engine 逻辑。
+
+当前边界：
+
+- 本切片不执行 standards-pack rules，也不新增任何 ADaM/CDISC 临床检查。
+- 它只建立未来 CDISC/P21/company-standard rules 必须进入的治理入口。
+
+验证：
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_static_rules tests.test_llm_generated_code tests.test_downstream_runner tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+结果：20 static-rule tests passed；126 related core tests passed。
+
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation 切片
 
 已完成：

@@ -18,7 +18,9 @@ try:
         StaticRuleError,
         StaticRulePolicy,
         assert_no_blocking_static_findings,
+        load_static_rule_pack,
         run_generated_r_static_checks,
+        validate_static_rule_pack_payload,
         write_static_rule_report,
         validate_static_rule_report_artifact,
     )
@@ -32,7 +34,9 @@ except ModuleNotFoundError:
         StaticRuleError,
         StaticRulePolicy,
         assert_no_blocking_static_findings,
+        load_static_rule_pack,
         run_generated_r_static_checks,
+        validate_static_rule_pack_payload,
         write_static_rule_report,
         validate_static_rule_report_artifact,
     )
@@ -216,6 +220,185 @@ class StaticRuleTests(unittest.TestCase):
         }
         found = sorted(token for token in forbidden_engine_tokens if token in engine_source)
         self.assertEqual(found, [], "Generic static-rule engine must not embed demo or dataset-specific ADaM logic.")
+
+    def test_static_rule_pack_admission_accepts_source_backed_rules(self) -> None:
+        payload = {
+            "pack_id": "company_standards_v1",
+            "source": "company-standard",
+            "version": "2026.05",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "COMPANY_TRACEABILITY_001",
+                    "description": "Generated outputs must be traceable to an approved contract.",
+                    "severity": "warning",
+                    "source": "company-standard",
+                    "version": "2026.05",
+                    "scope": ["all-adam"],
+                    "evidence": "references/company/traceability.md#rule-001",
+                }
+            ],
+        }
+
+        rule_pack = validate_static_rule_pack_payload(payload)
+
+        self.assertEqual(rule_pack.pack_id, "company_standards_v1")
+        self.assertEqual(rule_pack.rules[0].source_id, "company-standard:2026.05:COMPANY_TRACEABILITY_001")
+
+    def test_static_rule_pack_admission_rejects_rules_without_evidence(self) -> None:
+        payload = {
+            "pack_id": "candidate_rules",
+            "source": "implementation-note",
+            "version": "draft",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "CANDIDATE_RULE",
+                    "description": "A demo observation that has not been sourced.",
+                    "severity": "warning",
+                    "source": "implementation-note",
+                    "version": "draft",
+                    "scope": ["all-adam"],
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "must include evidence"):
+            validate_static_rule_pack_payload(payload)
+
+    def test_static_rule_pack_admission_rejects_non_string_provenance_fields(self) -> None:
+        payload = {
+            "pack_id": "standards_pack",
+            "source": "company-standard",
+            "version": "1",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "RULE_001",
+                    "description": "Non-string evidence should not be stringified.",
+                    "severity": "warning",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": ["all-adam"],
+                    "evidence": {"path": "references/company/rules.md", "anchor": "rule-001"},
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "evidence as a non-empty string"):
+            validate_static_rule_pack_payload(payload)
+
+    def test_static_rule_pack_admission_rejects_invalid_severity_and_scope(self) -> None:
+        missing_scope = {
+            "pack_id": "standards_pack",
+            "source": "company-standard",
+            "version": "1",
+            "rules": [],
+        }
+        with self.assertRaisesRegex(StaticRuleError, "scope"):
+            validate_static_rule_pack_payload(missing_scope)
+
+        invalid_severity = {
+            "pack_id": "standards_pack",
+            "source": "company-standard",
+            "version": "1",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "RULE_001",
+                    "description": "Invalid severity should not enter the rule engine.",
+                    "severity": "critical",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": ["all-adam"],
+                    "evidence": "references/company/rules.md#rule-001",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(StaticRuleError, "invalid severity"):
+            validate_static_rule_pack_payload(invalid_severity)
+
+    def test_static_rule_pack_admission_rejects_duplicate_rules_and_non_string_scope(self) -> None:
+        duplicate_rules = {
+            "pack_id": "standards_pack",
+            "source": "company-standard",
+            "version": "1",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "RULE_001",
+                    "description": "First rule.",
+                    "severity": "warning",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": ["all-adam"],
+                    "evidence": "references/company/rules.md#rule-001",
+                },
+                {
+                    "rule_id": "RULE_001",
+                    "description": "Duplicate rule.",
+                    "severity": "warning",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": ["all-adam"],
+                    "evidence": "references/company/rules.md#rule-001b",
+                },
+            ],
+        }
+        with self.assertRaisesRegex(StaticRuleError, "duplicate rule_id"):
+            validate_static_rule_pack_payload(duplicate_rules)
+
+        non_string_scope = {
+            "pack_id": "standards_pack",
+            "source": "company-standard",
+            "version": "1",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "RULE_002",
+                    "description": "Scope must be strings.",
+                    "severity": "warning",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": [{"dataset": "ANY"}],
+                    "evidence": "references/company/rules.md#rule-002",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(StaticRuleError, "scope values must be strings"):
+            validate_static_rule_pack_payload(non_string_scope)
+
+    def test_static_rule_pack_loader_reads_json_file(self) -> None:
+        workspace = _workspace_dir("static_rule_pack_loader")
+        pack_path = workspace / "rules.json"
+        pack_path.write_text(
+            json.dumps(
+                {
+                    "pack_id": "local_policy",
+                    "source": "local-policy",
+                    "version": "1",
+                    "scope": ["generated-r"],
+                    "rules": [
+                        {
+                            "rule_id": "LOCAL_POLICY_001",
+                            "description": "Local policy example with explicit evidence.",
+                            "severity": "info",
+                            "source": "local-policy",
+                            "version": "1",
+                            "scope": ["generated-r"],
+                            "evidence": "references/local/policy.md#local-policy-001",
+                            "enabled": False,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        rule_pack = load_static_rule_pack(pack_path)
+
+        self.assertEqual(rule_pack.rules[0].severity, "info")
+        self.assertFalse(rule_pack.rules[0].enabled)
 
     def test_static_rule_artifact_validation_rejects_incomplete_pass_report(self) -> None:
         workspace = _workspace_dir("static_rules_incomplete")

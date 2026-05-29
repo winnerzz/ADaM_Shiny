@@ -1696,6 +1696,35 @@ Subagent review:
 - It reported no major logic flaw, no misleading architecture claim, and no
   invalid retry regression.
 
+### 2026-05-30 - LG2.5 Rule-Pack Admission Contract Slice
+
+Completed:
+
+- Added generic `StaticRulePack` and `StaticRulePackItem` contracts.
+- Added `validate_static_rule_pack_payload()` and `load_static_rule_pack()` so
+  standards/company rules must pass provenance admission before any later slice
+  can use them.
+- Admission currently requires source, version, scope, declared severity,
+  evidence, and unique `rule_id` values.
+- Scope values must be explicit strings. This prevents ambiguous object-shaped
+  scope payloads from becoming hidden engine logic.
+
+Current boundary:
+
+- This slice does not execute standards-pack rules and does not add any
+  ADaM/CDISC clinical checks.
+- It creates the gate through which future CDISC/P21/company-standard rules
+  must enter.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_static_rules tests.test_llm_generated_code tests.test_downstream_runner tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result: 20 static-rule tests passed; 126 related core tests passed.
+
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation Slice
 
 Completed:
