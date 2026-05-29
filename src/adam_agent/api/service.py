@@ -113,6 +113,19 @@ UPLOAD_ROLE_TO_FOLDER = {
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
+GRAPH_GATEWAY_COMPATIBILITY_SHIM = "graph_gateway_compatibility_shim"
+
+
+def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[str, str]:
+    """Return explicit metadata for old endpoints that now write graph state."""
+
+    root = Path(study_dir)
+    run_dir = root / "runs" / run_id
+    return {
+        "workflow_control": GRAPH_GATEWAY_COMPATIBILITY_SHIM,
+        "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
+        "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+    }
 
 
 def ensure_study_workspace(request: StudyWorkspaceRequest) -> StudyInputSummary:
@@ -531,6 +544,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         static_check_path=static_check_path,
         dependency_review_status=plan.dependency_review_status,
         warnings=warnings,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 
@@ -604,6 +618,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             message=f"Approved input_spec found for {target}. Draft spec generation is not needed.",
             input_spec_path=input_spec_path,
             warnings=warnings,
+            **_graph_compatibility_metadata(study_dir, run_id),
         )
     if result.get("spec_source") == "approved_draft_spec":
         approved_spec_path = result.get("approved_spec_path")
@@ -634,6 +649,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             message=f"A previously approved draft spec is available for {target}.",
             approved_spec_path=approved_spec_path,
             warnings=warnings,
+            **_graph_compatibility_metadata(study_dir, run_id),
         )
     draft_path = result.get("draft_spec_path")
     if not draft_path:
@@ -648,6 +664,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         response_path=result.get("draft_spec_response_path") or "",
         variables=list(result.get("draft_spec_variables", [])),
         warnings=warnings,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
     GraphGateway().record_draft_spec_generation(
         study_dir=study_dir,
@@ -678,6 +695,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         ),
         draft_spec=draft_response,
         warnings=draft_response.warnings,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 
@@ -767,6 +785,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         response_path=draft_result.response_artifact.path,
         variables=variables,
         warnings=context.warnings + draft_result.warnings + plan.dependency_warnings,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 
@@ -883,6 +902,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
         review_path=str(review_path.as_posix()),
         approved=decision == "approve",
         approved_spec_path=str(approved_path.as_posix()) if approved_path else None,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 
@@ -996,6 +1016,7 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
         review_path=str(review_path.as_posix()),
         approved=decision == "approve",
         static_check_path=str(static_check_path.as_posix()) if static_check_path.exists() else None,
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 
@@ -1070,6 +1091,7 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         terminal_failure=terminal_failure,
         errors=list(result.get("execution_errors", [])),
         warnings=list(result.get("execution_warnings", [])),
+        **_graph_compatibility_metadata(study_dir, run_id),
     )
 
 

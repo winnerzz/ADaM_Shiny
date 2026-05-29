@@ -1602,6 +1602,42 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.8 Compatibility Shim Metadata Slice
+
+Completed:
+
+- Added explicit compatibility metadata to the old dataset-level product
+  endpoint responses:
+  - `workflow_control: graph_gateway_compatibility_shim`
+  - `graph_state_path`
+  - `workflow_state_path`
+- Covered the main compatibility endpoints:
+  - finalize inputs
+  - draft spec generation
+  - draft spec review
+  - R code generation
+  - code review
+  - approved local execution
+- Added API tests that assert these responses point to existing canonical graph
+  state and workflow projection files.
+
+Current boundary:
+
+- This is an observability/deprecation slice. It marks old URLs as compatibility
+  shims and makes graph ownership visible to callers.
+- It does not remove old endpoints, rewrite their route paths, or change the
+  backend execution order.
+- Canonical truth remains `graph_state.json`; `workflow_state.json` remains a
+  compatibility projection.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+```
+
+Result: 58 tests passed.
+
 ```text
 GET / from local uvicorn returned 200 and included studyProgressPanel/studyNextAction.
 ```

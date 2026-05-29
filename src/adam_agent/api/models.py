@@ -126,6 +126,9 @@ class DraftSpecResponse(StrictBaseModel):
     response_path: str
     variables: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class FinalizeInputsRequest(StrictBaseModel):
@@ -156,6 +159,9 @@ class FinalizeInputsResponse(StrictBaseModel):
     approved_spec_path: str | None = None
     draft_spec: DraftSpecResponse | None = None
     warnings: list[str] = Field(default_factory=list)
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class DraftSpecReviewRequest(StrictBaseModel):
@@ -177,6 +183,9 @@ class DraftSpecReviewResponse(StrictBaseModel):
     review_path: str
     approved: bool
     approved_spec_path: str | None = None
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class LLMProviderOverride(StrictBaseModel):
@@ -248,6 +257,9 @@ class GenerateCodeResponse(StrictBaseModel):
     static_check_path: str | None = None
     dependency_review_status: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class CodeReviewRequest(StrictBaseModel):
@@ -269,6 +281,9 @@ class CodeReviewResponse(StrictBaseModel):
     review_path: str
     approved: bool
     static_check_path: str | None = None
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class ExecuteCodeRequest(StrictBaseModel):
@@ -293,6 +308,9 @@ class ExecuteCodeResponse(StrictBaseModel):
     terminal_failure: bool = False
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
 
 
 class TerminalFailureReviewRequest(StrictBaseModel):
