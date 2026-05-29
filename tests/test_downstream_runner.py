@@ -113,6 +113,7 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.validation_status, "pass")
         self.assertIn("llm_context", result.artifacts)
+        self.assertIn("llm_prompt", result.artifacts)
         self.assertIn("llm_response", result.artifacts)
         self.assertIn("generated_code", result.artifacts)
         self.assertIn("validation_report", result.artifacts)
@@ -120,7 +121,13 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertFalse(result.validation_report["stubbed_r_execution"])
         self.assertEqual(result.llm_call_record.provider, "mock")
         self.assertEqual(result.llm_call_record.datasets_included, ["AE", "ADSL"])
+        self.assertTrue(result.llm_call_record.prompt_artifact_id.startswith("llm_prompt_compact_"))
         self.assertTrue((study_dir / "runs" / "run_downstream_success" / "llm" / "adae_context.json").exists())
+        compact_prompt_path = study_dir / "runs" / "run_downstream_success" / "llm" / "adae_compact_prompt.txt"
+        self.assertTrue(compact_prompt_path.exists())
+        compact_prompt = compact_prompt_path.read_text(encoding="utf-8")
+        self.assertIn("## Target Spec", compact_prompt)
+        self.assertNotIn('"target_spec"', compact_prompt)
         self.assertTrue((study_dir / "runs" / "run_downstream_success" / "code" / "build_adae.R").exists())
         self.assertTrue((study_dir / "runs" / "run_downstream_success" / "outputs" / "adae.csv").exists())
 
@@ -278,7 +285,7 @@ class DownstreamRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.validation_status, "fail")
         self.assertTrue(any("Profile not fully available" in error for error in result.validation_report["errors"]))
-        self.assertIn("output_adam", result.artifacts)
+        self.assertNotIn("output_adam", result.artifacts)
 
     def test_downstream_runner_respects_demo_rich_context_sample_rows(self) -> None:
         study_dir = _study_with_adae_inputs("downstream_runner_demo_context")

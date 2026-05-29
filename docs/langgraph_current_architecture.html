@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADaM LangGraph 当前系统架构报告</title>
+  <style>
+    :root {
+      --bg: #f5f7f9;
+      --panel: #ffffff;
+      --ink: #1d2733;
+      --muted: #647282;
+      --line: #d9e0e7;
+      --accent: #0f766e;
+      --accent-2: #2563eb;
+      --warn: #b45309;
+      --bad: #b91c1c;
+      --good: #15803d;
+      --soft: #edf7f5;
+      --soft-blue: #eef4ff;
+      --soft-warn: #fff7ed;
+      --code: #101828;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.65 "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+    header {
+      padding: 28px 34px;
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.25; }
+    h2 { margin: 0; font-size: 21px; line-height: 1.35; }
+    h3 { margin: 0 0 8px; font-size: 16px; }
+    p { margin: 8px 0; }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef1f5;
+      color: var(--code);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92em;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px;
+    }
+    nav {
+      position: sticky;
+      top: 18px;
+      align-self: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    nav a {
+      display: block;
+      color: var(--ink);
+      text-decoration: none;
+      padding: 7px 8px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    nav a:hover { background: var(--soft); color: var(--accent); }
+    main { min-width: 0; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .section-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+    .section-body { padding: 18px; }
+    .lede {
+      color: var(--muted);
+      max-width: 1050px;
+    }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .badge.good { color: var(--good); border-color: #b7dfc4; background: #f0fbf3; }
+    .badge.warn { color: var(--warn); border-color: #f4d4a8; background: #fff8ed; }
+    .badge.bad { color: var(--bad); border-color: #efc1c1; background: #fff1f1; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      min-width: 0;
+    }
+    .card.soft { background: var(--soft); }
+    .card.blue { background: var(--soft-blue); }
+    .card.warn { background: var(--soft-warn); }
+    .muted { color: var(--muted); }
+    .diagram {
+      overflow-x: auto;
+      padding: 4px 0;
+    }
+    .flow {
+      display: flex;
+      align-items: stretch;
+      gap: 10px;
+      min-width: 980px;
+      margin: 8px 0;
+    }
+    .node {
+      flex: 1;
+      min-width: 130px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+    .node strong { display: block; margin-bottom: 5px; }
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 700;
+      min-width: 22px;
+    }
+    .lane {
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      background: var(--soft);
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .lane.blue { border-left-color: var(--accent-2); background: var(--soft-blue); }
+    .lane.warn { border-left-color: var(--warn); background: var(--soft-warn); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #f7f9fb; }
+    ul { margin: 8px 0 8px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    .callout {
+      border: 1px solid #f4d4a8;
+      background: #fff8ed;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 12px 0;
+    }
+    .small { font-size: 13px; }
+    .split {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 12px;
+    }
+    .stack { display: grid; gap: 10px; }
+    .mono-block {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; }
+      .grid2, .grid3, .split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ADaM LangGraph 当前系统架构报告</h1>
+    <p class="lede">
+      本文件说明当前 <code>LangGraph</code> 分支的真实实现状态：浏览器 UI 如何收集输入，后端 API 如何设置人工审核闸门，
+      LangGraph 如何做 study 级编排和 dataset 级执行，PSY201 demo 如何在只有 sas7bdat 数据和 SAS 程序时流转，以及 LLM、R 沙盒、审计文件之间的关系。
+      本版根据当前代码库重新扫描更新，重点补充 FastAPI UI、service gate、workflow state 和 LangGraph 实际接入边界。
+    </p>
+    <div class="badge-row">
+      <span class="badge good">当前分支：LangGraph</span>
+      <span class="badge good">本地 UI：FastAPI + 单页 HTML</span>
+      <span class="badge warn">draft spec 需要人工批准</span>
+      <span class="badge warn">真实 LLM 不能绕过审核一键跑完</span>
+      <span class="badge warn">UI 当前仍是 single active target</span>
+      <span class="badge warn">下游 ADaM 生成依赖 LLM 质量</span>
+      <span class="badge bad">不是生产级合规系统</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav>
+      <a href="#summary">1. 一句话总览</a>
+      <a href="#product-flow">2. 用户看到的产品流程</a>
+      <a href="#fastapi-ui">3. FastAPI UI 当前真实状态</a>
+      <a href="#service-gate">4. FastAPI Service Gate</a>
+      <a href="#architecture">5. 系统分层架构</a>
+      <a href="#langgraph">6. LangGraph 图结构</a>
+      <a href="#spec-gate">7. Spec 闸门</a>
+      <a href="#dependency">8. 依赖关系如何决定</a>
+      <a href="#psy201">9. PSY201 demo 数据流</a>
+      <a href="#llm-r">10. LLM 与 R 沙盒</a>
+      <a href="#artifacts">11. 文件与审计产物</a>
+      <a href="#current-state">12. 当前完成和限制</a>
+      <a href="#files">13. 关键文件索引</a>
+    </nav>
+
+    <main>
+      <section id="summary">
+        <div class="section-head"><h2>1. 一句话总览</h2></div>
+        <div class="section-body">
+          <p>
+            当前系统的本质是：<strong>本地浏览器 UI + FastAPI 后端 + LangGraph 编排 + LLM 生成 spec/code + 本地 R 沙盒执行</strong>。
+          </p>
+          <div class="grid3">
+            <div class="card soft">
+              <h3>用户上传材料</h3>
+              <p>SDTM、正式 spec、reference ADaM、define.xml、legacy SAS/R code。系统先把它们整理到一个本地 study workspace，并按角色扫描。</p>
+            </div>
+            <div class="card blue">
+              <h3>系统生成中间产物</h3>
+              <p>如果没有正式 spec，先让 LLM 根据 SDTM 元数据、legacy SAS、define、reference ADaM 形态生成 <code>draft spec</code>，必须由用户批准。</p>
+            </div>
+            <div class="card warn">
+              <h3>本地执行和审计</h3>
+              <p>生成的 R code 要先人工批准，再用本地 Rscript 执行。输出、代码、prompt、response、validation、compare 都写入 run 目录。</p>
+            </div>
+          </div>
+          <div class="callout">
+            <strong>关键现实：</strong>
+            现在 UI 主流程不是“一键全自动 agent”。它是一个带人工闸门的本地工作台。真实 LLM 生成必须走
+            <code>finalize-inputs → draft spec review → generate-code → code-review → execute-approved-code</code>。
+            <code>POST /runs</code> 对真实 LLM/R 生成已经被封住，避免绕过审核闸门。
+          </div>
+          <div class="lane warn">
+            <strong>当前架构边界：</strong>
+            LangGraph 已经存在 StudyGraph/DatasetGraph，但 UI 里的人工审核主路径还没有完全并入 LangGraph interrupt + checkpointer。
+            现在真正保护用户不绕过审核的，是 FastAPI service 层的分步接口和 <code>workflow_state.json</code> sidecar 状态。
+          </div>
+        </div>
+      </section>
+
+      <section id="product-flow">
+        <div class="section-head"><h2>2. 用户看到的产品流程</h2></div>
+        <div class="section-body">
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>1 上传材料</strong><span class="muted">按角色上传 SDTM/spec/reference/define/legacy code</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>2 扫描输入</strong><span class="muted">识别数据集、文件格式、列名、样本行、legacy code 线索</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>3 选择输出</strong><span class="muted">选择要生成的 ADaM target，例如 ADAE、ADLB</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>4 依赖计划</strong><span class="muted">从 spec/SAS/define 中判断是否需要 ADDM、ADSL 等上游 ADaM</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>5 Finalize Inputs</strong><span class="muted">若无正式 spec，进入 draft spec 生成和审核</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>6 生成代码</strong><span class="muted">用正式 spec 或已批准 draft spec 生成 R code</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>7 审核运行</strong><span class="muted">人工批准代码后本地 R 沙盒执行并展示输出/compare</span></div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>UI 动作</th><th>后端 API</th><th>做了什么</th></tr></thead>
+            <tbody>
+              <tr><td>Use My Study Files</td><td><code>POST /product-workspace</code></td><td>创建默认本地 workspace，避免用户先手动选路径。</td></tr>
+              <tr><td>Upload SDTM / Spec / Reference / Define / Legacy</td><td><code>POST /studies/files</code></td><td>保存文件，按角色放入 canonical folders，然后重新扫描。</td></tr>
+              <tr><td>选择 output</td><td><code>POST /runs/prepare</code></td><td>生成依赖计划，不生成代码，不执行 R。</td></tr>
+              <tr><td>Finalize Inputs / Draft Spec</td><td><code>POST /runs/{run}/datasets/{dataset}/finalize-inputs</code></td><td>确认上传完成：有正式 spec 就放行；没有 spec 就生成 draft spec 并要求审核。</td></tr>
+              <tr><td>Approve Draft Spec</td><td><code>POST /runs/{run}/datasets/{dataset}/draft-spec-review</code></td><td>把 draft spec 标记为本 run 可用的 approved draft spec，并绑定当前输入 fingerprint。</td></tr>
+              <tr><td>Generate R Code</td><td><code>POST /runs/{run}/datasets/{dataset}/generate-code</code></td><td>调用 LLM 生成 R code，只生成不运行，并写 static check placeholder。</td></tr>
+              <tr><td>Approve And Run Locally</td><td><code>POST /code-review</code> + <code>POST /execute-approved-code</code></td><td>先记录代码审核，绑定 code hash 和输入 fingerprint，再用本地 Rscript 执行。</td></tr>
+              <tr><td>Batch run endpoint</td><td><code>POST /runs</code></td><td>保留给 stub/批处理骨架；真实 LLM/R 生成会被拒绝，必须走上面的分步审核流。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="fastapi-ui">
+        <div class="section-head"><h2>3. FastAPI UI 当前真实状态</h2></div>
+        <div class="section-body">
+          <p>
+            当前 UI 不是 Shiny，也不是独立前端工程。它是 FastAPI 返回的一页 HTML/JS，代码在
+            <code>src/adam_agent/api/web.py</code>，入口是 <code>GET /</code>。
+          </p>
+          <div class="grid2">
+            <div class="card soft">
+              <h3>它现在能做什么</h3>
+              <ul>
+                <li>创建默认本地 workspace，或加载根目录 demo study。</li>
+                <li>按角色上传文件：SDTM、Spec、Reference ADaM、Define、Legacy code。</li>
+                <li>扫描输入并展示文件状态、格式、行数/列名、legacy code 中识别到的 ADaM token。</li>
+                <li>推断 target candidates，例如从 spec 文件名、reference ADaM、legacy code 中看到 ADAE/ADDM/ADLB。</li>
+                <li>选择一个 active target，走 prepare plan、finalize inputs、draft spec review、generate code、approve and run。</li>
+                <li>展示 generated table、reference table、compare、downloads 和 advanced audit artifacts。</li>
+              </ul>
+            </div>
+            <div class="card warn">
+              <h3>它现在还不是完整多 target UI</h3>
+              <ul>
+                <li><code>selectedTargets()</code> 当前只返回 <code>[selectedTarget]</code>，也就是一次只主动处理一个 target。</li>
+                <li>虽然 UI 内部有 <code>generatedByDataset</code>、<code>reviewByDataset</code>、<code>executionByDataset</code> 等 per-dataset map，但当前主操作仍围绕 single active target。</li>
+                <li>切换 target 时，UI 会尽量恢复该 dataset 的前端状态；但这不是完整的 LangGraph 多 dataset 批处理看板。</li>
+                <li>Dataset execution cards 更像依赖计划和状态面板，不等于每个 dataset 都在图内独立 interrupt/checkpoint。</li>
+              </ul>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>UI 内部状态</th><th>意义</th><th>现实边界</th></tr></thead>
+            <tbody>
+              <tr><td><code>selectedTarget</code></td><td>当前正在操作的一个 ADaM target。</td><td>目前不是多选批量执行。</td></tr>
+              <tr><td><code>targetCandidates</code></td><td>从 spec/reference/legacy code 推断出来的可选 ADaM。</td><td>只是候选，不代表系统已经能生成全部 target。</td></tr>
+              <tr><td><code>draftSpecByDataset</code></td><td>保存本页面会话中某 dataset 的 draft spec 响应。</td><td>真正持久化依赖后端 <code>runs/{run_id}/specs/</code> 和 workflow state。</td></tr>
+              <tr><td><code>generatedByDataset</code></td><td>保存某 dataset 的生成代码响应。</td><td>页面刷新后需要从后端 artifact/review summary 重新恢复。</td></tr>
+              <tr><td><code>tablePages</code> / <code>compareResults</code></td><td>前端缓存表格分页和 compare 结果。</td><td>CSV 浏览较完整，sas7bdat 主要靠 R/haven profile 和下载路径支持。</td></tr>
+            </tbody>
+          </table>
+          <div class="lane blue">
+            <strong>输入变化处理：</strong>
+            每次上传文件后，UI 会调用 <code>invalidateUiStateAfterInputChange()</code> 清空 plan、draft spec、generated code、review、execution 等前端状态。
+            后端同时会更新 input fingerprint，并把已有 run 标为 stale。这样用户补传 SAS/define/spec 后，不应该继续沿用旧计划或旧审批。
+          </div>
+          <div class="lane warn">
+            <strong>LLM 设置：</strong>
+            真实 LLM 的 provider、model、base URL、API key、timeout、max tokens 现在由浏览器表单传给后端。
+            默认 timeout 是 <code>300</code> 秒，<code>max_tokens</code> 是 <code>4096</code>。API key 只用于这次请求，不写入项目配置文件。
+            <code>/llm/test-connection</code> 只发送一句连接测试文本，不发送 study 数据。
+          </div>
+        </div>
+      </section>
+
+      <section id="service-gate">
+        <div class="section-head"><h2>4. FastAPI Service Gate</h2></div>
+        <div class="section-body">
+          <p>
+            目前产品安全边界的核心在 <code>src/adam_agent/api/service.py</code>。它把“生成”和“执行”拆开，防止真实 LLM/R 一次性绕过人工审核。
+          </p>
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>upload</strong><span class="muted">保存文件，更新 fingerprint，旧 run 标 stale</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>prepare</strong><span class="muted">只做依赖计划，不生成代码</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>finalize</strong><span class="muted">确认 spec 是否存在；缺 spec 则 draft</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>draft review</strong><span class="muted">批准 draft spec，绑定输入 fingerprint</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>generate code</strong><span class="muted">只生成 R code，不执行</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>code review</strong><span class="muted">绑定 code hash、static check hash、fingerprint</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>execute</strong><span class="muted">只执行已批准且未过期的代码</span></div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>保护点</th><th>当前代码行为</th><th>为什么重要</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>真实 <code>POST /runs</code> 被阻断</td>
+                <td><code>execution_mode=llm_downstream_provider</code> 或 <code>llm_downstream_r_sandbox</code> 时写入 <code>split_flow_required</code> 并返回错误。</td>
+                <td>避免用户一键调用真实 LLM 后直接执行 R，绕过 draft spec/code review。</td>
+              </tr>
+              <tr>
+                <td>approved draft spec 防过期</td>
+                <td>批准前检查 draft spec 是否带 input fingerprint；生成代码前检查 approved draft spec fingerprint 是否等于当前输入。</td>
+                <td>避免旧数据/旧 SAS/旧 reference 下批准的推导说明被复用到新输入。</td>
+              </tr>
+              <tr>
+                <td>code approval 防过期</td>
+                <td>执行前检查 code review 中的 input fingerprint、code hash、static check hash。</td>
+                <td>避免用户批准后代码或输入又变了，但系统仍执行旧审批。</td>
+              </tr>
+              <tr>
+                <td>terminal failure 明确失败</td>
+                <td>R 失败或输出不合格时写 diagnostics 和 validation，状态为 <code>terminal_failure</code>。</td>
+                <td>即使磁盘上有半成品 CSV，也不会被当成可用 ADaM 预览/下载。</td>
+              </tr>
+              <tr>
+                <td>static check placeholder</td>
+                <td>生成代码后写 <code>static_checks/{dataset}_static_check.json</code>，目前状态是 warning-only。</td>
+                <td>先保留规则校验接口，未来接入 ADaM/CDISC/P21 检查；当前不能夸大为真实合规检查。</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="lane warn">
+            <strong>重要边界：</strong>
+            这个 service gate 目前比 LangGraph interrupt 更“真实”。也就是说，人工审核状态已经持久化到 run 目录和 workflow sidecar，
+            但还没有完全迁移成 LangGraph 原生 checkpointer/interrupt 驱动的统一状态机。
+          </div>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <div class="section-head"><h2>5. 系统分层架构</h2></div>
+        <div class="section-body">
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>Browser UI</strong><span class="muted">单页 HTML/JS，负责上传、选择 target、审核 draft spec 和代码、查看输出。</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>FastAPI API</strong><span class="muted">稳定接口层，接收 UI 请求，组织 service 调用。</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Service Layer</strong><span class="muted">业务闸门：workspace、输入扫描、spec gate、code gate、execute gate。</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>LangGraph</strong><span class="muted">study graph 和 dataset graph，做依赖编排、批次执行、失败路由。</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Tools</strong><span class="muted">LLM client、R runner、SDTM reader、dependency scanner、artifact writer。</span></div>
+            </div>
+          </div>
+          <div class="split">
+            <div class="card">
+              <h3>本地优先</h3>
+              <p>workspace、上传文件、生成代码、输出 ADaM、审计 JSON 都在本地目录内。R 沙盒也是本地 Rscript。</p>
+              <p>LLM 可以是 mock、OpenAI-compatible、OpenAI、Anthropic、DeepSeek、Qwen，也可走自定义 base URL 中转。</p>
+            </div>
+            <div class="card">
+              <h3>边界隔离</h3>
+              <p>LLM provider、R execution、input scanning、dependency planning 都有独立模块。以后替换 LLM 或增强 R 沙盒，不应改 UI 主流程。</p>
+              <p>当前 workflow state 以 <code>workflow_state.json</code> 和 SQLite checkpoint sidecar 形式持久化，记录输入 fingerprint、当前 interrupt、dataset 状态和审批结果。</p>
+            </div>
+          </div>
+          <div class="grid2">
+            <div class="card">
+              <h3>API 层</h3>
+              <p><code>app.py</code> 只负责 HTTP 路由和错误转换。真正的业务判断放在 <code>service.py</code>，例如能不能生成 draft spec、能不能执行 approved code。</p>
+            </div>
+            <div class="card warn">
+              <h3>Graph 层</h3>
+              <p><code>study_graph.py</code> 和 <code>dataset_graph.py</code> 已经存在，但 UI 主流程没有直接调用图节点做人工中断。当前是 API service 调用图的依赖规划逻辑和工具模块。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="langgraph">
+        <div class="section-head"><h2>6. LangGraph 图结构</h2></div>
+        <div class="section-body">
+          <h3>StudyGraph：研究级编排</h3>
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>initialize_study</strong><span class="muted">初始化 study run 状态</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>plan_datasets</strong><span class="muted">读取用户证据，做依赖计划和可运行列表</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>run_dependency_batches</strong><span class="muted">按依赖批次运行 dataset graph；同一批可并发</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>reduce_dataset_results</strong><span class="muted">汇总 dataset 成功/失败</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>write_audit_manifest</strong><span class="muted">写 dependency plan、review、manifest</span></div>
+            </div>
+          </div>
+
+          <h3>DatasetGraph：单个 ADaM 数据集执行</h3>
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>prepare_dataset</strong><span class="muted">按 execution_mode 分流</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>draft_lineage_stub</strong><span class="muted">早期骨架节点，目前真实流程多由 service 接管</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>draft_spec_stub</strong><span class="muted">图内 stub；UI 流程用真实 draft-spec API</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>route_risk</strong><span class="muted">决定是否需要 human review</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>generate_code / run_sandbox</strong><span class="muted">stub 或 LLM downstream / R sandbox</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>repair / revise / summarize</strong><span class="muted">失败诊断、修复、最终 summary</span></div>
+            </div>
+          </div>
+
+          <div class="lane warn">
+            <strong>容易误解的一点：</strong>
+            现在 UI 的 draft spec 审核和 R code 审核是 FastAPI service 层的显式接口，不是完全嵌在 DatasetGraph 节点里的自动 interrupt。
+            LangGraph 负责批处理编排和失败路由骨架；产品交互层负责人工闸门。为了避免双轨路径造成静默错误，真实 LLM/R 的
+            <code>POST /runs</code> 一键执行路径已经被阻断，用户必须走 UI/API 的分步审核流程。
+          </div>
+          <table>
+            <thead><tr><th>图/节点</th><th>当前实现</th><th>当前产品真实使用方式</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>StudyGraph</code></td>
+                <td>创建依赖计划、判断 runnable/blocked datasets、按批次并发调用 DatasetGraph、写 dependency plan 和 audit manifest。</td>
+                <td><code>POST /runs</code> 的 stub/兼容路径可调用；UI 的 prepare plan 则在 service 层直接调用同一套 dependency planner/resolver。</td>
+              </tr>
+              <tr>
+                <td><code>DatasetGraph.prepare_dataset</code></td>
+                <td>根据 <code>execution_mode</code> 分流：ADSL minimal、LLM downstream stub/provider/R sandbox 或普通 stub。</td>
+                <td>真实 UI split flow 不通过这里完成 draft/code 审核；这些 gate 在 service API 中。</td>
+              </tr>
+              <tr>
+                <td><code>draft_lineage_stub</code> / <code>draft_spec_stub</code></td>
+                <td>仍是早期骨架节点；LLM downstream 模式下多为 no-op。</td>
+                <td>真实 draft spec 由 <code>/finalize-inputs</code> 和 <code>/draft-spec</code> 生成。</td>
+              </tr>
+              <tr>
+                <td><code>repair_code_stub</code> / <code>revise_spec_stub</code></td>
+                <td>stub 图内可演示 code_error/spec_error 回路。</td>
+                <td>真实 split flow 的 execute-approved-code 当前失败后返回 <code>terminal_failure</code>，不自动进入无限 repair。</td>
+              </tr>
+              <tr>
+                <td><code>compile_study_graph(checkpointer=None)</code></td>
+                <td>接受可选 checkpointer 参数。</td>
+                <td>当前 UI 没有把 HITL 状态完全放入 LangGraph checkpointer；使用 sidecar JSON/SQLite 记录。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="spec-gate">
+        <div class="section-head"><h2>7. Spec 闸门：为什么不能直接生成代码</h2></div>
+        <div class="section-body">
+          <p>
+            当前系统强制区分三种 spec：
+          </p>
+          <table>
+            <thead><tr><th>类型</th><th>来源</th><th>是否可直接用于 R code 生成</th><th>意义</th></tr></thead>
+            <tbody>
+              <tr><td><code>input_spec</code></td><td>用户上传的正式 spec 文件</td><td>可以</td><td>系统认为它是用户提供的 approved contract。</td></tr>
+              <tr><td><code>draft_spec</code></td><td>LLM 根据 SDTM/reference/define/legacy evidence 生成</td><td>不可以</td><td>只是候选推导说明，必须人工审核。</td></tr>
+              <tr><td><code>approved_draft_spec</code></td><td>用户在本 run 中批准 draft spec</td><td>可以，但只限本 run</td><td>不是生产规则，只是当前运行的受控中间产物。</td></tr>
+            </tbody>
+          </table>
+          <div class="lane warn">
+            <strong>当前安全规则：</strong>
+            draft spec 和 approved draft spec 必须绑定当前输入 fingerprint。输入文件变化、draft spec 缺 fingerprint、approved draft spec 缺 fingerprint，都会阻断后续代码生成。
+            这样做是为了避免用户在不知情的情况下复用旧 run 的推导说明。
+          </div>
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>Finalize Inputs</strong><span class="muted">用户确认上传结束</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>有 input_spec?</strong><span class="muted">后端判断，不靠浏览器猜文件名</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>有：生成代码</strong><span class="muted">直接进入 code generation gate</span></div>
+              <div class="arrow"> / </div>
+              <div class="node"><strong>无：LLM 生成 draft spec</strong><span class="muted">展示变量、来源、推导、风险</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>人工批准</strong><span class="muted">批准后才可生成 R code</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="dependency">
+        <div class="section-head"><h2>8. 依赖关系如何决定</h2></div>
+        <div class="section-body">
+          <p>
+            依赖关系不是写死为 “ADAE 一定依赖 ADSL”。当前策略是：<strong>先看用户证据，没证据就不发明依赖</strong>。
+          </p>
+          <table>
+            <thead><tr><th>优先级</th><th>来源</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><code>input_spec</code></td><td>正式 spec 是最高优先级。若 spec 明确引用 ADaM 上游，则建立依赖。</td></tr>
+              <tr><td>2</td><td><code>legacy SAS/R code</code></td><td>例如 <code>from addata.addm</code> 会推断 <code>ADAE -> ADDM</code>。SAS libref 如 <code>adout_hw.adae</code> 不应被当成 dataset。</td></tr>
+              <tr><td>3</td><td><code>define.xml</code></td><td>从 define 的描述或引用中找 ADaM 依赖线索。</td></tr>
+              <tr><td>4</td><td><code>reference_adam</code></td><td>判断某个依赖 ADaM 是否已经由用户提供，并用于输出形态/compare；不单独决定推导逻辑。</td></tr>
+              <tr><td>5</td><td>无证据</td><td>不再自动补 ADSL。系统提示需要人工确认是否有上游 ADaM 输入。</td></tr>
+            </tbody>
+          </table>
+          <div class="lane blue">
+            <strong>PSY201 例子：</strong>
+            <code>ADAE.sas</code> 中 <code>from addata.addm</code> 表示 ADAE 使用 ADDM；而 <code>adout_hw</code> 是输出目录 libref，不是依赖数据集。
+          </div>
+          <p>
+            如果依赖数据集已经在 <code>reference_adam</code> 里，或者已经在本 run 输出目录里，系统会把它标为可用。
+            如果缺失，UI 会提示用户提供 existing dataset、批准系统生成、跳过 target 或暂停。
+          </p>
+          <div class="callout">
+            <strong>这里的 reference ADaM 只解决“有没有这个上游数据集”的问题。</strong>
+            例如系统发现 ADAE 依赖 ADDM，而用户已经把 <code>addm.sas7bdat</code> 放入 <code>reference_adam/</code>，
+            那么 ADDM 可作为 ADAE 生成时的输入数据使用。但这仍不表示 ADDM 的内容可以反推 ADAE 的全部推导规则。
+          </div>
+        </div>
+      </section>
+
+      <section id="psy201">
+        <div class="section-head"><h2>9. PSY201 demo 的真实数据流</h2></div>
+        <div class="section-body">
+          <p>
+            PSY201 demo 是当前最接近真实项目形态的测试输入。它不是“用户上传 CSV + 已有 spec”的简单 demo，而是：
+            <strong>SDTM 为 sas7bdat、reference ADaM 为 sas7bdat、没有正式 spec、只有 legacy SAS 程序作为推导证据</strong>。
+          </p>
+          <div class="grid3">
+            <div class="card soft">
+              <h3>用户上传到 SDTM</h3>
+              <p><code>PSY201/Data/SDTM/*.sas7bdat</code></p>
+              <p class="muted">例如 AE、DM、EX、LB、VS 等 SDTM 域。系统把它们放入 <code>input_sdtm/</code>。</p>
+            </div>
+            <div class="card blue">
+              <h3>用户上传到 Reference ADaM</h3>
+              <p><code>PSY201/Data/AD/*.sas7bdat</code></p>
+              <p class="muted">例如 ADSL、ADAE、ADCM、ADDM 等已存在的 ADaM。它们主要用于依赖可用性、输出形态和 compare，不是推导权威。</p>
+            </div>
+            <div class="card warn">
+              <h3>用户上传到 Legacy Code</h3>
+              <p><code>PSY201/Primary/HW/AD/Program/*.sas</code></p>
+              <p class="muted">SAS 程序用于提取依赖线索和推导线索。比如某程序读取 <code>addm</code>，说明目标 ADaM 可能依赖 ADDM。</p>
+            </div>
+          </div>
+
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>Upload sas7bdat SDTM</strong><span class="muted">保存到 input_sdtm/；R/haven 可读取元数据和样本行</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Upload sas7bdat ADaM</strong><span class="muted">保存到 reference_adam/；标记已有上游 ADaM 和 compare 基准</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Upload SAS programs</strong><span class="muted">保存到 legacy_code/；扫描 data/set/merge/from/join 线索</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Prepare Plan</strong><span class="muted">从 SAS/define/spec 判断 target 是否需要上游 ADaM</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Finalize Inputs</strong><span class="muted">因为没有 input_spec，进入 draft spec 生成</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Review Draft Spec</strong><span class="muted">用户确认变量来源和推导说明</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Generate / Review / Run</strong><span class="muted">LLM 生成 R code，人工批准后本地执行</span></div>
+            </div>
+          </div>
+
+          <table>
+            <thead><tr><th>输入角色</th><th>PSY201 文件形态</th><th>系统当前如何使用</th><th>不能做什么</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>input_sdtm</code></td>
+                <td><code>*.sas7bdat</code></td>
+                <td>用 Rscript + <code>haven::read_sas()</code> 读取列名、行数、样本行，作为 LLM 生成 draft spec/code 的来源数据。</td>
+                <td>如果本机 R 没有 <code>haven</code>，只能显示 <code>not_previewed</code> 或 metadata 不完整，LLM 上下文也会变弱。</td>
+              </tr>
+              <tr>
+                <td><code>reference_adam</code></td>
+                <td><code>*.sas7bdat</code></td>
+                <td>判断用户是否已经提供某个上游 ADaM；作为输出形态参考和最终 compare 基准。</td>
+                <td>不能被当作“最好的推导逻辑”。不能只靠 reference ADaM 反推出正式 derivation。</td>
+              </tr>
+              <tr>
+                <td><code>legacy_code</code></td>
+                <td><code>*.sas</code></td>
+                <td>扫描 SAS 程序中的 <code>data</code>、<code>set</code>、<code>merge</code>、<code>from</code>、<code>join</code> 等语句，提取依赖和推导线索。</td>
+                <td>当前不是完整 SAS 编译器，不保证理解所有 macro、动态 libref 或复杂条件逻辑。</td>
+              </tr>
+              <tr>
+                <td><code>input_spec</code></td>
+                <td>PSY201 当前没有上传正式 spec</td>
+                <td>缺失时触发 LLM 生成 <code>draft_spec</code>，用户审核通过后才允许生成 R code。</td>
+                <td>不能跳过 draft spec 审核直接生成/执行代码。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="callout">
+            <strong>PSY201 当前可测试的真实链路：</strong>
+            上传 SDTM sas7bdat、ADaM sas7bdat、SAS 程序后，选择一个 target，例如 ADAE。系统先做依赖计划；
+            如果没有正式 spec，就生成 draft spec 并要求你审核。审核通过后，LLM 才能用 approved draft spec 和上传证据生成 R code。
+            R code 再经过人工批准，最后由本地 Rscript 执行。只有 validation 通过的输出才会在 UI 中作为可预览/可下载的 generated ADaM。
+          </div>
+
+          <div class="lane warn">
+            <strong>PSY201 的关键风险：</strong>
+            如果只有 sas7bdat 和 SAS 程序，没有正式 spec，系统生成的是“基于证据的候选 spec/code”，不是临床生产规则。
+            这适合测试 agent 架构和真实数据流，但不能把结果当成已验证的 ADaM submission 产物。
+          </div>
+          <div class="grid2">
+            <div class="card">
+              <h3>PSY201 合理测试输入</h3>
+              <ul>
+                <li><code>D:/Archive/Research/Projects/ADaM_Shiny-ADaM_Shiny_experimental/demo-data/PSY201/Data/SDTM</code> 上传到 SDTM。</li>
+                <li><code>D:/Archive/Research/Projects/ADaM_Shiny-ADaM_Shiny_experimental/demo-data/PSY201/Data/AD</code> 上传到 Reference ADaM。</li>
+                <li><code>D:/Archive/Research/Projects/ADaM_Shiny-ADaM_Shiny_experimental/demo-data/PSY201/Primary/HW/AD/Program</code> 上传到 Legacy Code。</li>
+                <li>不上传 spec 时，必须走 draft spec 生成和审核。</li>
+              </ul>
+            </div>
+            <div class="card warn">
+              <h3>PSY201 运行前提</h3>
+              <ul>
+                <li>Rscript 路径需要可用，例如 <code>C:/Dev/R-4.5.2/bin/Rscript.exe</code>。</li>
+                <li>本机 R 需要安装 <code>haven</code>，否则 sas7bdat 只能被识别为 runtime-supported，但无法完整 preview/profile。</li>
+                <li>legacy SAS 程序只作为证据文本，不会被系统直接执行。</li>
+                <li>如果 LLM 生成的 R code 没正确使用 <code>haven::read_sas()</code> 和给定 read_path，R 沙盒会失败。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="llm-r">
+        <div class="section-head"><h2>10. LLM 与 R 沙盒</h2></div>
+        <div class="section-body">
+          <div class="grid2">
+            <div class="card">
+              <h3>LLM 输入如何构造</h3>
+              <ul>
+                <li>扫描 SDTM/reference ADaM 的列名、行数、样本行。</li>
+                <li><code>.sas7bdat</code> 通过本地 Rscript + <code>haven::read_sas()</code> 读取元数据。</li>
+                <li>加入 target spec 或 approved draft spec。</li>
+                <li>加入依赖解析结果、runtime contract、数据暴露策略。</li>
+                <li>再用 prompt compaction 生成紧凑 prompt。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>LLM 输出要求</h3>
+              <ul>
+                <li>生成代码必须返回严格 JSON。</li>
+                <li>JSON 中包含 <code>dataset</code>、<code>r_code</code>、assumptions、risk_points、used_inputs、expected_outputs。</li>
+                <li>解析失败会被记录为 <code>llm_output_parse_error</code>。</li>
+                <li>R 执行失败可生成 repair prompt，触发一次修复尝试。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="diagram">
+            <div class="flow">
+              <div class="node"><strong>Context Builder</strong><span class="muted">整理证据、spec、依赖、runtime policy</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Prompt Compaction</strong><span class="muted">压缩成模型更容易使用的提示词</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>LLM Client</strong><span class="muted">mock / OpenAI-compatible / Anthropic / DeepSeek / Qwen</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Parse JSON</strong><span class="muted">提取 R code 和审计字段</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>R Sandbox</strong><span class="muted">本地 Rscript 运行，限定输出到 run_dir</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Validate / Compare</strong><span class="muted">检查输出文件，和 reference ADaM 对比</span></div>
+            </div>
+          </div>
+          <div class="callout">
+            <strong>注意：</strong>
+            mock 模式只证明流程通，不代表推导正确。真实生成质量主要取决于用户上传的正式 spec、SDTM 内容、legacy SAS/define 质量，以及 LLM 输出质量。
+            R 执行失败时会进入 <code>terminal_failure</code>，即使磁盘上存在半成品 CSV，UI/API 也不会把它当成可用 generated ADaM 预览或下载。
+          </div>
+          <table>
+            <thead><tr><th>LLM provider</th><th>当前接口</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>mock</code></td><td>本地 deterministic mock</td><td>无 API key，无网络。用于流程测试，不代表真实推导。</td></tr>
+              <tr><td><code>openai</code> / <code>openai-compatible</code></td><td><code>/chat/completions</code></td><td>接受任意 model id 字符串，例如用户配置的 <code>gpt-5.5</code>；不会被旧模型白名单卡住。</td></tr>
+              <tr><td><code>deepseek</code> / <code>qwen</code></td><td>OpenAI-compatible adapter</td><td>用各自默认 base URL，也可显式传入中转 URL。</td></tr>
+              <tr><td><code>anthropic</code> / <code>claude</code></td><td>Anthropic Messages API</td><td>使用 <code>/v1/messages</code>，需要相应 API key。</td></tr>
+              <tr><td>自定义中转站</td><td><code>base_url + allow_custom_base_url</code></td><td>必须带审批人字段；call record 会标记 <code>external_relay</code> 和 <code>custom_base_url_approved</code>。</td></tr>
+            </tbody>
+          </table>
+          <div class="lane warn">
+            <strong>R 沙盒现实边界：</strong>
+            当前所谓沙盒主要是应用层边界：代码放在 <code>runs/{run_id}/code/</code>，输出要求写到 <code>runs/{run_id}/outputs/{dataset}.csv</code>。
+            它不是 Docker/系统级沙盒。生成代码理论上仍可能尝试读外部路径或执行危险操作；解析器会拦截部分明显危险代码，但生产级隔离仍应后续用容器或更严格的进程限制实现。
+          </div>
+        </div>
+      </section>
+
+      <section id="artifacts">
+        <div class="section-head"><h2>11. 文件与审计产物</h2></div>
+        <div class="section-body">
+          <p>每个 study workspace 大致结构如下：</p>
+          <div class="mono-block">study_workspace/
+  input_sdtm/          # 用户上传的 SDTM CSV 或 sas7bdat
+  input_spec/          # 用户上传的正式 spec
+  input_define/        # define.xml 或 metadata
+  reference_adam/      # 参考 ADaM，仅用于形态/比较证据
+  legacy_code/         # SAS/R 程序，作为推导证据
+  runs/{run_id}/
+    specs/             # LLM draft spec
+    approved_specs/    # 用户批准后的 draft spec
+    code/              # 生成的 R code
+    outputs/           # 生成的 ADaM CSV
+    llm/               # context、prompt、LLM response
+    reviews/           # draft spec 和 code 的人工审核记录
+    validation/        # R 运行/输出验证报告
+    compare/           # generated vs reference 对比报告
+    planning/          # dependency plan 和 review
+    audit/             # study-level manifest
+    workflow_state.json
+    workflow_checkpoints.sqlite</div>
+          <table>
+            <thead><tr><th>产物</th><th>作用</th><th>是否给用户看</th></tr></thead>
+            <tbody>
+              <tr><td><code>draft_spec.json</code></td><td>LLM 生成的候选 spec，必须审核。</td><td>是，UI 表格展示变量/来源/推导/风险。</td></tr>
+              <tr><td><code>approved_spec.json</code></td><td>本 run 允许使用的 draft spec。</td><td>部分展示。</td></tr>
+              <tr><td><code>build_*.R</code></td><td>LLM 生成的 R 程序。</td><td>是，代码审核页展示。</td></tr>
+              <tr><td><code>*.csv</code></td><td>R 沙盒生成的 ADaM 输出。</td><td>只有最近 validation 通过时，才表格预览和下载。</td></tr>
+              <tr><td><code>*_compare_report.json</code></td><td>与 reference ADaM 的结构/单元格差异。</td><td>是，compare 页展示。</td></tr>
+              <tr><td><code>workflow_state.json</code></td><td>当前 run 的状态、fingerprint、interrupt、dataset 状态。</td><td>高级视图/调试。</td></tr>
+              <tr><td><code>workflow_checkpoints.sqlite</code></td><td>每次 service gate 更新时写入一份状态快照。</td><td>调试/恢复依据；不是完整 LangGraph checkpointer 集成。</td></tr>
+              <tr><td><code>manifest.json</code></td><td>study-level 审计索引。</td><td>高级视图/下载。</td></tr>
+            </tbody>
+          </table>
+          <div class="lane blue">
+            <strong>workflow state 怎么理解：</strong>
+            <code>workflow_state.json</code> 是给当前 UI/API 流程看的“状态侧车”。里面记录最后一个节点、当前 interrupt、输入 fingerprint、plan 是否 stale、每个 dataset 的 spec/code/execution 状态。
+            SQLite 文件则保留多次状态更新的历史快照。它们让进程重启后可以追踪状态，但目前还不是 LangGraph 原生 interrupt 持久化的唯一状态源。
+          </div>
+        </div>
+      </section>
+
+      <section id="current-state">
+        <div class="section-head"><h2>12. 当前完成和限制</h2></div>
+        <div class="section-body">
+          <div class="grid2">
+            <div class="card soft">
+              <h3>已经具备</h3>
+              <ul>
+                <li>本地 workspace 和按角色上传。</li>
+                <li>CSV 和 sas7bdat 输入扫描；sas7bdat 可通过 R/haven 读取。</li>
+                <li>上传后自动更新 input fingerprint，并将已有 run 标为 inputs changed/stale。</li>
+                <li>dependency plan：从 input_spec、legacy SAS、define 推断上游 ADaM。</li>
+                <li>PSY201 形态输入：SDTM sas7bdat、reference ADaM sas7bdat、legacy SAS 程序。</li>
+                <li>无 spec 时生成 draft spec，并强制人工批准。</li>
+                <li>draft spec/code approval 绑定当前输入 fingerprint；代码审批绑定 code hash。</li>
+                <li>真实 LLM API 接口和自定义 OpenAI-compatible base URL。</li>
+                <li>生成 R code 后必须人工批准再执行。</li>
+                <li>本地 Rscript 执行、输出预览、下载、reference compare。</li>
+                <li>失败输出不会被当成可用 generated ADaM。</li>
+              </ul>
+            </div>
+            <div class="card warn">
+              <h3>仍是 MVP</h3>
+              <ul>
+                <li>不是 CDISC/P21 全量规则引擎。</li>
+                <li>PSY201 无正式 spec 时，draft spec/code 是 LLM 根据证据生成的候选结果，需要人工判断。</li>
+                <li>reference ADaM 不能单独决定推导逻辑，只能辅助比较和形态判断。</li>
+                <li>legacy SAS 扫描不是完整 SAS 解释器，对 macro 和动态 libref 只做有限解析。</li>
+                <li>sas7bdat profile 依赖本机 Rscript 和 <code>haven</code> 包。</li>
+                <li>下游 ADaM 的真实质量主要依赖正式 spec 和 LLM 代码质量。</li>
+                <li>UI 当前仍是 single active target，不是完整多 target 批处理工作台。</li>
+                <li>UI 的 study graph 和手动单 target 流程还没有完全合并成一个无缝多 target 产品。</li>
+                <li>DatasetGraph 内还有早期 stub 节点，真实 UI 流程目前更多通过 API service gate 执行。</li>
+                <li>static ADaM/CDISC 检查只是 placeholder，不是规则引擎。</li>
+                <li>compare 还是初版 CSV 结构/单元格比较；sas7bdat 表格浏览和完整临床统计验证仍有限。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="lane">
+            <strong>下一步最合理方向：</strong>
+            把 UI 的单 target 审核流和 LangGraph 的多 dataset 批处理流进一步合并。也就是让用户选择多个 output 后，
+            系统为每个 dataset 建立独立 spec/code/review/execution card，并把依赖 dataset 的可用性、是否由用户提供、
+            是否需要系统生成，都放进同一个 study-level plan。PSY201 这种只有 sas7bdat 和 SAS 程序的 study，应作为这个多 target 流程的主要测试样例。
+          </div>
+        </div>
+      </section>
+
+      <section id="files">
+        <div class="section-head"><h2>13. 关键文件索引</h2></div>
+        <div class="section-body">
+          <table>
+            <thead><tr><th>文件</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><code>src/adam_agent/api/web.py</code></td><td>浏览器 UI，上传、选择 target、finalize、approve、generate、run、preview。</td></tr>
+              <tr><td><code>src/adam_agent/api/app.py</code></td><td>FastAPI 路由定义。</td></tr>
+              <tr><td><code>src/adam_agent/api/service.py</code></td><td>核心 service gate：workspace、upload、plan、finalize inputs、draft spec、generate code、execute。</td></tr>
+              <tr><td><code>src/adam_agent/graph/workflow_state.py</code></td><td>持久化 run 状态、输入 fingerprint、stale plan、checkpoint sidecar。</td></tr>
+              <tr><td><code>src/adam_agent/graph/study_graph.py</code></td><td>StudyGraph：依赖计划、批次执行、结果聚合、审计 manifest。</td></tr>
+              <tr><td><code>src/adam_agent/graph/dataset_graph.py</code></td><td>DatasetGraph：单 dataset 执行、失败路由、repair/revise/summarize 骨架。</td></tr>
+              <tr><td><code>src/adam_agent/graph/dependencies.py</code></td><td>从 spec/SAS/define 提取 ADaM 依赖。</td></tr>
+              <tr><td><code>src/adam_agent/graph/dependency_resolution.py</code></td><td>判断依赖数据集是否已有 reference/run output，是否需要用户动作。</td></tr>
+              <tr><td><code>src/adam_agent/llm/context.py</code></td><td>构造 LLM 上下文，读取 CSV/sas7bdat profile，整理 target spec 和依赖。</td></tr>
+              <tr><td><code>src/adam_agent/llm/draft_spec.py</code></td><td>无正式 spec 时，调用 LLM 生成 review-required draft spec。</td></tr>
+              <tr><td><code>src/adam_agent/llm/clients.py</code></td><td>mock、OpenAI-compatible、Anthropic、DeepSeek、Qwen 等 LLM 客户端。</td></tr>
+              <tr><td><code>src/adam_agent/tools/sdtm_reader.py</code></td><td>读取/预览 CSV 和 sas7bdat；sas7bdat 依赖本地 Rscript + haven。</td></tr>
+              <tr><td><code>src/adam_agent/downstream/runner.py</code></td><td>下游 ADaM：LLM 生成代码、R 执行、验证、repair。</td></tr>
+              <tr><td><code>src/adam_agent/adsl/runner.py</code></td><td>ADSL minimal 的本地 R 生成路径。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

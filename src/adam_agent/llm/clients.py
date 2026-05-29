@@ -9,7 +9,7 @@ from http.client import RemoteDisconnected
 from typing import Any, Callable, Protocol
 from urllib import error, request
 
-from adam_agent.llm.model_registry import ModelRegistry
+from adam_agent.llm.model_registry import ModelInfo, ModelRegistry
 from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
 from adam_agent.tools.artifacts import sha256_text
 
@@ -151,7 +151,7 @@ class MockLLMClient:
         self.fixed_response_text = fixed_response_text
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        model_info = self.registry.lookup(request.provider, request.model)
+        model_info = self._model_info(request)
         response_text = self.fixed_response_text or f"[mock:{model_info.model}] deterministic response for {request.node}"
         prompt_artifact_id = request.prompt_artifact_id or f"prompt_{request.call_id}"
         response_artifact_id = request.response_artifact_id or f"response_{request.call_id}"
@@ -177,6 +177,20 @@ class MockLLMClient:
             transport="mock",
         )
         return LLMResponse(response_text=response_text, call_record=call_record)
+
+    def _model_info(self, request: LLMRequest) -> ModelInfo:
+        try:
+            return self.registry.lookup(request.provider, request.model)
+        except KeyError:
+            if request.provider.strip().lower() != "mock":
+                raise
+            return ModelInfo(
+                provider="mock",
+                model=request.model or "mock-model",
+                provider_locality="local_model",
+                requires_api_key=False,
+                implemented=True,
+            )
 
 
 def build_llm_client(
@@ -283,6 +297,8 @@ class OpenAICompatibleLLMClient:
     def _headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "ADaM-Agent-Studio/0.1",
             **self.config.extra_headers,
         }
         api_key = self._api_key()

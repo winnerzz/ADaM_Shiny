@@ -38,6 +38,9 @@ class FileUploadResponse(StrictBaseModel):
     folder: str
     saved_files: list[str] = Field(default_factory=list)
     input_summary: "StudyInputSummary"
+    input_fingerprint: dict[str, Any] = Field(default_factory=dict)
+    input_diff: dict[str, Any] = Field(default_factory=dict)
+    touched_runs: list[str] = Field(default_factory=list)
 
 
 class RunPlanRequest(StrictBaseModel):
@@ -63,6 +66,7 @@ class RunPlanResponse(StrictBaseModel):
     dependency_decisions: list[dict[str, Any]] = Field(default_factory=list)
     dependency_resolution: list[dict[str, Any]] = Field(default_factory=list)
     dependency_warnings: list[str] = Field(default_factory=list)
+    workflow_state_path: str | None = None
 
 
 class GenerateCodeRequest(StrictBaseModel):
@@ -71,9 +75,89 @@ class GenerateCodeRequest(StrictBaseModel):
     study_dir: NonEmptyStr
     study_id: str | None = None
     config_path: str | None = None
+    rscript_path: str | None = None
+    approved_dependency_datasets: list[str] = Field(default_factory=list)
+    require_spec_approval: bool = True
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class DraftSpecRequest(StrictBaseModel):
+    """Generate a review-required draft spec when no approved input spec exists."""
+
+    study_dir: NonEmptyStr
+    study_id: str | None = None
+    config_path: str | None = None
+    rscript_path: str | None = None
     approved_dependency_datasets: list[str] = Field(default_factory=list)
     llm_provider_override: "LLMProviderOverride | None" = None
     llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class DraftSpecResponse(StrictBaseModel):
+    """Reviewable draft spec returned before code generation."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    status: str
+    spec_path: str
+    prompt_path: str
+    response_path: str
+    variables: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FinalizeInputsRequest(StrictBaseModel):
+    """Confirm upload is complete and decide whether draft-spec generation is required."""
+
+    study_dir: NonEmptyStr
+    study_id: str | None = None
+    config_path: str | None = None
+    rscript_path: str | None = None
+    approved_dependency_datasets: list[str] = Field(default_factory=list)
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class FinalizeInputsResponse(StrictBaseModel):
+    """Result of the upload-complete checkpoint for one target dataset."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    status: str
+    input_spec_available: bool
+    draft_spec_required: bool
+    draft_spec_generated: bool = False
+    approved_draft_spec_available: bool = False
+    next_action: str
+    message: str
+    input_spec_path: str | None = None
+    approved_spec_path: str | None = None
+    draft_spec: DraftSpecResponse | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DraftSpecReviewRequest(StrictBaseModel):
+    """Persist a user's decision on a generated draft spec."""
+
+    study_dir: NonEmptyStr
+    reviewer: str = "local_user"
+    decision: str
+    notes: str = ""
+
+
+class DraftSpecReviewResponse(StrictBaseModel):
+    """Persisted draft-spec review decision."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    decision: str
+    review_path: str
+    approved: bool
+    approved_spec_path: str | None = None
 
 
 class LLMProviderOverride(StrictBaseModel):
@@ -139,8 +223,10 @@ class GenerateCodeResponse(StrictBaseModel):
     used_inputs: list[str] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
     context_path: str | None = None
+    draft_spec_path: str | None = None
     response_path: str | None = None
     parsed_response_path: str | None = None
+    static_check_path: str | None = None
     dependency_review_status: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -163,6 +249,7 @@ class CodeReviewResponse(StrictBaseModel):
     decision: str
     review_path: str
     approved: bool
+    static_check_path: str | None = None
 
 
 class ExecuteCodeRequest(StrictBaseModel):
@@ -185,6 +272,7 @@ class ExecuteCodeResponse(StrictBaseModel):
     output_path: str | None = None
     validation_report_path: str | None = None
     diagnostics_path: str | None = None
+    terminal_failure: bool = False
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

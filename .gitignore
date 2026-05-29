@@ -12,3 +12,5 @@ htmlcov/
 
 .DS_Store
 Thumbs.db
+
+ui_server_*.log

@@ -221,7 +221,9 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fff;
+      cursor: pointer;
     }
+    .dataset-card:hover { border-color: rgba(15, 118, 110, 0.35); background: #fbfffe; }
     .dataset-card.active { border-color: rgba(15, 118, 110, 0.45); background: #fbfffe; }
     .dataset-card.blocked { border-color: #efc4be; background: #fff8f7; }
     .dataset-top {
@@ -494,7 +496,7 @@ INDEX_HTML = r"""<!doctype html>
               </div>
               <div class="card drop-card">
                 <h3>Reference ADaM</h3>
-                <p class="muted">Existing ADaM for comparison or dependency evidence.</p>
+            <p class="muted">Existing ADaM for compare/output-shape evidence only.</p>
                 <input id="uploadReference" type="file" multiple>
                 <button data-upload-role="reference">Upload Reference ADaM</button>
                 <div class="file-meta" id="uploadStatusReference"></div>
@@ -514,7 +516,7 @@ INDEX_HTML = r"""<!doctype html>
                 <div class="file-meta" id="uploadStatusLegacy"></div>
               </div>
             </div>
-            <p class="note warn" style="margin-top:12px;">Reference ADaM is used for dependency/comparison evidence. It does not override user specs.</p>
+            <p class="note warn" style="margin-top:12px;">Reference ADaM is used for compare/output-shape evidence only. It is not derivation authority and does not override user specs.</p>
           </div>
         </div>
       </section>
@@ -542,7 +544,7 @@ INDEX_HTML = r"""<!doctype html>
           <span id="planStatus" class="pill warn">waiting</span>
         </div>
         <div class="section-body">
-          <p class="note">Pick the ADaM dataset you want to generate. The app will check whether dependencies such as ADSL are already available.</p>
+          <p class="note">Pick the ADaM dataset you want to generate. The app only adds upstream ADaM dependencies when your spec, define, or legacy code provides evidence.</p>
           <div class="button-row" id="targetButtons"></div>
           <div class="grid2" style="margin-top:12px;">
             <div class="field">
@@ -555,6 +557,11 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
           <div id="planView" class="note">Load inputs first, then choose a target.</div>
+          <div class="button-row">
+            <button class="secondary" id="finalizeInputsButton" disabled>Finalize Inputs / Draft Spec</button>
+            <button class="secondary" id="approveDraftSpecButton" disabled>Approve Draft Spec</button>
+          </div>
+          <div id="draftSpecPane" class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</div>
         </div>
       </section>
 
@@ -655,6 +662,12 @@ INDEX_HTML = r"""<!doctype html>
       generated: null,
       review: null,
       execution: null,
+      generatedByDataset: {},
+      reviewByDataset: {},
+      executionByDataset: {},
+      draftSpecByDataset: {},
+      draftSpecReviewByDataset: {},
+      finalizedInputsByDataset: {},
       runReview: null,
       selectedTarget: null,
       targetCandidates: [],
@@ -764,7 +777,7 @@ INDEX_HTML = r"""<!doctype html>
         model,
         base_url: baseUrl || null,
         api_key: apiKey,
-        timeout_seconds: 90,
+        timeout_seconds: 300,
         max_tokens: 4096,
         allow_custom_base_url: Boolean(baseUrl),
         custom_base_url_approved_by: baseUrl ? approvedBy : null
@@ -892,9 +905,8 @@ INDEX_HTML = r"""<!doctype html>
       byId('runId').value = payload.run_id || defaultRunId();
       byId('configPath').value = payload.config_path || byId('configPath').value;
       if (payload.rscript_path) byId('rscriptPath').value = payload.rscript_path;
-      if (payload.target_datasets?.length) {
-        state.selectedTarget = payload.target_datasets[0];
-      }
+      state.selectedTarget = payload.target_datasets?.length ? payload.target_datasets[0] : null;
+      resetRunState();
     }
 
     async function uploadRole(role) {
@@ -916,15 +928,48 @@ INDEX_HTML = r"""<!doctype html>
           body: form
         });
         state.inputSummary = payload.input_summary;
+        invalidateUiStateAfterInputChange(payload);
         renderInputSummary(payload.input_summary);
-        addEvent(`${role} uploaded`, `${payload.saved_files.length} file(s) added and inputs rescanned.`);
+        addEvent(`${role} uploaded`, uploadDiffMessage(payload));
         byId(uploadStatus[role]).textContent = `${payload.saved_files.length} file(s) uploaded.`;
-        byId('workspaceMessage').textContent = `Uploaded ${payload.saved_files.length} file(s). Inputs rescanned automatically.`;
+        byId('workspaceMessage').textContent = `Uploaded ${payload.saved_files.length} file(s). ${uploadDiffMessage(payload)}`;
         setStep(2);
       } catch (error) {
         byId(uploadStatus[role]).textContent = 'Upload failed.';
         byId('workspaceMessage').textContent = String(error);
       }
+    }
+
+    function invalidateUiStateAfterInputChange(payload) {
+      if (!payload?.input_diff?.changed) return;
+      state.plan = null;
+      state.generated = null;
+      state.review = null;
+      state.execution = null;
+      state.generatedByDataset = {};
+      state.reviewByDataset = {};
+      state.executionByDataset = {};
+      state.draftSpecByDataset = {};
+      state.draftSpecReviewByDataset = {};
+      state.finalizedInputsByDataset = {};
+      state.runReview = null;
+      state.tablePages = {};
+      state.compareResults = {};
+      setPill('planStatus', 'stale');
+      setPill('codeStatus', 'stale');
+      byId('planView').innerHTML = '<p class="note warn">Inputs changed. Dependency plan, draft specs, generated code, and reviews must be refreshed before generation continues.</p>';
+      byId('draftSpecPane').innerHTML = '<p class="note warn">Inputs changed. Finalize inputs again before approving or generating code.</p>';
+      byId('reviewPane').innerHTML = '<p class="note warn">Inputs changed. Previous generated-code state was cleared from the UI.</p>';
+    }
+
+    function uploadDiffMessage(payload) {
+      const diff = payload?.input_diff || {};
+      const parts = [];
+      if (diff.added?.length) parts.push(`${diff.added.length} added`);
+      if (diff.changed_files?.length) parts.push(`${diff.changed_files.length} changed`);
+      if (diff.removed?.length) parts.push(`${diff.removed.length} removed`);
+      const touched = payload?.touched_runs?.length ? ` ${payload.touched_runs.length} existing run(s) marked stale.` : '';
+      return `${payload.saved_files?.length || 0} file(s) added and inputs rescanned.${parts.length ? ` Input diff: ${parts.join(', ')}.` : ''}${touched}`;
     }
 
     async function scanInputs() {
@@ -951,6 +996,9 @@ INDEX_HTML = r"""<!doctype html>
       byId('inputWarnings').textContent = warnings.length ? warnings.join(' ') : 'No input warnings.';
       renderTargetButtons(inferTargets(summary));
       renderGraphAwareDashboard();
+      if (runId()) {
+        loadReviewSummary(runId());
+      }
     }
 
     function renderFiles(containerId, files) {
@@ -1035,11 +1083,13 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => {
           state.selectedTarget = button.dataset.target;
           renderTargetButtons(targets);
-          resetGeneratedState();
+          resetActiveDatasetView();
           preparePlan();
         });
       }
       byId('generateCodeButton').disabled = !state.selectedTarget;
+      byId('finalizeInputsButton').disabled = !state.selectedTarget;
+      renderDraftSpecPane();
       renderGraphAwareDashboard();
     }
 
@@ -1055,24 +1105,99 @@ INDEX_HTML = r"""<!doctype html>
       state.targetCandidates = Array.from(next).sort();
       state.selectedTarget = value;
       byId('manualTarget').value = '';
-      resetGeneratedState();
+      resetActiveDatasetView();
       renderTargetButtons(state.targetCandidates);
       addEvent('Target added', `${value} was added manually for planning.`);
       preparePlan();
     }
 
-    function resetGeneratedState() {
+    function resetRunState() {
+      state.plan = null;
       state.generated = null;
       state.review = null;
       state.execution = null;
+      state.generatedByDataset = {};
+      state.reviewByDataset = {};
+      state.executionByDataset = {};
+      state.draftSpecByDataset = {};
+      state.draftSpecReviewByDataset = {};
       state.runReview = null;
+      state.targetCandidates = state.selectedTarget ? [state.selectedTarget] : [];
       state.tablePages = {};
       state.compareResults = {};
+      resetActiveDatasetView();
+    }
+
+    function resetActiveDatasetView() {
+      syncActiveDatasetState();
       state.selectedResultView = 'generated';
-      setPill('codeStatus', 'not generated');
-      byId('approveButton').disabled = true;
+      setPill('codeStatus', codeStatusForActiveDataset());
+      byId('approveButton').disabled = !generatedFor(state.selectedTarget);
+      byId('finalizeInputsButton').disabled = !state.selectedTarget;
+      renderDraftSpecPane();
       renderPane();
       renderGraphAwareDashboard();
+    }
+
+    function syncActiveDatasetState() {
+      state.generated = generatedFor(state.selectedTarget);
+      state.review = reviewFor(state.selectedTarget);
+      state.execution = executionFor(state.selectedTarget);
+    }
+
+    function generatedFor(dataset) {
+      return dataset ? state.generatedByDataset[dataset] || null : null;
+    }
+
+    function reviewFor(dataset) {
+      return dataset ? state.reviewByDataset[dataset] || null : null;
+    }
+
+    function executionFor(dataset) {
+      return dataset ? state.executionByDataset[dataset] || null : null;
+    }
+
+    function draftSpecFor(dataset) {
+      return dataset ? state.draftSpecByDataset[dataset] || null : null;
+    }
+
+    function draftSpecReviewFor(dataset) {
+      return dataset ? state.draftSpecReviewByDataset[dataset] || null : null;
+    }
+
+    function finalizedInputsFor(dataset) {
+      return dataset ? state.finalizedInputsByDataset[dataset] || null : null;
+    }
+
+    function targetHasInputSpec(target) {
+      const specs = state.inputSummary?.specs || [];
+      const normalized = String(target || '').toUpperCase();
+      return specs.some((item) => String(item.dataset || '').toUpperCase() === normalized || String(item.file_name || '').toUpperCase().includes(normalized));
+    }
+
+    function targetSpecGateSatisfied(target) {
+      const finalized = finalizedInputsFor(target);
+      return Boolean(
+        finalized?.input_spec_available ||
+        finalized?.approved_draft_spec_available ||
+        targetHasInputSpec(target) ||
+        draftSpecReviewFor(target)?.approved
+      );
+    }
+
+    function datasetReviewFor(dataset) {
+      return (state.runReview?.dataset_reviews || []).find((item) => item.dataset === dataset) || null;
+    }
+
+    function codeStatusForActiveDataset() {
+      if (!state.selectedTarget) return 'not generated';
+      const execution = executionFor(state.selectedTarget);
+      if (execution) return execution.status;
+      if (generatedFor(state.selectedTarget)) return 'review';
+      const persisted = datasetReviewFor(state.selectedTarget);
+      if (persisted?.output_preview) return persisted.status || 'completed';
+      if (persisted?.generated_code) return 'review';
+      return 'not generated';
     }
 
     async function preparePlan() {
@@ -1094,6 +1219,7 @@ INDEX_HTML = r"""<!doctype html>
         addEvent('Dependency plan prepared', `${state.selectedTarget} status: ${plan.dependency_review_status}.`);
         setPill('planStatus', plan.dependency_review_status || 'planned');
         renderPlan(plan);
+        renderDraftSpecPane();
         renderGraphAwareDashboard();
         setStep(4);
       } catch (error) {
@@ -1111,6 +1237,115 @@ INDEX_HTML = r"""<!doctype html>
         ${blocks ? `<p class="note warn">Dependency action needed before generation:</p><ul class="clean">${blocks}</ul>` : '<p class="note strong">No blocking dependency action is required.</p>'}
         <ul class="clean">${decisions || '<li>No explicit dependency was detected for this target.</li>'}</ul>
       `;
+    }
+
+    async function finalizeInputsForDraftSpec() {
+      if (!state.selectedTarget) return;
+      if (!state.plan) await preparePlan();
+      byId('draftSpecPane').innerHTML = '<p class="note warn">Finalizing uploaded inputs...</p>';
+      setPill('codeStatus', 'running');
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/finalize-inputs`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            config_path: byId('configPath').value.trim() || null,
+            rscript_path: byId('rscriptPath').value.trim() || null,
+            approved_dependency_datasets: [],
+            ...llmOverridePayload()
+          })
+        });
+        if (payload.draft_spec) {
+          state.draftSpecByDataset[payload.dataset] = payload.draft_spec;
+        }
+        state.finalizedInputsByDataset[payload.dataset] = payload;
+        if (payload.approved_draft_spec_available) {
+          state.draftSpecReviewByDataset[payload.dataset] = {
+            dataset: payload.dataset,
+            approved: true,
+            approved_spec_path: payload.approved_spec_path
+          };
+        }
+        setPill('codeStatus', payload.next_action === 'review_draft_spec' ? 'draft review' : 'not generated');
+        byId('approveDraftSpecButton').disabled = payload.next_action !== 'review_draft_spec';
+        addEvent('Inputs finalized', payload.message);
+        renderDraftSpecPane();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+      }
+    }
+
+    async function approveDraftSpec() {
+      const draft = draftSpecFor(state.selectedTarget);
+      if (!draft) return;
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/draft-spec-review`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            reviewer: byId('reviewer').value.trim() || 'local_user',
+            decision: 'approve',
+            notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'
+          })
+        });
+        state.draftSpecReviewByDataset[payload.dataset] = payload;
+        setPill('codeStatus', 'not generated');
+        addEvent('Draft spec approved', `${payload.dataset} draft spec can now be used for R code generation.`);
+        renderDraftSpecPane();
+      } catch (error) {
+        byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+      }
+    }
+
+    function renderDraftSpecPane() {
+      const node = byId('draftSpecPane');
+      if (!node) return;
+      if (!state.selectedTarget) {
+        node.innerHTML = '<p class="note">Choose an output dataset before finalizing inputs.</p>';
+        byId('approveDraftSpecButton').disabled = true;
+        return;
+      }
+      const finalized = finalizedInputsFor(state.selectedTarget);
+      if (finalized?.input_spec_available || targetHasInputSpec(state.selectedTarget)) {
+        const specPath = finalized?.input_spec_path ? ` Artifact: ${escapeHtml(finalized.input_spec_path)}` : '';
+        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly.${specPath}</p>`;
+        byId('approveDraftSpecButton').disabled = true;
+        return;
+      }
+      if (finalized?.approved_draft_spec_available) {
+        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} already has a user-approved draft spec for this run. The code generator can use it now. Artifact: ${escapeHtml(finalized.approved_spec_path || '')}</p>`;
+        byId('approveDraftSpecButton').disabled = true;
+        return;
+      }
+      const draft = draftSpecFor(state.selectedTarget);
+      const review = draftSpecReviewFor(state.selectedTarget);
+      if (!draft) {
+        node.innerHTML = `<p class="note warn">No input spec found for ${escapeHtml(state.selectedTarget)}. Generate a draft spec from uploaded SDTM/reference/define/legacy evidence, review it, then approve it before generating R code.</p>`;
+        byId('approveDraftSpecButton').disabled = true;
+        return;
+      }
+      const rows = (draft.variables || []).slice(0, 20).map((item) => `
+        <tr>
+          <td>${escapeHtml(item.variable || '')}</td>
+          <td>${escapeHtml(item.type || '')}</td>
+          <td>${escapeHtml((item.source_domains || []).join(', '))}</td>
+          <td>${escapeHtml(item.derivation || '')}</td>
+          <td>${escapeHtml(item.risk_level || '')}</td>
+        </tr>
+      `).join('');
+      node.innerHTML = `
+        <p class="note ${review?.approved ? 'strong' : 'warn'}">
+          Draft spec for ${escapeHtml(draft.dataset)} ${review?.approved ? 'approved for this run' : 'requires review before code generation'}.
+          Artifact: ${escapeHtml(draft.spec_path)}
+        </p>
+        <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Type</th><th>Source</th><th>Derivation</th><th>Risk</th></tr></thead><tbody>${rows || '<tr><td class="muted" colspan="5">No variables returned.</td></tr>'}</tbody></table></div>
+        <div style="margin-top:10px;"><h3>Draft warnings</h3><ul class="clean">${listItems(draft.warnings, 'None reported.')}</ul></div>
+      `;
+      byId('approveDraftSpecButton').disabled = Boolean(review?.approved);
     }
 
     function renderGraphAwareDashboard() {
@@ -1174,24 +1409,38 @@ INDEX_HTML = r"""<!doctype html>
       node.innerHTML = targets.map((target) => {
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
-        const isGenerated = state.generated?.dataset === target;
-        const isCompleted = state.execution?.dataset === target && state.execution?.status === 'completed';
+        const generated = generatedFor(target);
+        const review = reviewFor(target);
+        const execution = executionFor(target);
+        const persisted = datasetReviewFor(target);
+        const isGenerated = Boolean(generated || persisted?.generated_code);
+        const isCompleted = execution?.status === 'completed' || Boolean(persisted?.output_preview);
+        const hasReview = Boolean(review || persisted?.generated_code);
+        const statusClass = status === 'blocked' || status === 'failed' ? 'fail' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         return `
-          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) ? 'blocked' : ''}">
+          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
               <span class="dataset-name">${escapeHtml(target)}</span>
-              <span class="pill ${status === 'blocked' ? 'fail' : status === 'ready' ? '' : 'warn'}">${escapeHtml(status)}</span>
+              <span class="pill ${statusClass}">${escapeHtml(status)}</span>
             </div>
             <div class="stage-strip">
               <div class="stage done">inputs</div>
               <div class="stage ${state.plan ? (blockedNames.has(target) ? 'blocked' : 'done') : 'active'}">plan</div>
               <div class="stage ${isGenerated ? 'done' : target === state.selectedTarget ? 'active' : ''}">code</div>
-              <div class="stage ${state.review?.dataset === target ? 'done' : isGenerated ? 'active' : ''}">review</div>
-              <div class="stage ${isCompleted ? 'done' : state.execution?.dataset === target ? 'blocked' : ''}">run</div>
+              <div class="stage ${hasReview ? 'done' : isGenerated ? 'active' : ''}">review</div>
+              <div class="stage ${isCompleted ? 'done' : execution ? 'blocked' : ''}">run</div>
             </div>
           </div>
         `;
       }).join('');
+      for (const card of node.querySelectorAll('[data-card-target]')) {
+        card.addEventListener('click', () => {
+          state.selectedTarget = card.dataset.cardTarget;
+          renderTargetButtons(state.targetCandidates || []);
+          resetActiveDatasetView();
+          preparePlan();
+        });
+      }
     }
 
     function hasDatasetEvidence(dataset) {
@@ -1209,8 +1458,12 @@ INDEX_HTML = r"""<!doctype html>
 
     function datasetStatus(target, runnable, blocked) {
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
-      if (state.execution?.dataset === target) return state.execution.status;
-      if (state.generated?.dataset === target) return 'needs review';
+      const execution = executionFor(target);
+      const persisted = datasetReviewFor(target);
+      if (execution) return execution.status;
+      if (persisted?.output_preview) return persisted.status || 'completed';
+      if (generatedFor(target) || persisted?.generated_code) return 'needs review';
+      if (hasDatasetEvidence(target)) return 'reference';
       if ((runnable || []).includes(target)) return 'ready';
       if (state.plan) return 'waiting';
       return 'candidate';
@@ -1219,6 +1472,11 @@ INDEX_HTML = r"""<!doctype html>
     async function generateCode() {
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
+      if (!targetSpecGateSatisfied(state.selectedTarget)) {
+        byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Click Finalize Inputs / Draft Spec, review the draft spec, then approve it before generating R code.</p>';
+        byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
+        return;
+      }
       setPill('codeStatus', 'running');
       try {
         const overrides = llmOverridePayload();
@@ -1229,11 +1487,15 @@ INDEX_HTML = r"""<!doctype html>
             study_dir: studyDir(),
             study_id: state.studyId,
             config_path: byId('configPath').value.trim() || null,
+            rscript_path: byId('rscriptPath').value.trim() || null,
             approved_dependency_datasets: [],
             ...overrides
           })
         });
         state.generated = payload;
+        state.generatedByDataset[payload.dataset] = payload;
+        state.review = reviewFor(payload.dataset);
+        state.execution = executionFor(payload.dataset);
         state.selectedView = 'summary';
         setActiveTab();
         setPill('codeStatus', 'review');
@@ -1249,10 +1511,12 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function approveAndRun() {
-      if (!state.generated) return;
+      const generated = generatedFor(state.selectedTarget);
+      if (!generated) return;
+      state.generated = generated;
       setPill('codeStatus', 'running');
       try {
-        state.review = await api(`/runs/${encodeURIComponent(state.generated.run_id)}/datasets/${encodeURIComponent(state.generated.dataset)}/code-review`, {
+        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -1262,7 +1526,8 @@ INDEX_HTML = r"""<!doctype html>
             notes: byId('reviewNotes').value.trim()
           })
         });
-        state.execution = await api(`/runs/${encodeURIComponent(state.generated.run_id)}/datasets/${encodeURIComponent(state.generated.dataset)}/execute-approved-code`, {
+        state.reviewByDataset[generated.dataset] = state.review;
+        state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/execute-approved-code`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -1272,8 +1537,9 @@ INDEX_HTML = r"""<!doctype html>
             require_approval: true
           })
         });
-        await loadReviewSummary(state.generated.run_id);
-        addEvent('Sandbox completed', `${state.generated.dataset} finished with status ${state.execution.status}.`);
+        state.executionByDataset[generated.dataset] = state.execution;
+        await loadReviewSummary(generated.run_id);
+        addEvent('Sandbox completed', `${generated.dataset} finished with status ${state.execution.status}.`);
         setPill('codeStatus', state.execution.status);
         state.selectedView = 'output';
         setActiveTab();
@@ -1289,24 +1555,32 @@ INDEX_HTML = r"""<!doctype html>
     async function loadReviewSummary(id) {
       try {
         state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}`);
-        const review = selectedDatasetReview();
-        if (review?.compare_summary) {
-          state.compareResults[review.dataset] = review.compare_summary;
+        for (const review of state.runReview?.dataset_reviews || []) {
+          if (review?.compare_summary) {
+            state.compareResults[review.dataset] = review.compare_summary;
+          }
         }
+        syncActiveDatasetState();
+        setPill('codeStatus', codeStatusForActiveDataset());
+        byId('approveButton').disabled = !generatedFor(state.selectedTarget);
         renderAdvanced();
+        renderGraphAwareDashboard();
+        renderPane();
       } catch {
         state.runReview = null;
+        renderAdvanced();
+        renderGraphAwareDashboard();
       }
     }
 
     function selectedDatasetReview() {
-      const dataset = state.generated?.dataset || state.selectedTarget;
-      return (state.runReview?.dataset_reviews || []).find((item) => item.dataset === dataset) || null;
+      return datasetReviewFor(state.selectedTarget);
     }
 
     function renderPane() {
       const pane = byId('reviewPane');
-      const generated = state.generated;
+      syncActiveDatasetState();
+      const generated = generatedFor(state.selectedTarget);
       const datasetReview = selectedDatasetReview();
       if (state.selectedView === 'summary') {
         if (!generated) {
@@ -1315,6 +1589,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         pane.innerHTML = `
           <p class="note strong">R code is ready for ${escapeHtml(generated.dataset)}. Review the assumptions, then approve to run locally.</p>
+          ${draftSpecNotice(generated)}
           <div class="grid2">
             <div class="card"><h3>What will happen</h3><ul class="clean">${listItems(generated.expected_outputs, 'No output declared.')}</ul></div>
             <div class="card"><h3>Inputs used</h3><ul class="clean">${listItems(generated.used_inputs, 'No inputs declared.')}</ul></div>
@@ -1328,10 +1603,12 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (state.selectedView === 'risk') {
         pane.innerHTML = generated ? `
+          ${draftSpecNotice(generated)}
           <div class="grid2">
             <div><h3>Assumptions</h3><ul class="clean">${listItems(generated.assumptions, 'None reported.')}</ul></div>
             <div><h3>Risk Points</h3><ul class="clean">${listItems(generated.risk_points, 'None reported.')}</ul></div>
           </div>
+          <div class="card" style="margin-top:12px;"><h3>Generation Warnings</h3><ul class="clean">${listItems(generated.warnings, 'None reported.')}</ul></div>
         ` : '<p class="note">No generated package yet.</p>';
         return;
       }
@@ -1341,6 +1618,17 @@ INDEX_HTML = r"""<!doctype html>
       }
       pane.innerHTML = resultWorkspace(datasetReview);
       attachResultHandlers(datasetReview);
+    }
+
+    function draftSpecNotice(generated) {
+      if (!generated?.draft_spec_path) return '';
+      return `
+        <p class="note warn">
+          Draft spec generated for ${escapeHtml(generated.dataset)} because no approved input spec was supplied.
+          This draft is evidence for review, not an approved production rule.
+          Artifact: ${escapeHtml(generated.draft_spec_path)}
+        </p>
+      `;
     }
 
     function resultWorkspace(review) {
@@ -1521,6 +1809,8 @@ INDEX_HTML = r"""<!doctype html>
 
     byId('createDemoButton').addEventListener('click', createDemoStudy);
     byId('startUploadButton').addEventListener('click', startUploadWorkspace);
+    byId('finalizeInputsButton').addEventListener('click', finalizeInputsForDraftSpec);
+    byId('approveDraftSpecButton').addEventListener('click', approveDraftSpec);
     byId('generateCodeButton').addEventListener('click', generateCode);
     byId('approveButton').addEventListener('click', approveAndRun);
     byId('addTargetButton').addEventListener('click', addManualTarget);

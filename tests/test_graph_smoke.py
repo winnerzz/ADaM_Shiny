@@ -38,34 +38,34 @@ def _workspace_dir(name: str) -> Path:
 
 
 class GraphSmokeTests(unittest.TestCase):
-    def test_dependency_plan_auto_adds_adsl_once_for_downstream_requests(self) -> None:
+    def test_dependency_plan_does_not_invent_adsl_without_evidence(self) -> None:
         plan = plan_dataset_dependencies(["ADAE", "ADCM"])
 
         self.assertEqual(plan.requested_datasets, ["ADAE", "ADCM"])
-        self.assertEqual(plan.target_datasets, ["ADSL", "ADAE", "ADCM"])
-        self.assertEqual(plan.auto_added_datasets, ["ADSL"])
-        self.assertEqual(plan.foundation_datasets, ["ADSL"])
-        self.assertEqual(plan.downstream_datasets, ["ADAE", "ADCM"])
+        self.assertEqual(plan.target_datasets, ["ADAE", "ADCM"])
+        self.assertEqual(plan.auto_added_datasets, [])
+        self.assertEqual(plan.foundation_datasets, ["ADAE", "ADCM"])
+        self.assertEqual(plan.downstream_datasets, [])
         self.assertEqual(plan.unsupported_datasets, [])
-        self.assertEqual(plan.dependencies["ADAE"], ["ADSL"])
-        self.assertEqual(plan.dependencies["ADCM"], ["ADSL"])
-        self.assertEqual(plan.dependency_graph, {"ADSL": ["ADAE", "ADCM"]})
-        self.assertEqual(plan.evidence, "phase7_mvp_fallback_adsl_foundation")
+        self.assertEqual(plan.dependencies["ADAE"], [])
+        self.assertEqual(plan.dependencies["ADCM"], [])
+        self.assertEqual(plan.dependency_graph, {})
+        self.assertEqual(plan.evidence, "no_dependency_evidence")
         decisions = {decision.dataset: decision for decision in plan.decisions}
-        self.assertEqual(decisions["ADAE"].source, "mvp_common_adam_fallback")
+        self.assertEqual(decisions["ADAE"].source, "no_dependency_evidence")
         self.assertTrue(decisions["ADAE"].review_required)
-        self.assertGreater(decisions["ADAE"].confidence, 0.5)
+        self.assertLess(decisions["ADAE"].confidence, 0.5)
 
     def test_dependency_plan_marks_unknown_adam_dependencies_low_confidence_review_required(self) -> None:
         plan = plan_dataset_dependencies(["ADTTE"])
 
-        self.assertEqual(plan.target_datasets, ["ADSL", "ADTTE"])
-        self.assertEqual(plan.dependencies["ADTTE"], ["ADSL"])
+        self.assertEqual(plan.target_datasets, ["ADTTE"])
+        self.assertEqual(plan.dependencies["ADTTE"], [])
         decisions = {decision.dataset: decision for decision in plan.decisions}
-        self.assertEqual(decisions["ADTTE"].source, "mvp_unknown_adam_fallback")
-        self.assertEqual(decisions["ADTTE"].confidence, 0.4)
+        self.assertEqual(decisions["ADTTE"].source, "no_dependency_evidence")
+        self.assertEqual(decisions["ADTTE"].confidence, 0.35)
         self.assertTrue(decisions["ADTTE"].review_required)
-        self.assertIn("requires review", decisions["ADTTE"].reason)
+        self.assertIn("will not invent an ADSL dependency", decisions["ADTTE"].reason)
 
     def test_dependency_plan_marks_non_ad_targets_unsupported(self) -> None:
         plan = plan_dataset_dependencies(["LB"])
@@ -104,9 +104,9 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(plan.requested_datasets, ["ADTTE"])
         self.assertEqual(plan.target_datasets, ["ADSL", "ADLB", "ADTTE"])
         self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
-        self.assertEqual(plan.dependencies["ADLB"], ["ADSL"])
-        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
-        self.assertEqual(plan.evidence, "user_evidence_plus_mvp_fallback")
+        self.assertEqual(plan.dependencies["ADLB"], [])
+        self.assertEqual(plan.execution_batches, [["ADSL", "ADLB"], ["ADTTE"]])
+        self.assertEqual(plan.evidence, "user_evidence")
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["ADTTE"].source, "input_spec_dependency")
         self.assertGreater(decisions["ADTTE"].confidence, 0.8)
@@ -236,7 +236,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(plan.dependencies["ADTTE"], ["ADLB"])
         self.assertFalse(any("Dependency conflict" in warning for warning in plan.planning_warnings))
 
-    def test_input_spec_present_but_missing_target_spec_warns_before_fallback(self) -> None:
+    def test_input_spec_present_but_missing_target_spec_warns_without_adsl_fallback(self) -> None:
         study_dir = _workspace_dir("phase7_spec_gap_dependency") / "PSY201"
         spec_dir = study_dir / "input_spec"
         spec_dir.mkdir(parents=True)
@@ -247,12 +247,13 @@ class GraphSmokeTests(unittest.TestCase):
 
         plan = plan_dataset_dependencies(["ADAE"], study_dir=study_dir)
 
-        self.assertEqual(plan.dependencies["ADAE"], ["ADSL"])
+        self.assertEqual(plan.target_datasets, ["ADAE"])
+        self.assertEqual(plan.dependencies["ADAE"], [])
         self.assertTrue(
             any(
                 "Input spec is present" in warning
                 and "ADAE" in warning
-                and "MVP fallback" in warning
+                and "not imposing a default ADSL dependency" in warning
                 for warning in plan.planning_warnings
             )
         )
@@ -271,7 +272,33 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["ADTTE"].source, "legacy_sas_dependency")
-        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
+        self.assertEqual(plan.execution_batches, [["ADSL", "ADLB"], ["ADTTE"]])
+
+    def test_dependency_plan_ignores_sas_libref_that_starts_with_ad(self) -> None:
+        study_dir = _workspace_dir("phase7_ignore_ad_libref") / "PSY201"
+        sas_dir = study_dir / "legacy_code"
+        sas_dir.mkdir(parents=True)
+        (sas_dir / "ADAE.sas").write_text(
+            """
+            libname adout_hw "Primary/HW/AD/Output";
+            proc sql;
+              create table dm as
+              select usubjid from addata.addm;
+            quit;
+            data adout_hw.adae;
+              set ae_t3;
+            run;
+            data addata.adae;
+              set adout_hw.adae;
+            run;
+            """,
+            encoding="utf-8",
+        )
+
+        plan = plan_dataset_dependencies(["ADAE"], study_dir=study_dir)
+
+        self.assertEqual(plan.dependencies["ADAE"], ["ADDM"])
+        self.assertFalse(any(record.dependency == "ADOUT_HW" for record in plan.evidence_records))
 
     def test_dependency_plan_uses_define_xml_dependency_evidence(self) -> None:
         study_dir = _workspace_dir("phase7_define_dependency") / "PSY201"
@@ -291,7 +318,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(plan.dependencies["ADTTE"], ["ADSL", "ADLB"])
         decisions = {decision.dataset: decision for decision in plan.decisions}
         self.assertEqual(decisions["ADTTE"].source, "define_xml_dependency")
-        self.assertEqual(plan.execution_batches, [["ADSL"], ["ADLB"], ["ADTTE"]])
+        self.assertEqual(plan.execution_batches, [["ADSL", "ADLB"], ["ADTTE"]])
 
     def test_study_graph_runs_foundation_then_downstream_stub_datasets(self) -> None:
         graph = compile_study_graph()
@@ -317,7 +344,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("ADSL", result["audit_manifest"].metadata["datasets"])
         self.assertIn("ADAE", result["audit_manifest"].metadata["datasets"])
         self.assertEqual(result["audit_manifest"].metadata["requested_datasets"], ["ADSL", "ADAE"])
-        self.assertEqual(result["audit_manifest"].metadata["dependency_evidence"], "phase7_mvp_fallback_adsl_foundation")
+        self.assertEqual(result["audit_manifest"].metadata["dependency_evidence"], "no_dependency_evidence")
         self.assertTrue(result["audit_manifest"].metadata["dependency_decisions"][1]["review_required"])
 
     @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
@@ -478,12 +505,11 @@ class GraphSmokeTests(unittest.TestCase):
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(summaries["ADSL"].status, "failed")
-        self.assertEqual(summaries["ADAE"].status, "failed")
-        self.assertEqual(summaries["ADAE"].validation_status, "blocked_by_dependency")
-        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "blocked_by_dependency", "blocked_by": "ADSL"}])
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(result["blocked_datasets"], [])
         self.assertEqual(result["status"], "failed")
 
-    def test_downstream_only_request_requires_dependency_decision_when_missing(self) -> None:
+    def test_downstream_only_request_does_not_invent_dependency_when_missing(self) -> None:
         graph = compile_study_graph()
 
         result = graph.invoke(
@@ -499,20 +525,17 @@ class GraphSmokeTests(unittest.TestCase):
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(set(summaries), {"ADAE"})
-        self.assertEqual(summaries["ADAE"].status, "failed")
-        self.assertEqual(summaries["ADAE"].validation_status, "dependency_user_action_required")
-        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "dependency_user_action_required", "blocked_by": "ADSL"}])
-        self.assertEqual(result["foundation_datasets"], ["ADSL"])
-        self.assertEqual(result["downstream_datasets"], ["ADAE"])
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(result["blocked_datasets"], [])
+        self.assertEqual(result["foundation_datasets"], ["ADAE"])
+        self.assertEqual(result["downstream_datasets"], [])
         self.assertEqual(result["requested_datasets"], ["ADAE"])
-        self.assertEqual(result["auto_added_datasets"], ["ADSL"])
-        self.assertEqual(result["runnable_datasets"], [])
-        self.assertEqual(result["dataset_dependencies"]["ADAE"], ["ADSL"])
-        self.assertTrue(result["dependency_action_required"])
-        self.assertEqual(result["dependency_resolution"][0]["target_dataset"], "ADAE")
-        self.assertEqual(result["dependency_resolution"][0]["required_dataset"], "ADSL")
-        self.assertEqual(result["dependency_resolution"][0]["resolution_status"], "user_action_required")
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["auto_added_datasets"], [])
+        self.assertEqual(result["runnable_datasets"], ["ADAE"])
+        self.assertEqual(result["dataset_dependencies"]["ADAE"], [])
+        self.assertFalse(result["dependency_action_required"])
+        self.assertEqual(result["dependency_resolution"], [])
+        self.assertEqual(result["status"], "completed")
 
     def test_downstream_request_uses_available_dependency_artifact_without_running_it(self) -> None:
         study_dir = _workspace_dir("phase74_available_dependency") / "PSY201"
@@ -537,9 +560,8 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(set(summaries), {"ADAE"})
         self.assertEqual(result["runnable_datasets"], ["ADAE"])
         self.assertFalse(result["dependency_action_required"])
-        self.assertEqual(result["dependency_resolution"][0]["resolution_status"], "available")
-        self.assertEqual(result["dependency_resolution"][0]["artifact_source"], "reference_adam")
-        self.assertEqual(result["satisfied_dependency_datasets"], ["ADSL"])
+        self.assertEqual(result["dependency_resolution"], [])
+        self.assertEqual(result["satisfied_dependency_datasets"], [])
         self.assertEqual(result["status"], "completed")
 
     def test_study_graph_runs_llm_downstream_stubbed_when_dependency_available(self) -> None:
@@ -869,17 +891,23 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(payload["dataset_results"][0]["validation_status"], "pass")
         self.assertTrue((study_dir / "runs" / "run_phase77_cli_r" / "outputs" / "adae.csv").exists())
 
-    def test_sas7bdat_dependency_artifact_is_found_but_not_usable_for_downstream_availability(self) -> None:
-        study_dir = _workspace_dir("phase74_unusable_sas7bdat_dependency") / "PSY201"
+    def test_sas7bdat_dependency_artifact_is_available_for_r_runtime(self) -> None:
+        study_dir = _workspace_dir("phase74_usable_sas7bdat_dependency") / "PSY201"
         reference_dir = study_dir / "reference_adam"
+        spec_dir = study_dir / "input_spec"
         reference_dir.mkdir(parents=True)
+        spec_dir.mkdir()
         (reference_dir / "adsl.sas7bdat").write_text("not a real sas7bdat", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
         graph = compile_study_graph()
 
         result = graph.invoke(
             {
                 "study_id": "PSY201",
-                "run_id": "run_phase74_unusable_sas7bdat_dependency",
+                "run_id": "run_phase74_usable_sas7bdat_dependency",
                 "target_datasets": ["ADAE"],
                 "study_dir": str(study_dir),
                 "dataset_results": [],
@@ -890,14 +918,14 @@ class GraphSmokeTests(unittest.TestCase):
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         resolution = result["dependency_resolution"][0]
-        self.assertEqual(result["runnable_datasets"], [])
-        self.assertTrue(result["dependency_action_required"])
-        self.assertEqual(resolution["resolution_status"], "found_but_unusable")
-        self.assertFalse(resolution["available"])
+        self.assertEqual(result["runnable_datasets"], ["ADAE"])
+        self.assertFalse(result["dependency_action_required"])
+        self.assertEqual(resolution["resolution_status"], "available")
+        self.assertTrue(resolution["available"])
         self.assertTrue(resolution["artifact_path"].endswith("adsl.sas7bdat"))
-        self.assertEqual(summaries["ADAE"].validation_status, "dependency_user_action_required")
-        self.assertEqual(result["blocked_datasets"], [{"dataset": "ADAE", "reason": "dependency_user_action_required", "blocked_by": "ADSL"}])
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(summaries["ADAE"].status, "completed")
+        self.assertEqual(result["blocked_datasets"], [])
+        self.assertEqual(result["status"], "completed")
 
     def test_approved_dependency_generation_allows_running_dependency_once(self) -> None:
         graph = compile_study_graph()
@@ -915,18 +943,16 @@ class GraphSmokeTests(unittest.TestCase):
         )
 
         datasets = [summary.dataset for summary in result["dataset_results"]]
-        self.assertEqual(datasets.count("ADSL"), 1)
-        self.assertEqual(set(datasets), {"ADSL", "ADAE", "ADCM"})
-        self.assertEqual(result["target_datasets"], ["ADSL", "ADAE", "ADCM"])
-        self.assertEqual(result["auto_added_datasets"], ["ADSL"])
-        self.assertEqual(result["runnable_datasets"], ["ADSL", "ADAE", "ADCM"])
-        self.assertEqual(result["dataset_dependencies"]["ADAE"], ["ADSL"])
-        self.assertEqual(result["dataset_dependencies"]["ADCM"], ["ADSL"])
+        self.assertEqual(datasets.count("ADSL"), 0)
+        self.assertEqual(set(datasets), {"ADAE", "ADCM"})
+        self.assertEqual(result["target_datasets"], ["ADAE", "ADCM"])
+        self.assertEqual(result["auto_added_datasets"], [])
+        self.assertEqual(result["runnable_datasets"], ["ADAE", "ADCM"])
+        self.assertEqual(result["dataset_dependencies"]["ADAE"], [])
+        self.assertEqual(result["dataset_dependencies"]["ADCM"], [])
         self.assertFalse(result["dependency_action_required"])
-        self.assertTrue(
-            all(record["resolution_status"] == "approved_for_system_generation" for record in result["dependency_resolution"])
-        )
-        self.assertEqual(result["audit_manifest"].metadata["auto_added_datasets"], ["ADSL"])
+        self.assertEqual(result["dependency_resolution"], [])
+        self.assertEqual(result["audit_manifest"].metadata["auto_added_datasets"], [])
 
     def test_approved_midstream_dependency_still_requires_its_missing_parent(self) -> None:
         study_dir = _workspace_dir("phase74_midstream_dependency_requires_parent") / "PSY201"
@@ -963,24 +989,16 @@ class GraphSmokeTests(unittest.TestCase):
         )
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
-        self.assertEqual(summaries["ADLB"].validation_status, "dependency_user_action_required")
-        self.assertEqual(summaries["ADTTE"].validation_status, "dependency_user_action_required")
-        self.assertEqual(result["runnable_datasets"], [])
-        self.assertTrue(result["dependency_action_required"])
-        self.assertIn(
-            {"dataset": "ADLB", "reason": "dependency_user_action_required", "blocked_by": "ADSL"},
-            result["blocked_datasets"],
-        )
-        self.assertIn(
-            {"dataset": "ADTTE", "reason": "dependency_user_action_required", "blocked_by": "ADLB"},
-            result["blocked_datasets"],
-        )
+        self.assertEqual(summaries["ADLB"].status, "completed")
+        self.assertEqual(summaries["ADTTE"].status, "completed")
+        self.assertEqual(result["runnable_datasets"], ["ADLB", "ADTTE"])
+        self.assertFalse(result["dependency_action_required"])
+        self.assertEqual(result["blocked_datasets"], [])
         resolutions = {
             (record["target_dataset"], record["required_dataset"]): record["resolution_status"]
             for record in result["dependency_resolution"]
         }
         self.assertEqual(resolutions[("ADTTE", "ADLB")], "approved_for_system_generation")
-        self.assertEqual(resolutions[("ADLB", "ADSL")], "user_action_required")
 
     def test_downstream_stub_failure_does_not_change_completed_adsl_status(self) -> None:
         graph = compile_study_graph()
@@ -1038,13 +1056,12 @@ class GraphSmokeTests(unittest.TestCase):
         )
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
-        self.assertEqual(summaries["ADSL"].status, "completed")
         self.assertEqual(summaries["ADAE"].status, "completed")
         self.assertEqual(summaries["ADLB"].status, "failed")
         self.assertEqual(summaries["ADTTE"].status, "failed")
         self.assertEqual(summaries["ADTTE"].validation_status, "blocked_by_dependency")
         self.assertIn({"dataset": "ADTTE", "reason": "blocked_by_dependency", "blocked_by": "ADLB"}, result["blocked_datasets"])
-        self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADSL"], ["ADAE", "ADLB"], ["ADTTE"]])
+        self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
 
     def test_study_graph_writes_dependency_plan_review_artifacts(self) -> None:
@@ -1072,19 +1089,17 @@ class GraphSmokeTests(unittest.TestCase):
         review_text = review_path.read_text(encoding="utf-8")
 
         self.assertEqual(payload["requested_datasets"], ["ADAE"])
-        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
-        self.assertEqual(payload["auto_added_datasets"], ["ADSL"])
-        self.assertEqual(payload["dataset_dependencies"]["ADAE"], ["ADSL"])
-        self.assertEqual(payload["execution_batches"], [])
-        self.assertEqual(payload["review_status"], "blocked")
-        self.assertTrue(payload["dependency_action_required"])
-        self.assertEqual(payload["dependency_resolution"][0]["resolution_status"], "user_action_required")
+        self.assertEqual(payload["target_datasets"], ["ADAE"])
+        self.assertEqual(payload["auto_added_datasets"], [])
+        self.assertEqual(payload["dataset_dependencies"]["ADAE"], [])
+        self.assertEqual(payload["execution_batches"], [["ADAE"]])
+        self.assertEqual(payload["review_status"], "review_required")
+        self.assertFalse(payload["dependency_action_required"])
+        self.assertEqual(payload["dependency_resolution"], [])
         self.assertIn("dependency_decisions", payload)
         self.assertIn("dependency_evidence_records", payload)
-        self.assertIn("Review status: blocked", review_text)
-        self.assertIn("## Execution Batches\n- None", review_text)
-        self.assertIn("ADAE: dependencies=ADSL", review_text)
-        self.assertIn("ADAE requires ADSL", review_text)
+        self.assertIn("Review status: review_required", review_text)
+        self.assertIn("ADAE: None", review_text)
         self.assertIsNotNone(result["dependency_plan_artifact"].sha256)
         self.assertIsNotNone(result["dependency_review_artifact"].sha256)
         self.assertEqual(result["audit_manifest"].path, str((study_dir / "runs" / "run_phase73_dependency_review" / "audit" / "manifest.json").as_posix()))

@@ -11,12 +11,12 @@ from typing import Any
 
 
 FOUNDATION_DATASETS = ["ADSL"]
-DEFAULT_ADSL_DEPENDENT_DATASETS = ["ADAE", "ADCM", "ADLB", "ADEX", "ADEG"]
 DEPENDENCY_SOURCE_PRIORITY = {
     "input_spec_dependency": 0,
     "legacy_sas_dependency": 1,
     "define_xml_dependency": 2,
 }
+_NON_DATASET_AD_TOKENS = {"ADDATA", "ADAM", "ADAMS", "ADAMDATA", "ADSLIB"}
 
 
 @dataclass(frozen=True)
@@ -220,14 +220,6 @@ def _dependencies_for_dataset(
 
 
 def _fallback_dependencies_for_dataset(dataset: str, *, study_dir: str | Path | None = None) -> list[str]:
-    if dataset == "ADSL":
-        return []
-    if _target_input_spec_present(study_dir, dataset):
-        return []
-    if dataset in DEFAULT_ADSL_DEPENDENT_DATASETS:
-        return ["ADSL"]
-    if dataset.startswith("AD"):
-        return ["ADSL"]
     return []
 
 
@@ -283,24 +275,17 @@ def _dependency_decision(
             ),
             evidence_ids=[],
         )
-    if dataset in DEFAULT_ADSL_DEPENDENT_DATASETS:
-        return DependencyDecision(
-            dataset=dataset,
-            dependencies=["ADSL"],
-            source="mvp_common_adam_fallback",
-            confidence=0.65,
-            review_required=True,
-            reason=f"{dataset} commonly needs subject-level ADSL variables, but this fallback must be reviewed against study evidence.",
-            evidence_ids=[],
-        )
     if dataset.startswith("AD"):
         return DependencyDecision(
             dataset=dataset,
-            dependencies=["ADSL"],
-            source="mvp_unknown_adam_fallback",
-            confidence=0.4,
+            dependencies=[],
+            source="no_dependency_evidence",
+            confidence=0.35,
             review_required=True,
-            reason=f"{dataset} is an unknown ADaM dataset in this MVP; ADSL dependency is a conservative fallback that requires review.",
+            reason=(
+                f"No user spec, legacy SAS, or define evidence identified an ADaM dependency for {dataset}. "
+                "The system will not invent an ADSL dependency; draft spec/code review must verify whether upstream ADaM inputs are required."
+            ),
             evidence_ids=[],
         )
     return DependencyDecision(
@@ -333,7 +318,7 @@ def _input_spec_gap_warnings(
             continue
         warnings.append(
             f"Input spec is present, but no dependency evidence was extracted for {dataset}; "
-            "using MVP fallback ordering for this dataset."
+            "not imposing a default ADSL dependency. Draft spec/code review must verify whether upstream ADaM inputs are required."
         )
     return warnings
 
@@ -423,8 +408,10 @@ def _reverse_dependency_graph(targets: list[str], dependencies: dict[str, list[s
 def _evidence_summary(decisions: list[DependencyDecision]) -> str:
     sources = {decision.source for decision in decisions}
     if any(source in sources for source in DEPENDENCY_SOURCE_PRIORITY):
-        return "user_evidence_plus_mvp_fallback"
-    return "phase7_mvp_fallback_adsl_foundation"
+        return "user_evidence"
+    if "no_dependency_evidence" in sources:
+        return "no_dependency_evidence"
+    return "no_adam_dependency"
 
 
 def _scan_input_spec_dependencies(folder: Path, warnings: list[str]) -> list[DependencyEvidence]:
@@ -680,7 +667,11 @@ def _dedupe_evidence(records: list[DependencyEvidence]) -> list[DependencyEviden
 def _adam_tokens(text: str) -> list[str]:
     tokens: list[str] = []
     for match in re.finditer(r"\bAD[A-Z0-9_]{1,}\b", text.upper()):
-        token = match.group(0)
+        if match.end() < len(text) and text[match.end()] == ".":
+            continue
+        token = match.group(0).split(".")[-1]
+        if token in _NON_DATASET_AD_TOKENS:
+            continue
         if token not in tokens:
             tokens.append(token)
     return tokens
@@ -707,6 +698,8 @@ def _normalize_dataset_token(value: str | None) -> str | None:
     if not value:
         return None
     token = value.strip().upper()
+    if token in _NON_DATASET_AD_TOKENS:
+        return None
     return token if token.startswith("AD") and len(token) > 2 else None
 
 
@@ -773,8 +766,8 @@ def _is_dependency_evidence_column(key: str | None) -> bool:
 
 
 def _looks_like_sas_dependency_line(line: str) -> bool:
-    lower = line.lower()
-    return any(keyword in lower for keyword in [" merge ", " set ", " join ", " from "])
+    lower = f" {line.lower()} "
+    return bool(re.search(r"\b(merge|set|join|from|update|modify)\b", lower))
 
 
 def _read_text(path: Path, warnings: list[str]) -> str:

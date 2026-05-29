@@ -12,6 +12,12 @@ from adam_agent.llm.clients import LLMClient, LLMRequest, MockLLMClient
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.generated_code import LLMGeneratedCodeError, parse_generated_code_response, write_generated_code_artifacts
 from adam_agent.llm.mock_code import default_mock_generated_code_response
+from adam_agent.llm.prompt_compaction import (
+    MAX_SAMPLE_ROWS_IN_PROMPT,
+    compact_prompt_from_context,
+    repair_prompt_from_failure,
+    write_compact_prompt_artifact,
+)
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
@@ -121,9 +127,18 @@ def run_downstream_adam(
             error=validation_report["errors"][0],
         )
 
-    prompt = _prompt_from_context(context.as_dict())
-    llm = llm_client or MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
     context_dict = context.as_dict()
+    prompt = compact_prompt_from_context(context_dict)
+    prompt_artifact = write_compact_prompt_artifact(
+        study_id=study_id,
+        run_id=run_id,
+        target_dataset=target,
+        study_dir=root,
+        prompt=prompt,
+        source_context_artifact_id=context_artifact.artifact_id,
+    )
+    artifacts["llm_prompt"] = prompt_artifact
+    llm = llm_client or MockLLMClient(fixed_response_text=_default_mock_generated_code_response(target))
     failure_records: list[FailureRecord] = []
 
     llm_response = llm.generate(
@@ -136,7 +151,7 @@ def run_downstream_adam(
             model=model,
             exposure=exposure_config,
             context_dict=context_dict,
-            context_artifact_id=context_artifact.artifact_id,
+            context_artifact_id=prompt_artifact.artifact_id,
             node="generate_downstream_code",
             call_id=f"llm_{run_id}_{target.lower()}",
             response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}",
@@ -180,7 +195,7 @@ def run_downstream_adam(
 
     if attempt.failure_record and _should_repair(attempt.failure_record, max_repair_attempts=max_repair_attempts):
         repair_prompt = _repair_prompt_from_failure(
-            context=context_dict,
+            compact_context_prompt=prompt,
             raw_response_text=attempt.raw_response_text,
             generated_code=attempt.generated_code,
             validation_report=attempt.validation_report,
@@ -197,7 +212,7 @@ def run_downstream_adam(
                 model=model,
                 exposure=exposure_config,
                 context_dict=context_dict,
-                context_artifact_id=context_artifact.artifact_id,
+                context_artifact_id=prompt_artifact.artifact_id,
                 node="repair_downstream_code",
                 call_id=f"llm_{run_id}_{target.lower()}_repair1",
                 response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}_repair1",
@@ -487,7 +502,7 @@ def _run_generated_response_attempt(
     )
     artifacts[f"validation_report{artifact_suffix}"] = validation_artifact
     artifacts["validation_report"] = validation_artifact
-    if runtime_output_path.exists() and runtime_output_path.is_file():
+    if validation_report["status"] in {"pass", "structural_stub_pass"} and runtime_output_path.exists() and runtime_output_path.is_file():
         output_artifact = _output_artifact(study_id, run_id, target, runtime_output_path)
         artifacts[f"output_adam{artifact_suffix}"] = output_artifact
         artifacts["output_adam"] = output_artifact
@@ -548,23 +563,19 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def _prompt_from_context(context: dict[str, Any]) -> str:
-    return (
-        "Use the following ADaM generation context. Return only the strict JSON "
-        "object requested by the system instructions.\n\n"
-        f"{json.dumps(context, indent=2, sort_keys=True)}"
-    )
+    return compact_prompt_from_context(context)
 
 
 def _code_generation_system_prompt(target: str) -> str:
     dataset = target.upper()
     return (
-        "You are generating auditable R code for an ADaM prototype. "
-        "Return only valid JSON. Do not wrap the JSON in markdown. "
-        "The JSON object must contain exactly these top-level fields: "
-        "dataset, r_code, assumptions, risk_points, used_inputs, expected_outputs. "
-        f"dataset must be {dataset}. r_code must write outputs/{dataset.lower()}.csv "
-        "relative to the working directory. assumptions, risk_points, used_inputs, "
-        "and expected_outputs must be arrays of strings."
+        "Return only one valid minified JSON object. Do not use markdown. "
+        "Do not explain or reason step by step. Use short, readable base R code. "
+        "Top-level keys must be: dataset, r_code, assumptions, risk_points, used_inputs, expected_outputs. "
+        f"dataset must be {dataset}. r_code runs from the run working directory and must write outputs/{dataset.lower()}.csv. "
+        "Read input data only from the read_path values listed in the prompt; do not search folders or assume an inputs directory. "
+        "For CSV input, use colClasses='character' and check.names=FALSE so subject IDs and sequence values are not changed by R type guessing. "
+        "The list fields must be arrays of strings."
     )
 
 
@@ -618,32 +629,21 @@ def _llm_request(
 
 def _repair_prompt_from_failure(
     *,
-    context: dict[str, Any],
+    compact_context_prompt: str,
     raw_response_text: str,
     generated_code: str,
     validation_report: dict[str, Any],
     r_result: RRunResult | None,
     failure_record: FailureRecord,
 ) -> str:
-    repair_context = {
-        "instruction": (
-            "Repair the previous generated R response. Return the same strict JSON "
-            "contract. Do not change the clinical intent. If the evidence shows a "
-            "missing source variable or spec conflict, report that as a risk point "
-            "instead of inventing a derivation."
-        ),
-        "failure": failure_record.model_dump(mode="json"),
-        "validation_report": validation_report,
-        "r_result": {
-            "exit_code": r_result.exit_code if r_result else None,
-            "stdout": r_result.stdout if r_result else "",
-            "stderr": r_result.stderr if r_result else "",
-        },
-        "previous_raw_response": raw_response_text,
-        "previous_r_code": generated_code,
-        "original_context": context,
-    }
-    return json.dumps(repair_context, indent=2, sort_keys=True)
+    return repair_prompt_from_failure(
+        compact_context_prompt=compact_context_prompt,
+        raw_response_text=raw_response_text,
+        generated_code=generated_code,
+        validation_report=validation_report,
+        r_result=r_result,
+        failure_record=failure_record,
+    )
 
 
 def _should_repair(record: FailureRecord, *, max_repair_attempts: int) -> bool:
@@ -701,7 +701,7 @@ def _sample_row_counts(context: dict[str, Any]) -> dict[str, int]:
         for dataset, profile in context.get(section, {}).items():
             sample_rows = profile.get("sample_rows", [])
             if sample_rows:
-                counts[dataset] = len(sample_rows)
+                counts[dataset] = min(len(sample_rows), MAX_SAMPLE_ROWS_IN_PROMPT)
     return counts
 
 

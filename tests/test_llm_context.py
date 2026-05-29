@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
+LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 
 try:
     from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
@@ -56,10 +57,14 @@ class LLMContextTests(unittest.TestCase):
         self.assertIn("AE", payload["source_dataset_profiles"])
         self.assertNotIn("DM", payload["source_dataset_profiles"])
         self.assertEqual(payload["source_dataset_profiles"]["AE"]["sample_rows"], [])
+        self.assertEqual(payload["source_dataset_profiles"]["AE"]["read_path"], "../../input_sdtm/ae.csv")
         self.assertIn("ADSL", payload["resolved_dependencies"])
         self.assertEqual(payload["resolved_dependencies"]["ADSL"]["sample_rows"], [])
+        self.assertEqual(payload["resolved_dependencies"]["ADSL"]["read_path"], "../../reference_adam/adsl.csv")
         self.assertEqual(payload["target_spec"]["json"]["dataset"], "ADAE")
         self.assertEqual(payload["runtime_contract"]["language"], "R")
+        self.assertEqual(payload["runtime_contract"]["runtime_output_path"], "outputs/adae.csv")
+        self.assertIn("colClasses", payload["runtime_contract"]["csv_read_policy"])
         self.assertTrue(payload["runtime_contract"]["write_only_to_run_dir"])
 
     def test_demo_rich_context_includes_configured_sample_rows(self) -> None:
@@ -177,6 +182,50 @@ class LLMContextTests(unittest.TestCase):
 
         self.assertIsNotNone(package.target_spec)
         self.assertTrue(package.target_spec["path"].endswith("ads_adae_full.csv"))
+
+    @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
+    def test_context_profiles_sas7bdat_with_explicit_rscript_path(self) -> None:
+        study_dir = _workspace_dir("llm_context_sas7bdat_rscript") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_sdtm.mkdir(parents=True)
+        create_script = study_dir / "create_sas7bdat.R"
+        create_script.write_text(
+            f"""
+if (!requireNamespace("haven", quietly = TRUE)) {{
+  stop("haven is required for this test")
+}}
+ae <- data.frame(USUBJID = c("01", "02"), AETERM = c("HEADACHE", "NAUSEA"))
+haven::write_sas(ae, "{(input_sdtm / 'ae.sas7bdat').as_posix()}")
+""",
+            encoding="utf-8",
+        )
+        import subprocess
+
+        subprocess.run([str(LOCAL_RSCRIPT), str(create_script)], check=True, capture_output=True, text=True)
+        exposure = LLMExposureConfig(
+            mode="demo_rich_context",
+            data_classification="processed_demo",
+            external_api_allowed=True,
+            sample_rows_per_dataset=1,
+        )
+
+        package = build_target_llm_context(
+            study_id="PSY201",
+            run_id="run_context_sas7bdat_rscript",
+            target_dataset="ADAE",
+            study_dir=study_dir,
+            dependency_resolution=[],
+            exposure=exposure,
+            source_datasets=["AE"],
+            rscript_path=str(LOCAL_RSCRIPT),
+        )
+
+        profile = package.source_dataset_profiles["AE"]
+        self.assertEqual(profile["status"], "ok")
+        self.assertEqual(profile["format"], "sas7bdat")
+        self.assertEqual(profile["columns"], ["USUBJID", "AETERM"])
+        self.assertEqual(profile["sample_rows"], [{"USUBJID": "01", "AETERM": "HEADACHE"}])
+        self.assertFalse(any("Rscript with the R package 'haven'" in warning for warning in package.warnings))
 
     def test_write_llm_context_package_creates_audit_artifact(self) -> None:
         study_dir = _study_with_adae_spec_and_adsl_dependency("llm_context_write")

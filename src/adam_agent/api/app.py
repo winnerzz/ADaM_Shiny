@@ -13,9 +13,15 @@ from adam_agent.api.models import (
     CodeReviewResponse,
     DatasetCompareResponse,
     DemoStudyResponse,
+    DraftSpecRequest,
+    DraftSpecResponse,
+    DraftSpecReviewRequest,
+    DraftSpecReviewResponse,
     ExecuteCodeRequest,
     ExecuteCodeResponse,
     FileUploadResponse,
+    FinalizeInputsRequest,
+    FinalizeInputsResponse,
     GenerateCodeRequest,
     GenerateCodeResponse,
     LLMConnectionTestRequest,
@@ -38,8 +44,11 @@ from adam_agent.api.service import (
     dataset_download_path,
     ensure_study_workspace,
     execute_approved_dataset_code,
+    finalize_dataset_inputs,
+    generate_dataset_draft_spec,
     generate_dataset_code,
     persist_code_review,
+    persist_draft_spec_review,
     prepare_run_plan,
     prepare_demo_study,
     read_dataset_table_page,
@@ -102,7 +111,7 @@ def create_app() -> FastAPI:
     ) -> FileUploadResponse:
         try:
             file_bytes = [(file.filename or "uploaded_file", await file.read()) for file in files]
-            normalized_role, folder, saved, summary = save_uploaded_file_bytes(
+            normalized_role, folder, saved, summary, upload_state = save_uploaded_file_bytes(
                 study_dir=study_dir,
                 role=role,
                 files=file_bytes,
@@ -115,6 +124,9 @@ def create_app() -> FastAPI:
                 folder=folder,
                 saved_files=saved,
                 input_summary=summary,
+                input_fingerprint=upload_state.get("input_fingerprint", {}),
+                input_diff=upload_state.get("input_diff", {}),
+                touched_runs=upload_state.get("touched_runs", []),
             )
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -137,6 +149,27 @@ def create_app() -> FastAPI:
     def generate_code(run_id: str, dataset: str, request: GenerateCodeRequest) -> GenerateCodeResponse:
         try:
             return generate_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/finalize-inputs", response_model=FinalizeInputsResponse)
+    def finalize_inputs(run_id: str, dataset: str, request: FinalizeInputsRequest) -> FinalizeInputsResponse:
+        try:
+            return finalize_dataset_inputs(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/draft-spec", response_model=DraftSpecResponse)
+    def draft_spec(run_id: str, dataset: str, request: DraftSpecRequest) -> DraftSpecResponse:
+        try:
+            return generate_dataset_draft_spec(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/draft-spec-review", response_model=DraftSpecReviewResponse)
+    def draft_spec_review(run_id: str, dataset: str, request: DraftSpecReviewRequest) -> DraftSpecReviewResponse:
+        try:
+            return persist_draft_spec_review(run_id, dataset, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

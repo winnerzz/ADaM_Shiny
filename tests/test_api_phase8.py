@@ -58,6 +58,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Use My Study Files", response.text)
         self.assertIn("Generate R Code", response.text)
         self.assertIn("Approve And Run Locally", response.text)
+        self.assertIn("finalize-inputs", response.text)
+        self.assertIn("finalizedInputsByDataset", response.text)
         self.assertIn("Audit Timeline", response.text)
         self.assertIn("Advanced settings and audit files", response.text)
         self.assertIn("Upload Define", response.text)
@@ -66,6 +68,13 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("addTargetButton", response.text)
         self.assertIn("Real LLM API", response.text)
         self.assertIn("testLlmButton", response.text)
+        self.assertIn("timeout_seconds: 300", response.text)
+        self.assertIn("generatedByDataset", response.text)
+        self.assertIn("reviewByDataset", response.text)
+        self.assertIn("executionByDataset", response.text)
+        self.assertIn("data-card-target", response.text)
+        self.assertIn("resetActiveDatasetView", response.text)
+        self.assertNotIn("resetGeneratedState", response.text)
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
 
@@ -112,6 +121,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(payload["role"], "sdtm")
         self.assertTrue((study_dir / "input_sdtm" / "dm.csv").exists())
         self.assertEqual(payload["input_summary"]["sdtm"][0]["dataset"], "DM")
+        self.assertIn("digest", payload["input_fingerprint"])
+        self.assertTrue(payload["input_diff"]["changed"])
+        self.assertIn("input_sdtm/dm.csv", payload["input_diff"]["added"])
 
         define_response = client.post(
             "/studies/files",
@@ -135,6 +147,35 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(legacy_payload["input_summary"]["legacy_code"][0]["status"], "ok")
         self.assertEqual(legacy_payload["input_summary"]["legacy_code"][0]["preview_type"], "code")
         self.assertIn("data adlb", legacy_payload["input_summary"]["legacy_code"][0]["text_preview"].lower())
+
+    def test_upload_marks_existing_workflow_state_stale(self) -> None:
+        study_dir = _workspace_dir("phase8_upload_stales_workflow") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (study_dir / "input_spec" / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM"}]}),
+            encoding="utf-8",
+        )
+
+        plan = client.post(
+            "/runs/prepare",
+            json={"study_dir": str(study_dir), "run_id": "run_stale", "target_datasets": ["ADAE"]},
+        )
+        self.assertEqual(plan.status_code, 200, plan.text)
+
+        upload = client.post(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "legacy"},
+            files=[("files", ("build_adae.sas", b"data adae; set ae; run;\n", "text/plain"))],
+        )
+
+        self.assertEqual(upload.status_code, 200, upload.text)
+        self.assertIn("run_stale", upload.json()["touched_runs"])
+        state = json.loads((study_dir / "runs" / "run_stale" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertTrue(state["plan_stale"])
+        self.assertTrue(state["input_diff"]["changed"])
+        self.assertIn("ADAE", state["stale_datasets"])
 
     def test_demo_study_endpoint_prepares_shiny_demo_shape(self) -> None:
         source = _demo_source("phase8_api_demo_source")
@@ -197,7 +238,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn(item["status"], {"not_previewed", "error"})
         self.assertIn("haven", item["note"])
 
-    def test_demo_study_can_run_through_api(self) -> None:
+    def test_demo_study_rejects_run_to_completion_llm_endpoint(self) -> None:
         source = _demo_source("phase8_api_demo_run_source")
         target = _workspace_dir("phase8_api_demo_run_target") / "demo_adam"
         client = TestClient(create_app())
@@ -219,23 +260,10 @@ class Phase8ApiTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(run_response.status_code, 200, run_response.text)
-        payload = run_response.json()
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["dataset_results"][0]["dataset"], "ADAE")
-        self.assertEqual(payload["dataset_results"][0]["status"], "completed_stub")
-
-        review_response = client.get(
-            "/runs/run_demo_from_endpoint/review-summary",
-            params={"study_dir": demo["study_dir"]},
-        )
-        self.assertEqual(review_response.status_code, 200, review_response.text)
-        review = review_response.json()
-        self.assertEqual(review["study_id"], "demo_adam")
-        self.assertEqual(review["dataset_reviews"][0]["dataset"], "ADAE")
-        self.assertTrue(review["dataset_reviews"][0]["generated_code"])
-        self.assertEqual(review["dataset_reviews"][0]["output_preview"]["file_name"], "adae.csv")
-        self.assertEqual(review["dataset_reviews"][0]["reference_preview"]["file_name"], "adae.csv")
+        self.assertEqual(run_response.status_code, 400)
+        self.assertIn("would bypass review gates", run_response.json()["detail"])
+        state = json.loads((target / "runs" / "run_demo_from_endpoint" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["current_interrupt"], "split_flow_required")
 
     def test_generate_review_execute_split_flow(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_split_flow")
@@ -264,6 +292,13 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(generated.status_code, 200, generated.text)
         generated_payload = generated.json()
         self.assertEqual(generated_payload["status"], "code_generated")
+        self.assertTrue(generated_payload["static_check_path"].endswith("adae_static_check.json"))
+        self.assertTrue(Path(generated_payload["static_check_path"]).exists())
+        static_check = json.loads(Path(generated_payload["static_check_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(static_check["status"], "warning_only")
+        workflow_state = json.loads((study_dir / "runs" / "run_split_flow" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "code_generated")
+        self.assertEqual(workflow_state["current_interrupt"], "code_review")
         self.assertTrue((study_dir / "runs" / "run_split_flow" / "code" / "build_adae.R").exists())
         self.assertTrue(generated_payload["generated_code"])
         self.assertFalse((study_dir / "runs" / "run_split_flow" / "outputs" / "adae.csv").exists())
@@ -286,6 +321,7 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(review.status_code, 200, review.text)
         self.assertTrue(review.json()["approved"])
+        self.assertTrue(review.json()["static_check_path"].endswith("adae_static_check.json"))
 
         executed = client.post(
             "/runs/run_split_flow/datasets/ADAE/execute-approved-code",
@@ -323,6 +359,231 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(download.status_code, 200, download.text)
         self.assertIn("USUBJID", download.text)
+
+    def test_approved_draft_spec_is_invalidated_when_inputs_change(self) -> None:
+        study_dir = _workspace_dir("phase8_stale_draft_spec") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+
+        finalized = client.post(
+            "/runs/run_stale_draft/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        self.assertEqual(finalized.json()["next_action"], "review_draft_spec")
+
+        review = client.post(
+            "/runs/run_stale_draft/datasets/ADAE/draft-spec-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+        generated = client.post(
+            "/runs/run_stale_draft/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+
+        self.assertEqual(generated.status_code, 400)
+        self.assertIn("Approved draft spec is stale", generated.json()["detail"])
+
+    def test_draft_spec_without_fingerprint_cannot_be_approved(self) -> None:
+        study_dir = _workspace_dir("phase8_draft_without_fingerprint") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_no_fingerprint"
+        spec_dir = run_dir / "specs"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "adae_draft_spec.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": []}),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_no_fingerprint/datasets/ADAE/draft-spec-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("no input fingerprint", response.json()["detail"])
+
+    def test_approved_draft_spec_without_fingerprint_cannot_be_reused(self) -> None:
+        study_dir = _workspace_dir("phase8_approved_draft_without_fingerprint") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_approved_no_fingerprint"
+        approved_dir = run_dir / "approved_specs"
+        review_dir = run_dir / "reviews"
+        approved_dir.mkdir(parents=True)
+        review_dir.mkdir(parents=True)
+        (approved_dir / "adae_approved_spec.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": []}),
+            encoding="utf-8",
+        )
+        (review_dir / "adae_draft_spec_review.json").write_text(
+            json.dumps({"decision": "approve", "approved": True}),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        generated = client.post(
+            "/runs/run_approved_no_fingerprint/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+
+        self.assertEqual(generated.status_code, 400)
+        self.assertIn("missing its input fingerprint", generated.json()["detail"])
+
+    def test_execute_approved_code_terminal_failure_is_explicit(self) -> None:
+        study_dir = _workspace_dir("phase8_terminal_failure") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_terminal"
+        code_dir = run_dir / "code"
+        code_dir.mkdir(parents=True)
+        (code_dir / "build_adae.R").write_text("stop('forced failure')\n", encoding="utf-8")
+        client = TestClient(create_app())
+        review = client.post(
+            "/runs/run_terminal/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+
+        executed = client.post(
+            "/runs/run_terminal/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+
+        self.assertEqual(executed.status_code, 200, executed.text)
+        payload = executed.json()
+        self.assertEqual(payload["status"], "terminal_failure")
+        self.assertTrue(payload["terminal_failure"])
+        report = json.loads(Path(payload["validation_report_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(report["terminal_failure"])
+        self.assertFalse(report["partial_output_usable"])
+
+    def test_terminal_failure_output_is_not_previewed_or_downloadable(self) -> None:
+        study_dir = _workspace_dir("phase8_terminal_failure_hidden_output") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_terminal_hidden"
+        code_dir = run_dir / "code"
+        review_dir = run_dir / "review"
+        outputs_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir(parents=True)
+        outputs_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (outputs_dir / "adae.csv").write_text("USUBJID,AETERM\n01,PARTIAL\n", encoding="utf-8")
+        (validation_dir / "adae_validation_report.json").write_text(
+            json.dumps({"dataset": "ADAE", "status": "fail", "terminal_failure": True, "partial_output_usable": False}),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        table = client.get(
+            "/runs/run_terminal_hidden/datasets/ADAE/table",
+            params={"study_dir": str(study_dir), "kind": "generated"},
+        )
+        download = client.get(
+            "/runs/run_terminal_hidden/datasets/ADAE/download",
+            params={"study_dir": str(study_dir), "kind": "generated"},
+        )
+        review = client.get(
+            "/runs/run_terminal_hidden/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(table.status_code, 200, table.text)
+        self.assertEqual(table.json()["status"], "missing")
+        self.assertEqual(download.status_code, 404)
+        self.assertEqual(review.status_code, 200, review.text)
+        self.assertIsNone(review.json()["dataset_reviews"][0]["output_preview"])
+        self.assertIsNone(review.json()["dataset_reviews"][0]["output_path"])
+
+    def test_code_approval_is_invalidated_when_code_or_inputs_change(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_stale_code_approval")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_stale_code/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        review = client.post(
+            "/runs/run_stale_code/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        code_path = study_dir / "runs" / "run_stale_code" / "code" / "build_adae.R"
+        code_path.write_text(code_path.read_text(encoding="utf-8") + "\n# changed after approval\n", encoding="utf-8")
+
+        changed_code = client.post(
+            "/runs/run_stale_code/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+        self.assertEqual(changed_code.status_code, 400)
+        self.assertIn("Generated code changed after approval", changed_code.json()["detail"])
+
+        review_again = client.post(
+            "/runs/run_stale_code/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review_again.status_code, 200, review_again.text)
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        changed_inputs = client.post(
+            "/runs/run_stale_code/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+        self.assertEqual(changed_inputs.status_code, 400)
+        self.assertIn("Code approval is stale", changed_inputs.json()["detail"])
+
+    def test_review_summary_recovers_multiple_outputs_from_same_run(self) -> None:
+        study_dir = _workspace_dir("phase8_multi_output_review") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_multi_output"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (output_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        for dataset in ["ADSL", "ADAE"]:
+            (validation_dir / f"{dataset.lower()}_validation_report.json").write_text(
+                json.dumps(
+                    {
+                        "dataset": dataset,
+                        "status": "pass",
+                        "terminal_failure": False,
+                        "partial_output_usable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_multi_output/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        reviews = response.json()["dataset_reviews"]
+        self.assertEqual({item["dataset"] for item in reviews}, {"ADSL", "ADAE"})
+        for item in reviews:
+            self.assertEqual(item["status"], "completed")
+            self.assertTrue(item["output_preview"])
+            self.assertTrue(item["output_path"].endswith(f"{item['dataset'].lower()}.csv"))
 
     def test_llm_connection_test_rejects_mock_provider(self) -> None:
         client = TestClient(create_app())
@@ -450,6 +711,320 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(requests[0].model, "gpt-5.5")
         self.assertEqual(requests[0].max_tokens, 1234)
         self.assertEqual(requests[0].exposure.mode, "demo_rich_context")
+        self.assertIn("## Target Spec", requests[0].prompt)
+        self.assertNotIn('"target_spec"', requests[0].prompt)
+        self.assertTrue(requests[0].prompt_artifact_id.startswith("llm_prompt_compact_"))
+        self.assertTrue(
+            (study_dir / "runs" / "run_real_provider_override" / "llm" / "adae_compact_prompt.txt").exists()
+        )
+
+    def test_missing_input_spec_requires_draft_spec_approval_before_code_generation(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_missing_spec_draft")
+        client = TestClient(create_app())
+        requests = []
+
+        class FakeLLMClient:
+            def generate(self, request):
+                requests.append(request)
+                if request.node == "draft_spec_from_evidence":
+                    return SimpleNamespace(
+                        response_text=json.dumps(
+                            {
+                                "dataset": "ADAE",
+                                "variables": [
+                                    {
+                                        "variable": "AETERM",
+                                        "label": "Reported Term for the Adverse Event",
+                                        "type": "character",
+                                        "source_domains": ["AE"],
+                                        "source_variables": ["AETERM"],
+                                        "derivation": "Copy from AE.AETERM based on legacy ADAE.sas evidence.",
+                                        "confidence": 0.7,
+                                        "review_required": True,
+                                        "review_reasons": ["Generated from legacy SAS because approved spec is missing."],
+                                        "risk_level": "high",
+                                        "assumptions": ["Legacy SAS is treated as evidence, not directly executed."],
+                                    }
+                                ],
+                            }
+                        ),
+                        call_record=SimpleNamespace(),
+                    )
+                return SimpleNamespace(
+                    response_text=json.dumps(
+                        {
+                            "dataset": "ADAE",
+                            "r_code": "dir.create('outputs', showWarnings = FALSE)\nwrite.csv(data.frame(AETERM='HEADACHE'), 'outputs/adae.csv', row.names = FALSE)",
+                            "assumptions": ["Used generated draft spec."],
+                            "risk_points": ["Draft spec requires human review."],
+                            "used_inputs": ["AE"],
+                            "expected_outputs": ["outputs/adae.csv"],
+                        }
+                    ),
+                    call_record=SimpleNamespace(),
+                )
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=FakeLLMClient()):
+            blocked = client.post(
+                "/runs/run_missing_spec_draft/datasets/ADAE/generate-code",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 1,
+                    },
+                },
+            )
+            draft_response = client.post(
+                "/runs/run_missing_spec_draft/datasets/ADAE/draft-spec",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 1,
+                    },
+                },
+            )
+            review_response = client.post(
+                "/runs/run_missing_spec_draft/datasets/ADAE/draft-spec-review",
+                json={
+                    "study_dir": str(study_dir),
+                    "reviewer": "tester",
+                    "decision": "approve",
+                    "notes": "Approved draft spec for this test run.",
+                },
+            )
+            response = client.post(
+                "/runs/run_missing_spec_draft/datasets/ADAE/generate-code",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 1,
+                    },
+                },
+            )
+
+        self.assertEqual(blocked.status_code, 400, blocked.text)
+        self.assertIn("Generate and approve a draft spec", blocked.json()["detail"])
+        self.assertEqual(draft_response.status_code, 200, draft_response.text)
+        draft_payload = draft_response.json()
+        self.assertEqual(draft_payload["status"], "draft_spec_generated")
+        self.assertTrue(draft_payload["spec_path"].endswith("specs/adae_draft_spec.json"))
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        self.assertTrue(review_response.json()["approved"])
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "code_generated")
+        self.assertTrue(payload["draft_spec_path"].endswith("approved_specs/adae_approved_spec.json"))
+        self.assertTrue(any("user-approved draft spec" in warning for warning in payload["warnings"]))
+        self.assertEqual([request.node for request in requests], ["draft_spec_from_evidence", "generate_downstream_code_for_review"])
+        draft_spec = json.loads((study_dir / "runs" / "run_missing_spec_draft" / "specs" / "adae_draft_spec.json").read_text(encoding="utf-8"))
+        self.assertEqual(draft_spec["dataset"], "ADAE")
+        self.assertEqual(draft_spec["status"], "draft")
+        self.assertEqual(draft_spec["variables"][0]["variable"], "AETERM")
+        compact_prompt = (study_dir / "runs" / "run_missing_spec_draft" / "llm" / "adae_compact_prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("AETERM|character|AE.AETERM|Copy from AE.AETERM", compact_prompt)
+        self.assertIn("user-approved draft spec", compact_prompt)
+
+    def test_finalize_inputs_uses_existing_input_spec_without_draft_generation(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_finalize_existing_spec")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_finalize_existing_spec/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "input_spec_ready")
+        self.assertTrue(payload["input_spec_available"])
+        self.assertFalse(payload["draft_spec_required"])
+        self.assertEqual(payload["next_action"], "generate_code")
+        self.assertTrue(payload["input_spec_path"].endswith("input_spec/adae.json"))
+        self.assertIsNone(payload["draft_spec"])
+        self.assertFalse((study_dir / "runs" / "run_finalize_existing_spec" / "specs" / "adae_draft_spec.json").exists())
+
+    def test_finalize_inputs_generates_review_required_draft_spec_when_spec_missing(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_finalize_missing_spec")
+        client = TestClient(create_app())
+        requests = []
+
+        class FakeDraftLLMClient:
+            def generate(self, request):
+                requests.append(request)
+                return SimpleNamespace(
+                    response_text=json.dumps(
+                        {
+                            "dataset": "ADAE",
+                            "variables": [
+                                {
+                                    "variable": "AETERM",
+                                    "label": "Reported Term",
+                                    "type": "character",
+                                    "source_domains": ["AE"],
+                                    "source_variables": ["AETERM"],
+                                    "derivation": "Copy from AE.AETERM based on uploaded evidence.",
+                                    "confidence": 0.7,
+                                    "review_required": True,
+                                    "review_reasons": ["Generated because approved input_spec is missing."],
+                                    "risk_level": "high",
+                                }
+                            ],
+                        }
+                    ),
+                    call_record=SimpleNamespace(),
+                )
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=FakeDraftLLMClient()):
+            response = client.post(
+                "/runs/run_finalize_missing_spec/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 1,
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "draft_spec_review_required")
+        self.assertFalse(payload["input_spec_available"])
+        self.assertTrue(payload["draft_spec_required"])
+        self.assertTrue(payload["draft_spec_generated"])
+        self.assertEqual(payload["next_action"], "review_draft_spec")
+        self.assertIsNotNone(payload["draft_spec"])
+        self.assertEqual(payload["draft_spec"]["variables"][0]["variable"], "AETERM")
+        self.assertEqual([request.node for request in requests], ["draft_spec_from_evidence"])
+        self.assertTrue((study_dir / "runs" / "run_finalize_missing_spec" / "specs" / "adae_draft_spec.json").exists())
+
+    def test_finalize_inputs_accepts_mock_model_alias_from_ui(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_finalize_mock_alias")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_finalize_mock_alias/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                "llm_provider_override": {"provider": "mock", "model": "mock"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "draft_spec_review_required")
+        self.assertEqual(payload["draft_spec"]["dataset"], "ADAE")
+        self.assertTrue(payload["draft_spec"]["variables"])
+
+    def test_finalize_inputs_passes_rscript_path_to_context_builder(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_finalize_rscript_path")
+        client = TestClient(create_app())
+        rscript_paths = []
+
+        class FakeDraftLLMClient:
+            def generate(self, _request):
+                return SimpleNamespace(
+                    response_text=json.dumps(
+                        {
+                            "dataset": "ADAE",
+                            "variables": [
+                                {
+                                    "variable": "AETERM",
+                                    "label": "Reported Term",
+                                    "type": "character",
+                                    "source_domains": ["AE"],
+                                    "source_variables": ["AETERM"],
+                                    "derivation": "Copy from AE.AETERM.",
+                                    "confidence": 0.7,
+                                    "review_required": True,
+                                    "risk_level": "high",
+                                }
+                            ],
+                        }
+                    ),
+                    call_record=SimpleNamespace(),
+                )
+
+        from adam_agent.api import service as service_module
+
+        original_builder = service_module.build_target_llm_context
+
+        def tracking_builder(*args, **kwargs):
+            rscript_paths.append(kwargs.get("rscript_path"))
+            return original_builder(*args, **kwargs)
+
+        with (
+            patch("adam_agent.api.service.build_llm_client", return_value=FakeDraftLLMClient()),
+            patch("adam_agent.api.service.build_target_llm_context", side_effect=tracking_builder),
+        ):
+            response = client.post(
+                "/runs/run_finalize_rscript_path/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe",
+                    "llm_provider_override": {
+                        "provider": "openai-compatible",
+                        "model": "gpt-5.5",
+                        "api_key": "test-key",
+                    },
+                    "llm_exposure_override": {
+                        "mode": "demo_rich_context",
+                        "data_classification": "processed_demo",
+                        "external_api_allowed": True,
+                        "approved_by": "tester",
+                        "sample_rows_per_dataset": 1,
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(rscript_paths)
+        self.assertTrue(all(path == "C:/Dev/R-4.5.2/bin/Rscript.exe" for path in rscript_paths))
 
     def test_generate_code_returns_readable_error_for_bad_llm_json(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_bad_llm_json")
@@ -482,7 +1057,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("not valid JSON", response.json()["detail"])
 
-    def test_create_run_and_read_artifacts(self) -> None:
+    def test_create_run_rejects_llm_run_to_completion(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_api_create_run")
         client = TestClient(create_app())
 
@@ -497,33 +1072,11 @@ class Phase8ApiTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["execution_mode"], "llm_downstream_provider")
-        self.assertEqual(payload["dataset_results"][0]["status"], "completed_stub")
-        self.assertTrue(payload["audit_manifest"].endswith("audit/manifest.json"))
-
-        plan = client.get(
-            "/runs/run_phase8_api/dependency-plan",
-            params={"study_dir": str(study_dir)},
-        )
-        self.assertEqual(plan.status_code, 200, plan.text)
-        self.assertEqual(plan.json()["requested_datasets"], ["ADAE"])
-
-        validation = client.get(
-            "/runs/run_phase8_api/datasets/ADAE/validation",
-            params={"study_dir": str(study_dir)},
-        )
-        self.assertEqual(validation.status_code, 200, validation.text)
-        self.assertEqual(validation.json()["status"], "structural_stub_pass")
-
-        manifest = client.get(
-            "/runs/run_phase8_api/audit-manifest",
-            params={"study_dir": str(study_dir)},
-        )
-        self.assertEqual(manifest.status_code, 200, manifest.text)
-        self.assertEqual(manifest.json()["manifest_scope"], "study")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Use /runs/prepare", response.json()["detail"])
+        state = json.loads((study_dir / "runs" / "run_phase8_api" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["current_interrupt"], "split_flow_required")
 
     def test_create_run_rejects_missing_study_dir(self) -> None:
         client = TestClient(create_app())
@@ -567,6 +1120,23 @@ def _study_with_adae_inputs(name: str) -> Path:
         encoding="utf-8",
     )
     (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+    return study_dir
+
+
+def _study_without_spec_with_auxiliary_evidence(name: str) -> Path:
+    study_dir = _workspace_dir(name) / "PSY201"
+    input_sdtm = study_dir / "input_sdtm"
+    reference_adam = study_dir / "reference_adam"
+    legacy_code = study_dir / "legacy_code"
+    input_sdtm.mkdir(parents=True)
+    reference_adam.mkdir()
+    legacy_code.mkdir()
+    (input_sdtm / "ae.csv").write_text("USUBJID,AETERM,AESTDTC\n01,HEADACHE,2024-01-02\n", encoding="utf-8")
+    (reference_adam / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+    (legacy_code / "ADAE.sas").write_text(
+        "proc sql; create table adae as select usubjid, aeterm from sdtmdata.ae; quit;\n",
+        encoding="utf-8",
+    )
     return study_dir
 
 

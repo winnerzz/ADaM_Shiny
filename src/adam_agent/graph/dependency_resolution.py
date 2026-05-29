@@ -273,7 +273,7 @@ def _is_usable_dependency_artifact(path: Path) -> bool:
     if suffix == ".csv":
         return _csv_has_header(path)
     if suffix == ".sas7bdat":
-        return False
+        return True
     return False
 
 
@@ -298,7 +298,7 @@ def _dependency_artifact_reason(dataset: str, path: Path) -> str:
     if suffix == ".sas7bdat":
         return (
             f"{dependency} dependency artifact was found at {path.as_posix()}, "
-            "but Python-side dependency profiling for sas7bdat is not available in Phase 7.4."
+            "and can be read by the R runtime through haven::read_sas."
         )
     if suffix == ".csv":
         return (
