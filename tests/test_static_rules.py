@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
 
 try:
-    from adam_agent.tools.reference_store import LocalReferenceStore
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import (
         StaticRuleError,
@@ -28,7 +27,6 @@ except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
-    from adam_agent.tools.reference_store import LocalReferenceStore
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import (
         StaticRuleError,
@@ -539,19 +537,6 @@ class StaticRuleTests(unittest.TestCase):
                 code_path=current_code,
                 code_sha256=f"sha256:{sha256_file(current_code)}",
             )
-
-    def test_local_reference_store_searches_only_local_text_roots(self) -> None:
-        workspace = _workspace_dir("reference_store")
-        references = workspace / "references"
-        references.mkdir()
-        (references / "guide.md").write_text("ADaM timing variables require traceable source evidence.\n", encoding="utf-8")
-
-        hits = LocalReferenceStore([references]).search("timing", limit=2)
-
-        self.assertEqual(len(hits), 1)
-        self.assertEqual(hits[0].source, "references")
-        self.assertIn("timing", hits[0].snippet.lower())
-
 
 if __name__ == "__main__":
     unittest.main()

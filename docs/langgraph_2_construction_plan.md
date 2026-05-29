@@ -1725,6 +1725,49 @@ python -B -m unittest tests.test_static_rules tests.test_llm_generated_code test
 
 Result: 20 static-rule tests passed; 126 related core tests passed.
 
+### 2026-05-30 - LG2.5 Reference Tool Interface Slice
+
+Completed:
+
+- Added local reference lookup tool contracts:
+  - `search_cdisc_reference`
+  - `lookup_adam_rule`
+  - `lookup_p21_rule`
+  - `lookup_company_standard`
+- Each tool maps to an explicit local reference root under `references/`.
+- Added `ReferenceToolRequest` and `ReferenceToolResult` so agents can record
+  which tool was called, what query was used, which hits were returned, and what
+  warnings apply.
+- Split reference-store tests into `tests/test_reference_store.py`.
+
+Current boundary:
+
+- These tools only search local text-like files. They do not prove compliance
+  and do not execute standards rules.
+- Empty lookup results are recorded as warnings, not evidence that a rule does
+  not exist.
+- Reference hits remain evidence for agents/review, not hidden derivation
+  authority.
+- `reference_root` is a local configuration/testing parameter. If a later API
+  exposes it to user or agent input, it must gain resolved-path allowlisting and
+  symlink escape checks first.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_reference_store tests.test_static_rules -v
+python -B -m unittest tests.test_reference_store tests.test_static_rules tests.test_state_schemas tests.test_llm_context tests.test_downstream_runner tests.test_api_phase8 -v
+```
+
+Result: 22 focused reference/static tests passed; 117 related core tests passed.
+
+Subagent review:
+
+- Subagent review returned GO.
+- The only residual note was that caller-configurable `reference_root` is
+  acceptable for the local tool contract, but must be hardened before exposure
+  through API or agent-supplied parameters.
+
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation Slice
 
 Completed:

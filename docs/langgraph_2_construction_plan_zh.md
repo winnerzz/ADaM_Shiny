@@ -1533,6 +1533,44 @@ python -B -m unittest tests.test_static_rules tests.test_llm_generated_code test
 
 结果：20 static-rule tests passed；126 related core tests passed。
 
+### 2026-05-30 - LG2.5 Reference Tool Interface 切片
+
+已完成：
+
+- 新增本地 reference lookup tool contracts：
+  - `search_cdisc_reference`
+  - `lookup_adam_rule`
+  - `lookup_p21_rule`
+  - `lookup_company_standard`
+- 每个 tool 都映射到 `references/` 下的明确本地 reference root。
+- 新增 `ReferenceToolRequest` 和 `ReferenceToolResult`，方便 agent 记录调用了
+  哪个工具、查询了什么、返回了哪些 hits，以及有哪些 warnings。
+- 将 reference-store 测试拆到 `tests/test_reference_store.py`。
+
+当前边界：
+
+- 这些工具只搜索本地 text-like 文件；不证明 compliance，也不执行 standards
+  rules。
+- 空检索结果只记录为 warning，不代表某条规则不存在。
+- Reference hits 仍然只是 agent/review 的证据，不是隐藏推导权威。
+- `reference_root` 只是本地配置/测试参数。如果后续 API 把它暴露给用户或 agent
+  输入，必须先增加 resolved-path allowlist 和 symlink escape 检查。
+
+验证：
+
+```text
+python -B -m unittest tests.test_reference_store tests.test_static_rules -v
+python -B -m unittest tests.test_reference_store tests.test_static_rules tests.test_state_schemas tests.test_llm_context tests.test_downstream_runner tests.test_api_phase8 -v
+```
+
+结果：22 focused reference/static tests passed；117 related core tests passed。
+
+子 agent 审查：
+
+- 子 agent 复审返回 GO。
+- 唯一残留提醒是：caller-configurable `reference_root` 对本地工具 contract
+  可以接受，但在暴露给 API 或 agent-supplied parameter 前必须 hardened。
+
 ### 2026-05-30 - LG2.2 Product Stub-Path Isolation 切片
 
 已完成：
