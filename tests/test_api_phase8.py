@@ -1045,13 +1045,15 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(first_execution.status_code, 200, first_execution.text)
         self.assertTrue(first_execution.json()["terminal_failure"])
 
-        second_execution = client.post(
-            "/runs/run_terminal_retry_gate/datasets/ADAE/execute-approved-code",
-            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
-        )
+        with patch("adam_agent.api.service.compile_dataset_graph") as compile_graph:
+            second_execution = client.post(
+                "/runs/run_terminal_retry_gate/datasets/ADAE/execute-approved-code",
+                json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+            )
 
         self.assertEqual(second_execution.status_code, 400, second_execution.text)
         self.assertIn("Terminal failure must be reviewed before retrying execution", second_execution.json()["detail"])
+        compile_graph.assert_not_called()
 
     def test_terminal_failure_requires_repair_code_before_regenerating_code(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_repair_gate")

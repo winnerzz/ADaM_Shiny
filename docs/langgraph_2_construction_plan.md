@@ -1669,6 +1669,37 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_terminal_failure
 
 Result: 55 tests passed.
 
+### 2026-05-30 - LG2.2 Execution Preflight Gate Slice
+
+Completed:
+
+- Moved the terminal-failure execution gate before DatasetGraph execution in the
+  FastAPI compatibility wrapper.
+- `/execute-approved-code` now calls
+  `GraphGateway.validate_product_step_start(step="execute")` before invoking
+  `graph_product_execute`, so an unreviewed terminal failure cannot start the
+  execution graph or R boundary.
+- Kept the graph-layer `record_execution()` validation as a second fail-closed
+  guard after execution.
+- Preserved the user-facing retry error wording for execute attempts blocked by
+  an unresolved terminal failure.
+- Added API regression coverage that patches `compile_dataset_graph` and asserts
+  it is not called when a second execution attempt is blocked before terminal
+  failure review.
+
+Current boundary:
+
+- This is a compatibility-wrapper preflight guard. The endpoint still calls one
+  graph mode at a time; full LangGraph interrupt resume remains a later slice.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit -v
+```
+
+Result: 3 tests passed.
+
 ### 2026-05-30 - LG2.8 Compatibility Projection Equivalence Slice
 
 Completed:

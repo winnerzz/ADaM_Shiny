@@ -1486,6 +1486,35 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_terminal_failure
 
 结果：55 tests passed。
 
+### 2026-05-30 - LG2.2 Execution Preflight Gate 切片
+
+已完成：
+
+- 将 terminal-failure execution gate 前移到 FastAPI compatibility wrapper
+  调用 DatasetGraph 之前。
+- `/execute-approved-code` 现在会先调用
+  `GraphGateway.validate_product_step_start(step="execute")`，再进入
+  `graph_product_execute`。因此未审核的 terminal failure 不会启动 execution
+  graph 或 R boundary。
+- 保留 graph-layer `record_execution()` 里的校验，作为执行后的第二层
+  fail-closed guard。
+- 保留 execute retry 被 terminal failure 阻止时的用户可读错误信息。
+- 增加 API 回归测试：patch `compile_dataset_graph` 并确认第二次执行在
+  terminal-failure review 前被阻止时不会调用 DatasetGraph。
+
+当前边界：
+
+- 这是 compatibility-wrapper 的 preflight guard。该 endpoint 仍是一次调用一个
+  graph mode；完整 LangGraph interrupt resume 仍留给后续切片。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit -v
+```
+
+结果：3 tests passed。
+
 ### 2026-05-30 - LG2.8 Graph-Mutating Endpoint Projection 切片
 
 已完成：

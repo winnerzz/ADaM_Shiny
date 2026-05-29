@@ -1461,6 +1461,11 @@ def _assert_terminal_failure_step_allowed(dataset_state: DatasetRunState, *, ste
     if not isinstance(review, dict):
         if not has_terminal_interrupt and status != "terminal_failure":
             return None
+        if step == "execute":
+            raise ValueError(
+                "Terminal failure must be reviewed before retrying execution. "
+                "Record a terminal-failure review decision first."
+            )
         raise ValueError("Terminal failure must be reviewed before continuing this dataset.")
     if consumed_by:
         if has_terminal_interrupt or status == "terminal_failure":

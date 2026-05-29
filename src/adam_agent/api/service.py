@@ -1038,6 +1038,15 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
     except FileNotFoundError as exc:
         raise ApiServiceError("Graph state does not exist for this run. Generate code through the graph flow before execution.") from exc
     _assert_target_dependency_gate_open_for_product_step(plan, target)
+    try:
+        GraphGateway().validate_product_step_start(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset=target,
+            step="execute",
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     result = compile_dataset_graph().invoke(
         {
             "study_id": study_id,
