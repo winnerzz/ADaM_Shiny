@@ -213,12 +213,40 @@ INDEX_HTML = r"""<!doctype html>
     }
     button.secondary:hover { background: #edf3f8; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
-    .target-button {
-      color: var(--text);
+    .target-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 38px;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
       background: #fff;
-      border-color: var(--line);
     }
-    .target-button.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    .target-option.planned { border-color: rgba(15, 118, 110, 0.45); background: #eef8f6; }
+    .target-option.active { box-shadow: inset 0 0 0 2px rgba(15, 118, 110, 0.16); }
+    .target-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .target-name { min-width: 44px; }
+    .target-hint {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .target-view {
+      min-height: 28px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+    .target-view.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
     .operation-banner {
       margin-bottom: 12px;
       padding: 12px;
@@ -703,7 +731,7 @@ INDEX_HTML = r"""<!doctype html>
           <span id="planStatus" class="pill warn">waiting</span>
         </div>
         <div class="section-body">
-          <p class="note">Pick the ADaM dataset you want to generate. The app only adds upstream ADaM dependencies when your spec, define, or legacy code provides evidence.</p>
+          <p class="note">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panels below; generation and execution still happen one dataset at a time.</p>
           <div class="button-row" id="targetButtons"></div>
           <div class="grid2" style="margin-top:12px;">
             <div class="field">
@@ -830,6 +858,7 @@ INDEX_HTML = r"""<!doctype html>
       finalizedInputsByDataset: {},
       runReview: null,
       selectedTarget: null,
+      selectedTargetsForPlan: [],
       targetCandidates: [],
       events: [],
       selectedView: 'summary',
@@ -950,7 +979,14 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function selectedTargets() {
-      return state.selectedTarget ? [state.selectedTarget] : [];
+      const selected = (state.selectedTargetsForPlan || [])
+        .map((target) => String(target || '').toUpperCase())
+        .filter(Boolean);
+      return Array.from(new Set(selected));
+    }
+
+    function planSelectionSet() {
+      return new Set(selectedTargets());
     }
 
     function llmProviderOverride() {
@@ -1274,6 +1310,7 @@ INDEX_HTML = r"""<!doctype html>
     function autoSelectFirstTarget(targets) {
       const available = targets.length ? targets : inferTargets(state.inputSummary);
       state.selectedTarget = available.includes('ADAE') ? 'ADAE' : available[0];
+      state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
       renderTargetButtons(available);
       if (state.selectedTarget) preparePlan();
     }
@@ -1287,15 +1324,43 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.selectedTarget || !targets.includes(state.selectedTarget)) {
         state.selectedTarget = targets.includes('ADAE') ? 'ADAE' : targets[0];
       }
+      const allowed = new Set(targets);
+      state.selectedTargetsForPlan = selectedTargets().filter((target) => allowed.has(target));
+      if (!state.selectedTargetsForPlan.length && state.selectedTarget) {
+        state.selectedTargetsForPlan = [state.selectedTarget];
+      }
+      const planned = planSelectionSet();
       node.innerHTML = targets.map((target) => `
-        <button class="target-button ${target === state.selectedTarget ? 'active' : ''}" data-target="${escapeHtml(target)}">${escapeHtml(target)}</button>
+        <span class="target-option ${planned.has(target) ? 'planned' : ''} ${target === state.selectedTarget ? 'active' : ''}">
+          <label class="target-check">
+            <input type="checkbox" data-target-toggle="${escapeHtml(target)}" ${planned.has(target) ? 'checked' : ''}>
+            <span class="target-name">${escapeHtml(target)}</span>
+          </label>
+          <button class="secondary target-view ${target === state.selectedTarget ? 'active' : ''}" data-target-view="${escapeHtml(target)}">${target === state.selectedTarget ? 'Viewing' : 'View'}</button>
+        </span>
       `).join('');
-      for (const button of node.querySelectorAll('[data-target]')) {
-        button.addEventListener('click', () => {
-          state.selectedTarget = button.dataset.target;
+      for (const checkbox of node.querySelectorAll('[data-target-toggle]')) {
+        checkbox.addEventListener('change', () => {
+          const target = checkbox.dataset.targetToggle;
+          const next = planSelectionSet();
+          if (checkbox.checked) {
+            next.add(target);
+          } else if (next.size > 1) {
+            next.delete(target);
+          } else {
+            checkbox.checked = true;
+          }
+          state.selectedTargetsForPlan = Array.from(next).sort();
           renderTargetButtons(targets);
           resetActiveDatasetView();
           preparePlan();
+        });
+      }
+      for (const button of node.querySelectorAll('[data-target-view]')) {
+        button.addEventListener('click', () => {
+          state.selectedTarget = button.dataset.targetView;
+          renderTargetButtons(targets);
+          resetActiveDatasetView();
         });
       }
       byId('generateCodeButton').disabled = !state.selectedTarget;
@@ -1315,6 +1380,7 @@ INDEX_HTML = r"""<!doctype html>
       next.add(value);
       state.targetCandidates = Array.from(next).sort();
       state.selectedTarget = value;
+      state.selectedTargetsForPlan = Array.from(new Set([...selectedTargets(), value])).sort();
       byId('manualTarget').value = '';
       resetActiveDatasetView();
       renderTargetButtons(state.targetCandidates);
@@ -1333,8 +1399,10 @@ INDEX_HTML = r"""<!doctype html>
       state.executionByDataset = {};
       state.draftSpecByDataset = {};
       state.draftSpecReviewByDataset = {};
+      state.finalizedInputsByDataset = {};
       state.runReview = null;
       state.targetCandidates = state.selectedTarget ? [state.selectedTarget] : [];
+      state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
       state.tablePages = {};
       state.compareResults = {};
       resetActiveDatasetView();
@@ -1373,6 +1441,13 @@ INDEX_HTML = r"""<!doctype html>
       const graphTargets = graph?.target_datasets || [];
       if (graphTargets.length) {
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...graphTargets])).sort();
+      }
+      const requestedTargets = graph?.requested_datasets || [];
+      if (requestedTargets.length) {
+        state.selectedTargetsForPlan = requestedTargets.map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      }
+      if (graphTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
+        state.selectedTarget = graphTargets.includes('ADAE') ? 'ADAE' : graphTargets[0];
       }
       for (const [dataset, datasetState] of Object.entries(graph?.datasets || {})) {
         const target = dataset.toUpperCase();
@@ -1519,13 +1594,18 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function preparePlan() {
-      if (!studyDir() || !state.selectedTarget) return;
-      beginOperation('Preparing dependency plan', `Checking whether ${state.selectedTarget} needs upstream ADaM datasets.`);
+      if (!studyDir()) return;
+      const targets = selectedTargets();
+      if (!targets.length) {
+        byId('planView').innerHTML = '<p class="note warn">Select at least one ADaM dataset for planning.</p>';
+        return;
+      }
+      beginOperation('Preparing dependency plan', `Checking dependencies for ${targets.join(', ')}.`);
       const payload = {
         study_dir: studyDir(),
         study_id: state.studyId,
         run_id: runId(),
-        target_datasets: selectedTargets(),
+        target_datasets: targets,
         approved_dependency_datasets: []
       };
       try {
@@ -1536,7 +1616,7 @@ INDEX_HTML = r"""<!doctype html>
         });
         state.plan = plan;
         await refreshGraphState();
-        addEvent('Dependency plan prepared', `${state.selectedTarget} status: ${plan.dependency_review_status}.`);
+        addEvent('Dependency plan prepared', `${plannedTargetsForDisplay(plan, targets).join(', ')} status: ${plan.dependency_review_status}.`);
         setPill('planStatus', plan.dependency_review_status || 'planned');
         renderPlan(plan);
         renderDraftSpecPane();
@@ -1554,11 +1634,18 @@ INDEX_HTML = r"""<!doctype html>
       const blocks = (plan.blocked_datasets || []).map((item) => `<li>${escapeHtml(item.dataset)} needs ${escapeHtml(item.blocked_by)}: ${humanDependencyReason(item.reason)}</li>`).join('');
       const decisions = (plan.dependency_decisions || []).map((item) => `<li>${escapeHtml(item.dataset)}: ${dependencyDecisionText(item)}</li>`).join('');
       byId('planView').innerHTML = `
-        <p><strong>Selected target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
+        <p><strong>Planned targets:</strong> ${escapeHtml(plannedTargetsForDisplay(plan).join(', ') || 'None')}</p>
+        <p><strong>Active detail target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
         <p><strong>Runnable now:</strong> ${escapeHtml((plan.runnable_datasets || []).join(', ') || 'None')}</p>
         ${blocks ? `<p class="note warn">Dependency action needed before generation:</p><ul class="clean">${blocks}</ul>` : '<p class="note strong">No blocking dependency action is required.</p>'}
         <ul class="clean">${decisions || '<li>No explicit dependency was detected for this target.</li>'}</ul>
       `;
+    }
+
+    function plannedTargetsForDisplay(plan, fallbackTargets = null) {
+      const requested = (plan?.requested_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      if (requested.length) return Array.from(new Set(requested));
+      return fallbackTargets || selectedTargets();
     }
 
     function dependencyPlanSummary(plan) {
@@ -1833,7 +1920,6 @@ INDEX_HTML = r"""<!doctype html>
           state.selectedTarget = card.dataset.cardTarget;
           renderTargetButtons(state.targetCandidates || []);
           resetActiveDatasetView();
-          preparePlan();
         });
       }
     }

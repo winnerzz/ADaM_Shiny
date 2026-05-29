@@ -1174,3 +1174,63 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 165 tests passed.
+
+### 2026-05-30 - LG2.3 Multi-Target Planning Selection Slice
+
+Completed:
+
+- Split the local UI target concept into:
+  - `selectedTargetsForPlan`: the ADaM datasets sent together to
+    `/runs/prepare` for dependency planning
+  - `selectedTarget`: the active dataset shown in the draft-spec, code-review,
+    execution, and results panes
+- Changed target controls from single active buttons into planning checkboxes
+  plus an explicit view button:
+  - checked datasets participate in the dependency plan
+  - the active dataset controls the single-dataset generation/review/run actions
+  - at least one target remains selected for planning
+- Updated dependency-plan copy and event text so the UI explains planned
+  targets separately from the active detail target.
+- Restored multi-target planning selection from `requested_datasets` in
+  `/graph-state`. `target_datasets` remains the broader run inventory used for
+  cards/progress, so historical dataset progress does not silently become the
+  current checkbox selection.
+- Updated plan/event display to use `requested_datasets` for "Planned targets",
+  so the UI does not label the broader run inventory as the current planning
+  selection.
+- Added regression coverage that `/runs/prepare` accepts `["ADAE", "ADCM"]`
+  in one request and persists both dataset states in canonical graph state.
+- Added UI contract coverage that View/card interactions do not mutate planning
+  selection or trigger a new dependency plan.
+
+Current boundary:
+
+- This is still a planning and state-preservation slice. The product does not
+  yet auto-dispatch code generation or R execution for every checked target.
+  Generation, draft-spec approval, code review, and local execution remain
+  one active dataset at a time.
+- Viewing a dataset card does not mutate planning selection and does not trigger
+  a new dependency plan. Only checkbox/manual-target planning changes re-run
+  `/runs/prepare`.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 78 tests passed.
+
+After subagent review fix:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 79 tests passed.
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+Result: 167 tests passed.

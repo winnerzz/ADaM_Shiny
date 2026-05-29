@@ -1047,3 +1047,58 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：165 tests passed。
+
+### 2026-05-30 - LG2.3 多 Target 规划选择切片
+
+已完成：
+
+- 把本地 UI 里的 target 拆成两个概念：
+  - `selectedTargetsForPlan`：一起发给 `/runs/prepare` 做依赖规划的
+    ADaM datasets。
+  - `selectedTarget`：当前在 draft spec、code review、execution、results
+    面板里查看和操作的单个 dataset。
+- 将 target 控件从单个 active button 改成“规划勾选框 + 查看按钮”：
+  - 被勾选的 datasets 会一起参与 dependency plan。
+  - active dataset 仍然控制单 dataset 的生成、审核、执行动作。
+  - UI 至少保留一个 target 参与规划，避免空计划。
+- 更新 dependency plan 的说明和事件文案，明确区分“planned targets”和
+  “active detail target”。
+- 从 `/graph-state` 里的 `requested_datasets` 恢复多 target 规划选择。
+  `target_datasets` 仍作为更宽的 run inventory，用于卡片和进度展示，避免历史
+  dataset 进度被静默变成当前 checkbox selection。
+- plan/event 显示也改为使用 `requested_datasets` 作为 “Planned targets”，
+  避免把更宽的 run inventory 展示成本次规划选择。
+- 增加回归测试，确认 `/runs/prepare` 一次接收 `["ADAE", "ADCM"]`，并且
+  canonical graph state 里持久化两个 dataset state。
+- 增加 UI contract 覆盖，确认 View/card 交互不会修改规划选择，也不会触发新的
+  dependency plan。
+
+当前边界：
+
+- 本切片仍是“规划与状态保存”，不是自动批量生成/自动批量执行。draft spec
+  approval、code generation、code review、本地 R execution 仍然一次操作一个
+  active dataset。
+- 查看某个 dataset card 不会修改规划选择，也不会触发新的 dependency plan。
+  只有 checkbox/manual-target 这类“规划选择”动作才会重新调用 `/runs/prepare`。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：78 tests passed。
+
+根据子 agent 复审修复后：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：79 tests passed。
+
+```text
+python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas -v
+```
+
+结果：167 tests passed。

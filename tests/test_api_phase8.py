@@ -74,6 +74,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Upload Legacy Code", response.text)
         self.assertIn("Add another ADaM target", response.text)
         self.assertIn("addTargetButton", response.text)
+        self.assertIn("Select one or more ADaM datasets to plan together", response.text)
+        self.assertIn("selectedTargetsForPlan", response.text)
+        self.assertIn("data-target-toggle", response.text)
+        self.assertIn("data-target-view", response.text)
+        self.assertIn("Planned targets:", response.text)
         self.assertIn("Real LLM API", response.text)
         self.assertIn("testLlmButton", response.text)
         self.assertIn("timeout_seconds: 300", response.text)
@@ -88,6 +93,31 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertNotIn("resetGeneratedState", response.text)
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
+
+    def test_index_keeps_planning_selection_separate_from_active_target_view(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        selected_targets_body = html.split("function selectedTargets()", 1)[1].split("function planSelectionSet()", 1)[0]
+        self.assertNotIn("selected.unshift(state.selectedTarget)", selected_targets_body)
+        self.assertNotIn("!selected.includes(state.selectedTarget)", selected_targets_body)
+        apply_graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function generatedFor(dataset)", 1)[0]
+        self.assertIn("const requestedTargets = graph?.requested_datasets || [];", apply_graph_body)
+        self.assertNotIn("selectedTargetsForPlan = Array.from(new Set([...selectedTargets(), ...graphTargets", apply_graph_body)
+        self.assertNotIn("selectedTargetsForPlan = graphTargets", apply_graph_body)
+        self.assertIn("function plannedTargetsForDisplay(plan, fallbackTargets = null)", html)
+        planned_display_body = html.split("function plannedTargetsForDisplay(plan, fallbackTargets = null)", 1)[1].split("function dependencyPlanSummary(plan)", 1)[0]
+        self.assertIn("plan?.requested_datasets", planned_display_body)
+        self.assertNotIn("plan.target_datasets", planned_display_body)
+        view_handler = html.split("for (const button of node.querySelectorAll('[data-target-view]'))", 1)[1].split("byId('generateCodeButton')", 1)[0]
+        self.assertIn("state.selectedTarget = button.dataset.targetView;", view_handler)
+        self.assertNotIn("selectedTargetsForPlan", view_handler)
+        dataset_card_handler = html.split("for (const card of node.querySelectorAll('[data-card-target]'))", 1)[1].split("function hasDatasetEvidence", 1)[0]
+        self.assertIn("state.selectedTarget = card.dataset.cardTarget;", dataset_card_handler)
+        self.assertNotIn("preparePlan();", dataset_card_handler)
 
     def test_product_workspace_endpoint_creates_hidden_default_workspace(self) -> None:
         client = TestClient(create_app())
@@ -1510,6 +1540,34 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(state["datasets"]["ADAE"]["code_state"]["code_sha256"], before_code_state["code_sha256"])
         self.assertIn("ADAE", state["target_datasets"])
         self.assertIn("ADCM", state["target_datasets"])
+
+    def test_public_prepare_accepts_multi_target_plan_and_preserves_dataset_cards(self) -> None:
+        study_dir = _study_with_adae_adcm_inputs("phase8_prepare_multi_target")
+        client = TestClient(create_app())
+
+        prepared = client.post(
+            "/runs/prepare",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_prepare_multi_target",
+                "target_datasets": ["ADAE", "ADCM"],
+            },
+        )
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        payload = prepared.json()
+        self.assertEqual(payload["target_datasets"], ["ADAE", "ADCM"])
+        self.assertIn("ADAE", payload["runnable_datasets"])
+        self.assertIn("ADCM", payload["runnable_datasets"])
+
+        graph_state = client.get(
+            "/runs/run_prepare_multi_target/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        state = graph_state.json()
+        self.assertEqual(state["target_datasets"], ["ADAE", "ADCM"])
+        self.assertIn("ADAE", state["datasets"])
+        self.assertIn("ADCM", state["datasets"])
 
     def test_public_prepare_marks_existing_graph_dataset_state_stale_when_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_prepare_marks_stale")
