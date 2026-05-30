@@ -494,6 +494,7 @@ class GraphGateway:
         llm_client_builder: Any | None = None,
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
+        force_new_draft_spec: bool = False,
     ) -> GraphGatewayFinalizeInputsResult:
         """Prepare product context and persist graph-owned spec readiness state."""
 
@@ -513,14 +514,17 @@ class GraphGateway:
                 "llm_exposure": llm_exposure,
                 "llm_client_builder": llm_client_builder,
                 "target_context_builder": target_context_builder,
+                "force_new_draft_spec": force_new_draft_spec,
                 "audit_artifacts": [],
             }
         )
         if result.get("status") == "failed":
             raise ValueError(str(result.get("real_run_error") or f"Could not finalize inputs for {target}."))
-        fingerprint = input_fingerprint(root)
         warnings = list(result.get("product_context_warnings", []))
         spec_source = str(result.get("spec_source") or "")
+        if force_new_draft_spec and spec_source == "input_spec":
+            raise ValueError(f"An input_spec already exists for {target}; draft spec generation is not needed.")
+        fingerprint = input_fingerprint(root)
         if spec_source == "input_spec":
             input_spec_path = result.get("input_spec_path")
             if not input_spec_path:
@@ -593,6 +597,36 @@ class GraphGateway:
             draft_spec_prompt_path=str(prompt_path),
             draft_spec_response_path=str(response_path),
             draft_spec_variables=draft_variables,
+        )
+
+    def generate_draft_spec(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        dependency_resolution: list[dict[str, Any]],
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayFinalizeInputsResult:
+        """Generate a fresh review-required draft spec through DatasetGraph."""
+
+        return self.finalize_inputs(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=dataset,
+            dependency_resolution=dependency_resolution,
+            llm_provider=llm_provider,
+            llm_exposure=llm_exposure,
+            llm_client_builder=llm_client_builder,
+            target_context_builder=target_context_builder,
+            rscript_path=rscript_path,
+            force_new_draft_spec=True,
         )
 
     def record_draft_spec_review(

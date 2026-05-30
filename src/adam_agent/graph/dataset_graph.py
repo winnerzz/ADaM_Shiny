@@ -187,7 +187,7 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "sandbox_runs": 0,
         }
 
-    force_new_draft_spec = _terminal_failure_requires_new_draft_spec(
+    force_new_draft_spec = bool(state.get("force_new_draft_spec")) or _terminal_failure_requires_new_draft_spec(
         Path(study_dir), state["run_id"], state["dataset"]
     )
     approved_payload = None

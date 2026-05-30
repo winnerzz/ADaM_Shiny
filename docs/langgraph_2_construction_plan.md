@@ -1652,6 +1652,49 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice
+
+Completed:
+
+- Added `GraphGateway.generate_draft_spec()` as the graph-owned entry point for
+  the explicit `/draft-spec` compatibility endpoint.
+- The endpoint now delegates fresh draft-spec generation to `DatasetGraph`
+  through the gateway instead of building LLM context, calling the provider, and
+  recording graph state inside `api/service.py`.
+- Added `force_new_draft_spec` to the dataset graph state so explicit
+  draft-spec generation can request a new review-required draft instead of
+  reusing a previously approved draft spec.
+- The gateway rejects explicit draft-spec generation when a user-supplied
+  `input_spec` already exists, before writing canonical graph state.
+- Kept dependency gating in the service compatibility wrapper for this slice,
+  consistent with the current LG2.2 boundary.
+
+Current boundary:
+
+- Public route paths and response shapes are unchanged.
+- `finalize-inputs` and explicit `/draft-spec` now share the same graph-owned
+  prepare/draft-spec path, but they keep different user intent:
+  `finalize-inputs` may accept existing input specs or approved drafts, while
+  explicit `/draft-spec` forces a fresh draft only when no input spec exists.
+- Static rules remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_draft_spec_forces_fresh_draft_and_rejects_input_spec tests.test_api_phase8.Phase8ApiTests.test_missing_input_spec_requires_draft_spec_approval_before_code_generation tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_generates_review_required_draft_spec_when_spec_missing tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+```
+
+Result: 4 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+Result: 169 related gateway/API/graph/static/reference tests passed; 49
+additional core tests passed.
+
 ### 2026-05-30 - LG2.2 GraphGateway-Owned Execution Slice
 
 Completed:

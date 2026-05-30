@@ -1467,6 +1467,48 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.2 显式 Draft-Spec Gateway 切片
+
+已完成：
+
+- 新增 `GraphGateway.generate_draft_spec()`，作为显式 `/draft-spec`
+  compatibility endpoint 的 graph-owned 入口。
+- 该 endpoint 现在把 fresh draft-spec generation 委托给 Gateway 和
+  `DatasetGraph`，不再在 `api/service.py` 里自行构建 LLM context、调用 provider，
+  再手动记录 graph state。
+- 在 dataset graph state 增加 `force_new_draft_spec`，让显式 draft-spec 生成可
+  以请求新的 review-required draft，而不是复用已批准的 draft spec。
+- 当用户已经提供 `input_spec` 时，Gateway 会拒绝显式 draft-spec generation，
+  且不会写入 canonical graph state。
+- dependency gate 本切片仍保留在 service compatibility wrapper，符合当前
+  LG2.2 边界。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- `finalize-inputs` 和显式 `/draft-spec` 现在共用 graph-owned
+  prepare/draft-spec 路径，但用户意图不同：`finalize-inputs` 可以接受已有
+  input spec 或 approved draft；显式 `/draft-spec` 只在没有 input spec 时强制
+  生成 fresh draft。
+- 静态规则继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_draft_spec_forces_fresh_draft_and_rejects_input_spec tests.test_api_phase8.Phase8ApiTests.test_missing_input_spec_requires_draft_spec_approval_before_code_generation tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_generates_review_required_draft_spec_when_spec_missing tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+```
+
+结果：4 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+结果：169 related gateway/API/graph/static/reference tests passed；49
+additional core tests passed。
+
 ### 2026-05-30 - LG2.2 GraphGateway-Owned Execution 切片
 
 已完成：

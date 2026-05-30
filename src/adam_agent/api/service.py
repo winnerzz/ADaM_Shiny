@@ -61,16 +61,10 @@ from adam_agent.llm.clients import (
     LLMProviderConfig,
     LLMProviderResponseError,
     LLMRequest,
-    MockLLMClient,
     build_llm_client,
 )
 from adam_agent.schemas.graph_state import HumanCommand
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
-from adam_agent.llm.draft_spec import (
-    DraftSpecGenerationError,
-    default_mock_draft_spec_response,
-    generate_draft_spec_from_evidence,
-)
 from adam_agent.llm.generated_code import (
     LLMGeneratedCodeError,
     parse_generated_code_response,
@@ -632,72 +626,35 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         run_id=run_id,
         target=target,
     )
+    _assert_target_dependency_gate_open_for_product_step(plan, target)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        llm_client = build_llm_client(provider_config)
-    except LLMClientConfigError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    context = build_target_llm_context(
-        study_id=study_id,
-        run_id=run_id,
-        target_dataset=target,
-        study_dir=study_dir,
-        dependency_resolution=plan.dependency_resolution,
-        exposure=exposure,
-        rscript_path=getattr(request, "rscript_path", None),
-    )
-    if context.target_spec is not None:
-        raise ApiServiceError(f"An input_spec already exists for {target}; draft spec generation is not needed.")
-    context_dict = context.as_dict()
-    if provider_config.provider.strip().lower() == "mock":
-        llm_client = MockLLMClient(fixed_response_text=default_mock_draft_spec_response(target, context_dict))
-    try:
-        draft_result = generate_draft_spec_from_evidence(
+        result = GraphGateway().generate_draft_spec(
+            study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
-            target_dataset=target,
-            study_dir=study_dir,
-            context_dict=context_dict,
-            llm_client=llm_client,
-            provider=provider_config.provider,
-            model=provider_config.model,
-            exposure=exposure,
-            max_tokens=provider_config.max_tokens,
+            dataset=target,
+            dependency_resolution=plan.dependency_resolution,
+            llm_provider=provider_config.__dict__,
+            llm_exposure=exposure.model_dump(mode="json"),
+            llm_client_builder=build_llm_client,
+            target_context_builder=build_target_llm_context,
+            rscript_path=getattr(request, "rscript_path", None) or "",
         )
-    except (DraftSpecGenerationError, LLMClientConfigError, LLMProviderResponseError) as exc:
+    except ValueError as exc:
         raise ApiServiceError(f"Draft spec generation failed: {exc}") from exc
-    fingerprint = input_fingerprint(study_dir)
-    _merge_json_artifact(
-        Path(draft_result.spec_artifact.path),
-        {
-            "input_fingerprint": fingerprint,
-            "reference_adam_policy": "Reference ADaM is compare/output-shape evidence only, not derivation authority.",
-        },
-    )
-    variables = [variable.model_dump(mode="json") for variable in draft_result.spec.variables]
-    GraphGateway().record_draft_spec_generation(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        dataset=target,
-        draft_spec_path=draft_result.spec_artifact.path,
-        prompt_path=draft_result.prompt_artifact.path,
-        response_path=draft_result.response_artifact.path,
-        variables=variables,
-        warnings=context.warnings + draft_result.warnings + plan.dependency_warnings,
-        input_fingerprint_payload=fingerprint,
-    )
+    warnings = result.warnings + plan.dependency_warnings
     return DraftSpecResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
         status="draft_spec_generated",
-        spec_path=draft_result.spec_artifact.path,
-        prompt_path=draft_result.prompt_artifact.path,
-        response_path=draft_result.response_artifact.path,
-        variables=variables,
-        warnings=context.warnings + draft_result.warnings + plan.dependency_warnings,
+        spec_path=result.draft_spec_path or "",
+        prompt_path=result.draft_spec_prompt_path or "",
+        response_path=result.draft_spec_response_path or "",
+        variables=list(result.draft_spec_variables or []),
+        warnings=warnings,
         **_graph_compatibility_metadata(study_dir, run_id),
     )
 
@@ -2298,12 +2255,6 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _merge_json_artifact(path: Path, payload: dict[str, Any]) -> None:
-    current = _read_json_if_exists(path)
-    current.update(payload)
-    _write_json(path, current)
 
 
 def _read_text_if_exists(path: Path, *, limit_chars: int) -> str:

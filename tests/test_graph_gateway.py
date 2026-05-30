@@ -517,6 +517,68 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
         self.assertEqual(workflow_state["current_interrupt"], "draft_spec_review")
 
+    def test_gateway_generate_draft_spec_forces_fresh_draft_and_rejects_input_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_force_draft_spec") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_gateway_force_draft_spec"
+        spec_dir = run_dir / "specs"
+        llm_dir = run_dir / "llm"
+        spec_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        draft_path = spec_dir / "adae_draft_spec.json"
+        prompt_path = llm_dir / "adae_draft_prompt.txt"
+        response_path = llm_dir / "adae_draft_response.json"
+        draft_path.write_text(json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM"}]}), encoding="utf-8")
+        prompt_path.write_text("draft prompt", encoding="utf-8")
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "spec_source": "draft_spec",
+                "draft_spec_path": str(draft_path.as_posix()),
+                "draft_spec_prompt_path": str(prompt_path.as_posix()),
+                "draft_spec_response_path": str(response_path.as_posix()),
+                "draft_spec_variables": [{"variable": "AETERM"}],
+                "product_context_warnings": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            result = gateway.generate_draft_spec(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_force_draft_spec",
+                dataset="ADAE",
+                dependency_resolution=[],
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        self.assertTrue(invoked_state["force_new_draft_spec"])
+        self.assertEqual(result.spec_source, "draft_spec")
+        self.assertEqual(result.draft_spec_path, str(draft_path.as_posix()))
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "spec_source": "input_spec",
+                "input_spec_path": str((study_dir / "input_spec" / "adae.json").as_posix()),
+                "product_context_warnings": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            with self.assertRaisesRegex(ValueError, "draft spec generation is not needed"):
+                gateway.generate_draft_spec(
+                    study_dir=study_dir,
+                    study_id="PSY201",
+                    run_id="run_lg2_gateway_force_draft_spec_input",
+                    dataset="ADAE",
+                    dependency_resolution=[],
+                    llm_provider={"provider": "mock", "model": "mock-model"},
+                    llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+                )
+
     def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
         study_dir.mkdir(parents=True)
