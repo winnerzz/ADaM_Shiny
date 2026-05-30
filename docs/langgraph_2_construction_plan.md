@@ -1695,6 +1695,51 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 Result: 169 related gateway/API/graph/static/reference tests passed; 49
 additional core tests passed.
 
+### 2026-05-30 - LG2.2 GraphGateway-Owned Dependency Gate Slice
+
+Completed:
+
+- Added `GraphGateway.dependency_gate_for_product_step()` as the graph-owned
+  dependency gate for dataset product steps.
+- Moved the product-step dependency decision out of `api/service.py` for:
+  - finalize inputs
+  - explicit draft spec generation
+  - R code generation
+  - approved R execution
+- The service compatibility wrappers now still resolve config/provider inputs
+  and shape API responses, but they ask the gateway whether the dependency gate
+  is open before entering the product step.
+- Removed the old service-local `_assert_target_dependency_gate_open_for_product_step()`
+  and plan-read/start helper that duplicated graph dependency state decisions.
+- Added gateway-level tests for:
+  - auto-starting a dependency plan when a product step has no plan yet
+  - failing closed when an unresolved upstream ADaM dependency blocks the target
+  - returning dependency plan fields when the gate is open
+
+Current boundary:
+
+- Public route paths and response shapes are unchanged.
+- Dependency planning itself still belongs to `StudyGraph`; this slice only
+  moves product-step gate ownership into `GraphGateway`.
+- Static rules remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_dependency_warning tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+```
+
+Result: 5 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+Result: 171 related gateway/API/graph/static/reference tests passed; 49
+additional core tests passed.
+
 ### 2026-05-30 - LG2.2 GraphGateway-Owned Execution Slice
 
 Completed:

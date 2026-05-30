@@ -457,17 +457,20 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="generate_code_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan = _get_or_start_dependency_plan_for_product_step(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        target=target,
-    )
-    _assert_target_dependency_gate_open_for_product_step(plan, target)
+    gateway = GraphGateway()
+    try:
+        plan = gateway.dependency_gate_for_product_step(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = GraphGateway().generate_code(
+        result = gateway.generate_code(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
@@ -521,17 +524,20 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="finalize_inputs_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan = _get_or_start_dependency_plan_for_product_step(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        target=target,
-    )
-    _assert_target_dependency_gate_open_for_product_step(plan, target)
+    gateway = GraphGateway()
+    try:
+        plan = gateway.dependency_gate_for_product_step(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = GraphGateway().finalize_inputs(
+        result = gateway.finalize_inputs(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
@@ -620,17 +626,20 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         raise ApiServiceError(str(exc)) from exc
     mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="draft_spec_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    plan = _get_or_start_dependency_plan_for_product_step(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        target=target,
-    )
-    _assert_target_dependency_gate_open_for_product_step(plan, target)
+    gateway = GraphGateway()
+    try:
+        plan = gateway.dependency_gate_for_product_step(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = GraphGateway().generate_draft_spec(
+        result = gateway.generate_draft_spec(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
@@ -898,17 +907,19 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
+    gateway = GraphGateway()
     try:
-        plan = _read_dependency_plan_for_product_step(
+        gateway.dependency_gate_for_product_step(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
-            target=target,
+            dataset=target,
+            start_if_missing=False,
         )
     except FileNotFoundError as exc:
         raise ApiServiceError("Graph state does not exist for this run. Generate code through the graph flow before execution.") from exc
-    _assert_target_dependency_gate_open_for_product_step(plan, target)
-    gateway = GraphGateway()
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     try:
         result = gateway.execute_approved_code(
             study_dir=study_dir,
@@ -1429,109 +1440,6 @@ def _sample_row_counts(context: dict[str, Any]) -> dict[str, int]:
 
 def _default_mock_generated_code_response(target: str) -> str:
     return default_mock_generated_code_response(target)
-
-
-def _assert_target_dependency_gate_open_for_product_step(plan: RunPlanResponse, target: str) -> None:
-    """Fail closed when a target still needs dependency review or user action."""
-
-    dataset = target.strip().upper()
-    blocked = [
-        block
-        for block in plan.blocked_datasets
-        if str(block.get("dataset", "")).strip().upper() == dataset
-    ]
-    if blocked:
-        reasons = ", ".join(str(block.get("reason") or "blocked") for block in blocked)
-        raise ApiServiceError(
-            f"{dataset} cannot continue until dependency issues are resolved: {reasons}. "
-            "Review the dependency plan before finalizing inputs or generating code."
-        )
-    if dataset not in [item.strip().upper() for item in plan.runnable_datasets]:
-        raise ApiServiceError(
-            f"{dataset} is not runnable in the current dependency plan. "
-            "Review the dependency plan before finalizing inputs or generating code."
-        )
-    if plan.dependency_review_status == "warning" or plan.dependency_warnings:
-        raise ApiServiceError(
-            f"{dataset} dependency plan has warnings that require review before this step. "
-            f"Warnings: {'; '.join(plan.dependency_warnings)}"
-        )
-    blocking_decisions = [
-        decision
-        for decision in plan.dependency_decisions
-        if str(decision.get("dataset", "")).strip().upper() == dataset
-        and decision.get("review_required") is True
-        and str(decision.get("source", "")) != "no_dependency_evidence"
-    ]
-    if blocking_decisions:
-        sources = ", ".join(str(decision.get("source") or "unknown") for decision in blocking_decisions)
-        raise ApiServiceError(
-            f"{dataset} dependency plan requires human review before this step. "
-            f"Review-required sources: {sources}."
-        )
-
-
-def _read_dependency_plan_for_product_step(
-    *,
-    study_dir: Path,
-    study_id: str,
-    run_id: str,
-    target: str,
-) -> RunPlanResponse:
-    """Read the last graph dependency plan without overwriting graph state."""
-
-    graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
-    if graph_state.study_id != study_id:
-        raise ApiServiceError("Graph state study_id does not match the request.")
-    target_dataset = target.strip().upper()
-    if target_dataset not in [item.strip().upper() for item in graph_state.target_datasets]:
-        raise ApiServiceError(f"{target_dataset} is not part of the current graph dependency plan.")
-    plan_payload = graph_state.dependency_plan
-    unsupported = plan_payload.get("unsupported_datasets", [])
-    return RunPlanResponse(
-        study_id=study_id,
-        run_id=run_id,
-        requested_datasets=list(graph_state.requested_datasets),
-        target_datasets=list(graph_state.target_datasets),
-        runnable_datasets=list(graph_state.runnable_datasets),
-        blocked_datasets=list(graph_state.blocked_datasets)
-        + [
-            {"dataset": dataset, "reason": "unsupported_dataset", "blocked_by": "study_planner"}
-            for dataset in unsupported
-        ],
-        dependency_review_status=graph_state.dependency_review_status or "accepted",
-        dependency_decisions=list(graph_state.dependency_decisions),
-        dependency_resolution=list(graph_state.dependency_resolution),
-        dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
-        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
-    )
-
-
-def _get_or_start_dependency_plan_for_product_step(
-    *,
-    study_dir: Path,
-    study_id: str,
-    run_id: str,
-    target: str,
-) -> RunPlanResponse:
-    """Use the graph plan read model for product steps without clobbering dataset state."""
-
-    try:
-        return _read_dependency_plan_for_product_step(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            target=target,
-        )
-    except FileNotFoundError:
-        return prepare_run_plan(
-            RunPlanRequest(
-                study_dir=str(study_dir),
-                study_id=study_id,
-                run_id=run_id,
-                target_datasets=[target],
-            )
-        )
 
 
 def _graph_code_state(study_dir: Path, run_id: str, target: str) -> dict[str, Any]:

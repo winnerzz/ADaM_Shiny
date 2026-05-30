@@ -1509,6 +1509,51 @@ python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.te
 结果：169 related gateway/API/graph/static/reference tests passed；49
 additional core tests passed。
 
+### 2026-05-30 - LG2.2 GraphGateway-Owned Dependency Gate 切片
+
+已完成：
+
+- 新增 `GraphGateway.dependency_gate_for_product_step()`，作为 dataset product
+  steps 的 graph-owned dependency gate。
+- 将产品步骤的 dependency decision 从 `api/service.py` 移到 Gateway，覆盖：
+  - finalize inputs
+  - 显式 draft spec generation
+  - R code generation
+  - approved R execution
+- service compatibility wrappers 现在仍负责 config/provider 解析和 API response
+  shape，但是否允许进入产品步骤由 Gateway 判断。
+- 删除旧的 service-local `_assert_target_dependency_gate_open_for_product_step()`
+  和重复读取/启动 plan 的 helper，避免 FastAPI 层复制 graph dependency state
+  决策。
+- 新增 gateway 层测试，覆盖：
+  - 产品步骤没有 plan 时自动启动 dependency plan；
+  - 上游 ADaM dependency 未解决时 fail closed；
+  - gate 打开时返回 dependency plan 字段。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- dependency planning 本身仍属于 `StudyGraph`；本切片只把产品步骤 gate ownership
+  移到 `GraphGateway`。
+- 静态规则继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_dependency_warning tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+```
+
+结果：5 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+结果：171 related gateway/API/graph/static/reference tests passed；49
+additional core tests passed。
+
 ### 2026-05-30 - LG2.2 GraphGateway-Owned Execution 切片
 
 已完成：

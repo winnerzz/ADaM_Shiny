@@ -579,6 +579,59 @@ class GraphGatewayTests(unittest.TestCase):
                     llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 )
 
+    def test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_dependency_gate") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        (legacy_dir / "ADAE.sas").write_text("data adae; merge ae adsl; by usubjid; run;", encoding="utf-8")
+
+        gateway = GraphGateway()
+
+        with self.assertRaisesRegex(ValueError, "cannot continue until dependency issues are resolved"):
+            gateway.dependency_gate_for_product_step(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_dependency_gate",
+                dataset="ADAE",
+            )
+
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_gateway_dependency_gate")
+        self.assertEqual(graph_state.dependency_review_status, "blocked")
+        self.assertIn("ADAE", graph_state.target_datasets)
+
+    def test_gateway_dependency_gate_returns_plan_when_open(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_dependency_gate_open") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+
+        gate = gateway.dependency_gate_for_product_step(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_gateway_dependency_gate_open",
+            dataset="ADAE",
+        )
+
+        self.assertEqual(gate.dependency_review_status, "accepted")
+        self.assertIn("ADAE", gate.runnable_datasets)
+        self.assertEqual(gate.dependency_resolution, [])
+
     def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
         study_dir.mkdir(parents=True)

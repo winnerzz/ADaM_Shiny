@@ -78,6 +78,23 @@ class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
     draft_spec_variables: list[dict[str, Any]] | None = None
 
 
+@dataclass(frozen=True)
+class GraphGatewayDependencyGateResult:
+    """Graph-owned dependency gate result for one product step."""
+
+    study_id: str
+    run_id: str
+    requested_datasets: list[str]
+    target_datasets: list[str]
+    runnable_datasets: list[str]
+    blocked_datasets: list[dict[str, str]]
+    dependency_review_status: str
+    dependency_decisions: list[dict[str, Any]]
+    dependency_resolution: list[dict[str, Any]]
+    dependency_warnings: list[str]
+    workflow_state_path: str | None = None
+
+
 class GraphGateway:
     """Single entry point for starting, resuming, and reading graph runs.
 
@@ -628,6 +645,38 @@ class GraphGateway:
             rscript_path=rscript_path,
             force_new_draft_spec=True,
         )
+
+    def dependency_gate_for_product_step(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        start_if_missing: bool = True,
+    ) -> GraphGatewayDependencyGateResult:
+        """Return a graph-owned dependency gate and fail closed if it is not open."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError:
+            if not start_if_missing:
+                raise
+            graph_state = self.start_dependency_plan(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                target_datasets=[target],
+            ).graph_state
+        if graph_state.study_id != study_id:
+            raise ValueError("Graph state study_id does not match the request.")
+        if target not in [item.strip().upper() for item in graph_state.target_datasets]:
+            raise ValueError(f"{target} is not part of the current graph dependency plan.")
+        result = _dependency_gate_result(root, graph_state)
+        _assert_dependency_gate_open(result, target)
+        return result
 
     def record_draft_spec_review(
         self,
@@ -1639,6 +1688,66 @@ def _dependency_review_reason(status: str) -> str:
 
 def _blocked_dataset_names(blocked: list[dict[str, Any]]) -> set[str]:
     return {str(item.get("dataset", "")).strip().upper() for item in blocked if item.get("dataset")}
+
+
+def _dependency_gate_result(study_dir: Path, graph_state: StudyRunState) -> GraphGatewayDependencyGateResult:
+    plan_payload = graph_state.dependency_plan
+    unsupported = plan_payload.get("unsupported_datasets", [])
+    blocked = list(graph_state.blocked_datasets) + [
+        {"dataset": str(dataset), "reason": "unsupported_dataset", "blocked_by": "study_planner"}
+        for dataset in unsupported
+    ]
+    return GraphGatewayDependencyGateResult(
+        study_id=graph_state.study_id,
+        run_id=graph_state.run_id,
+        requested_datasets=list(graph_state.requested_datasets),
+        target_datasets=list(graph_state.target_datasets),
+        runnable_datasets=list(graph_state.runnable_datasets),
+        blocked_datasets=blocked,
+        dependency_review_status=graph_state.dependency_review_status or "accepted",
+        dependency_decisions=list(graph_state.dependency_decisions),
+        dependency_resolution=list(graph_state.dependency_resolution),
+        dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
+        workflow_state_path=str((study_dir / "runs" / graph_state.run_id / "workflow_state.json").as_posix()),
+    )
+
+
+def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target: str) -> None:
+    dataset = target.strip().upper()
+    blocked = [
+        block
+        for block in gate.blocked_datasets
+        if str(block.get("dataset", "")).strip().upper() == dataset
+    ]
+    if blocked:
+        reasons = ", ".join(str(block.get("reason") or "blocked") for block in blocked)
+        raise ValueError(
+            f"{dataset} cannot continue until dependency issues are resolved: {reasons}. "
+            "Review the dependency plan before finalizing inputs or generating code."
+        )
+    if dataset not in [item.strip().upper() for item in gate.runnable_datasets]:
+        raise ValueError(
+            f"{dataset} is not runnable in the current dependency plan. "
+            "Review the dependency plan before finalizing inputs or generating code."
+        )
+    if gate.dependency_review_status == "warning" or gate.dependency_warnings:
+        raise ValueError(
+            f"{dataset} dependency plan has warnings that require review before this step. "
+            f"Warnings: {'; '.join(gate.dependency_warnings)}"
+        )
+    blocking_decisions = [
+        decision
+        for decision in gate.dependency_decisions
+        if str(decision.get("dataset", "")).strip().upper() == dataset
+        and decision.get("review_required") is True
+        and str(decision.get("source", "")) != "no_dependency_evidence"
+    ]
+    if blocking_decisions:
+        sources = ", ".join(str(decision.get("source") or "unknown") for decision in blocking_decisions)
+        raise ValueError(
+            f"{dataset} dependency plan requires human review before this step. "
+            f"Review-required sources: {sources}."
+        )
 
 
 def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: str) -> None:
