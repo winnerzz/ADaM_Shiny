@@ -62,7 +62,6 @@ from adam_agent.llm.clients import (
     LLMRequest,
     build_llm_client,
 )
-from adam_agent.schemas.graph_state import HumanCommand
 from adam_agent.llm.context import build_target_llm_context, write_llm_context_package
 from adam_agent.llm.generated_code import (
     LLMGeneratedCodeError,
@@ -418,37 +417,26 @@ def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResp
         raise ApiServiceError("Dependency review decision must be approve or reject.")
     gateway = GraphGateway()
     try:
-        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
-    except FileNotFoundError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    if graph_state.current_interrupt is None or graph_state.current_interrupt.name != "dependency_review":
-        raise ApiServiceError("Current graph state is not waiting for dependency_review.")
-    result = gateway.resume(
-        study_dir=study_dir,
-        graph_state=graph_state,
-        command=HumanCommand(
-            interrupt="dependency_review",
-            action="approve" if decision == "approve" else "reject",
+        result = gateway.review_dependency(
+            study_dir=study_dir,
+            run_id=run_id,
+            decision=decision,
             reviewer=request.reviewer,
             notes=request.notes,
-            payload={
-                "approved_dependency_datasets": [
-                    str(item).strip().upper()
-                    for item in getattr(request, "approved_dependency_datasets", [])
-                    if str(item).strip()
-                ]
-            },
-        ),
-    )
-    current_interrupt = None
-    if result.graph_state.current_interrupt is not None and result.graph_state.current_interrupt.status == "open":
-        current_interrupt = result.graph_state.current_interrupt.name
+            approved_dependency_datasets=[
+                str(item).strip().upper()
+                for item in getattr(request, "approved_dependency_datasets", [])
+                if str(item).strip()
+            ],
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     return DependencyReviewResponse(
         study_id=result.graph_state.study_id,
         run_id=run_id,
-        decision=decision,
-        approved=decision == "approve",
-        current_interrupt=current_interrupt,
+        decision=result.decision,
+        approved=result.approved,
+        current_interrupt=result.current_interrupt,
         graph_state_path=str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
         workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
     )

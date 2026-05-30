@@ -3398,3 +3398,39 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.8 Dependency Review Gateway Ownership Slice
+
+Completed:
+
+- Added `GraphGateway.review_dependency()` as the graph-owned high-level entry
+  point for study-level dependency review decisions.
+- Moved dependency-review state loading, interrupt validation, human command
+  construction, and resume into the gateway.
+- Reduced `api/service.py::persist_dependency_review()` to request validation,
+  gateway delegation, and compatibility response shaping.
+- Strengthened the product service wrapper regression guard so wrappers must
+  call the corresponding GraphGateway high-level method and must not call
+  `load_graph_state()`, `resume()`, low-level recorders, or direct workflow
+  writes.
+- Added gateway coverage proving dependency-review approval persists the human
+  command in canonical graph state and refreshes the UI projection.
+
+Current boundary:
+
+- Public route path and response shape are unchanged.
+- This does not remove the lower-level `resume()` primitive; it remains a
+  graph-internal building block and explicit test helper.
+- This does not change dependency planning semantics, product generation,
+  execution, compare behavior, UI layout, or sandbox behavior.
+- Static-rule governance is unchanged. No clinical, dataset-specific,
+  study-specific, demo-specific, or variable-specific static rule is added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_graph_gateway.GraphGatewayTests.test_dependency_review_endpoint_resumes_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_dependency_owns_interrupt_resume -v
+python -m compileall -q src\adam_agent
+```
+
+Result: 3 focused gateway/API tests passed; compileall passed.

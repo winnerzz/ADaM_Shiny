@@ -1560,6 +1560,41 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.8 Dependency Review Gateway Ownership 切片
+
+已完成：
+
+- 新增 `GraphGateway.review_dependency()`，作为 study-level dependency review
+  决策的 graph-owned 高层入口。
+- 将 dependency-review 的 graph state 读取、interrupt 校验、human command 构造
+  和 resume 逻辑收进 gateway。
+- 将 `api/service.py::persist_dependency_review()` 缩减为 request validation、
+  gateway delegation 和 compatibility response shaping。
+- 加强 product service wrapper 回归保护：wrapper 必须调用对应的 GraphGateway
+  高层方法，不能直接调用 `load_graph_state()`、`resume()`、low-level recorders
+  或直接写 `workflow_state.json`。
+- 增加 gateway 测试，确认 dependency-review approve 会把 human command 写入
+  canonical graph state，并刷新 UI projection。
+
+当前边界：
+
+- Public route path 和 response shape 不变。
+- 不移除低层 `resume()` primitive；它仍然是 graph 内部 building block 和显式
+  test helper。
+- 不改变 dependency planning semantics、product generation、execution、compare、
+  UI layout 或 sandbox behavior。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_graph_gateway.GraphGatewayTests.test_dependency_review_endpoint_resumes_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_dependency_owns_interrupt_resume -v
+python -m compileall -q src\adam_agent
+```
+
+结果：3 个 focused gateway/API tests passed；compileall passed。
+
 ### 2026-05-30 - LG2.4 Validation Agent Compare Audit 切片
 
 已完成：

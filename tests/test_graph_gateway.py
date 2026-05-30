@@ -236,6 +236,37 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(workflow_state["current_interrupt"])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
 
+    def test_gateway_review_dependency_owns_interrupt_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_dependency_review_entrypoint") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_gateway_dependency_review",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.review_dependency(
+            study_dir=study_dir,
+            run_id="run_lg2_gateway_dependency_review",
+            decision="approve",
+            reviewer="tester",
+            notes="Dependency plan accepted for this run.",
+            approved_dependency_datasets=["adsl"],
+        )
+
+        self.assertTrue(result.approved)
+        self.assertIsNone(result.current_interrupt)
+        self.assertIsNone(result.graph_state.current_interrupt)
+        self.assertEqual(result.graph_state.human_commands[0].interrupt, "dependency_review")
+        self.assertEqual(result.graph_state.human_commands[0].payload["approved_dependency_datasets"], ["ADSL"])
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_gateway_dependency_review" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertIsNone(workflow_state["current_interrupt"])
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+
     def test_gateway_resume_preserves_other_dataset_interrupt(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_resume_preserve_interrupt") / "PSY201"
         study_dir.mkdir(parents=True)

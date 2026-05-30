@@ -95,18 +95,18 @@ class Phase8ApiTests(unittest.TestCase):
     def test_product_service_wrappers_delegate_state_changes_to_gateway_methods(self) -> None:
         from adam_agent.api import service
 
-        wrappers = [
-            service.persist_dependency_review,
-            service.finalize_dataset_inputs,
-            service.generate_dataset_draft_spec,
-            service.generate_dataset_code,
-            service.persist_draft_spec_review,
-            service.persist_code_review,
-            service.execute_approved_dataset_code,
-            service.persist_terminal_failure_review,
-        ]
+        wrappers = {
+            service.persist_dependency_review: "review_dependency",
+            service.finalize_dataset_inputs: "finalize_inputs",
+            service.generate_dataset_draft_spec: "generate_draft_spec",
+            service.generate_dataset_code: "generate_code",
+            service.persist_draft_spec_review: "review_draft_spec",
+            service.persist_code_review: "review_code",
+            service.execute_approved_dataset_code: "execute_approved_code",
+            service.persist_terminal_failure_review: "review_terminal_failure",
+        }
 
-        for wrapper in wrappers:
+        for wrapper, gateway_method in wrappers.items():
             tree = ast.parse(textwrap.dedent(inspect.getsource(wrapper)))
             called_names: set[str] = set()
             for node in ast.walk(tree):
@@ -130,10 +130,17 @@ class Phase8ApiTests(unittest.TestCase):
                 "update_workflow_state",
                 "mark_workflow_inputs_current",
                 "mark_workflow_inputs_stale",
+                "load_graph_state",
+                "resume",
             }
             self.assertTrue(
                 forbidden_low_level_recorders.isdisjoint(called_names),
                 f"{wrapper.__name__} must use GraphGateway product methods, not low-level recorders or workflow writes.",
+            )
+            self.assertIn(
+                gateway_method,
+                called_names,
+                f"{wrapper.__name__} must delegate to GraphGateway.{gateway_method}().",
             )
 
     def test_legacy_run_endpoint_owns_only_remaining_service_workflow_writes(self) -> None:

@@ -131,6 +131,15 @@ class GraphGatewayDependencyGateResult:
 
 
 @dataclass(frozen=True)
+class GraphGatewayDependencyReviewResult(GraphGatewayResult):
+    """Graph-owned dependency-review result plus API-facing fields."""
+
+    decision: str
+    approved: bool
+    current_interrupt: str | None
+
+
+@dataclass(frozen=True)
 class GraphGatewayInputInvalidationResult:
     """Canonical graph runs touched after study input evidence changes."""
 
@@ -217,6 +226,52 @@ class GraphGateway:
         self._persist_graph_state(study_dir, next_state, node=f"resume_{command.interrupt}")
         projection = project_graph_state_to_workflow(study_dir, next_state, node=f"graph_gateway_resume_{command.interrupt}")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def review_dependency(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        approved_dependency_datasets: list[str] | None = None,
+    ) -> GraphGatewayDependencyReviewResult:
+        """Persist a human decision for the study-level dependency-review gate."""
+
+        root = Path(study_dir).expanduser()
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Dependency review decision must be approve or reject.")
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        if graph_state.current_interrupt is None or graph_state.current_interrupt.name != "dependency_review":
+            raise ValueError("Current graph state is not waiting for dependency_review.")
+        result = self.resume(
+            study_dir=root,
+            graph_state=graph_state,
+            command=HumanCommand(
+                interrupt="dependency_review",
+                action="approve" if normalized_decision == "approve" else "reject",
+                reviewer=reviewer,
+                notes=notes,
+                payload={
+                    "approved_dependency_datasets": _normalize_dataset_list(approved_dependency_datasets or [])
+                },
+            ),
+        )
+        current_interrupt = None
+        if result.graph_state.current_interrupt is not None and result.graph_state.current_interrupt.status == "open":
+            current_interrupt = result.graph_state.current_interrupt.name
+        return GraphGatewayDependencyReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=result.workflow_projection,
+            decision=normalized_decision,
+            approved=normalized_decision == "approve",
+            current_interrupt=current_interrupt,
+        )
 
     def review_code(
         self,
