@@ -10,9 +10,17 @@ LangGraph-2 的核心原则：
 
 当前已经有价值的资产：
 
-- `src/adam_agent/api/service.py` 里有目前最完整的真实流程：依赖计划、确认输入、draft spec、draft spec 审核、生成代码、代码审核、执行已审核 R、验证、比较、下载。
+- `src/adam_agent/graph/gateway.py` 现在是主要产品状态转换边界。
+  FastAPI service helpers 已经通过 `GraphGateway` 委托 dependency planning、
+  input finalization、draft-spec generation/review、code generation/review、
+  approved R execution、terminal-failure review、compare recording、upload
+  invalidation，以及 legacy `/runs` compatibility writes。
+- `src/adam_agent/api/service.py` 现在主要负责 request validation、
+  config/provider resolution、response shaping、artifact preview/download 和
+  read-model helpers。它不应该拥有 workflow state transitions。
 - `src/adam_agent/graph/study_graph.py` 已有 study 级依赖计划、dataset 批次、分发、汇总和 study audit manifest。
-- `src/adam_agent/graph/dataset_graph.py` 已有 dataset 图骨架、LLM downstream 执行模式、失败路由和结果汇总。
+- `src/adam_agent/graph/dataset_graph.py` 已有 dataset 图骨架、
+  product-mode prepare/generate/execute nodes、LLM downstream 执行模式、失败路由和结果汇总。
 - `src/adam_agent/graph/workflow_state.py` 目前仍会持久化兼容用的
   `workflow_state.json` read model 和 SQLite sidecar history，供当前 UI/API
   展示层使用。
@@ -21,22 +29,29 @@ LangGraph-2 的核心原则：
 
 当前架构偏差：
 
-- 真实 human-in-the-loop 流程主要还在 FastAPI service 函数里，不在 LangGraph `interrupt` 节点里。
 - `workflow_state.json` 仍作为 UI/API 兼容 read model 存在，但产品事实来源正在
-  收敛到 canonical `graph_state.json`；剩余的直接兼容写入都应视为要移除或隔离
-  的 legacy surface。
-- `DatasetGraph` 里仍有早期 `*_stub` 节点，图还不是完整产品工作流。
-- 当前产品更像“受控流水线 + LLM 调用”，还不是明确专家角色分工的多智能体图。
+  canonical `graph_state.json`；compatibility projection writes 现在应位于
+  `GraphGateway` 后面，而不是 FastAPI service helpers 里。
+- 产品流已经由 graph-gateway 拥有，但 UI 仍通过一步一步的 FastAPI 调用驱动。
+  它还不是一个由 StudyGraph 统一启动、分发所有 dataset subgraph、并通过
+  LangGraph 原生 interrupt/checkpointer resume 完成的完整运行。
+- `DatasetGraph` 里仍有早期 `*_stub` 节点供显式 legacy/test modes 使用。Product
+  modes 已防止回落到 legacy stub chain，但旧节点还没有删除。
+- 当前产品更像“受控流水线 + LLM 调用”，还不是每个角色都由专家节点承担的
+  多智能体图。
 - UI 的 dataset card 和 target 切换仍更像单 target 控制器，不像多个持久 dataset run 的图状态视图。
 - Static ADaM/CDISC 检查现在已有有限范围的 policy-driven gate，但还不是完整规则引擎。
 - R 执行仍是本地 `Rscript` 加应用层路径约束，不是强化沙盒。
 
 未完成的产品能力：
 
-- 进程重启后的 graph-native checkpoint/resume。
-- 依赖审核、draft spec 审核、code review、terminal failure triage 的 graph-native interrupt。
-- UI 中可见的多 dataset 编排和持久 dataset card。
-- Evidence、Spec、Code、Validation、Repair、Reference、Audit 等 agent 角色分离。
+- 完整产品流的 graph-native checkpointer resume，而不仅是当前持久化
+  `graph_state.json` 后的恢复读取。
+- 依赖审核、draft spec 审核、code review、terminal failure triage 的 LangGraph
+  原生 interrupt 执行，而不是 API methods 将 review commands 写入 canonical state。
+- 由 StudyGraph 驱动的多 dataset 产品编排，并在 UI 中体现为持久 dataset card。
+- 更深入的 Evidence、Spec、Code、Validation、Repair、Reference、Audit 等 agent
+  角色分离。当前 agent decisions 是可审计记录，但还不是完整专家节点图。
 - CDISC/P21/company standard 检索工具。
 - 生产级验证、安全和部署控制。
 

@@ -14,13 +14,19 @@ The key rule for LangGraph-2:
 
 Current useful assets:
 
-- `src/adam_agent/api/service.py` contains the most complete real workflow:
-  dependency plan, finalize inputs, draft spec, draft spec review, code
-  generation, code review, approved R execution, validation, compare, download.
+- `src/adam_agent/graph/gateway.py` is now the main product transition
+  boundary. FastAPI service helpers delegate dependency planning, input
+  finalization, draft-spec generation/review, code generation/review, approved
+  R execution, terminal-failure review, compare recording, upload invalidation,
+  and legacy `/runs` compatibility writes through `GraphGateway`.
+- `src/adam_agent/api/service.py` is now mostly request validation,
+  config/provider resolution, response shaping, artifact preview/download, and
+  read-model helpers. It should not own workflow state transitions.
 - `src/adam_agent/graph/study_graph.py` contains study-level dependency
   planning, dataset batching, dispatch, reduction, and study audit manifest.
 - `src/adam_agent/graph/dataset_graph.py` contains the dataset graph skeleton,
-  LLM downstream execution modes, failure routing, and summary reduction.
+  product-mode nodes for prepare/generate/execute, LLM downstream execution
+  modes, failure routing, and summary reduction.
 - `src/adam_agent/graph/workflow_state.py` still persists the compatibility
   `workflow_state.json` read model and a SQLite sidecar history for the current
   UI/API flow.
@@ -31,15 +37,18 @@ Current useful assets:
 
 Current architectural deviations:
 
-- The real human-in-the-loop workflow is mostly in FastAPI service functions,
-  not in LangGraph `interrupt` nodes.
 - `workflow_state.json` still exists as a UI/API compatibility read model, but
-  product truth is converging on canonical `graph_state.json`; remaining direct
-  compatibility writes must be treated as legacy surfaces to remove or isolate.
-- `DatasetGraph` still contains early `*_stub` nodes. The graph is not yet the
-  full product workflow.
+  product truth is canonical `graph_state.json`; compatibility projection
+  writes now belong behind `GraphGateway`, not in FastAPI service helpers.
+- The product flow is graph-gateway owned, but the UI still drives it as
+  stepwise FastAPI calls. It is not yet a single StudyGraph run that dispatches
+  all dataset subgraphs through native LangGraph interrupts and checkpointer
+  resume.
+- `DatasetGraph` still contains early `*_stub` nodes for explicit legacy/test
+  modes. Product modes are guarded from falling back into the legacy stub
+  chain, but the old nodes have not been removed.
 - The current product is a controlled pipeline with LLM calls, not yet a true
-  multi-agent graph with explicit specialist roles.
+  multi-agent graph with explicit specialist nodes for every role.
 - UI dataset cards and target switching still behave more like a single-target
   controller than a graph view over multiple persistent dataset runs.
 - Static ADaM/CDISC checks now have a limited policy-driven gate, but they are
@@ -49,12 +58,16 @@ Current architectural deviations:
 
 Unfinished product areas:
 
-- Graph-native checkpoint/resume after process restart.
-- Graph-native interrupts for dependency review, draft spec review, code
-  review, and terminal failure triage.
-- Multi-dataset orchestration visible in the UI as persistent per-dataset cards.
-- Agent role separation for evidence, spec, code, validation, repair, reference,
-  and audit.
+- Full graph-native checkpointer resume for the whole product flow after
+  process restart, beyond the current persisted `graph_state.json` recovery.
+- Native LangGraph interrupt execution for dependency review, draft spec review,
+  code review, and terminal failure triage, instead of API methods recording
+  review commands into canonical state.
+- StudyGraph-driven multi-dataset product orchestration visible in the UI as
+  persistent per-dataset cards.
+- Deeper agent role separation for evidence, spec, code, validation, repair,
+  reference, and audit. Current agent decisions are auditable records, not yet
+  a complete specialist-node graph.
 - CDISC/P21/company-standard retrieval tools.
 - Production-grade validation, security, and deployment controls.
 
