@@ -414,6 +414,38 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("would bypass review gates", run_response.json()["detail"])
         state = json.loads((target / "runs" / "run_demo_from_endpoint" / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["current_interrupt"], "split_flow_required")
+        self.assertEqual(state["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertEqual(state["legacy_endpoint"], "POST /runs")
+        self.assertTrue(state["product_flow_required"])
+        self.assertIsNone(state["graph_state_path"])
+        self.assertTrue(state["workflow_state_path"].endswith("runs/run_demo_from_endpoint/workflow_state.json"))
+
+    def test_create_run_stub_is_marked_legacy_compatibility_shim(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_api_legacy_run_stub")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_legacy_stub",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "stub",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertIsNone(payload["graph_state_path"])
+        self.assertTrue(payload["workflow_state_path"].endswith("runs/run_legacy_stub/workflow_state.json"))
+        self.assertEqual(payload["status"], "completed")
+        workflow_state = json.loads((study_dir / "runs" / "run_legacy_stub" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(workflow_state["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertEqual(workflow_state["legacy_endpoint"], "POST /runs")
+        self.assertFalse(workflow_state["product_flow_required"])
+        self.assertIsNone(workflow_state["graph_state_path"])
+        self.assertEqual(workflow_state["workflow_state_path"], payload["workflow_state_path"])
 
     def test_generate_review_execute_split_flow(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_split_flow")
@@ -2661,6 +2693,10 @@ class Phase8ApiTests(unittest.TestCase):
         state = json.loads((study_dir / "runs" / "run_phase8_api" / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["status"], "blocked")
         self.assertEqual(state["current_interrupt"], "split_flow_required")
+        self.assertEqual(state["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertEqual(state["legacy_endpoint"], "POST /runs")
+        self.assertTrue(state["product_flow_required"])
+        self.assertIsNone(state["graph_state_path"])
 
     def test_create_run_rejects_missing_study_dir(self) -> None:
         client = TestClient(create_app())

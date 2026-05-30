@@ -106,6 +106,7 @@ MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
 GRAPH_GATEWAY_COMPATIBILITY_SHIM = "graph_gateway_compatibility_shim"
+LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM = "legacy_run_to_completion_compatibility_shim"
 
 
 def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[str, str]:
@@ -255,6 +256,7 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
     if execution_mode is None:
         execution_mode = "stub"
     if execution_mode in {"llm_downstream_provider", "llm_downstream_r_sandbox"}:
+        run_dir = study_dir / "runs" / config.run_id
         update_workflow_state(
             study_dir,
             config.run_id,
@@ -267,6 +269,11 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
                 "requested_datasets": [str(item).strip().upper() for item in request.target_datasets],
                 "execution_mode": execution_mode,
                 "blocked_reason": "LLM ADaM generation must use the draft/spec/code-review/execute API flow.",
+                "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+                "legacy_endpoint": "POST /runs",
+                "product_flow_required": True,
+                "graph_state_path": None,
+                "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
             },
         )
         raise ApiServiceError(
@@ -313,6 +320,11 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             "execution_mode": response.execution_mode,
             "dataset_results": response.dataset_results,
             "audit_manifest": response.audit_manifest,
+            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+            "legacy_endpoint": "POST /runs",
+            "product_flow_required": False,
+            "graph_state_path": response.graph_state_path,
+            "workflow_state_path": response.workflow_state_path,
         },
     )
     return response
@@ -1041,17 +1053,21 @@ def _response_from_graph_result(
     study_dir: Path,
 ) -> RunStudyResponse:
     audit_manifest = result.get("audit_manifest")
+    run_dir = study_dir / "runs" / result["run_id"]
     return RunStudyResponse(
         study_id=result["study_id"],
         run_id=result["run_id"],
         status=result["status"],
         execution_mode=execution_mode,
+        workflow_control=LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+        graph_state_path=None,
+        workflow_state_path=str((run_dir / "workflow_state.json").as_posix()),
         requested_datasets=result.get("requested_datasets", []),
         target_datasets=result.get("target_datasets", []),
         runnable_datasets=result.get("runnable_datasets", []),
         blocked_datasets=result.get("blocked_datasets", []),
         dependency_review_status=result.get("dependency_review_status"),
-        run_dir=str((study_dir / "runs" / result["run_id"]).as_posix()),
+        run_dir=str(run_dir.as_posix()),
         audit_manifest=audit_manifest.path if audit_manifest else None,
         dataset_results=[
             summary.model_dump(mode="json")

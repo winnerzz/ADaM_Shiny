@@ -1687,6 +1687,62 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary Slice
+
+Completed:
+
+- Marked `POST /runs` run-to-completion responses with explicit legacy metadata:
+  - `workflow_control: legacy_run_to_completion_compatibility_shim`
+  - `graph_state_path: null`
+  - `workflow_state_path`
+- Marked the blocked LLM run-to-completion path the same way in
+  `workflow_state.json`, while keeping `current_interrupt: split_flow_required`
+  and the existing error that points callers to `/runs/prepare` plus the
+  dataset-level review gates.
+- Added API regression coverage for both paths:
+  - stub `/runs` succeeds but is labeled legacy compatibility
+  - LLM `/runs` is rejected and records that product split-flow is required
+- Updated `docs/phase8_1_api_contract.md` so it no longer implies real LLM/R
+  generation should use `POST /runs`.
+- After subagent review, updated the `RunStudyRequest` schema docstring so the
+  OpenAPI schema also describes `/runs` as legacy/smoke compatibility.
+
+Current boundary:
+
+- This slice does not remove `POST /runs` and does not change its stub/smoke
+  behavior.
+- It does not create canonical `graph_state.json` for the legacy
+  run-to-completion path. The null `graph_state_path` is intentional so callers
+  can distinguish it from GraphGateway-owned product flow.
+- Real LLM/R ADaM generation remains blocked on this endpoint and must use
+  `/runs/prepare` plus dataset-level finalize/draft/code-review/execute gates.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_demo_study_rejects_run_to_completion_llm_endpoint -v
+```
+
+Result: 3 tests passed.
+
+Broader verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_static_rules tests.test_reference_store tests.test_state_schemas -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md docs/phase8_1_api_contract.md src/adam_agent/api/models.py src/adam_agent/api/service.py tests/test_api_phase8.py
+python -m compileall -q src/adam_agent
+```
+
+Result: 63 Phase 8 API tests passed; 135 related graph/static/schema tests
+passed; diff check and compileall passed before subagent review.
+
+Subagent review:
+
+- Subagent review returned GO with no blocking findings.
+- The non-blocking request to clarify the `RunStudyRequest` schema docstring was
+  addressed before commit.
+
 ### 2026-05-30 - LG2.8 Product Read-Model Write Isolation Slice
 
 Completed:

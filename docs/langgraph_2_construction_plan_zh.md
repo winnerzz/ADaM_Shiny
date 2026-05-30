@@ -1498,6 +1498,59 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary 切片
+
+已完成：
+
+- 给 `POST /runs` 一次性运行 response 增加明确 legacy metadata：
+  - `workflow_control: legacy_run_to_completion_compatibility_shim`
+  - `graph_state_path: null`
+  - `workflow_state_path`
+- LLM run-to-completion 被拒绝的路径也在 `workflow_state.json` 中写入同样的
+  legacy 标记，同时保留 `current_interrupt: split_flow_required` 和原有错误提示，
+  指向 `/runs/prepare` 与 dataset-level review gates。
+- 增加 API 回归测试覆盖两条路径：
+  - stub `/runs` 可以成功，但明确标记为 legacy compatibility
+  - LLM `/runs` 被拒绝，并记录必须走 product split-flow
+- 更新 `docs/phase8_1_api_contract.md`，避免文档继续暗示真实 LLM/R 生成应使用
+  `POST /runs`。
+- 根据子 agent 审查意见，更新 `RunStudyRequest` schema docstring，让 OpenAPI
+  schema 也把 `/runs` 描述为 legacy/smoke compatibility。
+
+当前边界：
+
+- 本切片不删除 `POST /runs`，也不改变它的 stub/smoke 行为。
+- 本切片不会为 legacy run-to-completion 路径创建 canonical `graph_state.json`。
+  `graph_state_path: null` 是有意设计，让调用方能区分它和 GraphGateway-owned
+  product flow。
+- 真实 LLM/R ADaM generation 仍然被此 endpoint 阻断，必须走 `/runs/prepare`
+  加 dataset-level finalize/draft/code-review/execute gates。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_demo_study_rejects_run_to_completion_llm_endpoint -v
+```
+
+结果：3 tests passed。
+
+Broader verification：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_static_rules tests.test_reference_store tests.test_state_schemas -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md docs/phase8_1_api_contract.md src/adam_agent/api/models.py src/adam_agent/api/service.py tests/test_api_phase8.py
+python -m compileall -q src/adam_agent
+```
+
+结果：63 个 Phase 8 API tests 通过；135 个 graph/static/schema 相关测试通过；
+diff check 和 compileall 在子 agent review 前通过。
+
+子 agent 审查：
+
+- 子 agent review 返回 GO，未发现 blocking finding。
+- 非阻塞建议是澄清 `RunStudyRequest` schema docstring；提交前已处理。
+
 ### 2026-05-30 - LG2.8 产品 Read-Model 写入隔离切片
 
 已完成：

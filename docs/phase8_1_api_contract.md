@@ -42,10 +42,14 @@ uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
 
 ## POST /runs
 
-Create and run a study orchestration request.
+Legacy run-to-completion orchestration request.
 
-The current implementation is synchronous. The HTTP response returns after the
-graph run finishes.
+This endpoint is retained for compatibility and smoke tests. It is synchronous,
+but it is not the product path for LLM/R ADaM generation. Requests using
+`llm_downstream_provider` or `llm_downstream_r_sandbox` are rejected because
+they would bypass draft-spec, code-review, and execution approval gates. Use
+`POST /runs/prepare` and the dataset-level split-flow endpoints for real
+generation.
 
 Request:
 
@@ -55,7 +59,7 @@ Request:
   "run_id": "run_demo_api",
   "target_datasets": ["ADAE"],
   "config_path": "studies/_template/configs/mock_downstream.json",
-  "execution_mode": "llm_downstream_provider",
+  "execution_mode": "stub",
   "approved_dependency_datasets": [],
   "rscript_path": null,
   "study_id": null
@@ -69,7 +73,10 @@ Response:
   "study_id": "PSY201",
   "run_id": "run_demo_api",
   "status": "completed",
-  "execution_mode": "llm_downstream_provider",
+  "execution_mode": "stub",
+  "workflow_control": "legacy_run_to_completion_compatibility_shim",
+  "graph_state_path": null,
+  "workflow_state_path": "D:/path/to/PSY201/runs/run_demo_api/workflow_state.json",
   "requested_datasets": ["ADAE"],
   "target_datasets": ["ADSL", "ADAE"],
   "runnable_datasets": ["ADAE"],

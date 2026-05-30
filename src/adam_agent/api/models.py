@@ -10,7 +10,7 @@ from adam_agent.schemas.base import NonEmptyStr, StrictBaseModel
 
 
 class RunStudyRequest(StrictBaseModel):
-    """Create and run a study orchestration request."""
+    """Legacy run-to-completion request kept for compatibility and smoke tests."""
 
     study_dir: NonEmptyStr
     run_id: NonEmptyStr
@@ -376,6 +376,9 @@ class RunStudyResponse(StrictBaseModel):
     run_id: str
     status: str
     execution_mode: str
+    workflow_control: str = "legacy_run_to_completion_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
     requested_datasets: list[str] = Field(default_factory=list)
     target_datasets: list[str] = Field(default_factory=list)
     runnable_datasets: list[str] = Field(default_factory=list)
