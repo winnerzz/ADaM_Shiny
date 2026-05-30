@@ -486,6 +486,44 @@ INDEX_HTML = r"""<!doctype html>
     .stage.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
     .stage.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
     .stage.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .agent-audit-panel {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .agent-audit-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .agent-audit-title { font-size: 14px; font-weight: 800; }
+    .agent-audit-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      margin-bottom: 9px;
+    }
+    .agent-audit-node {
+      min-height: 44px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      font-size: 12px;
+    }
+    .agent-audit-node strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .agent-audit-node span { color: var(--muted); }
+    .agent-audit-node.warn { border-color: #f0d19b; background: #fff8ea; }
+    .agent-audit-node.fail { border-color: #efc4be; background: #fff8f7; }
     .timeline {
       display: grid;
       gap: 8px;
@@ -641,7 +679,7 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 1120px) {
       main { grid-template-columns: 1fr; }
       aside { position: static; }
-      .grid3, .grid5, .metric-grid, .study-progress-steps { grid-template-columns: 1fr; }
+      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
@@ -720,6 +758,18 @@ INDEX_HTML = r"""<!doctype html>
               <h3>Dataset Execution Cards</h3>
               <div id="datasetBoard" class="dataset-board"><div class="muted">No dataset selected yet.</div></div>
             </div>
+          </div>
+          <div class="agent-audit-panel" id="agentAuditPanel">
+            <div class="agent-audit-head">
+              <div>
+                <div class="status-label">Agent Audit</div>
+                <div class="agent-audit-title" id="agentAuditTitle">No graph decisions yet</div>
+                <div class="muted" id="agentAuditDetail">Agent decisions appear after dependency planning or dataset actions.</div>
+              </div>
+              <span class="pill warn" id="agentAuditStatus">waiting</span>
+            </div>
+            <div class="agent-audit-grid" id="agentAuditGrid"></div>
+            <div class="note" id="agentAuditRiskNote">No agent risk flags yet.</div>
           </div>
         </div>
       </section>
@@ -2063,6 +2113,7 @@ INDEX_HTML = r"""<!doctype html>
       renderStudyProgress(targets, runnable, blocked);
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
+      renderAgentAuditPanel();
       renderActionAvailability();
     }
 
@@ -2289,6 +2340,125 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
+    }
+
+    function renderAgentAuditPanel() {
+      const node = byId('agentAuditGrid');
+      const decisions = activeAgentDecisions().slice(-8).reverse();
+      const risks = activeRiskFlags();
+      byId('agentAuditTitle').textContent = state.selectedTarget
+        ? `${state.selectedTarget} agent decisions`
+        : 'Study agent decisions';
+      byId('agentAuditDetail').textContent = decisions.length
+        ? `${decisions.length} recent bounded graph node decision(s) shown.`
+        : 'No agent decisions are recorded for the active view yet.';
+      setPill('agentAuditStatus', decisions.length ? 'audited' : 'waiting');
+      node.innerHTML = decisions.length
+        ? decisions.map((decision) => agentDecisionCard(decision)).join('')
+        : '<div class="muted">Run dependency planning, draft spec, code generation, execution, or compare to populate agent audit.</div>';
+      const readableRisks = risks.map(readableRiskFlag);
+      byId('agentAuditRiskNote').innerHTML = readableRisks.length
+        ? `<strong>Risk flags:</strong> ${escapeHtml(readableRisks.slice(0, 12).join(', '))}${readableRisks.length > 12 ? ' ...' : ''}`
+        : 'No graph-level or active-dataset risk flags are recorded yet.';
+    }
+
+    function activeAgentDecisions() {
+      const graph = state.graphState || {};
+      const target = state.selectedTarget;
+      const datasetState = target ? graph.datasets?.[target] : null;
+      const decisions = datasetState?.agent_decisions?.length
+        ? datasetState.agent_decisions
+        : graph.agent_decisions || [];
+      return Array.isArray(decisions) ? decisions : [];
+    }
+
+    function activeRiskFlags() {
+      const graph = state.graphState || {};
+      const target = state.selectedTarget;
+      const datasetFlags = target ? graph.datasets?.[target]?.risk_flags || [] : [];
+      return Array.from(new Set([...(graph.risk_flags || []), ...datasetFlags].map((flag) => String(flag || '').trim()).filter(Boolean)));
+    }
+
+    function agentDecisionCard(decision) {
+      const agent = readableAgentName(decision.agent);
+      const status = String(decision.status || '').toLowerCase();
+      const klass = status.includes('fail') || status.includes('terminal') ? 'fail' : (decision.risk_flags || []).length || status.includes('warning') || status.includes('review') ? 'warn' : '';
+      const detail = [readableDecisionName(decision.decision), readableNodeName(decision.node)].filter(Boolean).join(' | ');
+      return `
+        <div class="agent-audit-node ${klass}">
+          <strong>${escapeHtml(agent)}</strong>
+          <span>${escapeHtml(detail || 'Decision recorded')}</span>
+        </div>
+      `;
+    }
+
+    function readableAgentName(agent) {
+      const labels = {
+        evidence_agent: 'Evidence',
+        dependency_agent: 'Dependency',
+        spec_agent: 'Spec',
+        code_agent: 'Code',
+        static_review_agent: 'Static review',
+        execution_agent: 'Execution',
+        validation_agent: 'Validation',
+        diagnosis_repair_agent: 'Diagnosis / repair',
+        audit_agent: 'Audit'
+      };
+      return labels[agent] || String(agent || 'Agent');
+    }
+
+    function readableDecisionName(decision) {
+      const labels = {
+        dependency_plan_prepared: 'Dependency plan prepared',
+        input_spec_ready: 'Input spec ready',
+        approved_draft_spec_ready: 'Approved draft spec ready',
+        draft_spec_generated: 'Draft spec generated',
+        r_code_generated: 'R code generated',
+        static_check_recorded: 'Static check recorded',
+        r_execution_completed: 'R execution completed',
+        r_execution_terminal_failure: 'R execution failed',
+        reference_compare_recorded: 'Reference compare recorded',
+        terminal_failure_triage_recorded: 'Terminal failure triaged',
+        agent_audit_summary_written: 'Audit summary written'
+      };
+      return labels[decision] || titleFromToken(decision || 'decision recorded');
+    }
+
+    function readableNodeName(node) {
+      const labels = {
+        dependency_plan: 'Dependency planning',
+        prepare_dataset_context: 'Evidence context',
+        draft_spec_agent: 'Draft spec',
+        generate_r_code_agent: 'Code generation',
+        code_generation: 'Code generation',
+        execute_approved_code: 'R execution',
+        compare_reference_output: 'Reference compare',
+        terminal_failure_review: 'Failure triage',
+        write_agent_audit_summary: 'Audit summary'
+      };
+      return labels[node] || titleFromToken(node || '');
+    }
+
+    function readableRiskFlag(flag) {
+      const labels = {
+        static_check_limited_scope: 'Static check limited scope',
+        reference_compare_limited_scope: 'Reference compare limited scope',
+        terminal_failure_triage_limited_scope: 'Terminal failure triage limited scope',
+        draft_spec_requires_human_review: 'Draft spec requires human review',
+        missing_input_spec: 'Missing input spec',
+        terminal_failure: 'Terminal failure',
+        inputs_changed_after_planning: 'Inputs changed after planning',
+        inputs_changed_after_dataset_progress: 'Inputs changed after dataset progress'
+      };
+      return labels[flag] || titleFromToken(flag || '');
+    }
+
+    function titleFromToken(value) {
+      return String(value || '')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
     }
 
     function hasReferenceAdamEvidence(dataset) {

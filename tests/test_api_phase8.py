@@ -251,6 +251,13 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("operationBanner", response.text)
         self.assertIn("globalStatusDetail", response.text)
         self.assertIn("studyProgressPanel", response.text)
+        self.assertIn("agentAuditPanel", response.text)
+        self.assertIn("Agent Audit", response.text)
+        self.assertIn("renderAgentAuditPanel", response.text)
+        self.assertIn("activeAgentDecisions", response.text)
+        self.assertIn("readableAgentName", response.text)
+        self.assertIn("readableDecisionName", response.text)
+        self.assertIn("readableRiskFlag", response.text)
         self.assertIn("specActionHints", response.text)
         self.assertIn("generationActionHints", response.text)
         self.assertIn("Study Progress", response.text)
@@ -310,6 +317,25 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("targetSpecGateSatisfied(active)", html)
         self.assertIn("generatedFor(active)?.status === 'stale'", html)
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
+
+    def test_index_exposes_agent_audit_from_graph_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        audit_body = html.split("function renderAgentAuditPanel()", 1)[1].split("function hasReferenceAdamEvidence", 1)[0]
+        self.assertIn("state.graphState", audit_body)
+        self.assertIn("graph.datasets?.[target]?.risk_flags", audit_body)
+        self.assertIn("datasetState?.agent_decisions", audit_body)
+        self.assertIn("graph.agent_decisions", audit_body)
+        self.assertIn("validation_agent: 'Validation'", audit_body)
+        self.assertIn("diagnosis_repair_agent: 'Diagnosis / repair'", audit_body)
+        self.assertIn("readableDecisionName(decision.decision)", audit_body)
+        self.assertIn("readableRiskFlag", audit_body)
+        self.assertIn("Reference compare limited scope", audit_body)
+        self.assertNotIn("JSON.stringify", audit_body)
 
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())

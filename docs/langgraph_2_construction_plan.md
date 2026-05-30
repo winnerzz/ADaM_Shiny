@@ -1783,6 +1783,36 @@ python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphG
 python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.7 Agent Audit Viewer Slice
+
+Completed:
+
+- Added an `Agent Audit` panel to the local UI study dashboard.
+- The panel reads from canonical `/graph-state` data already loaded in the
+  browser:
+  - active dataset `agent_decisions`
+  - fallback study-level `agent_decisions`
+  - graph and active-dataset `risk_flags`
+- Agent records are shown as short human-readable cards instead of raw JSON.
+- The panel includes the LG2.4 roles added so far, including `validation_agent`
+  and `diagnosis_repair_agent`.
+
+Current boundary:
+
+- This is a read-only graph-state viewer. It does not create or mutate graph
+  state.
+- It does not add a new audit source. Canonical truth remains
+  `graph_state.json`; the UI only renders the existing projection payload.
+- It does not claim that agent decisions prove clinical correctness. Risk flags
+  remain visibility signals for human review.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -m unittest tests.test_api_phase8 -v
+```
+
 ### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit Slice
 
 Completed:

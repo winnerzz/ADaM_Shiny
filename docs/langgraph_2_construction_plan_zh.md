@@ -1590,6 +1590,33 @@ python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphG
 python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.7 Agent Audit Viewer 切片
+
+已完成：
+
+- 在本地 UI 的 study dashboard 中增加 `Agent Audit` panel。
+- 该 panel 读取浏览器里已经加载的 canonical `/graph-state` 数据：
+  - active dataset 的 `agent_decisions`
+  - fallback study-level 的 `agent_decisions`
+  - graph 和 active-dataset 的 `risk_flags`
+- Agent record 以简短、可读的卡片显示，不把原始 JSON 直接丢给用户。
+- 面板包含目前 LG2.4 已加入的角色，包括 `validation_agent` 和
+  `diagnosis_repair_agent`。
+
+当前边界：
+
+- 这是只读 graph-state viewer，不创建也不修改 graph state。
+- 不新增 audit source。canonical truth 仍然是 `graph_state.json`；UI 只渲染已有
+  projection payload。
+- 不声称 agent decisions 证明临床正确性。risk flags 只是给人工 review 的可见性信号。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -m unittest tests.test_api_phase8 -v
+```
+
 ### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit 切片
 
 已完成：
