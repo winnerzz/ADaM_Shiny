@@ -321,11 +321,67 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(upload.status_code, 200, upload.text)
-        self.assertIn("run_stale", upload.json()["touched_runs"])
+        upload_payload = upload.json()
+        self.assertIn("run_stale", upload_payload["touched_runs"])
+        self.assertIn("run_stale", upload_payload["touched_graph_runs"])
+        graph_state = json.loads((study_dir / "runs" / "run_stale" / "graph_state.json").read_text(encoding="utf-8"))
         state = json.loads((study_dir / "runs" / "run_stale" / "workflow_state.json").read_text(encoding="utf-8"))
-        self.assertTrue(state["plan_stale"])
-        self.assertTrue(state["input_diff"]["changed"])
-        self.assertIn("ADAE", state["stale_datasets"])
+        self.assertTrue(graph_state["dependency_plan"]["plan_stale"])
+        self.assertTrue(graph_state["dependency_plan"]["input_diff"]["changed"])
+        self.assertEqual(graph_state["dependency_review_status"], "stale")
+        self.assertEqual(graph_state["current_interrupt"]["name"], "dependency_review")
+        self.assertEqual(state["projection_source"], "langgraph")
+        self.assertTrue(state["dependency_plan"]["plan_stale"])
+        self.assertTrue(state["dependency_plan"]["input_diff"]["changed"])
+        _assert_run_projection(self, study_dir, "run_stale")
+
+    def test_upload_marks_existing_graph_product_state_stale_and_blocks_generation(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_upload_stales_graph_product")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_upload_graph_stale/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+
+        upload = client.post(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "sdtm"},
+            files=[("files", ("ae.csv", b"USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", "text/csv"))],
+        )
+
+        self.assertEqual(upload.status_code, 200, upload.text)
+        upload_payload = upload.json()
+        self.assertIn("run_upload_graph_stale", upload_payload["touched_runs"])
+        self.assertIn("run_upload_graph_stale", upload_payload["touched_graph_runs"])
+        graph_state = client.get(
+            "/runs/run_upload_graph_stale/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(graph_state["dependency_review_status"], "stale")
+        self.assertTrue(graph_state["dependency_plan"]["plan_stale"])
+        self.assertEqual(graph_state["current_interrupt"]["name"], "dependency_review")
+        self.assertEqual(adae_state["status"], "needs_review")
+        self.assertEqual(adae_state["current_interrupt"]["name"], "code_review")
+        self.assertEqual(adae_state["code_state"]["status"], "stale")
+        self.assertIn("input_sdtm/ae.csv", adae_state["code_state"]["input_diff"]["changed_files"])
+        _assert_run_projection(self, study_dir, "run_upload_graph_stale")
+
+        blocked = client.post(
+            "/runs/run_upload_graph_stale/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("dependency plan is stale", blocked.json()["detail"])
 
     def test_demo_study_endpoint_prepares_shiny_demo_shape(self) -> None:
         source = _demo_source("phase8_api_demo_source")

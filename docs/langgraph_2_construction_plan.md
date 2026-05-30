@@ -1687,6 +1687,74 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation Slice
+
+Completed:
+
+- Routed study input uploads into graph-owned stale marking instead of leaving
+  invalidation only in the UI `workflow_state.json` read model.
+- Added `GraphGateway.mark_inputs_changed()`:
+  - reloads canonical `graph_state.json`
+  - recomputes the study input fingerprint
+  - records `dependency_plan.plan_stale`, `dependency_plan.input_diff`, and a
+    stale reason
+  - opens a study-level `dependency_review` interrupt when inputs changed
+  - marks datasets with product progress as `needs_review`
+  - marks generated code state as `stale` when code exists
+  - marks spec state as `stale` when only spec/draft-spec progress exists
+  - writes a fresh `workflow_state.json` projection from graph state
+- The `/studies/files` response now includes `touched_graph_runs` so callers can
+  see which active graph runs were invalidated, separately from legacy workflow
+  read-model touches.
+- Product steps now fail closed when the dependency plan is stale. A caller must
+  re-run dependency planning before finalize inputs, draft spec, or code
+  generation can continue.
+
+Static-rule boundary reaffirmed:
+
+- This slice does not add any clinical/static ADaM rule.
+- Static checks remain generic contract/rule-pack checks.
+- Future blocking rules must verify a declared contract and identify their
+  authority source: system contract, approved spec, user policy, or a
+  source-backed versioned rule pack with source, scope, severity, and evidence.
+- Demo failures or PSY201 observations may become tests for a generic contract
+  or candidates for a governed rule-pack item; they must not be embedded as
+  dataset/study/file-specific branches in the generic static-rule engine.
+
+Current boundary:
+
+- `workflow_state.json` remains a projection, not the source of truth.
+- Legacy runs without `graph_state.json` are skipped by upload-time graph
+  invalidation and remain covered only by legacy read-model invalidation.
+- The user-facing UI still clears browser-side cached plan/code/review data on
+  upload. The backend graph-state invalidation is the authoritative guard.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_inputs_changed_updates_canonical_state_and_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_inputs_changed_raises_for_legacy_run_without_graph_state tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_workflow_state_stale tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+```
+
+Result: 4 focused tests passed.
+
+Related verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result: 111 gateway/API tests passed.
+
+Subagent review:
+
+- Read-only subagent review returned GO.
+- No blocking schema, backcompat, stale-gate, or static-rule-boundary issue was
+  found.
+- Follow-up noted for a later slice: upload invalidation still discovers active
+  runs from the legacy workflow read model before updating canonical graph
+  state. A later hardening slice should scan `runs/*/graph_state.json`
+  directly and treat `workflow_state.json` only as projection.
+
 ### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary Slice
 
 Completed:

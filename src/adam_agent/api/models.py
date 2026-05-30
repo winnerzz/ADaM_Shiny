@@ -41,6 +41,7 @@ class FileUploadResponse(StrictBaseModel):
     input_fingerprint: dict[str, Any] = Field(default_factory=dict)
     input_diff: dict[str, Any] = Field(default_factory=dict)
     touched_runs: list[str] = Field(default_factory=list)
+    touched_graph_runs: list[str] = Field(default_factory=list)
 
 
 class RunPlanRequest(StrictBaseModel):

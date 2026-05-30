@@ -1498,6 +1498,72 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
+
+已完成：
+
+- 将 study input 上传后的失效处理接入 graph-owned stale marking，而不是只更新
+  UI 侧 `workflow_state.json` read model。
+- 新增 `GraphGateway.mark_inputs_changed()`：
+  - 读取 canonical `graph_state.json`
+  - 重新计算 study input fingerprint
+  - 写入 `dependency_plan.plan_stale`、`dependency_plan.input_diff` 和
+    stale reason
+  - 输入变化后打开 study-level `dependency_review` interrupt
+  - 将已有产品进度的 dataset 标记为 `needs_review`
+  - 如果已有 generated code，则将 code state 标记为 `stale`
+  - 如果只有 spec/draft-spec 进度，则将 spec state 标记为 `stale`
+  - 从 graph state 重新投影 `workflow_state.json`
+- `/studies/files` response 新增 `touched_graph_runs`，让调用方能区分哪些
+  active graph run 被 canonical graph invalidation 触达，哪些只是 legacy
+  workflow read-model touch。
+- Product step 现在遇到 stale dependency plan 会 fail closed。用户必须重新运行
+  dependency planning，之后才能继续 finalize inputs、draft spec 或 code
+  generation。
+
+静态规则边界重申：
+
+- 本切片不新增任何 clinical/static ADaM rule。
+- 静态检查仍然只做 generic contract/rule-pack checks。
+- 未来 blocking rule 必须验证某个已经声明的 contract，并说明权威来源：
+  system contract、approved spec、user policy，或带 source、scope、severity、
+  evidence 的 source-backed versioned rule pack。
+- demo failure 或 PSY201 观察只能成为 generic contract 的测试，或进入受治理的
+  rule-pack item 候选；不能作为 dataset/study/file-specific 分支写入 generic
+  static-rule engine。
+
+当前边界：
+
+- `workflow_state.json` 仍是 projection，不是 source of truth。
+- 没有 `graph_state.json` 的 legacy run 在上传时会跳过 graph invalidation，
+  仍只受 legacy read-model invalidation 保护。
+- UI 仍会在上传后清空浏览器端缓存的 plan/code/review 数据；真正的后端保护是
+  canonical graph-state invalidation。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_inputs_changed_updates_canonical_state_and_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_inputs_changed_raises_for_legacy_run_without_graph_state tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_workflow_state_stale tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+```
+
+结果：4 focused tests passed。
+
+相关验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+结果：111 gateway/API tests passed。
+
+子 agent 审查：
+
+- 只读子 agent 审查返回 GO。
+- 未发现阻断性的 schema、backcompat、stale gate 或 static-rule boundary 问题。
+- 后续切片提醒：上传失效目前仍先从 legacy workflow read model 发现 active
+  runs，再更新 canonical graph state。后续 hardening 应直接扫描
+  `runs/*/graph_state.json`，并把 `workflow_state.json` 只当 projection。
+
 ### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary 切片
 
 已完成：

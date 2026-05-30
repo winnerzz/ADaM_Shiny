@@ -119,6 +119,7 @@ class GraphGatewayDependencyGateResult:
     runnable_datasets: list[str]
     blocked_datasets: list[dict[str, str]]
     dependency_review_status: str
+    dependency_plan: dict[str, Any]
     dependency_decisions: list[dict[str, Any]]
     dependency_resolution: list[dict[str, Any]]
     dependency_warnings: list[str]
@@ -1783,6 +1784,43 @@ class GraphGateway:
             return
         _assert_terminal_failure_step_allowed(dataset_state, step=step)
 
+    def mark_inputs_changed(self, *, study_dir: str | Path, run_id: str) -> GraphGatewayResult:
+        """Mark canonical graph state stale after uploaded study evidence changes."""
+
+        root = Path(study_dir).expanduser()
+        try:
+            next_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
+        except FileNotFoundError as exc:
+            raise ValueError(f"Graph state does not exist for run: {run_id}") from exc
+        new_fingerprint = input_fingerprint(root)
+        diff = compare_fingerprints(next_state.input_fingerprint, new_fingerprint)
+        next_state.input_fingerprint = new_fingerprint
+        next_state.dependency_plan["plan_stale"] = diff["changed"]
+        next_state.dependency_plan["input_diff"] = diff
+        next_state.dependency_plan["stale_reason"] = (
+            "Study input files changed after prior planning or review." if diff["changed"] else ""
+        )
+        if diff["changed"]:
+            for dataset, dataset_state in sorted(next_state.datasets.items()):
+                if not _has_dataset_product_progress(dataset_state):
+                    dataset_state.input_fingerprint = new_fingerprint
+                    continue
+                _mark_dataset_stale_for_input_change(dataset_state, diff=diff, fingerprint=new_fingerprint)
+            next_state.dependency_review_status = "stale"
+            next_state.current_interrupt = InterruptState(
+                name="dependency_review",
+                reason="Study inputs changed after dependency planning or dataset review. Re-run dependency planning before continuing.",
+                payload={"input_diff": diff},
+            )
+            next_state.status = "needs_review"
+            _append_risk_flags(next_state, ["inputs_changed_after_planning"])
+        else:
+            _roll_up_study_state(next_state)
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="input_upload_rescan")
+        projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_input_upload_rescan")
+        return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
     def _generated_code_state(self, study_dir: Path, *, run_id: str, dataset: str) -> dict[str, Any]:
         try:
             graph_state = self.load_graph_state(study_dir=study_dir, run_id=run_id)
@@ -1971,21 +2009,7 @@ class GraphGateway:
                 preserved.dependency_resolution = list(planned_dataset_state.dependency_resolution)
             diff = compare_fingerprints(preserved.input_fingerprint, merged.input_fingerprint)
             if diff["changed"]:
-                preserved.input_fingerprint = merged.input_fingerprint
-                preserved.status = "needs_review"
-                preserved.current_interrupt = InterruptState(
-                    name="code_review",
-                    dataset=dataset,
-                    reason="Study inputs changed after this dataset product state was created; regenerate code before execution.",
-                    payload={"input_diff": diff},
-                )
-                preserved.code_state.update(
-                    {
-                        "status": "stale",
-                        "stale_reason": "Study inputs changed after code generation or review.",
-                        "input_diff": diff,
-                    }
-                )
+                _mark_dataset_stale_for_input_change(preserved, diff=diff, fingerprint=merged.input_fingerprint)
             merged.datasets[dataset] = preserved
             if dataset not in merged.target_datasets:
                 merged.target_datasets.append(dataset)
@@ -2093,6 +2117,7 @@ def _dependency_gate_result(study_dir: Path, graph_state: StudyRunState) -> Grap
         runnable_datasets=list(graph_state.runnable_datasets),
         blocked_datasets=blocked,
         dependency_review_status=graph_state.dependency_review_status or "accepted",
+        dependency_plan=dict(plan_payload),
         dependency_decisions=list(graph_state.dependency_decisions),
         dependency_resolution=list(graph_state.dependency_resolution),
         dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
@@ -2102,6 +2127,17 @@ def _dependency_gate_result(study_dir: Path, graph_state: StudyRunState) -> Grap
 
 def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target: str) -> None:
     dataset = target.strip().upper()
+    plan_payload = getattr(gate, "dependency_plan", None)
+    if isinstance(plan_payload, dict) and plan_payload.get("plan_stale"):
+        raise ValueError(
+            f"{dataset} dependency plan is stale because study inputs changed. "
+            "Re-run dependency planning before finalizing inputs or generating code."
+        )
+    if gate.dependency_review_status == "stale":
+        raise ValueError(
+            f"{dataset} dependency plan is stale because study inputs changed. "
+            "Re-run dependency planning before finalizing inputs or generating code."
+        )
     blocked = [
         block
         for block in gate.blocked_datasets
@@ -2212,6 +2248,42 @@ def _has_dataset_product_progress(dataset_state: DatasetRunState | None) -> bool
     if dataset_state.spec_state:
         return True
     return dataset_state.status not in {"pending", "planned"}
+
+
+def _mark_dataset_stale_for_input_change(
+    dataset_state: DatasetRunState,
+    *,
+    diff: dict[str, Any],
+    fingerprint: dict[str, Any],
+) -> None:
+    dataset_state.input_fingerprint = fingerprint
+    dataset_state.status = "needs_review"
+    interrupt_name = "code_review" if dataset_state.code_state else "draft_spec_review"
+    interrupt_reason = (
+        "Study inputs changed after this dataset code state was created; regenerate code before execution."
+        if dataset_state.code_state
+        else "Study inputs changed after this dataset spec state was created; review or regenerate the spec before code generation."
+    )
+    dataset_state.current_interrupt = InterruptState(
+        name=interrupt_name,
+        dataset=dataset_state.dataset,
+        reason=interrupt_reason,
+        payload={"input_diff": diff},
+    )
+    stale_payload = {
+        "status": "stale",
+        "stale_reason": "Study inputs changed after code generation or review.",
+        "input_diff": diff,
+    }
+    if dataset_state.code_state:
+        dataset_state.code_state.update(stale_payload)
+    if dataset_state.spec_state:
+        dataset_state.spec_state["input_diff"] = diff
+        if str(dataset_state.spec_state.get("status") or "").strip() in {"approved", "input_spec_ready", "draft_generated"}:
+            dataset_state.spec_state["status"] = "stale"
+            dataset_state.spec_state["stale_reason"] = "Study inputs changed after spec review or input confirmation."
+    _append_risk_flags(dataset_state, ["inputs_changed_after_dataset_progress"])
+    dataset_state.updated_at = utc_now()
 
 
 def _next_open_dataset_interrupt(

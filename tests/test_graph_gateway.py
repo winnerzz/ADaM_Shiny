@@ -760,6 +760,64 @@ class GraphGatewayTests(unittest.TestCase):
                     llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 )
 
+    def test_gateway_mark_inputs_changed_updates_canonical_state_and_projection(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_inputs_changed") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_mark_inputs_changed",
+            target_datasets=["ADAE"],
+        )
+        gateway.record_input_spec_ready(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_mark_inputs_changed",
+            dataset="ADAE",
+            input_spec_path=spec_dir / "adae.json",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        result = gateway.mark_inputs_changed(study_dir=study_dir, run_id="run_lg2_mark_inputs_changed")
+
+        graph_state = result.graph_state
+        dataset_state = graph_state.datasets["ADAE"]
+        workflow_state = json.loads((study_dir / "runs" / "run_lg2_mark_inputs_changed" / "workflow_state.json").read_text(encoding="utf-8"))
+        consistency = workflow_projection_consistency(workflow_state, graph_state)
+        self.assertTrue(graph_state.dependency_plan["plan_stale"])
+        self.assertIn("input_sdtm/ae.csv", graph_state.dependency_plan["input_diff"]["changed_files"])
+        self.assertEqual(graph_state.dependency_review_status, "stale")
+        self.assertEqual(graph_state.current_interrupt.name, "dependency_review")
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.spec_state["status"], "stale")
+        self.assertTrue(consistency["consistent"], consistency["mismatches"])
+
+        with self.assertRaisesRegex(ValueError, "dependency plan is stale"):
+            gateway.dependency_gate_for_product_step(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_mark_inputs_changed",
+                dataset="ADAE",
+            )
+
+    def test_gateway_mark_inputs_changed_raises_for_legacy_run_without_graph_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_inputs_changed_legacy") / "PSY201"
+        study_dir.mkdir(parents=True)
+
+        with self.assertRaisesRegex(ValueError, "Graph state does not exist"):
+            GraphGateway().mark_inputs_changed(study_dir=study_dir, run_id="run_no_graph_state")
+
     def test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_dependency_gate") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
