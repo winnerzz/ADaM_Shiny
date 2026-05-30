@@ -1066,11 +1066,15 @@ class GraphGatewayTests(unittest.TestCase):
         output_dir = run_dir / "outputs"
         code_dir = run_dir / "code"
         spec_dir = study_dir / "input_spec"
+        reference_dir = study_dir / "reference_adam"
         output_dir.mkdir(parents=True)
         code_dir.mkdir()
         spec_dir.mkdir(parents=True)
+        reference_dir.mkdir()
         adsl_path = output_dir / "adsl.csv"
+        reference_adsl_path = reference_dir / "adsl.csv"
         adsl_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        reference_adsl_path.write_text("USUBJID,TRTSDT\n99,2099-01-01\n", encoding="utf-8")
         (spec_dir / "adae.json").write_text(
             json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
             encoding="utf-8",
@@ -1143,6 +1147,7 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(resolution[0]["resolution_status"], "available")
         self.assertEqual(resolution[0]["artifact_source"], "run_output")
         self.assertEqual(resolution[0]["artifact_path"], str(adsl_path.as_posix()))
+        self.assertNotEqual(resolution[0]["artifact_path"], str(reference_adsl_path.as_posix()))
 
         dependency_artifacts = result.graph_state.datasets["ADAE"].code_state["dependency_artifacts"]
         self.assertEqual(

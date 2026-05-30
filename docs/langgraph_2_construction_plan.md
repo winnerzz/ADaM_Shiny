@@ -1898,17 +1898,18 @@ Result: 6 gateway tests passed; 5 API tests passed; compileall passed.
 
 Completed:
 
-- Added regression coverage proving that `GraphGateway.generate_code()` uses
-  the dependency resolution from the gateway-owned canonical dependency plan,
-  not a caller-supplied dependency list.
-- The test seeds a graph-backed completed `ADSL` run output, replans `ADAE`,
-  then verifies:
+- Added regression coverage for the boundary that
+  `GraphGateway.generate_code()` uses the dependency resolution from the
+  gateway-owned canonical dependency plan, not a caller-supplied dependency
+  list.
+- The test seeds both a graph-backed completed `ADSL` run output and a decoy
+  `reference_adam/adsl.csv`, replans `ADAE`, then verifies:
   - the `DatasetGraph` invocation receives the `ADAE -> ADSL` dependency
     resolution from the current graph plan
   - generated-code state records the same graph-backed runtime dependency
     artifact
-  - the recorded runtime dependency artifact points to `run_output`, not
-    reference ADaM
+  - the recorded runtime dependency artifact points to `run_output`, not the
+    decoy reference ADaM
 - No runtime logic was changed; the existing implementation already satisfied
   this boundary.
 

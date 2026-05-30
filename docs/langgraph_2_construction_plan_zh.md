@@ -1704,15 +1704,15 @@ python -m compileall -q src\adam_agent
 
 已完成：
 
-- 增加回归测试，证明 `GraphGateway.generate_code()` 使用的是 gateway-owned
+- 增加回归测试，覆盖 `GraphGateway.generate_code()` 必须使用 gateway-owned
   canonical dependency plan 中的 dependency resolution，而不是调用方传入的
-  dependency list。
-- 该测试先 seed 一个 graph-backed 且 completed 的 `ADSL` run output，再重新
-  plan `ADAE`，随后验证：
+  dependency list 这一边界。
+- 该测试先同时 seed 一个 graph-backed 且 completed 的 `ADSL` run output 和一个
+  decoy `reference_adam/adsl.csv`，再重新 plan `ADAE`，随后验证：
   - `DatasetGraph` invocation 收到当前 graph plan 里的 `ADAE -> ADSL`
     dependency resolution；
   - generated-code state 记录同一个 graph-backed runtime dependency artifact；
-  - runtime dependency artifact 指向 `run_output`，不是 reference ADaM。
+  - runtime dependency artifact 指向 `run_output`，不是 decoy reference ADaM。
 - 未修改 runtime logic；现有实现已经满足这个边界，本切片只是补防回归测试。
 
 当前边界：
