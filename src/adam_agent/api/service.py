@@ -678,109 +678,27 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
     decision = request.decision.strip().lower()
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Draft spec review decision must be approve or reject.")
-    run_dir = study_dir / "runs" / run_id
-    draft_path = run_dir / "specs" / f"{target.lower()}_draft_spec.json"
-    if not draft_path.exists() or not draft_path.is_file():
-        raise ApiServiceError(f"Draft spec does not exist for review: {draft_path}")
-    current_fingerprint = input_fingerprint(study_dir)
-    draft_payload = _read_json_if_exists(draft_path)
-    draft_fingerprint = draft_payload.get("input_fingerprint")
-    if not draft_fingerprint or not draft_fingerprint.get("digest"):
-        raise ApiServiceError(
-            "Draft spec cannot be approved because it has no input fingerprint. "
-            "Regenerate the draft spec before approval."
-        )
-    if draft_fingerprint.get("digest") != current_fingerprint.get("digest"):
-        raise ApiServiceError(
-            "Draft spec is stale because study inputs changed after it was generated. "
-            "Regenerate and review the draft spec before approval."
-        )
     gateway = GraphGateway()
     try:
-        gateway.validate_draft_spec_review(
-            study_dir=study_dir,
-            run_id=run_id,
-            dataset=target,
-            draft_spec_path=draft_path,
-            input_fingerprint_payload=current_fingerprint,
-        )
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    review_dir = run_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    approved_path: Path | None = None
-    approved_spec_sha: str | None = None
-    if decision == "approve":
-        approved_dir = run_dir / "approved_specs"
-        approved_dir.mkdir(parents=True, exist_ok=True)
-        approved_path = approved_dir / f"{target.lower()}_approved_spec.json"
-        approved_payload = draft_payload or _read_json_if_exists(draft_path)
-        approved_payload["status"] = "approved_draft"
-        approved_payload["approved_from_draft_path"] = str(draft_path.as_posix())
-        approved_payload["approved_by"] = request.reviewer
-        approved_payload["approved_at"] = datetime.now().isoformat(timespec="seconds")
-        approved_payload["approval_notes"] = request.notes
-        approved_payload["input_fingerprint"] = current_fingerprint
-        approved_payload["reference_adam_policy"] = "Reference ADaM is compare/output-shape evidence only, not derivation authority."
-        _write_json(approved_path, approved_payload)
-        approved_spec_sha = f"sha256:{sha256_file(approved_path)}"
-    review_path = review_dir / f"{target.lower()}_draft_spec_review.json"
-    review_payload = {
-        "study_id": request.study_id if hasattr(request, "study_id") else study_dir.name,
-        "run_id": run_id,
-        "dataset": target,
-        "decision": decision,
-        "approved": decision == "approve",
-        "reviewer": request.reviewer,
-        "notes": request.notes,
-        "draft_spec_path": str(draft_path.as_posix()),
-        "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
-        "approved_spec_sha256": approved_spec_sha,
-        "input_fingerprint": current_fingerprint,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    _write_json(review_path, review_payload)
-    command = HumanCommand(
-        interrupt="draft_spec_review",
-        action="approve" if decision == "approve" else "reject",
-        dataset=target,
-        reviewer=request.reviewer,
-        notes=request.notes,
-        payload={
-            "review_path": str(review_path.as_posix()),
-            "draft_spec_path": str(draft_path.as_posix()),
-            "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
-            "approved_spec_sha256": approved_spec_sha,
-        },
-    )
-    try:
-        gateway.record_draft_spec_review(
+        result = gateway.review_draft_spec(
             study_dir=study_dir,
             study_id=study_dir.name,
             run_id=run_id,
             dataset=target,
-            command=command,
-            review_path=review_path,
-            draft_spec_path=draft_path,
-            approved_spec_path=approved_path,
-            approved_spec_sha256=approved_spec_sha,
-            input_fingerprint_payload=current_fingerprint,
+            decision=decision,
+            reviewer=request.reviewer,
+            notes=request.notes,
         )
-    except Exception as exc:
-        review_path.unlink(missing_ok=True)
-        if approved_path:
-            approved_path.unlink(missing_ok=True)
-        if isinstance(exc, ValueError):
-            raise ApiServiceError(str(exc)) from exc
-        raise
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     return DraftSpecReviewResponse(
         study_id=study_dir.name,
         run_id=run_id,
         dataset=target,
-        decision=decision,
-        review_path=str(review_path.as_posix()),
-        approved=decision == "approve",
-        approved_spec_path=str(approved_path.as_posix()) if approved_path else None,
+        decision=result.decision,
+        review_path=result.review_path,
+        approved=result.approved,
+        approved_spec_path=result.approved_spec_path,
         **_graph_compatibility_metadata(study_dir, run_id),
     )
 

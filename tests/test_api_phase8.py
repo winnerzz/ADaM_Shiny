@@ -866,9 +866,17 @@ class Phase8ApiTests(unittest.TestCase):
         run_dir = study_dir / "runs" / "run_no_fingerprint"
         spec_dir = run_dir / "specs"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "adae_draft_spec.json").write_text(
-            json.dumps({"dataset": "ADAE", "variables": []}),
-            encoding="utf-8",
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_no_fingerprint",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=input_fingerprint(study_dir),
         )
         client = TestClient(create_app())
 
@@ -2042,6 +2050,40 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(graph_state.status_code, 200, graph_state.text)
         self.assertEqual(graph_state.json()["datasets"]["ADAE"]["code_state"]["status"], "generated")
+
+    def test_draft_spec_review_cleans_artifacts_when_graph_recording_fails(self) -> None:
+        study_dir = _workspace_dir("phase8_draft_review_cleanup_on_graph_failure") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        finalized = client.post(
+            "/runs/run_draft_review_cleanup/datasets/ADAE/finalize-inputs",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        review_path = study_dir / "runs" / "run_draft_review_cleanup" / "reviews" / "adae_draft_spec_review.json"
+        approved_path = study_dir / "runs" / "run_draft_review_cleanup" / "approved_specs" / "adae_approved_spec.json"
+
+        with patch("adam_agent.api.service.GraphGateway.record_draft_spec_review", side_effect=ValueError("forced graph failure")):
+            review = client.post(
+                "/runs/run_draft_review_cleanup/datasets/ADAE/draft-spec-review",
+                json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+            )
+
+        self.assertEqual(review.status_code, 400, review.text)
+        self.assertIn("forced graph failure", review.json()["detail"])
+        self.assertFalse(review_path.exists())
+        self.assertFalse(approved_path.exists())
+        graph_state = client.get(
+            "/runs/run_draft_review_cleanup/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        self.assertEqual(graph_state.json()["datasets"]["ADAE"]["spec_state"]["status"], "draft_generated")
 
     def test_review_summary_recovers_multiple_outputs_from_same_run(self) -> None:
         study_dir = _workspace_dir("phase8_multi_output_review") / "MY_STUDY"

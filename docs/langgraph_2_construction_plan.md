@@ -1729,6 +1729,45 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_
 
 Result: 3 focused gateway tests passed; 4 focused API tests passed.
 
+### 2026-05-30 - LG2.2 Gateway-Owned Draft-Spec Review Artifact Slice
+
+Completed:
+
+- Added `GraphGateway.review_draft_spec()` as the graph-owned entry point for
+  the draft-spec review compatibility endpoint.
+- The gateway now owns the draft-spec review transition:
+  - verify the draft spec is recorded in canonical graph state
+  - verify the draft-spec hash and current input fingerprint before trust
+  - write `runs/{run_id}/reviews/{dataset}_draft_spec_review.json`
+  - write `runs/{run_id}/approved_specs/{dataset}_approved_spec.json` when the
+    human decision approves the draft
+  - persist the review decision into `graph_state.json`
+  - refresh the UI `workflow_state.json` projection
+- Reduced `api/service.py::persist_draft_spec_review()` to request validation,
+  delegation to `GraphGateway.review_draft_spec()`, and compatibility response
+  construction.
+- Added gateway and API tests for the direct review-draft-spec entry point and
+  for cleanup when graph-state recording fails after review artifacts are
+  written.
+
+Current boundary:
+
+- Public route paths and response shapes are unchanged.
+- This moves draft-spec review artifact/state ownership into the gateway; it
+  does not create a new LangGraph interrupt-resume API yet.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_draft_spec_writes_artifacts_and_records_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_draft_spec_cleans_artifacts_when_recording_fails tests.test_api_phase8.Phase8ApiTests.test_draft_spec_review_cleans_artifacts_when_graph_recording_fails -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_draft_spec_review_in_canonical_state tests.test_api_phase8.Phase8ApiTests.test_missing_input_spec_requires_draft_spec_approval_before_code_generation tests.test_api_phase8.Phase8ApiTests.test_approved_draft_spec_is_invalidated_when_inputs_change tests.test_api_phase8.Phase8ApiTests.test_approved_draft_spec_is_invalidated_when_approved_file_changes -v
+```
+
+Result: 3 focused ownership/cleanup tests passed; 4 existing draft-spec review
+regression tests passed.
+
 ### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice
 
 Completed:

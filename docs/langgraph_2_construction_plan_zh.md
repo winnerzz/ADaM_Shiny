@@ -1539,6 +1539,43 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_
 
 结果：3 focused gateway tests passed；4 focused API tests passed。
 
+### 2026-05-30 - LG2.2 Gateway-Owned Draft-Spec Review Artifact 切片
+
+已完成：
+
+- 新增 `GraphGateway.review_draft_spec()`，作为 draft-spec review
+  compatibility endpoint 的 graph-owned 入口。
+- Gateway 现在拥有 draft-spec review transition：
+  - 验证 draft spec 已记录在 canonical graph state 中
+  - 在信任 draft spec 前验证 draft-spec hash 和当前 input fingerprint
+  - 写入 `runs/{run_id}/reviews/{dataset}_draft_spec_review.json`
+  - 当人工决定 approve 时，写入
+    `runs/{run_id}/approved_specs/{dataset}_approved_spec.json`
+  - 将 review decision 持久化进 `graph_state.json`
+  - 刷新 UI 使用的 `workflow_state.json` projection
+- 将 `api/service.py::persist_draft_spec_review()` 收缩为 request validation、
+  委托 `GraphGateway.review_draft_spec()` 和 compatibility response construction。
+- 新增 gateway 和 API 测试，覆盖直接 review-draft-spec 入口，以及 review
+  artifacts 写出后 graph-state recording 失败时的清理行为。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- 本切片把 draft-spec review artifact/state ownership 移入 Gateway，但还没有
+  新增真正的 LangGraph interrupt-resume API。
+- 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_draft_spec_writes_artifacts_and_records_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_draft_spec_cleans_artifacts_when_recording_fails tests.test_api_phase8.Phase8ApiTests.test_draft_spec_review_cleans_artifacts_when_graph_recording_fails -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_draft_spec_review_in_canonical_state tests.test_api_phase8.Phase8ApiTests.test_missing_input_spec_requires_draft_spec_approval_before_code_generation tests.test_api_phase8.Phase8ApiTests.test_approved_draft_spec_is_invalidated_when_inputs_change tests.test_api_phase8.Phase8ApiTests.test_approved_draft_spec_is_invalidated_when_approved_file_changes -v
+```
+
+结果：3 focused ownership/cleanup tests passed；4 existing draft-spec review
+regression tests passed。
+
 ### 2026-05-30 - LG2.2 显式 Draft-Spec Gateway 切片
 
 已完成：

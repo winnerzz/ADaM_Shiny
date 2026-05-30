@@ -76,6 +76,16 @@ class GraphGatewayCodeReviewResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayDraftSpecReviewResult(GraphGatewayResult):
+    """Graph-owned draft-spec review result plus API-facing fields."""
+
+    decision: str
+    review_path: str
+    approved: bool
+    approved_spec_path: str | None
+
+
+@dataclass(frozen=True)
 class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
     """Graph-owned finalize-inputs result plus response-neutral fields."""
 
@@ -883,6 +893,122 @@ class GraphGateway:
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_draft_spec_review")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
+    def review_draft_spec(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayDraftSpecReviewResult:
+        """Write draft-spec review artifacts and persist the graph-owned decision."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Draft spec review decision must be approve or reject.")
+        run_dir = root / "runs" / run_id
+        draft_path = run_dir / "specs" / f"{target.lower()}_draft_spec.json"
+        if not draft_path.exists() or not draft_path.is_file():
+            raise ValueError(f"Draft spec does not exist for review: {draft_path}")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        self.validate_draft_spec_review(
+            study_dir=root,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        draft_payload = _read_json_if_exists(draft_path)
+        approved_path: Path | None = None
+        approved_spec_sha: str | None = None
+        review_path = run_dir / "reviews" / f"{target.lower()}_draft_spec_review.json"
+        try:
+            if normalized_decision == "approve":
+                approved_path = run_dir / "approved_specs" / f"{target.lower()}_approved_spec.json"
+                approved_payload = dict(draft_payload)
+                approved_payload["status"] = "approved_draft"
+                approved_payload["approved_from_draft_path"] = str(draft_path.as_posix())
+                approved_payload["approved_by"] = reviewer
+                approved_payload["approved_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+                approved_payload["approval_notes"] = notes
+                approved_payload["input_fingerprint"] = fingerprint
+                approved_payload["reference_adam_policy"] = (
+                    "Reference ADaM is compare/output-shape evidence only, not derivation authority."
+                )
+                _write_json(approved_path, approved_payload)
+                approved_spec_sha = f"sha256:{sha256_file(approved_path)}"
+            review_payload = {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "decision": normalized_decision,
+                "approved": normalized_decision == "approve",
+                "reviewer": reviewer,
+                "notes": notes,
+                "draft_spec_path": str(draft_path.as_posix()),
+                "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
+                "approved_spec_sha256": approved_spec_sha,
+                "input_fingerprint": fingerprint,
+                "created_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            }
+            _write_json(review_path, review_payload)
+        except Exception:
+            review_path.unlink(missing_ok=True)
+            if approved_path:
+                approved_path.unlink(missing_ok=True)
+            raise
+        command = HumanCommand(
+            interrupt="draft_spec_review",
+            action="approve" if normalized_decision == "approve" else "reject",
+            dataset=target,
+            reviewer=reviewer,
+            notes=notes,
+            payload={
+                "review_path": str(review_path.as_posix()),
+                "draft_spec_path": str(draft_path.as_posix()),
+                "approved_spec_path": str(approved_path.as_posix()) if approved_path else None,
+                "approved_spec_sha256": approved_spec_sha,
+            },
+        )
+        try:
+            result = self.record_draft_spec_review(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                command=command,
+                review_path=review_path,
+                draft_spec_path=draft_path,
+                approved_spec_path=approved_path,
+                approved_spec_sha256=approved_spec_sha,
+                input_fingerprint_payload=fingerprint,
+            )
+        except Exception:
+            if not self._graph_draft_spec_review_matches_review_path(
+                root,
+                run_id=run_id,
+                dataset=target,
+                review_path=review_path,
+            ):
+                review_path.unlink(missing_ok=True)
+                if approved_path:
+                    approved_path.unlink(missing_ok=True)
+            raise
+        return GraphGatewayDraftSpecReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=result.workflow_projection,
+            decision=normalized_decision,
+            review_path=str(review_path.as_posix()),
+            approved=normalized_decision == "approve",
+            approved_spec_path=str(approved_path.as_posix()) if approved_path else None,
+        )
+
     def validate_draft_spec_review(
         self,
         *,
@@ -1600,6 +1726,27 @@ class GraphGateway:
         return (
             code_state.get("status") in {"approved", "rejected"}
             and str(Path(str(code_state.get("review_path") or "")).as_posix()) == str(review_path.as_posix())
+        )
+
+    def _graph_draft_spec_review_matches_review_path(
+        self,
+        study_dir: Path,
+        *,
+        run_id: str,
+        dataset: str,
+        review_path: Path,
+    ) -> bool:
+        try:
+            graph_state = self.load_graph_state(study_dir=study_dir, run_id=run_id)
+        except FileNotFoundError:
+            return False
+        dataset_state = graph_state.datasets.get(dataset.strip().upper())
+        if dataset_state is None:
+            return False
+        spec_state = dataset_state.spec_state
+        return (
+            spec_state.get("status") in {"approved", "rejected"}
+            and str(Path(str(spec_state.get("review_path") or "")).as_posix()) == str(review_path.as_posix())
         )
 
     def _assert_approved_code_execution_ready(self, *, study_dir: Path, run_id: str, dataset: str) -> None:

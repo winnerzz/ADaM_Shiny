@@ -506,6 +506,106 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
 
+    def test_gateway_review_draft_spec_writes_artifacts_and_records_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_review_draft_spec_entrypoint") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_review_draft_spec_entrypoint"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        llm_dir = run_dir / "llm"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        prompt_path = llm_dir / "adae_draft_prompt.txt"
+        response_path = llm_dir / "adae_draft_response.json"
+        prompt_path.write_text("draft ADAE spec", encoding="utf-8")
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_draft_spec_entrypoint",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            prompt_path=prompt_path,
+            response_path=response_path,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        result = gateway.review_draft_spec(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_draft_spec_entrypoint",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Gateway owns draft-spec review artifacts.",
+            input_fingerprint_payload=fingerprint,
+        )
+
+        review_path = Path(result.review_path)
+        approved_path = Path(str(result.approved_spec_path))
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        approved_payload = json.loads(approved_path.read_text(encoding="utf-8"))
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(result.decision, "approve")
+        self.assertTrue(result.approved)
+        self.assertEqual(review_payload["decision"], "approve")
+        self.assertEqual(review_payload["approved_spec_sha256"], f"sha256:{sha256_file(approved_path)}")
+        self.assertEqual(approved_payload["status"], "approved_draft")
+        self.assertEqual(approved_payload["approved_by"], "tester")
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.spec_state["review_path"], str(review_path.as_posix()))
+        self.assertEqual(dataset_state.spec_state["approved_spec_path"], str(approved_path.as_posix()))
+        self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+
+    def test_gateway_review_draft_spec_cleans_artifacts_when_recording_fails(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_review_draft_spec_cleanup") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_review_draft_spec_cleanup"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = run_dir / "specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_draft_spec_cleanup",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+
+        with patch.object(gateway, "record_draft_spec_review", side_effect=ValueError("forced graph failure")):
+            with self.assertRaisesRegex(ValueError, "forced graph failure"):
+                gateway.review_draft_spec(
+                    study_dir=study_dir,
+                    study_id="PSY201",
+                    run_id="run_lg2_review_draft_spec_cleanup",
+                    dataset="ADAE",
+                    decision="approve",
+                    reviewer="tester",
+                    input_fingerprint_payload=fingerprint,
+                )
+
+        self.assertFalse((run_dir / "reviews" / "adae_draft_spec_review.json").exists())
+        self.assertFalse((run_dir / "approved_specs" / "adae_approved_spec.json").exists())
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_review_draft_spec_cleanup")
+        self.assertEqual(reloaded.datasets["ADAE"].spec_state["status"], "draft_generated")
+
     def test_gateway_finalize_inputs_records_existing_input_spec(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_finalize_input_spec") / "PSY201"
         spec_dir = study_dir / "input_spec"
