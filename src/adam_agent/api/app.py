@@ -135,6 +135,7 @@ def create_app() -> FastAPI:
                 input_diff=upload_state.get("input_diff", {}),
                 touched_runs=upload_state.get("touched_runs", []),
                 touched_graph_runs=upload_state.get("touched_graph_runs", []),
+                skipped_graph_runs=upload_state.get("skipped_graph_runs", []),
             )
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

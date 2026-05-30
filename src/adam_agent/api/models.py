@@ -42,6 +42,7 @@ class FileUploadResponse(StrictBaseModel):
     input_diff: dict[str, Any] = Field(default_factory=dict)
     touched_runs: list[str] = Field(default_factory=list)
     touched_graph_runs: list[str] = Field(default_factory=list)
+    skipped_graph_runs: list[str] = Field(default_factory=list)
 
 
 class RunPlanRequest(StrictBaseModel):

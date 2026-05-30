@@ -1564,6 +1564,51 @@ python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
   runs，再更新 canonical graph state。后续 hardening 应直接扫描
   `runs/*/graph_state.json`，并把 `workflow_state.json` 只当 projection。
 
+### 2026-05-30 - LG2.8 Canonical Graph-Run Upload Invalidation Hardening 切片
+
+已完成：
+
+- 将上传失效时的 graph-run discovery 移入 `GraphGateway`。
+- 新增 `GraphGateway.list_graph_runs()`，从 `runs/*/graph_state.json` 发现
+  canonical graph runs，不再依赖 UI `workflow_state.json` projection。
+- 新增 `GraphGateway.mark_all_inputs_changed()`，API 上传路径可以失效所有
+  stored input fingerprint 已变化的 canonical graph runs。
+- `/studies/files` 现在返回：
+  - `touched_runs`：legacy workflow read-model invalidations
+  - `touched_graph_runs`：canonical graph-state invalidations
+  - `skipped_graph_runs`：无法加载或更新的 graph-state runs
+- 增加关键 failure mode 回归：即使 `workflow_state.json` 缺失，上传后仍能发现
+  `graph_state.json`，将 dependency plan 标记为 stale，打开 graph-level
+  `dependency_review`，并从 canonical state 重新生成 workflow projection。
+- 重复 upload rescan 时，如果 run 已 stale 但本次没有新的 input change，会继续保持
+  fail-closed stale 状态，但不会重复报告为 newly touched graph run。
+- 增加 corrupt `graph_state.json` 的 skipped-run reporting 和回归测试。
+- 更新 UI 上传提示，让它报告 `touched_graph_runs` 中的 canonical graph
+  invalidations，而不只看 legacy workflow projection touches。
+
+静态规则边界重申：
+
+- 本切片不修改 static-rule logic，也不新增 clinical、dataset-specific、
+  study-specific 或 demo-specific rule。
+- 静态检查继续只做 generic contract/rule-pack checks。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_scans_canonical_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_preserves_existing_stale_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_reports_corrupt_graph_state_as_skipped tests.test_api_phase8.Phase8ApiTests.test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+```
+
+结果：5 focused tests passed。
+
+相关验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+python -B -m unittest tests.test_static_rules tests.test_state_schemas tests.test_graph_smoke -v
+```
+
+结果：115 gateway/API tests passed；87 static/state/graph smoke tests passed。
+
 ### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary 切片
 
 已完成：

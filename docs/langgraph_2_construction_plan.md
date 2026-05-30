@@ -1755,6 +1755,54 @@ Subagent review:
   state. A later hardening slice should scan `runs/*/graph_state.json`
   directly and treat `workflow_state.json` only as projection.
 
+### 2026-05-30 - LG2.8 Canonical Graph-Run Upload Invalidation Hardening Slice
+
+Completed:
+
+- Moved graph-run discovery for upload invalidation into `GraphGateway`.
+- Added `GraphGateway.list_graph_runs()` to discover runs from
+  `runs/*/graph_state.json`, not from the UI `workflow_state.json` projection.
+- Added `GraphGateway.mark_all_inputs_changed()` so the API upload path can
+  invalidate all canonical graph runs whose stored input fingerprint changed.
+- `/studies/files` now reports:
+  - `touched_runs`: legacy workflow read-model invalidations
+  - `touched_graph_runs`: canonical graph-state invalidations
+  - `skipped_graph_runs`: graph-state files that could not be loaded or updated
+- Added regression coverage for the important failure mode: if
+  `workflow_state.json` is missing, upload still finds `graph_state.json`,
+  marks the dependency plan stale, opens graph-level `dependency_review`, and
+  regenerates the workflow projection from canonical state.
+- Preserved existing stale state across repeated upload rescans without
+  repeatedly reporting the run as newly touched when no new input change
+  occurred.
+- Added skipped-run reporting and regression coverage for corrupt
+  `graph_state.json`.
+- Updated the UI upload message so it reports canonical graph invalidations
+  from `touched_graph_runs`, not only legacy workflow projection touches.
+
+Static-rule boundary reaffirmed:
+
+- This slice does not modify static-rule logic and does not add clinical,
+  dataset-specific, study-specific, or demo-specific rules.
+- Static checks continue to be generic contract/rule-pack checks only.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_scans_canonical_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_preserves_existing_stale_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_reports_corrupt_graph_state_as_skipped tests.test_api_phase8.Phase8ApiTests.test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+```
+
+Result: 5 focused tests passed.
+
+Related verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+python -B -m unittest tests.test_static_rules tests.test_state_schemas tests.test_graph_smoke -v
+```
+
+Result: 115 gateway/API tests passed; 87 static/state/graph smoke tests passed.
+
 ### 2026-05-30 - LG2.8 Legacy `/runs` Shim Boundary Slice
 
 Completed:

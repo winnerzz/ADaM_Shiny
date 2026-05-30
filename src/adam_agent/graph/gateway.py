@@ -126,6 +126,14 @@ class GraphGatewayDependencyGateResult:
     workflow_state_path: str | None = None
 
 
+@dataclass(frozen=True)
+class GraphGatewayInputInvalidationResult:
+    """Canonical graph runs touched after study input evidence changes."""
+
+    touched_graph_runs: list[str]
+    skipped_graph_runs: list[str]
+
+
 class GraphGateway:
     """Single entry point for starting, resuming, and reading graph runs.
 
@@ -1794,12 +1802,15 @@ class GraphGateway:
             raise ValueError(f"Graph state does not exist for run: {run_id}") from exc
         new_fingerprint = input_fingerprint(root)
         diff = compare_fingerprints(next_state.input_fingerprint, new_fingerprint)
+        was_stale = bool(next_state.dependency_plan.get("plan_stale")) or next_state.dependency_review_status == "stale"
         next_state.input_fingerprint = new_fingerprint
-        next_state.dependency_plan["plan_stale"] = diff["changed"]
-        next_state.dependency_plan["input_diff"] = diff
-        next_state.dependency_plan["stale_reason"] = (
-            "Study input files changed after prior planning or review." if diff["changed"] else ""
-        )
+        next_state.dependency_plan["plan_stale"] = bool(diff["changed"] or was_stale)
+        if diff["changed"] or not was_stale:
+            next_state.dependency_plan["input_diff"] = diff
+        if diff["changed"]:
+            next_state.dependency_plan["stale_reason"] = "Study input files changed after prior planning or review."
+        elif not was_stale:
+            next_state.dependency_plan["stale_reason"] = ""
         if diff["changed"]:
             for dataset, dataset_state in sorted(next_state.datasets.items()):
                 if not _has_dataset_product_progress(dataset_state):
@@ -1820,6 +1831,40 @@ class GraphGateway:
         self._persist_graph_state(root, next_state, node="input_upload_rescan")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_input_upload_rescan")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def mark_all_inputs_changed(self, *, study_dir: str | Path) -> GraphGatewayInputInvalidationResult:
+        """Mark every canonical graph run stale when its input fingerprint changed."""
+
+        root = Path(study_dir).expanduser()
+        new_fingerprint = input_fingerprint(root)
+        touched: list[str] = []
+        skipped: list[str] = []
+        for run_id in self.list_graph_runs(study_dir=root):
+            try:
+                old_state = self.load_graph_state(study_dir=root, run_id=run_id)
+                diff = compare_fingerprints(old_state.input_fingerprint, new_fingerprint)
+                self.mark_inputs_changed(study_dir=root, run_id=run_id)
+            except (OSError, ValueError, FileNotFoundError):
+                skipped.append(run_id)
+                continue
+            if diff.get("changed"):
+                touched.append(run_id)
+        return GraphGatewayInputInvalidationResult(
+            touched_graph_runs=touched,
+            skipped_graph_runs=skipped,
+        )
+
+    def list_graph_runs(self, *, study_dir: str | Path) -> list[str]:
+        """Return run ids that have canonical graph state."""
+
+        runs_dir = Path(study_dir).expanduser() / "runs"
+        if not runs_dir.exists() or not runs_dir.is_dir():
+            return []
+        return [
+            run_dir.name
+            for run_dir in sorted(item for item in runs_dir.iterdir() if item.is_dir())
+            if (run_dir / "graph_state.json").is_file()
+        ]
 
     def _generated_code_state(self, study_dir: Path, *, run_id: str, dataset: str) -> dict[str, Any]:
         try:

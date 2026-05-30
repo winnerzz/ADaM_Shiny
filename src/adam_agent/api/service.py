@@ -180,14 +180,9 @@ def save_uploaded_file_bytes(
         saved.append(str(target.as_posix()))
     summary = summarize_study_inputs(root, study_id=study_id or root.name)
     upload_state = invalidate_active_workflows(root)
-    touched_graph_runs: list[str] = []
-    for run_id in upload_state.get("touched_runs", []):
-        try:
-            GraphGateway().mark_inputs_changed(study_dir=root, run_id=str(run_id))
-        except ValueError:
-            continue
-        touched_graph_runs.append(str(run_id))
-    upload_state["touched_graph_runs"] = touched_graph_runs
+    graph_invalidation = GraphGateway().mark_all_inputs_changed(study_dir=root)
+    upload_state["touched_graph_runs"] = graph_invalidation.touched_graph_runs
+    upload_state["skipped_graph_runs"] = graph_invalidation.skipped_graph_runs
     return normalized_role, folder_name, saved, summary, upload_state
 
 

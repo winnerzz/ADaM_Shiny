@@ -1314,8 +1314,10 @@ INDEX_HTML = r"""<!doctype html>
       if (diff.added?.length) parts.push(`${diff.added.length} added`);
       if (diff.changed_files?.length) parts.push(`${diff.changed_files.length} changed`);
       if (diff.removed?.length) parts.push(`${diff.removed.length} removed`);
-      const touched = payload?.touched_runs?.length ? ` ${payload.touched_runs.length} existing run(s) marked stale.` : '';
-      return `${payload.saved_files?.length || 0} file(s) added and inputs rescanned.${parts.length ? ` Input diff: ${parts.join(', ')}.` : ''}${touched}`;
+      const touchedCount = new Set([...(payload?.touched_runs || []), ...(payload?.touched_graph_runs || [])]).size;
+      const touched = touchedCount ? ` ${touchedCount} existing run(s) marked stale.` : '';
+      const skipped = payload?.skipped_graph_runs?.length ? ` ${payload.skipped_graph_runs.length} graph run(s) could not be refreshed; check audit files.` : '';
+      return `${payload.saved_files?.length || 0} file(s) added and inputs rescanned.${parts.length ? ` Input diff: ${parts.join(', ')}.` : ''}${touched}${skipped}`;
     }
 
     async function scanInputs() {

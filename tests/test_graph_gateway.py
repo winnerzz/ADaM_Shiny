@@ -818,6 +818,65 @@ class GraphGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Graph state does not exist"):
             GraphGateway().mark_inputs_changed(study_dir=study_dir, run_id="run_no_graph_state")
 
+    def test_gateway_mark_all_inputs_changed_scans_canonical_graph_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_all_inputs_changed") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        sdtm_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_graph_state_only",
+            target_datasets=["ADAE"],
+        )
+        (study_dir / "runs" / "run_graph_state_only" / "workflow_state.json").unlink()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        result = gateway.mark_all_inputs_changed(study_dir=study_dir)
+
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_state_only")
+        workflow_path = study_dir / "runs" / "run_graph_state_only" / "workflow_state.json"
+        self.assertEqual(result.touched_graph_runs, ["run_graph_state_only"])
+        self.assertEqual(result.skipped_graph_runs, [])
+        self.assertTrue(graph_state.dependency_plan["plan_stale"])
+        self.assertEqual(graph_state.dependency_review_status, "stale")
+        self.assertTrue(workflow_path.exists())
+
+    def test_gateway_mark_all_inputs_changed_preserves_existing_stale_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_all_preserves_stale") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        sdtm_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_preserve_stale",
+            target_datasets=["ADAE"],
+        )
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+        first = gateway.mark_all_inputs_changed(study_dir=study_dir)
+
+        second = gateway.mark_all_inputs_changed(study_dir=study_dir)
+
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_preserve_stale")
+        self.assertEqual(first.touched_graph_runs, ["run_preserve_stale"])
+        self.assertEqual(second.touched_graph_runs, [])
+        self.assertTrue(graph_state.dependency_plan["plan_stale"])
+        self.assertEqual(graph_state.dependency_review_status, "stale")
+
+    def test_gateway_mark_all_inputs_changed_reports_corrupt_graph_state_as_skipped(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_all_skips_corrupt") / "PSY201"
+        run_dir = study_dir / "runs" / "run_corrupt"
+        run_dir.mkdir(parents=True)
+        (run_dir / "graph_state.json").write_text("{not-json", encoding="utf-8")
+
+        result = GraphGateway().mark_all_inputs_changed(study_dir=study_dir)
+
+        self.assertEqual(result.touched_graph_runs, [])
+        self.assertEqual(result.skipped_graph_runs, ["run_corrupt"])
+
     def test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_dependency_gate") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

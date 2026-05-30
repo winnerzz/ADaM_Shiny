@@ -136,6 +136,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("generatedByDataset", response.text)
         self.assertIn("reviewByDataset", response.text)
         self.assertIn("executionByDataset", response.text)
+        self.assertIn("touched_graph_runs", response.text)
+        self.assertIn("skipped_graph_runs", response.text)
         self.assertIn("refreshGraphState", response.text)
         self.assertIn("canApproveGeneratedCode", response.text)
         self.assertIn("Generated-code state exists", response.text)
@@ -382,6 +384,55 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(blocked.status_code, 400)
         self.assertIn("dependency plan is stale", blocked.json()["detail"])
+
+    def test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing(self) -> None:
+        study_dir = _workspace_dir("phase8_upload_graph_state_only") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        plan = client.post(
+            "/runs/prepare",
+            json={"study_dir": str(study_dir), "run_id": "run_graph_state_only", "target_datasets": ["ADAE"]},
+        )
+        self.assertEqual(plan.status_code, 200, plan.text)
+        (study_dir / "runs" / "run_graph_state_only" / "workflow_state.json").unlink()
+
+        upload = client.post(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "sdtm"},
+            files=[("files", ("ae.csv", b"USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", "text/csv"))],
+        )
+
+        self.assertEqual(upload.status_code, 200, upload.text)
+        payload = upload.json()
+        self.assertIn("run_graph_state_only", payload["touched_graph_runs"])
+        self.assertEqual(payload["skipped_graph_runs"], [])
+        graph_state = client.get(
+            "/runs/run_graph_state_only/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        self.assertEqual(graph_state["dependency_review_status"], "stale")
+        self.assertTrue(graph_state["dependency_plan"]["plan_stale"])
+        _assert_run_projection(self, study_dir, "run_graph_state_only")
+
+    def test_upload_reports_corrupt_graph_state_as_skipped(self) -> None:
+        study_dir = _workspace_dir("phase8_upload_corrupt_graph_state") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        run_dir = study_dir / "runs" / "run_corrupt"
+        run_dir.mkdir(parents=True)
+        (run_dir / "graph_state.json").write_text("{not-json", encoding="utf-8")
+
+        upload = client.post(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "sdtm"},
+            files=[("files", ("ae.csv", b"USUBJID,AETERM\n01,HEADACHE\n", "text/csv"))],
+        )
+
+        self.assertEqual(upload.status_code, 200, upload.text)
+        payload = upload.json()
+        self.assertEqual(payload["touched_graph_runs"], [])
+        self.assertEqual(payload["skipped_graph_runs"], ["run_corrupt"])
 
     def test_demo_study_endpoint_prepares_shiny_demo_shape(self) -> None:
         source = _demo_source("phase8_api_demo_source")
