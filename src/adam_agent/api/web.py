@@ -1039,6 +1039,7 @@ INDEX_HTML = r"""<!doctype html>
       inputSummary: null,
       plan: null,
       graphState: null,
+      runProgress: null,
       generated: null,
       review: null,
       execution: null,
@@ -1120,7 +1121,18 @@ INDEX_HTML = r"""<!doctype html>
         'generate code',
         'regenerate',
         'reload review',
-        'code review'
+        'code review',
+        'review_dependency_plan',
+        'replan_dependencies',
+        'review_draft_spec',
+        'review_code',
+        'review_terminal_failure',
+        'finalize_inputs',
+        'reconfirm_inputs',
+        'generate_code',
+        'execute_approved_code',
+        'resolve_dependency',
+        'prepare_dependency_plan'
       ].includes(status)) node.classList.add('warn');
     }
 
@@ -1339,6 +1351,7 @@ INDEX_HTML = r"""<!doctype html>
         const payload = await api('/demo-study', {method: 'POST'});
         applyWorkspacePayload(payload);
         await scanInputs();
+        await refreshRunProgress();
         autoSelectFirstTarget(inferTargets(state.inputSummary));
         addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
         setPill('workspaceStatus', 'ready');
@@ -1383,6 +1396,7 @@ INDEX_HTML = r"""<!doctype html>
         });
         state.inputSummary = payload.input_summary;
         invalidateUiStateAfterInputChange(payload);
+        await refreshGraphReadModels();
         renderInputSummary(payload.input_summary);
         addEvent(`${role} uploaded`, uploadDiffMessage(payload));
         byId(uploadStatus[role]).textContent = `${payload.saved_files.length} file(s) uploaded.`;
@@ -1400,6 +1414,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!payload?.input_diff?.changed) return;
       state.plan = null;
       state.graphState = null;
+      state.runProgress = null;
       state.generated = null;
       state.review = null;
       state.execution = null;
@@ -1436,6 +1451,7 @@ INDEX_HTML = r"""<!doctype html>
       state.inputSummary = payload;
       renderInputSummary(payload);
       addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
+      await refreshRunProgress();
       return payload;
     }
 
@@ -1603,6 +1619,7 @@ INDEX_HTML = r"""<!doctype html>
     function resetRunState() {
       state.plan = null;
       state.graphState = null;
+      state.runProgress = null;
       state.generated = null;
       state.review = null;
       state.execution = null;
@@ -1647,6 +1664,35 @@ INDEX_HTML = r"""<!doctype html>
         return graph;
       } catch {
         return null;
+      }
+    }
+
+    async function refreshRunProgress() {
+      if (!studyDir() || !runId()) return null;
+      try {
+        const progress = await api(`/runs/${encodeURIComponent(runId())}/progress?study_dir=${encodeURIComponent(studyDir())}`);
+        state.runProgress = progress;
+        applyRunProgress(progress);
+        return progress;
+      } catch {
+        state.runProgress = null;
+        return null;
+      }
+    }
+
+    async function refreshGraphReadModels() {
+      const graph = await refreshGraphState();
+      await refreshRunProgress();
+      return graph;
+    }
+
+    function applyRunProgress(progress) {
+      const progressTargets = (progress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      if (progressTargets.length) {
+        state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...progressTargets])).sort();
+      }
+      if (progressTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
+        state.selectedTarget = progressTargets.includes('ADAE') ? 'ADAE' : progressTargets[0];
       }
     }
 
@@ -1788,16 +1834,19 @@ INDEX_HTML = r"""<!doctype html>
     function actionAvailability() {
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
+      const progress = datasetProgressFor(target);
+      const progressBlocked = Boolean(progress?.blocked);
+      const progressBlockReason = progress?.blocked_reason || '';
       const generated = generatedFor(target);
       const execution = executionFor(target);
       const draft = draftSpecFor(target);
       const draftReview = draftSpecReviewFor(target);
       const finalized = finalizedInputsFor(target);
       const hasSpecGate = targetSpecGateSatisfied(target);
-      const finalizeReady = Boolean(target && !blocked);
+      const finalizeReady = Boolean(target && !blocked && !progressBlocked);
       const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
-      const generateReady = Boolean(target && !blocked && hasSpecGate);
-      const approveReady = Boolean(canApproveGeneratedCode(target));
+      const generateReady = Boolean(target && !blocked && !progressBlocked && hasSpecGate);
+      const approveReady = Boolean(canApproveGeneratedCode(target) && !progressBlocked);
       return {
         finalize: {
           ready: finalizeReady,
@@ -1806,7 +1855,9 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
-              : blocked
+              : progressBlocked
+                ? progressBlockReason
+                : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}. Resolve or approve the dependency plan first.`
                 : hasSpecGate
                   ? `${target} already has an input spec or approved draft spec; finalizing again is optional.`
@@ -1832,7 +1883,9 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
-              : blocked
+              : progressBlocked
+                ? progressBlockReason
+                : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
                 : !hasSpecGate
                   ? 'Confirm the uploaded input spec or review/approve the generated draft spec first.'
@@ -1848,6 +1901,8 @@ INDEX_HTML = r"""<!doctype html>
           pill: execution?.status === 'completed' ? 'rerun' : execution?.status === 'terminal_failure' || execution?.status === 'failed' ? 'diagnose' : null,
           reason: !target
             ? 'Choose an ADaM output first.'
+            : progressBlocked
+              ? progressBlockReason
             : execution?.status === 'completed'
               ? `${target} already completed local execution. Approval remains available only if you intentionally rerun the same generated code.`
               : execution?.status === 'terminal_failure' || execution?.status === 'failed'
@@ -1879,6 +1934,7 @@ INDEX_HTML = r"""<!doctype html>
       button.title = item.reason;
       button.setAttribute('aria-disabled-reason', item.reason);
       button.dataset.actionReady = String(Boolean(item.ready));
+      button.disabled = !item.ready;
     }
 
     function renderActionHints(id, items) {
@@ -1972,7 +2028,7 @@ INDEX_HTML = r"""<!doctype html>
           body: JSON.stringify(payload)
         });
         state.plan = plan;
-        await refreshGraphState();
+        await refreshGraphReadModels();
         addEvent('Dependency plan prepared', `${plannedTargetsForDisplay(plan, targets).join(', ')} status: ${plan.dependency_review_status}.`);
         setPill('planStatus', plan.dependency_review_status || 'planned');
         renderPlan(plan);
@@ -2042,6 +2098,12 @@ INDEX_HTML = r"""<!doctype html>
     async function finalizeInputsForDraftSpec() {
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
+      const availability = actionAvailability().finalize;
+      if (!availability.ready) {
+        byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
+        renderActionAvailability();
+        return;
+      }
       beginOperation('Finalizing inputs', `Checking whether ${state.selectedTarget} has an approved spec or needs a draft spec.`);
       byId('draftSpecPane').innerHTML = '<p class="note warn">Finalizing uploaded inputs...</p>';
       setPill('codeStatus', 'running');
@@ -2068,6 +2130,7 @@ INDEX_HTML = r"""<!doctype html>
             approved_spec_path: payload.approved_spec_path
           };
         }
+        await refreshGraphReadModels();
         setPill('codeStatus', payload.next_action === 'review_draft_spec' ? 'draft review' : 'not generated');
         byId('approveDraftSpecButton').disabled = payload.next_action !== 'review_draft_spec';
         addEvent('Inputs finalized', payload.message);
@@ -2097,6 +2160,7 @@ INDEX_HTML = r"""<!doctype html>
           })
         });
         state.draftSpecReviewByDataset[payload.dataset] = payload;
+        await refreshGraphReadModels();
         setPill('codeStatus', 'not generated');
         addEvent('Draft spec approved', `${payload.dataset} draft spec can now be used for R code generation.`);
         completeOperation('Draft spec approved', `${payload.dataset} can now use the approved draft spec for code generation.`);
@@ -2160,20 +2224,21 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderGraphAwareDashboard() {
       const summary = state.inputSummary;
+      const progress = state.runProgress;
       const fileCount =
         (summary?.sdtm?.length || 0) +
         (summary?.specs?.length || 0) +
         (summary?.reference_adam?.length || 0) +
         (summary?.define?.length || 0) +
         (summary?.legacy_code?.length || 0);
-      const targets = state.targetCandidates || [];
-      const runnable = state.plan?.runnable_datasets || [];
-      const blocked = state.plan?.blocked_datasets || [];
+      const targets = progress?.target_datasets?.length ? progress.target_datasets : state.targetCandidates || [];
+      const runnable = progress?.runnable_datasets || state.plan?.runnable_datasets || [];
+      const blocked = progress?.blocked_datasets || state.plan?.blocked_datasets || [];
       byId('metricInputs').textContent = String(fileCount);
       byId('metricTargets').textContent = String(targets.length);
       byId('metricRunnable').textContent = String(runnable.length);
       byId('metricBlocked').textContent = String(blocked.length);
-      setPill('graphStatus', blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+      setPill('graphStatus', progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting'));
       renderStudyProgress(targets, runnable, blocked);
       renderHumanReviewQueue();
       renderDependencyGraph(targets, runnable, blocked);
@@ -2196,6 +2261,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function studyProgressSummary(targets, runnable, blocked) {
+      const progress = state.runProgress;
       const inputCount =
         (state.inputSummary?.sdtm?.length || 0) +
         (state.inputSummary?.specs?.length || 0) +
@@ -2203,16 +2269,20 @@ INDEX_HTML = r"""<!doctype html>
         (state.inputSummary?.define?.length || 0) +
         (state.inputSummary?.legacy_code?.length || 0);
       const active = state.selectedTarget || '';
-      const activeStatus = active ? datasetStatus(active, runnable, blocked) : 'not selected';
-      const activeNext = active ? nextActionText(active, activeStatus, Boolean((blocked || []).find((item) => item.dataset === active))) : 'Load or upload study evidence.';
+      const activeProgress = datasetProgressFor(active);
+      const activeStatus = active ? (activeProgress?.status || datasetStatus(active, runnable, blocked)) : 'not selected';
+      const activeNext = active
+        ? (activeProgress?.blocked_reason || activeProgress?.action_label || nextActionText(active, activeStatus, Boolean((blocked || []).find((item) => item.dataset === active))))
+        : 'Load or upload study evidence.';
       const interrupt = graphInterruptLabel();
-      const steps = [
+      const localSteps = [
         {label: 'Inputs', detail: inputCount ? `${inputCount} file(s)` : 'not loaded', state: inputCount ? 'done' : 'active'},
         {label: 'Plan', detail: state.plan ? (blocked?.length ? 'needs action' : 'ready') : 'not prepared', state: state.plan ? (blocked?.length ? 'blocked' : 'done') : inputCount ? 'active' : ''},
         {label: 'Spec', detail: active ? specGateLabel(active) : 'choose target', state: active && targetSpecGateSatisfied(active) ? 'done' : active ? 'active' : ''},
         {label: 'Code Review', detail: active ? codeReviewLabel(active) : 'waiting', state: codeReviewStepState(active)},
         {label: 'Run', detail: active ? runStepLabel(active) : 'waiting', state: runStepState(active)}
       ];
+      const steps = progress ? progressStepsFromReadModel(progress, activeProgress, inputCount) : localSteps;
       return {
         title: active
           ? `${active} is ${activeStatus}`
@@ -2220,13 +2290,34 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Inputs recognized'
             : 'No study loaded',
         detail: [
-          state.graphState?.status ? `Graph status: ${state.graphState.status}.` : '',
-          interrupt ? `Open gate: ${interrupt}.` : '',
+          progress?.status ? `Graph status: ${progress.status}.` : state.graphState?.status ? `Graph status: ${state.graphState.status}.` : '',
+          progress?.plan_stale ? 'Dependency plan is stale after input changes.' : '',
+          progress?.current_interrupt ? `Open gate: ${readableInterruptName(progress.current_interrupt.name)}.` : interrupt ? `Open gate: ${interrupt}.` : '',
           activeNext
         ].filter(Boolean).join(' '),
-        action: studyNextActionPill(active, activeStatus, blocked, inputCount),
+        action: progress?.next_action || studyNextActionPill(active, activeStatus, blocked, inputCount),
         steps
       };
+    }
+
+    function datasetProgressFor(target) {
+      const normalized = String(target || '').toUpperCase();
+      if (!normalized) return null;
+      return (state.runProgress?.datasets || []).find((item) => String(item.dataset || '').toUpperCase() === normalized) || null;
+    }
+
+    function progressStepsFromReadModel(progress, activeProgress, inputCount) {
+      const planBlocked = progress.plan_stale || ['blocked', 'warning', 'review_required', 'stale'].includes(progress.dependency_review_status);
+      const specStatus = activeProgress?.spec_status || '';
+      const codeStatus = activeProgress?.code_status || '';
+      const executionStatus = activeProgress?.execution_status || '';
+      return [
+        {label: 'Inputs', detail: inputCount ? `${inputCount} file(s)` : 'not loaded', state: inputCount ? 'done' : 'active'},
+        {label: 'Plan', detail: progress.plan_stale ? 'replan needed' : planBlocked ? 'review needed' : 'ready', state: progress.plan_stale || planBlocked ? 'blocked' : 'done'},
+        {label: 'Spec', detail: specStatus || 'not finalized', state: ['input_spec_ready', 'approved'].includes(specStatus) ? 'done' : specStatus === 'draft_generated' ? 'active' : ''},
+        {label: 'Code Review', detail: codeStatus || 'not generated', state: codeStatus === 'approved' ? 'done' : codeStatus === 'generated' ? 'active' : codeStatus === 'stale' ? 'blocked' : ''},
+        {label: 'Run', detail: executionStatus || 'waiting', state: executionStatus === 'completed' ? 'done' : ['terminal_failure', 'failed', 'stale'].includes(executionStatus) ? 'blocked' : executionStatus ? 'active' : ''}
+      ];
     }
 
     function renderHumanReviewQueue() {
@@ -2244,9 +2335,33 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function humanReviewQueueItems() {
+      const progress = state.runProgress || {};
       const graph = state.graphState || {};
       const items = [];
       const seen = new Set();
+      addReviewQueueItem(items, seen, progress.current_interrupt, {
+        scope: 'study',
+        status: progress.status,
+        reason: progress.action_label || ''
+      });
+      for (const datasetProgress of progress.datasets || []) {
+        addReviewQueueItem(items, seen, datasetProgress.current_interrupt, {
+          scope: 'dataset',
+          dataset: datasetProgress.dataset,
+          status: datasetProgress.status,
+          reason: datasetProgress.action_label || datasetProgress.blocked_reason || ''
+        });
+        if (!datasetProgress.current_interrupt && ['review_code', 'review_draft_spec', 'review_terminal_failure', 'resolve_dependency'].includes(datasetProgress.next_action)) {
+          addReviewQueueItem(items, seen, null, {
+            scope: 'dataset',
+            dataset: datasetProgress.dataset,
+            status: datasetProgress.status,
+            source: 'progress',
+            interruptName: progressInterruptName(datasetProgress.next_action),
+            reason: datasetProgress.action_label || datasetProgress.blocked_reason || ''
+          });
+        }
+      }
       addReviewQueueItem(items, seen, graph.current_interrupt, {
         scope: 'study',
         status: graph.status,
@@ -2307,6 +2422,16 @@ INDEX_HTML = r"""<!doctype html>
           reason: interrupt.reason || context.reason || ''
         };
       }
+      if (context.interruptName) {
+        return {
+          scope: context.scope || 'dataset',
+          dataset,
+          name: context.interruptName,
+          status: context.status || 'open',
+          source: context.source || 'progress',
+          reason: context.reason || ''
+        };
+      }
       const status = String(context.status || '').toLowerCase();
       if (status === 'needs_review' || status === 'terminal_failure') {
         return {
@@ -2319,6 +2444,17 @@ INDEX_HTML = r"""<!doctype html>
         };
       }
       return null;
+    }
+
+    function progressInterruptName(nextAction) {
+      const names = {
+        review_dependency_plan: 'dependency_review',
+        review_draft_spec: 'draft_spec_review',
+        review_code: 'code_review',
+        review_terminal_failure: 'terminal_failure',
+        resolve_dependency: 'dependency_user_action_required'
+      };
+      return names[nextAction] || 'review_required';
     }
 
     function reviewQueueItemHtml(item) {
@@ -2363,6 +2499,8 @@ INDEX_HTML = r"""<!doctype html>
     function reviewQueueDetailText(item) {
       const source = item.source === 'status'
         ? `Status marker: ${item.status}.`
+        : item.source === 'progress'
+          ? `Graph progress action: ${item.status}.`
         : 'Open graph interrupt.';
       return [source, item.reason || 'No additional reason was recorded.'].join(' ');
     }
@@ -2486,6 +2624,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function nextActionText(target, status, isBlocked) {
+      const progress = datasetProgressFor(target);
+      if (progress?.blocked_reason) return progress.blocked_reason;
+      if (progress?.action_label) return progress.action_label;
       if (isBlocked) {
         const block = (state.plan?.blocked_datasets || []).find((item) => item.dataset === target);
         return `Action required before generation: ${block ? `${block.dataset} needs ${block.blocked_by}` : 'resolve blocked dependencies'}.`;
@@ -2510,26 +2651,27 @@ INDEX_HTML = r"""<!doctype html>
       }
       const blockedNames = new Set((blocked || []).map((item) => item.dataset));
       node.innerHTML = targets.map((target) => {
+        const progress = datasetProgressFor(target);
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
         const generated = generatedFor(target);
         const review = reviewFor(target);
         const execution = executionFor(target);
         const persisted = datasetReviewFor(target);
-        const isGenerated = Boolean(generated || persisted?.generated_code);
-        const isCompleted = execution?.status === 'completed' || Boolean(persisted?.output_preview);
-        const hasReview = Boolean(review || persisted?.generated_code);
-        const statusClass = status === 'blocked' || status === 'failed' ? 'fail' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
+        const isGenerated = Boolean(generated || persisted?.generated_code || progress?.code_status);
+        const isCompleted = execution?.status === 'completed' || progress?.execution_status === 'completed' || Boolean(persisted?.output_preview);
+        const hasReview = Boolean(review || persisted?.generated_code || progress?.code_status === 'approved');
+        const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         return `
-          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
+          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) || progress?.blocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
               <span class="dataset-name">${escapeHtml(target)}</span>
               <span class="pill ${statusClass}">${escapeHtml(status)}</span>
             </div>
             <div class="stage-strip">
               <div class="stage done">inputs</div>
-              <div class="stage ${state.plan ? (blockedNames.has(target) ? 'blocked' : 'done') : 'active'}">plan</div>
-              <div class="stage ${isGenerated ? 'done' : target === state.selectedTarget ? 'active' : ''}">code</div>
+              <div class="stage ${state.plan ? (blockedNames.has(target) || progress?.blocked ? 'blocked' : 'done') : 'active'}">plan</div>
+              <div class="stage ${isGenerated ? 'done' : target === state.selectedTarget && !progress?.blocked ? 'active' : ''}">code</div>
               <div class="stage ${hasReview ? 'done' : isGenerated ? 'active' : ''}">review</div>
               <div class="stage ${isCompleted ? 'done' : execution ? 'blocked' : ''}">run</div>
             </div>
@@ -2685,6 +2827,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function datasetStatus(target, runnable, blocked) {
+      const progress = datasetProgressFor(target);
+      if (progress?.blocked) return 'blocked';
+      if (progress?.status) return progress.status;
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
       const execution = executionFor(target);
       const persisted = datasetReviewFor(target);
@@ -2702,6 +2847,12 @@ INDEX_HTML = r"""<!doctype html>
     async function generateCode() {
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
+      const availability = actionAvailability().generate;
+      if (!availability.ready) {
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
+        renderActionAvailability();
+        return;
+      }
       if (!targetSpecGateSatisfied(state.selectedTarget)) {
         byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Click Finalize Inputs / Draft Spec, review the draft spec, then approve it before generating R code.</p>';
         byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
@@ -2726,6 +2877,7 @@ INDEX_HTML = r"""<!doctype html>
         state.generatedByDataset[payload.dataset] = payload;
         state.review = reviewFor(payload.dataset);
         state.execution = executionFor(payload.dataset);
+        await refreshGraphReadModels();
         state.selectedView = 'summary';
         setActiveTab();
         setPill('codeStatus', 'review');
@@ -2745,6 +2897,12 @@ INDEX_HTML = r"""<!doctype html>
     async function approveAndRun() {
       const generated = generatedFor(state.selectedTarget);
       if (!generated) return;
+      const availability = actionAvailability().approveRun;
+      if (!availability.ready) {
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
+        renderActionAvailability();
+        return;
+      }
       state.generated = generated;
       beginOperation('Running approved R code', `Approving ${generated.dataset} code, then executing it with local Rscript.`);
       setPill('codeStatus', 'running');
@@ -2760,6 +2918,7 @@ INDEX_HTML = r"""<!doctype html>
           })
         });
         state.reviewByDataset[generated.dataset] = state.review;
+        await refreshGraphReadModels();
         state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/execute-approved-code`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -2770,6 +2929,7 @@ INDEX_HTML = r"""<!doctype html>
           })
         });
         state.executionByDataset[generated.dataset] = state.execution;
+        await refreshGraphReadModels();
         await loadReviewSummary(generated.run_id);
         addEvent('Sandbox completed', `${generated.dataset} finished with status ${state.execution.status}.`);
         setPill('codeStatus', state.execution.status);
@@ -2798,6 +2958,7 @@ INDEX_HTML = r"""<!doctype html>
             state.compareResults[review.dataset] = review.compare_summary;
           }
         }
+        await refreshGraphReadModels();
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
         byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);

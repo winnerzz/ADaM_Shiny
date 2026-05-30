@@ -347,6 +347,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("touched_graph_runs", response.text)
         self.assertIn("skipped_graph_runs", response.text)
         self.assertIn("refreshGraphState", response.text)
+        self.assertIn("refreshRunProgress", response.text)
+        self.assertIn("/progress?study_dir=", response.text)
+        self.assertIn("runProgress", response.text)
         self.assertIn("canApproveGeneratedCode", response.text)
         self.assertIn("Generated-code state exists", response.text)
         self.assertIn("data-card-target", response.text)
@@ -355,18 +358,21 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
 
-    def test_index_exposes_graph_state_progress_panel(self) -> None:
+    def test_index_exposes_graph_owned_progress_panel(self) -> None:
         client = TestClient(create_app())
 
         response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         html = response.text
-        progress_body = html.split("function studyProgressSummary(targets, runnable, blocked)", 1)[1].split("function graphInterruptLabel()", 1)[0]
+        progress_body = html.split("function studyProgressSummary(targets, runnable, blocked)", 1)[1].split("function renderHumanReviewQueue()", 1)[0]
+        self.assertIn("state.runProgress", progress_body)
+        self.assertIn("datasetProgressFor(active)", progress_body)
+        self.assertIn("progressStepsFromReadModel(progress, activeProgress, inputCount)", progress_body)
+        self.assertIn("progress?.next_action", progress_body)
+        self.assertIn("activeProgress?.blocked_reason", progress_body)
         self.assertIn("state.graphState?.status", progress_body)
         self.assertIn("graphInterruptLabel()", progress_body)
-        self.assertIn("datasetStatus(active, runnable, blocked)", progress_body)
-        self.assertIn("nextActionText(active, activeStatus", progress_body)
         self.assertIn("targetSpecGateSatisfied(active)", html)
         self.assertIn("generatedFor(active)?.status === 'stale'", html)
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
@@ -379,6 +385,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.text
         queue_body = html.split("function renderHumanReviewQueue()", 1)[1].split("function graphInterruptLabel()", 1)[0]
+        self.assertIn("state.runProgress", queue_body)
+        self.assertIn("progress.current_interrupt", queue_body)
+        self.assertIn("datasetProgress.current_interrupt", queue_body)
+        self.assertIn("progressInterruptName(datasetProgress.next_action)", queue_body)
         self.assertIn("state.graphState", queue_body)
         self.assertIn("graph.current_interrupt", queue_body)
         self.assertIn("const safeDatasetState = datasetState || {};", queue_body)
@@ -442,12 +452,16 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("generatedFor(target)", action_body)
         self.assertIn("executionFor(target)", action_body)
         self.assertIn("canApproveGeneratedCode(target)", action_body)
+        self.assertIn("const approveReady = Boolean(canApproveGeneratedCode(target) && !progressBlocked);", action_body)
         self.assertIn("Clicking will prepare the dependency plan first", action_body)
         self.assertIn("Generated-code metadata exists", action_body)
         self.assertIn("function setButtonAvailability(id, item)", html)
         self.assertIn("button.setAttribute('aria-disabled-reason', item.reason)", html)
         self.assertIn("button.dataset.actionReady = String(Boolean(item.ready))", html)
-        self.assertNotIn("button.disabled = !item.ready", html)
+        self.assertIn("button.disabled = !item.ready", html)
+        self.assertIn("const availability = actionAvailability().finalize;", html)
+        self.assertIn("const availability = actionAvailability().generate;", html)
+        self.assertIn("const availability = actionAvailability().approveRun;", html)
         dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
         self.assertIn("renderActionAvailability()", dashboard_body)
 

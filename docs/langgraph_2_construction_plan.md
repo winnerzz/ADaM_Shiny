@@ -3705,3 +3705,63 @@ Subagent review:
     unblocked in progress even though product methods would reject them.
 - Both issues were fixed and covered with regression tests.
 - Final related verification passed with 168 gateway/API/static-rule tests.
+
+### 2026-05-30 - LG2.8 UI Progress Read Model Wiring Slice
+
+Completed:
+
+- Added `state.runProgress` to the local UI and refresh it from
+  `GET /runs/{run_id}/progress`.
+- The study progress panel, top graph status, dataset cards, action hints, and
+  human review queue now prefer `/progress` next actions, blocked reasons, and
+  per-dataset spec/code/execution state.
+- Raw `graphState` remains as an audit/debug and compatibility fallback, but the
+  UI no longer treats browser-side reconstruction from raw graph JSON as the
+  primary source for "what happens next".
+- Upload, prepare plan, finalize inputs, draft-spec review, code generation,
+  code review, execution, and review-summary refresh now refresh graph read
+  models after state-changing operations.
+- Added UI contract coverage proving the page calls `/progress`, stores
+  `runProgress`, and uses the graph-owned read model in the progress panel and
+  review queue.
+
+Current boundary:
+
+- This is a UI wiring slice only. It does not change dependency planning, LLM
+  generation, R execution, compare, route semantics, or page layout.
+- Static-rule governance is unchanged. This slice adds no clinical,
+  dataset-specific, study-specific, demo-specific, or variable-specific static
+  rule.
+- Per the latest user review, future static-rule work must keep the generic
+  boundary: the static engine may enforce artifact/execution/spec
+  declared-contract checks or admitted rule-pack items with
+  authority/source/version/scope/severity/evidence. Problems observed in a
+  demo, PSY201, one legacy program, one ADaM dataset, or one variable cannot be
+  promoted directly into blocking static rules; they must first become a
+  generic contract or a governed rule-pack/backlog/reviewer-note item.
+
+Verification:
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```
+
+Result: focused UI/API tests passed; full related gateway/API/static-rule
+regression passed with 168 tests.
+
+Subagent review:
+
+- Initial review returned NO-GO: the UI surfaced graph-owned blocked reasons
+  from `/progress`, but the primary action buttons could still remain
+  clickable because `setButtonAvailability()` only wrote hints and
+  `data-action-ready`.
+- Fixed by making `setButtonAvailability()` disable buttons from the same
+  `actionAvailability()` contract and adding front-door guards to finalize
+  inputs, generate code, and approve/run. A blocked graph progress state now
+  prevents product actions in the UI before the backend has to reject them.
+- Follow-up review found that approve/run still missed the same
+  `progressBlocked` predicate. `approveRun.ready` now also requires
+  `!progressBlocked` and shows the graph-owned blocked reason first.
+- Final review returned GO.

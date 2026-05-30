@@ -3378,3 +3378,57 @@ tests passed；diff check passed。
     在 progress 中显示为未阻塞，但 product methods 实际会拒绝继续。
 - 两个问题均已修复，并增加 regression tests。
 - 最终相关验证通过 168 个 gateway/API/static-rule tests。
+
+### 2026-05-30 - LG2.8 UI Progress Read Model 接入切片
+
+已完成：
+
+- 本地 UI 新增 `state.runProgress`，通过 `GET /runs/{run_id}/progress`
+  读取 graph-owned progress read model。
+- Study progress panel、top graph status、dataset cards、action hints 和
+  human review queue 现在优先使用 `/progress` 返回的 next action、
+  blocked reason、per-dataset spec/code/execution 状态。
+- raw `graphState` 仍作为 audit/debug 和兼容 fallback 保留，但 UI 不再把
+  “下一步是什么”主要交给浏览器端自行拼接。
+- 上传文件、prepare plan、finalize inputs、draft-spec review、code generation、
+  code review、execution、review summary refresh 后都会刷新 graph read models。
+- 增加前端契约测试，确认 UI 暴露 `/progress` 调用、保存 `runProgress`，并在
+  progress panel/review queue 中优先使用 graph-owned read model。
+
+当前边界：
+
+- 这是 UI 接线切片，不改变 dependency planning、LLM generation、R execution、
+  compare、route semantics 或页面总体布局。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。
+- 根据用户审查意见，后续 static-rule 工作继续按通用规则边界推进：static
+  engine 只能执行 artifact/execution/spec declared-contract checks，或执行已通过
+  authority/source/version/scope/severity/evidence 准入的 rule-pack item。任何从
+  demo、PSY201、单个 legacy 程序、单个 ADaM 数据集或某个变量观察到的问题，
+  不能直接写成 blocking static rule；必须先抽象为通用 contract，或进入受治理
+  rule-pack/backlog/reviewer-note。
+
+验证：
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```
+
+结果：focused UI/API tests passed；完整相关 gateway/API/static-rule regression
+通过 168 个 tests。
+
+子 agent review：
+
+- 初次 review 返回 NO-GO：UI 已经从 `/progress` 展示 graph-owned blocked
+  reasons，但主操作按钮仍可能保持可点击，因为 `setButtonAvailability()` 只写
+  提示和 `data-action-ready`。
+- 已修复：`setButtonAvailability()` 现在直接按同一份 `actionAvailability()`
+  contract 禁用按钮，并在 finalize inputs、generate code、approve/run 三个前门
+  入口增加 guard。graph progress 已阻塞时，UI 会在前端产品动作入口拦住，而不是
+  等后端拒绝后才暴露问题。
+- 复审继续发现 approve/run 仍漏掉同一个 `progressBlocked` 条件。现已修正：
+  `approveRun.ready` 也要求 `!progressBlocked`，并优先展示 graph-owned blocked
+  reason。
+- 最终 review 返回 GO。
