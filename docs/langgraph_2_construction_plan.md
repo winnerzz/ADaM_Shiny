@@ -1783,6 +1783,38 @@ python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphG
 python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit Slice
+
+Completed:
+
+- `GraphGateway.record_terminal_failure_review()` now records a
+  `diagnosis_repair_agent` decision when a human triages a terminal failure.
+- The decision captures:
+  - failure ids and prior recommended routes
+  - human action such as `retry_execution`, `repair_code`, or `revise_spec`
+  - the next controlled product action
+  - whether the terminal-failure interrupt remains open
+- Added `terminal_failure_triage_limited_scope` to the dataset and study risk
+  flags so audit readers can distinguish triage recording from actual repair or
+  re-execution.
+
+Current boundary:
+
+- This slice does not implement autonomous repair and does not execute a retry.
+- Existing gates remain unchanged:
+  - `repair_code` only unlocks code regeneration
+  - `revise_spec` / `request_new_input` only unlock input/spec finalization
+  - `retry_execution` only unlocks an explicit later execution request
+- The diagnosis/repair agent record is audit metadata over the existing
+  graph-owned human decision, not a second workflow state machine.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage -v
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
 ### 2026-05-30 - LG2.6 Local R Environment-Control Slice
 
 Completed:

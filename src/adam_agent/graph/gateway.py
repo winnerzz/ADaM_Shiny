@@ -1786,6 +1786,38 @@ class GraphGateway:
                 "terminal_failure_next_action": _terminal_failure_next_action(command.action),
             },
         )
+        _append_agent_decisions(
+            dataset_state,
+            [
+                record_agent_decision(
+                    agent="diagnosis_repair_agent",
+                    node="terminal_failure_review",
+                    decision="terminal_failure_triage_recorded",
+                    dataset=target,
+                    status=dataset_state.status,
+                    reason=(
+                        "Recorded the human terminal-failure triage decision and the next controlled product action. "
+                        "This does not execute repair, revise specs, or retry R automatically."
+                    ),
+                    inputs={
+                        "failure_ids": [failure.failure_id for failure in dataset_state.failures],
+                        "recommended_routes": [
+                            failure.recommended_route
+                            for failure in dataset_state.failures
+                            if failure.recommended_route
+                        ],
+                        "human_action": command.action,
+                    },
+                    outputs={
+                        "next_action": _terminal_failure_next_action(command.action),
+                        "interrupt_open": dataset_state.current_interrupt is not None
+                        and dataset_state.current_interrupt.status == "open",
+                    },
+                    risk_flags=["terminal_failure_triage_limited_scope"],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, ["terminal_failure_triage_limited_scope"])
         next_state.datasets[target] = dataset_state
         next_state.human_commands.append(command)
         if next_state.current_interrupt is not None and next_state.current_interrupt.name == "dependency_review":

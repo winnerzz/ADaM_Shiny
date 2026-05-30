@@ -1590,6 +1590,38 @@ python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphG
 python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit 切片
+
+已完成：
+
+- `GraphGateway.record_terminal_failure_review()` 在人工处置 terminal failure
+  时，记录一条 `diagnosis_repair_agent` decision。
+- 该 decision 捕获：
+  - failure ids 和之前的 recommended routes
+  - `retry_execution`、`repair_code`、`revise_spec` 等 human action
+  - 下一步受控 product action
+  - terminal-failure interrupt 是否仍然 open
+- 给 dataset 和 study risk flags 增加
+  `terminal_failure_triage_limited_scope`，让 audit reader 能区分 triage
+  记录与真正 repair / re-execution。
+
+当前边界：
+
+- 本切片不实现 autonomous repair，也不执行 retry。
+- 既有 gate 不变：
+  - `repair_code` 只解锁 code regeneration
+  - `revise_spec` / `request_new_input` 只解锁 input/spec finalization
+  - `retry_execution` 只解锁后续显式 execution request
+- diagnosis/repair agent record 是基于现有 graph-owned human decision 的 audit
+  metadata，不是第二套 workflow state machine。
+
+验证：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage -v
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
 ### 2026-05-30 - LG2.6 Local R Environment-Control 切片
 
 已完成：
