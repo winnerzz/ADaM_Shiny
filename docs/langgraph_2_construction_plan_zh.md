@@ -496,6 +496,10 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - 不 blocking 的 reviewer note 或 candidate-rule backlog
 - 如果一个 static check 需要靠“某个 demo study、某个上传文件、某个单独变量
   特例”才能解释清楚，它就不能进入 generic static-rule engine。
+- 用户审查意见重申：静态规则不能写成一串具体 demo 修补。未来如果某个失败
+  暗示需要新增检查，必须先把它改写成通用 contract，或改写成带治理信息的
+  rule-pack item；如果无法完成这个改写，就只能作为 reviewer note 暴露给人，
+  不能作为 blocking static rule。
 
 任务：
 
@@ -664,6 +668,14 @@ LG2.6 当前 slice 已实现：
   不匹配的 working directory。
 - `LocalRRunner` 现在会把相对 `script_path` 解析到 `working_dir` 下，避免按调用
   shell 的当前目录误解析。
+- local sandbox 现在只把 allowlist 中的环境变量传给 Rscript。API key、
+  `R_PROFILE_USER` 和 `R_ENVIRON_USER` 默认不会传入。
+- local sandbox 执行 Rscript 时会加入 `--vanilla`，避免 generated-code run 读取
+  用户级 R startup files 或 saved workspace。
+- local sandbox 会拒绝调用方传入的 Rscript arguments，防止可执行命令行参数绕过
+  generated-script preflight。
+- `LocalRRunner` 保留显式 environment/argument injection，供 sandbox boundary
+  控制执行；这不改变其他 profiling 或 legacy helper caller 的默认行为。
 
 LG2.6 当前 slice 验证：
 
@@ -1534,6 +1546,43 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.6 Local R Environment-Control 切片
+
+已完成：
+
+- 给 `RRunRequest` 增加可选 `environment` 和 `arguments` 字段，并让
+  `LocalRRunner` 传给底层 `subprocess.run()`。
+- 给 local sandbox 增加环境变量 allowlist。默认情况下，generated-code R
+  execution 只收到一小组运行时环境变量，不会收到 API key、`R_PROFILE_USER`
+  或 `R_ENVIRON_USER`。
+- 保留显式空 allowlist 的语义。这样“完全不继承环境变量”和“使用默认
+  allowlist”不会混在一起。
+- local sandbox 调用 Rscript 时加入 `--vanilla`，避免 generated-code run 读取
+  用户级 R startup files 或 saved workspace。
+- 在 sandbox boundary metadata 中记录 environment control 和 Rscript arguments，
+  方便 validation/audit report 展示本地 runner 实际做了什么。
+- 按用户审查意见再次重申 static-rule governance：静态检查必须保持 generic
+  contract/rule-pack checks，不能退化成 demo-specific patch rules。
+
+当前边界：
+
+- 这仍然是 local developer runner，不是系统级隔离。它减少环境变量泄露和 R
+  startup file 影响，但不能阻止 generated R code 读写任意文件或访问网络。
+- 本切片不新增任何 clinical、dataset-specific、study-specific 或 demo-specific
+  static ADaM rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_sandbox -v
+python -B -m unittest tests.test_sandbox tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway -v
+python -m compileall -q src\adam_agent
+git diff --check -- src/adam_agent/tools/r_runner.py src/adam_agent/tools/sandbox.py tests/test_sandbox.py docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```
+
+结果：12 个 sandbox tests 通过；207 个 sandbox/downstream/graph/API 相关测试
+通过；compileall 通过；diff check 无 whitespace error。
 
 ### 2026-05-30 - LG2.6 Sandbox Forbidden-Call Preflight 切片
 

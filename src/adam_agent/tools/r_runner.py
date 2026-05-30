@@ -21,6 +21,8 @@ class RRunRequest:
     scenario: str = "success"
     script_path: str | None = None
     timeout_seconds: int = 120
+    environment: dict[str, str] | None = None
+    arguments: tuple[str, ...] = ()
 
 
 @dataclass
@@ -90,12 +92,13 @@ class LocalRRunner:
 
         try:
             completed = subprocess.run(
-                [self.rscript_path, str(script_path)],
+                [self.rscript_path, *request.arguments, str(script_path)],
                 cwd=str(working_dir),
                 capture_output=True,
                 text=True,
                 timeout=request.timeout_seconds,
                 check=False,
+                env=request.environment,
             )
         except subprocess.TimeoutExpired as exc:
             return RRunResult(

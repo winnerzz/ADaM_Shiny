@@ -563,6 +563,11 @@ Design principle:
   - `source_type`: one of `system_contract`, `approved_spec`,
     `standards_pack`, or `user_policy`
   - optional `source_id`: spec artifact id, rule-pack id, or policy id
+- User review note: static rules must not be implemented as a sequence of
+  concrete demo fixes. If a future failure suggests a new check, first rewrite
+  it as a general contract or a governed rule-pack item. If that rewrite is not
+  possible, the product should surface the issue as a reviewer note, not as a
+  blocking static rule.
 - New blocking clinical rules are not allowed in the generic engine. They must
   be added through a versioned rule pack with explicit `authority_type`,
   source, scope, severity, and evidence, then reviewed as a rule-pack change.
@@ -774,6 +779,15 @@ LG2.6 current slice implemented:
 - `LocalRRunner` now resolves relative `script_path` values under
   `working_dir`, matching the sandbox contract and avoiding accidental
   resolution against the caller's shell directory.
+- The local sandbox now passes only an allowlisted environment to Rscript.
+  API keys, `R_PROFILE_USER`, and `R_ENVIRON_USER` are not passed by default.
+- Local sandbox execution adds `--vanilla` to Rscript invocations so user-level
+  R startup files and saved workspaces are not part of generated-code runs.
+- Local sandbox rejects caller-supplied Rscript arguments. This prevents
+  executable command-line options from bypassing the generated-script preflight.
+- `LocalRRunner` still supports explicit environment/argument injection so the
+  sandbox boundary can control execution without changing unrelated profiling
+  or legacy helper callers.
 
 LG2.6 current slice verification:
 
@@ -1723,6 +1737,45 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.6 Local R Environment-Control Slice
+
+Completed:
+
+- Added optional `environment` and `arguments` fields to `RRunRequest`, and
+  passed them through `LocalRRunner` to `subprocess.run()`.
+- Added local sandbox environment allowlisting. By default, generated-code R
+  execution receives only a small runtime allowlist and does not receive API key
+  variables, `R_PROFILE_USER`, or `R_ENVIRON_USER`.
+- Preserved explicit empty allowlists as empty. This keeps "no inherited
+  environment" distinct from "use the default allowlist".
+- Added `--vanilla` to local sandbox Rscript invocations so generated-code runs
+  do not consume user startup files or saved workspaces.
+- Added boundary metadata for environment control and Rscript arguments so
+  validation/audit reports can show what the local runner did.
+- Re-stated the static-rule governance boundary: static checks must remain
+  generic contract/rule-pack checks and must not become demo-specific patch
+  rules.
+
+Current boundary:
+
+- This is still a local developer runner, not system-level isolation. It reduces
+  accidental environment leakage and startup-file effects but does not prevent
+  arbitrary filesystem or network behavior by generated R code.
+- The change does not add any clinical, dataset-specific, study-specific, or
+  demo-specific static ADaM rule.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_sandbox -v
+python -B -m unittest tests.test_sandbox tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway -v
+python -m compileall -q src\adam_agent
+git diff --check -- src/adam_agent/tools/r_runner.py src/adam_agent/tools/sandbox.py tests/test_sandbox.py docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```
+
+Result: 12 sandbox tests passed; 207 related sandbox/downstream/graph/API
+tests passed; compileall passed; diff check reported no whitespace errors.
 
 ### 2026-05-30 - LG2.6 Sandbox Forbidden-Call Preflight Slice
 
