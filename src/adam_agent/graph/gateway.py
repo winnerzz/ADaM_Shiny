@@ -22,6 +22,7 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
+from adam_agent.tools.compare import compare_dataset_files, reference_adam_path, usable_generated_output_path
 from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
@@ -145,6 +146,13 @@ class GraphGatewayInputInvalidationResult:
 
     touched_graph_runs: list[str]
     skipped_graph_runs: list[str]
+
+
+@dataclass(frozen=True)
+class GraphGatewayCompareResult(GraphGatewayResult):
+    """Graph-owned reference compare result plus API-facing compare fields."""
+
+    compare_summary: dict[str, Any]
 
 
 class GraphGateway:
@@ -1751,6 +1759,65 @@ class GraphGateway:
         self._persist_graph_state(root, next_state, node="compare_reference_output")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_compare_reference_output")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def compare_reference_output(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+    ) -> GraphGatewayCompareResult:
+        """Compute generated-vs-reference compare and record it in graph state."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        run_dir = root / "runs" / run_id
+        output_path = usable_generated_output_path(run_dir, target)
+        reference_path = reference_adam_path(root, target)
+        compare_summary = compare_dataset_files(target, output_path, reference_path)
+        result = self.record_compare(
+            study_dir=root,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=target,
+            compare_summary=compare_summary,
+            write_compare_report=True,
+            input_fingerprint_payload=input_fingerprint(root),
+        )
+        dataset_state = result.graph_state.datasets.get(target)
+        if dataset_state is not None:
+            payload = dict(dataset_state.compare_summary)
+            compare_summary = {
+                key: value
+                for key, value in payload.items()
+                if key in {
+                    "dataset",
+                    "status",
+                    "generated_file",
+                    "reference_file",
+                    "row_count_generated",
+                    "row_count_reference",
+                    "row_count_delta",
+                    "generated_only_columns",
+                    "reference_only_columns",
+                    "common_columns",
+                    "key_columns",
+                    "matched_rows",
+                    "generated_only_keys",
+                    "reference_only_keys",
+                    "compared_cells",
+                    "mismatch_count",
+                    "mismatch_samples",
+                    "report_path",
+                    "note",
+                }
+            }
+        return GraphGatewayCompareResult(
+            graph_state=result.graph_state,
+            workflow_projection=result.workflow_projection,
+            compare_summary=compare_summary,
+        )
 
     def record_terminal_failure_review(
         self,

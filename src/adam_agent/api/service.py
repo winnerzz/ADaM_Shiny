@@ -77,6 +77,7 @@ from adam_agent.llm.prompt_compaction import (
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.tools.artifacts import sha256_file
+from adam_agent.tools.compare import compare_dataset_files, reference_adam_path, usable_generated_output_path
 from adam_agent.tools.config import ConfigLoader
 from adam_agent.tools.r_runner import LocalRRunner, RRunRequest
 from adam_agent.tools.sdtm_reader import SDTMReader
@@ -867,33 +868,24 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
     root = _validated_study_root(study_dir)
     target = dataset.strip().upper()
     run_dir = _validated_run_dir(root, run_id)
-    output_path = _usable_generated_output_path(run_dir, target)
-    reference_path = _reference_path(root, target)
-    compare = _compare_dataset_files(target, output_path, reference_path)
-    return _record_compare_in_graph_state(root, run_id, target, compare)
-
-
-def _record_compare_in_graph_state(root: Path, run_id: str, dataset: str, compare: DatasetCompareResponse) -> DatasetCompareResponse:
     gateway = GraphGateway()
     try:
-        graph_state = gateway.load_graph_state(study_dir=root, run_id=run_id)
-        study_id = graph_state.study_id
+        result = gateway.compare_reference_output(
+            study_dir=root,
+            run_id=run_id,
+            dataset=target,
+        )
     except FileNotFoundError:
-        return compare
-    result = gateway.record_compare(
-        study_dir=root,
-        study_id=study_id,
-        run_id=run_id,
-        dataset=dataset,
-        compare_summary=compare.model_dump(mode="json"),
-        write_compare_report=True,
-        input_fingerprint_payload=input_fingerprint(root),
-    )
-    dataset_state = result.graph_state.datasets.get(dataset.strip().upper())
-    if dataset_state is None:
-        return compare
-    payload = dict(dataset_state.compare_summary)
-    payload = {key: value for key, value in payload.items() if key in DatasetCompareResponse.model_fields}
+        output_path = usable_generated_output_path(run_dir, target)
+        reference_path = reference_adam_path(root, target)
+        return DatasetCompareResponse(**compare_dataset_files(target, output_path, reference_path))
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    payload = {
+        key: value
+        for key, value in result.compare_summary.items()
+        if key in DatasetCompareResponse.model_fields
+    }
     return DatasetCompareResponse(**payload)
 
 
@@ -1353,23 +1345,10 @@ def _read_csv_page(
 
 def _dataset_file_for_kind(root: Path, run_id: str, dataset: str, kind: str) -> Path | None:
     if kind == "generated":
-        return _usable_generated_output_path(root / "runs" / run_id, dataset)
+        return usable_generated_output_path(root / "runs" / run_id, dataset)
     if kind == "reference":
-        return _reference_path(root, dataset)
+        return reference_adam_path(root, dataset)
     raise ApiServiceError("Table kind must be generated or reference.")
-
-
-def _usable_generated_output_path(run_dir: Path, dataset: str) -> Path | None:
-    target = dataset.strip().upper()
-    output_path = run_dir / "outputs" / f"{target.lower()}.csv"
-    if not output_path.exists() or not output_path.is_file():
-        return None
-    report = _read_json_if_exists(run_dir / "validation" / f"{target.lower()}_validation_report.json")
-    if report.get("status") not in {"pass", "structural_stub_pass"}:
-        return None
-    if report.get("terminal_failure") is True or report.get("partial_output_usable") is False:
-        return None
-    return output_path
 
 
 def _dataset_download_file(root: Path, run_id: str, dataset: str, kind: str) -> Path | None:
@@ -1377,7 +1356,7 @@ def _dataset_download_file(root: Path, run_id: str, dataset: str, kind: str) -> 
     if kind == "generated":
         return _dataset_file_for_kind(root, run_id, dataset, "generated")
     if kind == "reference":
-        return _reference_path(root, dataset)
+        return reference_adam_path(root, dataset)
     if kind == "code":
         path = run_dir / "code" / f"build_{dataset.lower()}.R"
         return path if path.exists() else None
@@ -1624,172 +1603,6 @@ def _text_preview_error(path: Path, *, role: str, dataset: str | None, suffix: s
     )
 
 
-def _compare_dataset_files(dataset: str, generated_path: Path | None, reference_path: Path | None) -> DatasetCompareResponse:
-    if generated_path is None or not generated_path.exists():
-        return DatasetCompareResponse(dataset=dataset, status="missing_generated", note="Generated ADaM output is not available yet.")
-    if reference_path is None or not reference_path.exists():
-        return DatasetCompareResponse(
-            dataset=dataset,
-            status="missing_reference",
-            generated_file=generated_path.name,
-            note="No reference ADaM was found for this dataset.",
-        )
-    if generated_path.suffix.lower() != ".csv" or reference_path.suffix.lower() != ".csv":
-        return DatasetCompareResponse(
-            dataset=dataset,
-            status="not_supported",
-            generated_file=generated_path.name,
-            reference_file=reference_path.name,
-            note="Compare is currently implemented for CSV generated/reference ADaM tables.",
-        )
-    generated = _read_csv_table(generated_path)
-    reference = _read_csv_table(reference_path)
-    if generated["status"] != "ok":
-        return DatasetCompareResponse(dataset=dataset, status="error", generated_file=generated_path.name, reference_file=reference_path.name, note=generated["note"])
-    if reference["status"] != "ok":
-        return DatasetCompareResponse(dataset=dataset, status="error", generated_file=generated_path.name, reference_file=reference_path.name, note=reference["note"])
-
-    generated_columns = generated["columns"]
-    reference_columns = reference["columns"]
-    common_columns = [column for column in generated_columns if column in reference_columns]
-    generated_only_columns = [column for column in generated_columns if column not in reference_columns]
-    reference_only_columns = [column for column in reference_columns if column not in generated_columns]
-    key_columns = _choose_compare_keys(dataset, common_columns)
-    generated_rows = generated["rows"]
-    reference_rows = reference["rows"]
-    row_count_generated = len(generated_rows)
-    row_count_reference = len(reference_rows)
-    generated_only_keys: list[str] = []
-    reference_only_keys: list[str] = []
-    mismatch_samples: list[dict[str, str]] = []
-    compared_cells = 0
-    matched_rows = 0
-    mismatch_count = 0
-
-    if key_columns:
-        generated_by_key = _rows_by_key(generated_rows, key_columns)
-        reference_by_key = _rows_by_key(reference_rows, key_columns)
-        generated_key_set = set(generated_by_key)
-        reference_key_set = set(reference_by_key)
-        generated_only_keys = sorted(generated_key_set - reference_key_set)[:20]
-        reference_only_keys = sorted(reference_key_set - generated_key_set)[:20]
-        for key in sorted(generated_key_set & reference_key_set):
-            matched_rows += 1
-            generated_row = generated_by_key[key]
-            reference_row = reference_by_key[key]
-            for column in common_columns:
-                if column in key_columns:
-                    continue
-                compared_cells += 1
-                generated_value = _string_cell(generated_row.get(column))
-                reference_value = _string_cell(reference_row.get(column))
-                if generated_value != reference_value:
-                    mismatch_count += 1
-                    if len(mismatch_samples) < 25:
-                        mismatch_samples.append(
-                            {
-                                "key": key,
-                                "column": column,
-                                "generated": generated_value,
-                                "reference": reference_value,
-                            }
-                        )
-    else:
-        for index, (generated_row, reference_row) in enumerate(zip(generated_rows, reference_rows), start=1):
-            matched_rows += 1
-            for column in common_columns:
-                compared_cells += 1
-                generated_value = _string_cell(generated_row.get(column))
-                reference_value = _string_cell(reference_row.get(column))
-                if generated_value != reference_value:
-                    mismatch_count += 1
-                    if len(mismatch_samples) < 25:
-                        mismatch_samples.append(
-                            {
-                                "key": f"row {index}",
-                                "column": column,
-                                "generated": generated_value,
-                                "reference": reference_value,
-                            }
-                        )
-
-    status = "match"
-    if (
-        row_count_generated != row_count_reference
-        or generated_only_columns
-        or reference_only_columns
-        or generated_only_keys
-        or reference_only_keys
-        or mismatch_count
-    ):
-        status = "differences"
-    return DatasetCompareResponse(
-        dataset=dataset,
-        status=status,
-        generated_file=generated_path.name,
-        reference_file=reference_path.name,
-        row_count_generated=row_count_generated,
-        row_count_reference=row_count_reference,
-        row_count_delta=row_count_generated - row_count_reference,
-        generated_only_columns=generated_only_columns,
-        reference_only_columns=reference_only_columns,
-        common_columns=common_columns,
-        key_columns=key_columns,
-        matched_rows=matched_rows,
-        generated_only_keys=generated_only_keys,
-        reference_only_keys=reference_only_keys,
-        compared_cells=compared_cells,
-        mismatch_count=mismatch_count,
-        mismatch_samples=mismatch_samples,
-        note="Initial CSV compare. This checks structure and sampled cell differences, not full clinical rule conformance.",
-    )
-
-
-def _read_csv_table(path: Path) -> dict[str, Any]:
-    try:
-        with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            text = handle.read()
-    except (OSError, UnicodeDecodeError) as exc:
-        return {"status": "error", "note": str(exc), "columns": [], "rows": []}
-    try:
-        reader = csv.DictReader(io.StringIO(text))
-        columns = list(reader.fieldnames or [])
-        rows = [{column: _string_cell(row.get(column)) for column in columns} for row in reader]
-    except csv.Error as exc:
-        return {"status": "error", "note": str(exc), "columns": [], "rows": []}
-    return {"status": "ok", "note": "", "columns": columns, "rows": rows}
-
-
-def _choose_compare_keys(dataset: str, common_columns: list[str]) -> list[str]:
-    upper_to_original = {column.upper(): column for column in common_columns}
-    candidates = {
-        "ADAE": ["USUBJID", "AESEQ"],
-        "ADCM": ["USUBJID", "CMSEQ"],
-        "ADLB": ["USUBJID", "PARAMCD", "AVISITN", "ADT", "ATPTN"],
-        "ADEX": ["USUBJID", "EXSEQ"],
-        "ADEG": ["USUBJID", "PARAMCD", "AVISITN", "ADT", "ATPTN"],
-        "ADSL": ["USUBJID"],
-    }
-    chosen = [upper_to_original[key] for key in candidates.get(dataset.upper(), ["USUBJID"]) if key in upper_to_original]
-    if chosen:
-        return chosen
-    if "USUBJID" in upper_to_original:
-        return [upper_to_original["USUBJID"]]
-    return []
-
-
-def _rows_by_key(rows: list[dict[str, str]], key_columns: list[str]) -> dict[str, dict[str, str]]:
-    keyed: dict[str, dict[str, str]] = {}
-    for index, row in enumerate(rows, start=1):
-        key = "|".join(_string_cell(row.get(column)) for column in key_columns)
-        if not key.strip("|"):
-            key = f"row {index}"
-        if key in keyed:
-            key = f"{key}#{index}"
-        keyed[key] = row
-    return keyed
-
-
 def _string_cell(value: Any) -> str:
     if value is None:
         return ""
@@ -1804,10 +1617,10 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
     diagnostics = _read_json_if_exists(run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json")
     parsed_response = _read_json_if_exists(run_dir / "llm" / f"{dataset_lower}_parsed_response.json")
     code_path = run_dir / "code" / f"build_{dataset_lower}.R"
-    output_path = _usable_generated_output_path(run_dir, dataset)
-    reference_path = _reference_path(root, dataset)
+    output_path = usable_generated_output_path(run_dir, dataset)
+    reference_path = reference_adam_path(root, dataset)
     reader = SDTMReader()
-    compare_summary = _compare_dataset_files(dataset, output_path, reference_path)
+    compare_summary = DatasetCompareResponse(**compare_dataset_files(dataset, output_path, reference_path))
     compare_status = compare_summary.status if compare_summary.status != "missing_generated" else result.get("compare_status")
 
     return DatasetReview(
@@ -1876,16 +1689,6 @@ def _dataset_downloads(root: Path, run_id: str, dataset: str) -> list[DownloadIt
             )
         )
     return items
-
-
-def _reference_path(root: Path, dataset: str) -> Path | None:
-    folder = root / "reference_adam"
-    for suffix in [".csv", ".sas7bdat"]:
-        for name in [dataset.lower(), dataset.upper()]:
-            path = folder / f"{name}{suffix}"
-            if path.exists():
-                return path
-    return None
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:

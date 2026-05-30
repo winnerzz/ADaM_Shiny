@@ -1764,6 +1764,40 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.compare_summary["report_path"], str(report_path.as_posix()))
         self.assertIn("compare_report_adae", [artifact.artifact_id for artifact in dataset_state.artifacts])
 
+    def test_gateway_compare_reference_output_computes_and_records_compare(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_entrypoint") / "PSY201"
+        output_dir = study_dir / "runs" / "run_lg2_compare_entrypoint" / "outputs"
+        validation_dir = study_dir / "runs" / "run_lg2_compare_entrypoint" / "validation"
+        reference_dir = study_dir / "reference_adam"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir()
+        reference_dir.mkdir(parents=True)
+        (output_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (validation_dir / "adae_validation_report.json").write_text(
+            json.dumps({"dataset": "ADAE", "status": "pass"}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_entrypoint",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.compare_reference_output(
+            study_dir=study_dir,
+            run_id="run_lg2_compare_entrypoint",
+            dataset="ADAE",
+        )
+
+        report_path = study_dir / "runs" / "run_lg2_compare_entrypoint" / "compare" / "adae_compare_report.json"
+        self.assertEqual(result.compare_summary["status"], "match")
+        self.assertTrue(report_path.exists())
+        self.assertEqual(result.graph_state.datasets["ADAE"].compare_summary["status"], "match")
+        self.assertEqual(result.graph_state.datasets["ADAE"].result_summary.compare_status, "match")
+
     def test_gateway_compare_requires_existing_graph_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_compare_requires_state") / "PSY201"
         study_dir.mkdir(parents=True)

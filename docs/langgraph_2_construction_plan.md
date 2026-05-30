@@ -3499,3 +3499,46 @@ Verification:
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_prepare_run_plan_uses_graph_projection tests.test_graph_gateway.GraphGatewayTests.test_graph_state_endpoint_returns_canonical_state -v
 ```
+
+### 2026-05-30 - LG2.8 GraphGateway-Owned Compare Entry Point Slice
+
+Completed:
+
+- Added `src/adam_agent/tools/compare.py` as the deterministic compare tool
+  boundary for:
+  - generated output usability checks
+  - reference ADaM lookup
+  - generated-vs-reference CSV structural/cell compare
+- Added `GraphGateway.compare_reference_output()` as the graph-owned high-level
+  entry point for stateful compare.
+- The compare endpoint now delegates prepared graph runs to
+  `GraphGateway.compare_reference_output()` instead of computing compare and
+  then calling a low-level recorder from the service layer.
+- Preserved the legacy compatibility behavior for ad-hoc compare calls without
+  `graph_state.json`: the endpoint can still return a transient compare
+  response, but it does not create graph state or write a compare report.
+- Added regression coverage proving:
+  - stateful compare is delegated to the gateway;
+  - gateway compare computes and records canonical compare state;
+  - no-graph-state compare remains transient.
+
+Current boundary:
+
+- This does not change the compare algorithm. It remains an initial CSV
+  structural and sampled-cell compare, not clinical derivation validation.
+- `review-summary` remains a read-model endpoint and still computes a fresh
+  non-mutating compare preview so disappearing reference files are visible
+  without rewriting historical graph state.
+- Static-rule governance is unchanged. No clinical, dataset-specific,
+  study-specific, demo-specific, or variable-specific static rule is added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_reference_output_computes_and_records_compare tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
+python -m compileall -q src\adam_agent
+```
+
+Result: 4 focused API tests passed; 4 focused gateway tests passed; compileall
+passed.

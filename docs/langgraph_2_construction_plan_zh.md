@@ -3181,3 +3181,45 @@ python -m compileall -q src\adam_agent
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_prepare_run_plan_uses_graph_projection tests.test_graph_gateway.GraphGatewayTests.test_graph_state_endpoint_returns_canonical_state -v
 ```
+
+### 2026-05-30 - LG2.8 GraphGateway-Owned Compare Entry Point 切片
+
+已完成：
+
+- 新增 `src/adam_agent/tools/compare.py`，作为确定性 compare tool boundary，
+  负责：
+  - generated output 是否可用于比较；
+  - reference ADaM 查找；
+  - generated-vs-reference CSV 结构/单元格比较。
+- 新增 `GraphGateway.compare_reference_output()`，作为有状态 compare 的
+  graph-owned 高层入口。
+- compare endpoint 对已经 prepare 过的 graph run，现在委托
+  `GraphGateway.compare_reference_output()`，不再由 service 层先计算 compare 再
+  调低层 recorder。
+- 保留无 `graph_state.json` 的旧兼容行为：endpoint 仍可返回一次临时 compare
+  response，但不会创建 graph state，也不会写 compare report。
+- 增加回归覆盖：
+  - stateful compare 必须委托 gateway；
+  - gateway compare 会计算并记录 canonical compare state；
+  - 无 graph state 的 compare 仍然是 transient。
+
+当前边界：
+
+- 本切片不改变 compare 算法。它仍只是初始 CSV 结构和抽样单元格比较，不是临床
+  推导验证。
+- `review-summary` 仍是 read-model endpoint，可以重新计算一次不写入状态的
+  compare preview，用来显示 reference 文件消失这类当前事实，而不改写历史
+  graph state。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_reference_output_computes_and_records_compare tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
+python -m compileall -q src\adam_agent
+```
+
+结果：4 个 focused API tests passed；4 个 focused gateway tests passed；
+compileall passed。
