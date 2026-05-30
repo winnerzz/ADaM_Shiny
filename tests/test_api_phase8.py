@@ -341,6 +341,26 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
         self.assertNotIn("JSON.stringify", queue_body)
 
+    def test_index_hides_technical_paths_outside_advanced_artifact_view(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        draft_pane_body = html.split("function renderDraftSpecPane()", 1)[1].split("function renderGraphAwareDashboard()", 1)[0]
+        draft_notice_body = html.split("function draftSpecNotice(generated)", 1)[1].split("function resultWorkspace(review)", 1)[0]
+        advanced_body = html.split("function renderAdvanced()", 1)[1].split("function renderTimeline()", 1)[0]
+        self.assertIn("artifactRecordedNote('Input spec artifact')", draft_pane_body)
+        self.assertIn("artifactRecordedNote('Approved draft-spec artifact')", draft_pane_body)
+        self.assertIn("artifactRecordedNote('Draft-spec artifact')", draft_pane_body)
+        self.assertIn("Technical path is available under Advanced settings and audit files", html)
+        self.assertIn("<th>Path</th>", advanced_body)
+        self.assertNotIn("escapeHtml(finalized.input_spec_path)", draft_pane_body)
+        self.assertNotIn("escapeHtml(finalized.approved_spec_path", draft_pane_body)
+        self.assertNotIn("escapeHtml(draft.spec_path)", draft_pane_body)
+        self.assertNotIn("escapeHtml(generated.draft_spec_path)", draft_notice_body)
+
     def test_index_exposes_agent_audit_from_graph_state(self) -> None:
         client = TestClient(create_app())
 

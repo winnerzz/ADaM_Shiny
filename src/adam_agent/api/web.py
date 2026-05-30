@@ -1835,7 +1835,7 @@ INDEX_HTML = r"""<!doctype html>
               : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
                 : !hasSpecGate
-                  ? 'Approve an uploaded input spec path or review/approve the generated draft spec first.'
+                  ? 'Confirm the uploaded input spec or review/approve the generated draft spec first.'
                   : generated?.status === 'stale'
                     ? 'Inputs changed after code generation; regenerate R code before review.'
                     : generated
@@ -2118,13 +2118,12 @@ INDEX_HTML = r"""<!doctype html>
       }
       const finalized = finalizedInputsFor(state.selectedTarget);
       if (finalized?.input_spec_available || targetHasInputSpec(state.selectedTarget)) {
-        const specPath = finalized?.input_spec_path ? ` Artifact: ${escapeHtml(finalized.input_spec_path)}` : '';
-        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly.${specPath}</p>`;
+        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly. ${artifactRecordedNote('Input spec artifact')}</p>`;
         byId('approveDraftSpecButton').disabled = true;
         return;
       }
       if (finalized?.approved_draft_spec_available) {
-        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} already has a user-approved draft spec for this run. The code generator can use it now. Artifact: ${escapeHtml(finalized.approved_spec_path || '')}</p>`;
+        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} already has a user-approved draft spec for this run. The code generator can use it now. ${artifactRecordedNote('Approved draft-spec artifact')}</p>`;
         byId('approveDraftSpecButton').disabled = true;
         return;
       }
@@ -2147,12 +2146,16 @@ INDEX_HTML = r"""<!doctype html>
       node.innerHTML = `
         <p class="note ${review?.approved ? 'strong' : 'warn'}">
           Draft spec for ${escapeHtml(draft.dataset)} ${review?.approved ? 'approved for this run' : 'requires review before code generation'}.
-          Artifact: ${escapeHtml(draft.spec_path)}
+          ${artifactRecordedNote('Draft-spec artifact')}
         </p>
         <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Type</th><th>Source</th><th>Derivation</th><th>Risk</th></tr></thead><tbody>${rows || '<tr><td class="muted" colspan="5">No variables returned.</td></tr>'}</tbody></table></div>
         <div style="margin-top:10px;"><h3>Draft warnings</h3><ul class="clean">${listItems(draft.warnings, 'None reported.')}</ul></div>
       `;
       byId('approveDraftSpecButton').disabled = Boolean(review?.approved);
+    }
+
+    function artifactRecordedNote(label) {
+      return `${label || 'Artifact'} recorded. Technical path is available under Advanced settings and audit files.`;
     }
 
     function renderGraphAwareDashboard() {
@@ -2861,7 +2864,7 @@ INDEX_HTML = r"""<!doctype html>
         <p class="note warn">
           Draft spec generated for ${escapeHtml(generated.dataset)} because no approved input spec was supplied.
           This draft is evidence for review, not an approved production rule.
-          Artifact: ${escapeHtml(generated.draft_spec_path)}
+          ${artifactRecordedNote('Draft-spec artifact')}
         </p>
       `;
     }

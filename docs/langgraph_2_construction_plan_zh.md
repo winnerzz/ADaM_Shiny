@@ -1647,6 +1647,32 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_loc
 python -m compileall -q src\adam_agent
 ```
 
+### 2026-05-30 - LG2.7 Hide Technical Paths In Main UI 切片
+
+已完成：
+
+- 从主流程里的 draft-spec 和 code-review pane 中移除直接 spec/draft-spec artifact
+  path 展示。
+- 改成面向用户的 artifact-recorded 文案。
+- 技术路径继续保留在已有的 Advanced settings and audit files 表格中。
+- 增加 UI contract 测试，防止普通 review pane 重新展示 `input_spec_path`、
+  `approved_spec_path`、`draft.spec_path` 或 `generated.draft_spec_path`。
+
+当前边界：
+
+- 这是 UI presentation 层改动，不改变 artifact storage、download behavior、
+  graph state、workflow projection 或 audit files。
+- 技术路径仍可在 Advanced 中用于 audit/debug。
+- 不改变 static-rule 行为。静态检查仍然是 generic contract/rule-pack
+  governance，不是 demo/study/dataset-specific 补丁。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+python -m compileall -q src\adam_agent
+```
+
 ### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit 切片
 
 已完成：
