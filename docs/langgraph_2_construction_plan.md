@@ -1038,9 +1038,12 @@ Current boundary:
 
 - This is not the full DatasetGraph product replacement.
 - Draft spec LLM generation is now in the minimal `graph_product_prepare` path.
-- Code generation, code review, and R execution are not yet graph-native
-  DatasetGraph nodes.
-- Current UI/API still mostly uses the compatibility service path.
+- At the time of this slice, code generation, code review, and R execution were
+  not yet graph-owned product entry points.
+- Later LG2.2/LG2.8 slices moved finalize inputs, draft spec generation, code
+  generation, code review, dependency review, approved execution, terminal
+  failure review, and compare recording behind `GraphGateway` while preserving
+  compatibility route paths.
 
 Verified with:
 
@@ -1138,9 +1141,12 @@ Current boundary:
 - `workflow_state.json` remains a UI projection for compatibility, but this
   slice makes draft spec generation/review and approved-draft consumption
   graph-owned.
-- Code review and execution are partly graph-owned already, but terminal
-  validation/compare/repair are still service-driven or compatibility-layer
-  paths.
+- At the time of this slice, code review, execution, validation, compare, and
+  repair routing still had service/compatibility responsibilities.
+- Later LG2.2/LG2.8 slices moved code review, approved execution, terminal
+  failure review, dependency review, and compare recording into `GraphGateway`.
+  The current remaining boundary is that compatibility route paths still call
+  graph-owned product steps one at a time.
 - DatasetGraph still has legacy stub nodes for non-product test modes.
 
 Verified with:
@@ -3014,10 +3020,10 @@ Completed:
 Current boundary:
 
 - The public route path and response shape are unchanged.
-- Dependency-plan gating still lives in the service compatibility wrapper for
-  this slice.
-- `finalize-inputs` still calls `DatasetGraph` directly from the service and is
-  the remaining large dataset product step to migrate.
+- At the time of this slice, dependency-plan gating and `finalize-inputs` were
+  still compatibility-wrapper responsibilities.
+- Superseded by later slices: dependency-plan gating and `finalize-inputs` are
+  now graph/gateway-owned product boundaries.
 - Static checks remain generic contract/rule-pack checks. This slice does not
   add clinical, dataset-specific, study-specific, or demo-specific rules.
 
@@ -3065,11 +3071,10 @@ Completed:
 Current boundary:
 
 - The public route path and response shape are unchanged.
-- Dependency-plan gating still lives in the service compatibility wrapper for
-  this slice.
-- The separate explicit `/draft-spec` endpoint still performs its own draft
-  generation service flow and records the result through `GraphGateway`; this
-  was left out of scope to keep the migration slice bounded.
+- At the time of this slice, dependency-plan gating and the explicit
+  `/draft-spec` endpoint still had compatibility-wrapper responsibilities.
+- Superseded by later slices: dependency-plan gating and explicit draft-spec
+  generation now route through graph/gateway-owned product methods.
 - Static checks remain generic contract/rule-pack checks. This slice does not
   add clinical, dataset-specific, study-specific, or demo-specific rules.
 

@@ -899,8 +899,12 @@ python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_
 
 - 这不是完整 DatasetGraph 产品替换。
 - draft spec LLM 生成已并入 `graph_product_prepare` 最小路径。
-- code generation、code review、R execution 还没有并入 DatasetGraph。
-- 当前 UI/API 仍主要使用 compatibility service path。
+- 在这个切片当时，code generation、code review、R execution 还没有成为
+  graph-owned product entry points。
+- 后续 LG2.2/LG2.8 切片已经把 finalize inputs、draft spec generation、
+  code generation、code review、dependency review、approved execution、
+  terminal failure review 和 compare recording 收进 `GraphGateway`，同时保留
+  兼容 route path。
 
 已验证：
 
@@ -996,8 +1000,12 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 
 - `workflow_state.json` 仍作为 UI 兼容投影保留，但本切片已经让 draft spec
   生成/审核以及 approved draft spec 的消费成为 graph-owned 状态。
-- code review 和 execution 已经部分 graph-owned，但 terminal
-  validation/compare/repair 仍在 service 或 compatibility path 中。
+- 在这个切片当时，code review、execution、validation、compare 和 repair
+  routing 仍有 service/compatibility responsibilities。
+- 后续 LG2.2/LG2.8 切片已经把 code review、approved execution、
+  terminal failure review、dependency review 和 compare recording 移入
+  `GraphGateway`。当前仍保留的边界是 compatibility route paths 会按单步调用
+  graph-owned product steps。
 - DatasetGraph 仍保留 legacy stub node，供非产品测试模式使用。
 
 已验证：
@@ -2757,9 +2765,10 @@ python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_
 当前边界：
 
 - public route path 和 response shape 不变。
-- dependency-plan gate 本切片仍留在 service compatibility wrapper。
-- `finalize-inputs` 仍由 service 直接调用 `DatasetGraph`，它是剩下的主要
-  dataset product step migration。
+- 在这个切片当时，dependency-plan gate 和 `finalize-inputs` 仍属于
+  compatibility-wrapper responsibilities。
+- 后续切片已替代该边界：dependency-plan gating 和 `finalize-inputs` 现在是
+  graph/gateway-owned product boundaries。
 - 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
   clinical、dataset-specific、study-specific 或 demo-specific rule。
 
@@ -2804,9 +2813,10 @@ python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_
 当前边界：
 
 - public route path 和 response shape 不变。
-- dependency-plan gate 本切片仍留在 service compatibility wrapper。
-- 独立 `/draft-spec` endpoint 仍保留自己的 draft generation service flow，并通过
-  `GraphGateway` 记录结果；为了保持本切片范围可控，暂未迁移它。
+- 在这个切片当时，dependency-plan gate 和独立 `/draft-spec` endpoint 仍有
+  compatibility-wrapper responsibilities。
+- 后续切片已替代该边界：dependency-plan gating 和显式 draft-spec generation
+  现在都通过 graph/gateway-owned product methods。
 - 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
   clinical、dataset-specific、study-specific 或 demo-specific rule。
 
