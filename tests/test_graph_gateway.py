@@ -61,6 +61,50 @@ def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, cod
 
 
 class GraphGatewayTests(unittest.TestCase):
+    def test_gateway_blocks_legacy_llm_run_to_completion_with_projection(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_legacy_block") / "PSY201"
+        study_dir.mkdir(parents=True)
+
+        projection = GraphGateway().block_legacy_run_to_completion(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_legacy_block",
+            requested_datasets=["adae"],
+            execution_mode="llm_downstream_provider",
+        )
+
+        workflow_path = study_dir / "runs" / "run_legacy_block" / "workflow_state.json"
+        workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(projection["status"], "blocked")
+        self.assertEqual(workflow_state["current_interrupt"], "split_flow_required")
+        self.assertEqual(workflow_state["requested_datasets"], ["ADAE"])
+        self.assertEqual(workflow_state["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertEqual(workflow_state["legacy_endpoint"], "POST /runs")
+        self.assertTrue(workflow_state["product_flow_required"])
+        self.assertIsNone(workflow_state["graph_state_path"])
+
+    def test_gateway_runs_legacy_stub_to_completion_with_projection(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_legacy_stub") / "PSY201"
+        study_dir.mkdir(parents=True)
+
+        result = GraphGateway().run_legacy_to_completion(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_legacy_stub",
+            target_datasets=["ADAE"],
+            execution_mode="stub",
+        )
+
+        workflow_path = study_dir / "runs" / "run_legacy_stub" / "workflow_state.json"
+        workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(result.graph_result["status"], "completed")
+        self.assertEqual(result.workflow_projection["workflow_control"], "legacy_run_to_completion_compatibility_shim")
+        self.assertEqual(workflow_state["status"], "completed")
+        self.assertEqual(workflow_state["legacy_endpoint"], "POST /runs")
+        self.assertFalse(workflow_state["product_flow_required"])
+        self.assertIsNone(workflow_state["graph_state_path"])
+        self.assertTrue(workflow_state["workflow_state_path"].endswith("runs/run_legacy_stub/workflow_state.json"))
+
     def test_gateway_dependency_plan_writes_consistent_workflow_projection(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_plan") / "PSY201"
         study_dir.mkdir(parents=True)

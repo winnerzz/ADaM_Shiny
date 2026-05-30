@@ -46,12 +46,10 @@ from adam_agent.graph.dependency_resolution import (
     resolve_dependency_availability,
 )
 from adam_agent.graph.dependencies import plan_dataset_dependencies
-from adam_agent.graph.gateway import GraphGateway
-from adam_agent.graph.study_graph import compile_study_graph
+from adam_agent.graph.gateway import GraphGateway, LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
-    update_workflow_state,
 )
 from adam_agent.llm.clients import (
     LLMClientConfigError,
@@ -104,7 +102,6 @@ MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
 GRAPH_GATEWAY_COMPATIBILITY_SHIM = "graph_gateway_compatibility_shim"
-LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM = "legacy_run_to_completion_compatibility_shim"
 
 
 def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[str, str]:
@@ -117,74 +114,6 @@ def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[st
         "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
         "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
     }
-
-
-def _write_legacy_run_blocked_workflow_state(
-    *,
-    study_dir: str | Path,
-    run_id: str,
-    study_id: str,
-    request: RunStudyRequest,
-    execution_mode: str,
-) -> None:
-    """Write the legacy `/runs` blocked-state compatibility projection."""
-
-    root = Path(study_dir)
-    run_dir = root / "runs" / run_id
-    update_workflow_state(
-        root,
-        run_id,
-        study_id=study_id,
-        node="run_study_request_blocked",
-        status="blocked",
-        current_interrupt="split_flow_required",
-        input_fingerprint_payload=input_fingerprint(root),
-        extra={
-            "requested_datasets": [str(item).strip().upper() for item in request.target_datasets],
-            "execution_mode": execution_mode,
-            "blocked_reason": "LLM ADaM generation must use the draft/spec/code-review/execute API flow.",
-            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
-            "legacy_endpoint": "POST /runs",
-            "product_flow_required": True,
-            "graph_state_path": None,
-            "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
-        },
-    )
-
-
-def _write_legacy_run_completion_workflow_state(
-    *,
-    study_dir: str | Path,
-    run_id: str,
-    study_id: str,
-    response: RunStudyResponse,
-) -> None:
-    """Write the legacy `/runs` completion-state compatibility projection."""
-
-    root = Path(study_dir)
-    update_workflow_state(
-        root,
-        run_id,
-        study_id=study_id,
-        node="run_study_request",
-        status=response.status,
-        input_fingerprint_payload=input_fingerprint(root),
-        extra={
-            "requested_datasets": response.requested_datasets,
-            "target_datasets": response.target_datasets,
-            "runnable_datasets": response.runnable_datasets,
-            "blocked_datasets": response.blocked_datasets,
-            "dependency_review_status": response.dependency_review_status,
-            "execution_mode": response.execution_mode,
-            "dataset_results": response.dataset_results,
-            "audit_manifest": response.audit_manifest,
-            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
-            "legacy_endpoint": "POST /runs",
-            "product_flow_required": False,
-            "graph_state_path": response.graph_state_path,
-            "workflow_state_path": response.workflow_state_path,
-        },
-    )
 
 
 def ensure_study_workspace(request: StudyWorkspaceRequest) -> StudyInputSummary:
@@ -328,12 +257,13 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
         execution_mode = "llm_downstream_provider"
     if execution_mode is None:
         execution_mode = "stub"
+    gateway = GraphGateway()
     if execution_mode in {"llm_downstream_provider", "llm_downstream_r_sandbox"}:
-        _write_legacy_run_blocked_workflow_state(
+        gateway.block_legacy_run_to_completion(
             study_dir=study_dir,
             run_id=config.run_id,
             study_id=study_id,
-            request=request,
+            requested_datasets=list(request.target_datasets),
             execution_mode=execution_mode,
         )
         raise ApiServiceError(
@@ -342,35 +272,22 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             "and execute-approved-code."
         )
 
-    graph = compile_study_graph()
-    result = graph.invoke(
-        {
-            "study_id": config.study_id,
-            "run_id": config.run_id,
-            "target_datasets": request.target_datasets,
-            "execution_mode": execution_mode,
-            "study_dir": str(study_dir),
-            "rscript_path": request.rscript_path or "",
-            "approved_dependency_datasets": request.approved_dependency_datasets,
-            "llm_exposure": config.llm_exposure.model_dump(mode="json"),
-            "llm_provider": {
-                key: value
-                for key, value in config.llm_provider.__dict__.items()
-                if value is not None
-            },
-            "dataset_results": [],
-            "blocked_datasets": [],
-            "audit_artifacts": [],
-        }
-    )
-    response = _response_from_graph_result(result, execution_mode=execution_mode, study_dir=study_dir)
-    _write_legacy_run_completion_workflow_state(
+    legacy_result = gateway.run_legacy_to_completion(
         study_dir=study_dir,
+        study_id=config.study_id,
         run_id=config.run_id,
-        study_id=study_id,
-        response=response,
+        target_datasets=list(request.target_datasets),
+        execution_mode=execution_mode,
+        approved_dependency_datasets=request.approved_dependency_datasets,
+        rscript_path=request.rscript_path or "",
+        llm_exposure=config.llm_exposure.model_dump(mode="json"),
+        llm_provider={
+            key: value
+            for key, value in config.llm_provider.__dict__.items()
+            if value is not None
+        },
     )
-    return response
+    return _response_from_graph_result(legacy_result.graph_result, execution_mode=execution_mode, study_dir=study_dir)
 
 
 def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:

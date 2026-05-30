@@ -143,13 +143,9 @@ class Phase8ApiTests(unittest.TestCase):
                 f"{wrapper.__name__} must delegate to GraphGateway.{gateway_method}().",
             )
 
-    def test_legacy_run_endpoint_owns_only_remaining_service_workflow_writes(self) -> None:
+    def test_service_layer_no_longer_writes_workflow_state_directly(self) -> None:
         from adam_agent.api import service
 
-        allowed_helpers = {
-            "_write_legacy_run_blocked_workflow_state",
-            "_write_legacy_run_completion_workflow_state",
-        }
         direct_update_callers: list[str] = []
         for name, obj in vars(service).items():
             if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
@@ -168,11 +164,11 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(
             sorted(direct_update_callers),
-            sorted(allowed_helpers),
-            "Only legacy `/runs` compatibility helpers may write workflow_state directly from the service layer.",
+            [],
+            "Service helpers must delegate state changes to GraphGateway instead of writing workflow_state directly.",
         )
 
-    def test_run_study_from_request_delegates_legacy_workflow_writes(self) -> None:
+    def test_run_study_from_request_delegates_legacy_run_state_to_gateway(self) -> None:
         from adam_agent.api import service
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(service.run_study_from_request)))
@@ -186,43 +182,15 @@ class Phase8ApiTests(unittest.TestCase):
                 called_names.add(node.func.id)
 
         self.assertNotIn("update_workflow_state", called_names)
-        self.assertIn("_write_legacy_run_blocked_workflow_state", called_names)
-        self.assertIn("_write_legacy_run_completion_workflow_state", called_names)
+        self.assertNotIn("compile_study_graph", called_names)
+        self.assertIn("block_legacy_run_to_completion", called_names)
+        self.assertIn("run_legacy_to_completion", called_names)
 
-    def test_legacy_run_workflow_helpers_are_only_called_by_legacy_run_endpoint(self) -> None:
+    def test_legacy_run_workflow_helpers_are_removed_from_service_layer(self) -> None:
         from adam_agent.api import service
 
-        legacy_helpers = {
-            "_write_legacy_run_blocked_workflow_state",
-            "_write_legacy_run_completion_workflow_state",
-        }
-        callers: dict[str, list[str]] = {helper: [] for helper in legacy_helpers}
-        for name, obj in vars(service).items():
-            if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
-                continue
-            if name in legacy_helpers:
-                continue
-            tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
-            called_names: set[str] = set()
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                if isinstance(node.func, ast.Attribute):
-                    called_names.add(node.func.attr)
-                elif isinstance(node.func, ast.Name):
-                    called_names.add(node.func.id)
-            for helper in legacy_helpers:
-                if helper in called_names:
-                    callers[helper].append(name)
-
-        self.assertEqual(
-            callers,
-            {
-                "_write_legacy_run_blocked_workflow_state": ["run_study_from_request"],
-                "_write_legacy_run_completion_workflow_state": ["run_study_from_request"],
-            },
-            "Legacy `/runs` workflow helpers must not become reusable service-layer state writers.",
-        )
+        self.assertFalse(hasattr(service, "_write_legacy_run_blocked_workflow_state"))
+        self.assertFalse(hasattr(service, "_write_legacy_run_completion_workflow_state"))
 
     def test_review_summary_read_model_helpers_do_not_record_compare(self) -> None:
         from adam_agent.api import service

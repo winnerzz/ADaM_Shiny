@@ -20,6 +20,7 @@ from adam_agent.graph.workflow_state import (
     input_fingerprint,
     invalidate_active_workflows,
     project_graph_state_to_workflow,
+    update_workflow_state,
 )
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
 from adam_agent.schemas.artifacts import ArtifactRef
@@ -29,6 +30,9 @@ from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
 from adam_agent.tools.compare import compare_dataset_files, reference_adam_path, usable_generated_output_path
 from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
+
+
+LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM = "legacy_run_to_completion_compatibility_shim"
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,14 @@ class GraphGatewayInputInvalidationResult:
 
 
 @dataclass(frozen=True)
+class GraphGatewayLegacyRunResult:
+    """Graph invocation result plus the legacy workflow projection."""
+
+    graph_result: dict[str, Any]
+    workflow_projection: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class GraphGatewayCompareResult(GraphGatewayResult):
     """Graph-owned reference compare result plus API-facing compare fields."""
 
@@ -210,6 +222,101 @@ class GraphGateway:
         self._persist_graph_state(root, graph_state, node="dependency_plan")
         projection = project_graph_state_to_workflow(root, graph_state, node="graph_gateway_plan")
         return GraphGatewayResult(graph_state=graph_state, workflow_projection=projection)
+
+    def block_legacy_run_to_completion(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        requested_datasets: list[str],
+        execution_mode: str,
+    ) -> dict[str, Any]:
+        """Write the compatibility projection for rejected legacy LLM `/runs` calls."""
+
+        root = Path(study_dir).expanduser()
+        run_dir = root / "runs" / run_id
+        return update_workflow_state(
+            root,
+            run_id,
+            study_id=study_id,
+            node="run_study_request_blocked",
+            status="blocked",
+            current_interrupt="split_flow_required",
+            input_fingerprint_payload=input_fingerprint(root),
+            extra={
+                "requested_datasets": _normalize_dataset_list(requested_datasets),
+                "execution_mode": execution_mode,
+                "blocked_reason": "LLM ADaM generation must use the draft/spec/code-review/execute API flow.",
+                "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+                "legacy_endpoint": "POST /runs",
+                "product_flow_required": True,
+                "graph_state_path": None,
+                "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+            },
+        )
+
+    def run_legacy_to_completion(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        target_datasets: list[str],
+        execution_mode: str,
+        approved_dependency_datasets: list[str] | None = None,
+        rscript_path: str = "",
+        llm_exposure: dict[str, Any] | None = None,
+        llm_provider: dict[str, Any] | None = None,
+    ) -> GraphGatewayLegacyRunResult:
+        """Run the old `/runs` compatibility path and write its projection."""
+
+        root = Path(study_dir).expanduser()
+        result = self._graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "target_datasets": list(target_datasets),
+                "execution_mode": execution_mode,
+                "study_dir": str(root),
+                "rscript_path": rscript_path,
+                "approved_dependency_datasets": _normalize_dataset_list(approved_dependency_datasets or []),
+                "llm_exposure": dict(llm_exposure or {}),
+                "llm_provider": dict(llm_provider or {}),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            },
+            config=self._config(study_id, run_id),
+        )
+        run_dir = root / "runs" / run_id
+        projection = update_workflow_state(
+            root,
+            run_id,
+            study_id=study_id,
+            node="run_study_request",
+            status=result.get("status"),
+            input_fingerprint_payload=input_fingerprint(root),
+            extra={
+                "requested_datasets": result.get("requested_datasets", []),
+                "target_datasets": result.get("target_datasets", []),
+                "runnable_datasets": result.get("runnable_datasets", []),
+                "blocked_datasets": result.get("blocked_datasets", []),
+                "dependency_review_status": result.get("dependency_review_status"),
+                "execution_mode": execution_mode,
+                "dataset_results": [
+                    summary.model_dump(mode="json") if hasattr(summary, "model_dump") else summary
+                    for summary in result.get("dataset_results", [])
+                ],
+                "audit_manifest": _artifact_path(result.get("audit_manifest")),
+                "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+                "legacy_endpoint": "POST /runs",
+                "product_flow_required": False,
+                "graph_state_path": None,
+                "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+            },
+        )
+        return GraphGatewayLegacyRunResult(graph_result=dict(result), workflow_projection=projection)
 
     def resume(self, *, study_dir: str | Path, graph_state: StudyRunState, command: HumanCommand) -> GraphGatewayResult:
         """Record a human command against a graph-native interrupt.
@@ -2829,6 +2936,13 @@ def _read_json_if_exists(path: str | Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _artifact_path(artifact: Any) -> str | None:
+    if artifact is None:
+        return None
+    path = getattr(artifact, "path", None)
+    return str(path) if path else None
 
 
 def _write_json(path: str | Path, payload: dict[str, Any]) -> Path:

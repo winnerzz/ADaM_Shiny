@@ -3582,3 +3582,45 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ma
 ```
 
 Result: 9 focused tests passed.
+
+### 2026-05-30 - LG2.8 Legacy `/runs` Gateway Ownership Slice
+
+Completed:
+
+- Added graph-gateway entry points for the remaining legacy run-to-completion
+  surface:
+  - `GraphGateway.block_legacy_run_to_completion()` writes the blocked
+    compatibility projection for LLM `/runs` calls that must use the split-flow
+    review gates.
+  - `GraphGateway.run_legacy_to_completion()` runs the old stub/test
+    compatibility graph path and writes the legacy workflow projection.
+- Removed the remaining direct `workflow_state.json` write helpers from
+  `api/service.py`.
+- Removed the direct `compile_study_graph()` call from
+  `api/service.py::run_study_from_request()`.
+- Strengthened API boundary tests so service helpers must not call
+  `update_workflow_state()` directly, and legacy `/runs` state is delegated to
+  gateway methods.
+- Added gateway coverage for both rejected LLM run-to-completion and old stub
+  run-to-completion projections.
+
+Current boundary:
+
+- `POST /runs` remains a legacy compatibility route. It is not the product LLM
+  generation path.
+- The current product path remains `/runs/prepare` plus per-dataset
+  finalize/draft-spec/code-review/execute gates.
+- The legacy `/runs` response shape is preserved, including
+  `workflow_control: legacy_run_to_completion_compatibility_shim` and
+  `graph_state_path: null`.
+- Static-rule governance is unchanged. This slice does not add clinical,
+  dataset-specific, study-specific, demo-specific, or variable-specific static
+  rules.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_blocks_legacy_llm_run_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_runs_legacy_stub_to_completion_with_projection tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_run_study_from_request_delegates_legacy_run_state_to_gateway tests.test_api_phase8.Phase8ApiTests.test_legacy_run_workflow_helpers_are_removed_from_service_layer tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_demo_study_rejects_run_to_completion_llm_endpoint -v
+```
+
+Result: 8 focused tests passed.

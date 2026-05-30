@@ -3262,3 +3262,39 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ma
 ```
 
 结果：9 个 focused tests passed。
+
+### 2026-05-30 - LG2.8 Legacy `/runs` Gateway Ownership 切片
+
+已完成：
+
+- 为剩余的旧 run-to-completion surface 新增 graph-gateway 入口：
+  - `GraphGateway.block_legacy_run_to_completion()`：为被拒绝的 LLM `/runs`
+    调用写入 blocked compatibility projection，强制走 split-flow review gates。
+  - `GraphGateway.run_legacy_to_completion()`：运行旧 stub/test compatibility
+    graph path，并写入 legacy workflow projection。
+- 从 `api/service.py` 移除剩余的直接 `workflow_state.json` 写入 helper。
+- 从 `api/service.py::run_study_from_request()` 移除直接
+  `compile_study_graph()` 调用。
+- 加强 API 边界测试：service helpers 不能直接调用 `update_workflow_state()`，
+  旧 `/runs` 状态必须委托给 gateway methods。
+- 增加 gateway 测试，覆盖 LLM run-to-completion 被拒绝和旧 stub
+  run-to-completion projection。
+
+当前边界：
+
+- `POST /runs` 仍是 legacy compatibility route，不是产品 LLM generation path。
+- 当前产品路径仍然是 `/runs/prepare` 加 per-dataset
+  finalize/draft-spec/code-review/execute gates。
+- 旧 `/runs` response shape 保持不变，包括
+  `workflow_control: legacy_run_to_completion_compatibility_shim` 和
+  `graph_state_path: null`。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_blocks_legacy_llm_run_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_runs_legacy_stub_to_completion_with_projection tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_run_study_from_request_delegates_legacy_run_state_to_gateway tests.test_api_phase8.Phase8ApiTests.test_legacy_run_workflow_helpers_are_removed_from_service_layer tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_demo_study_rejects_run_to_completion_llm_endpoint -v
+```
+
+结果：8 个 focused tests passed。
