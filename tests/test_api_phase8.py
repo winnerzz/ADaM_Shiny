@@ -92,14 +92,18 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
-    def test_product_service_wrappers_do_not_own_terminal_failure_preflight(self) -> None:
+    def test_product_service_wrappers_delegate_state_changes_to_gateway_methods(self) -> None:
         from adam_agent.api import service
 
         wrappers = [
+            service.persist_dependency_review,
             service.finalize_dataset_inputs,
             service.generate_dataset_draft_spec,
             service.generate_dataset_code,
+            service.persist_draft_spec_review,
+            service.persist_code_review,
             service.execute_approved_dataset_code,
+            service.persist_terminal_failure_review,
         ]
 
         for wrapper in wrappers:
@@ -123,10 +127,13 @@ class Phase8ApiTests(unittest.TestCase):
                 "record_code_review",
                 "record_draft_spec_review",
                 "record_terminal_failure_review",
+                "update_workflow_state",
+                "mark_workflow_inputs_current",
+                "mark_workflow_inputs_stale",
             }
             self.assertTrue(
                 forbidden_low_level_recorders.isdisjoint(called_names),
-                f"{wrapper.__name__} must use GraphGateway product methods, not low-level recorders.",
+                f"{wrapper.__name__} must use GraphGateway product methods, not low-level recorders or workflow writes.",
             )
 
     def test_review_summary_read_model_helpers_do_not_record_compare(self) -> None:
