@@ -475,6 +475,10 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - rule-pack 准入是产品/治理决策，不是随手改代码。任何 clinical/static
   standards rule 要能 block 一个 run，必须先有 authority_type、source、
   version、scope、severity 和 evidence。
+- `source` 也必须是真正的规则来源，不能把 `demo-observation`、
+  `implementation-note`、`candidate-rule` 或 `reviewer-note` 伪装成
+  `user_policy` 或 company standard。观察记录只能进入 candidate backlog 或
+  reviewer note，不能直接进入 binding rule pack。
 - generic engine 里不能有“例外登记表”。如果未来某个问题看起来需要例外处理，
   工程上的处理只能是：修正 approved spec contract，加入带来源的 rule-pack
   item，或在具备正式来源前保留为不 blocking 的 reviewer note。
@@ -515,6 +519,8 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - rule-pack admission checks：没有 allowed authority_type、source、version、
     scope、declared severity 和 evidence pointer 的 rule-pack item，不能影响
     code review 或 execution
+  - non-authority source checks：candidate/demo/reviewer/implementation note 不能
+    被当成正式 source 进入 binding rule pack
   - future standards-pack rules：从显式 references 加载 CDISC/P21/company
     standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
@@ -577,6 +583,9 @@ LG2.5 当前 slice 已实现：
 - `StaticRulePack` 准入现在要求 pack 级显式 `authority_type`
   (`cdisc_standard`, `p21_rule`, `company_standard`, `user_policy`)。rule item
   继承该 authority，不能用不同 authority class 偷渡规则。
+- `StaticRulePack` 准入会拒绝 `demo-observation`、`implementation-note`、
+  `candidate-rule`、`reviewer-note` 这类非权威 source，防止把测试观察或实现备
+  注包装成正式规则。
 
 LG2.5 当前 slice 验证：
 
@@ -1525,6 +1534,50 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.5 Static Rule 非权威 Source Guard 切片
+
+已完成：
+
+- 收紧 static-rule governance：rule-pack 不只检查 `authority_type`，也检查
+  `source` 是否是真正规则来源。
+- `StaticRulePack` 准入现在会拒绝以下 note-like source，防止它们成为 binding
+  rule：
+  - `demo-observation`
+  - `implementation-note`
+  - `candidate-rule`
+  - `reviewer-note`
+- 拒绝范围覆盖下划线/空格变体和带后缀形式，例如
+  `demo-observation-2026`，避免把实现备注改个名字伪装成 user policy。
+- 更新 `StaticRulePolicy` governance metadata，让 static-check report 明确说明
+  note-like source 不能作为正式 rule-pack source。
+- 同步更新中英文 LG2 施工方案，把这条作为硬设计边界。
+
+当前边界：
+
+- 本切片不新增任何 clinical、ADaM、CDISC、P21、study-specific、
+  dataset-specific 或 variable-specific rule。
+- 合理的 `user_policy`、`company_standard`、`p21_rule` 和 `cdisc_standard`
+  rule pack 仍然可用，前提是它们提供真实 source、version、scope、severity 和
+  evidence metadata。
+- 静态检查仍然是 generic contract/rule-pack governance。Demo 观察可以进入
+  candidate backlog，但不能直接 block run。
+
+验证：
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_static_rules tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+后缀加固前结果：26 个 static-rule tests passed；151 个 static/gateway/API
+相关测试通过。
+
+子 agent 审查：
+
+- 只读子 agent review 返回 GO。
+- 未发现 blocking issue。
+- 审查建议补上带后缀的 note-like source guard；已在最终验证前落实。
 
 ### 2026-05-30 - LG2.8 Legacy Workflow Write Boundary 切片
 

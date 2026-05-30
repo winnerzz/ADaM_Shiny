@@ -28,6 +28,13 @@ STATIC_RULE_CATEGORIES = {"artifact_contract", "execution_boundary", "spec_contr
 STATIC_RULE_SOURCE_TYPES = {"system_contract", "approved_spec", "standards_pack", "user_policy"}
 STATIC_RULE_PACK_AUTHORITY_TYPES = {"cdisc_standard", "p21_rule", "company_standard", "user_policy"}
 SOURCE_ID_REQUIRED_TYPES = {"approved_spec", "standards_pack", "user_policy"}
+NON_AUTHORITY_SOURCE_MARKERS = {
+    "candidate",
+    "candidate-rule",
+    "demo-observation",
+    "implementation-note",
+    "reviewer-note",
+}
 
 
 class StaticRuleError(ValueError):
@@ -145,6 +152,7 @@ class StaticRulePolicy:
                 "demo_observation_policy": "Demo observations can become static rules only after promotion into source-backed rule packs.",
                 "clinical_rule_policy": "clinical/domain rules require approved specs or versioned standards packs",
                 "rule_pack_admission_policy": "A standards/company rule pack must declare authority_type, source, version, scope, severity, and evidence before it can affect review or execution.",
+                "non_authority_source_policy": "Candidate rules, demo observations, implementation notes, and reviewer notes cannot be admitted as binding rule-pack sources.",
                 "candidate_rule_policy": "Candidate rules and demo observations are reviewer notes until promoted through rule-pack admission.",
             },
         }
@@ -309,6 +317,7 @@ def validate_static_rule_pack_payload(payload: Any) -> StaticRulePack:
     pack_id = _required_text(payload, "pack_id", context="Static rule pack")
     authority_type = _required_authority_type(payload.get("authority_type"), context=f"Static rule pack {pack_id}")
     source = _required_text(payload, "source", context=f"Static rule pack {pack_id}")
+    _reject_non_authority_source(source, context=f"Static rule pack {pack_id}")
     version = _required_text(payload, "version", context=f"Static rule pack {pack_id}")
     scope = _required_scope(payload.get("scope"), context=f"Static rule pack {pack_id}")
     rules_payload = payload.get("rules")
@@ -397,6 +406,7 @@ def _validate_rule_pack_item(
         raise StaticRuleError(f"{context} has invalid severity: {severity}.")
     authority_type = _authority_type_or_inherit(item.get("authority_type"), inherited=pack_authority_type, context=context)
     source = _required_text(item, "source", context=context)
+    _reject_non_authority_source(source, context=context)
     version = _required_text(item, "version", context=context)
     scope = _required_scope(item.get("scope"), context=context)
     evidence = _required_text(item, "evidence", context=context)
@@ -448,6 +458,25 @@ def _required_authority_type(value: Any, *, context: str) -> StaticRulePackAutho
             f"Allowed values: {', '.join(sorted(STATIC_RULE_PACK_AUTHORITY_TYPES))}."
         )
     return authority_type  # type: ignore[return-value]
+
+
+def _reject_non_authority_source(source: str, *, context: str) -> None:
+    normalized = source.strip().lower().replace("_", "-").replace(" ", "-")
+    if _is_non_authority_source_marker(normalized):
+        raise StaticRuleError(
+            f"{context} source {source!r} is not a binding rule authority. "
+            "Keep candidate rules, demo observations, implementation notes, and reviewer notes out of admitted rule packs."
+        )
+
+
+def _is_non_authority_source_marker(normalized_source: str) -> bool:
+    for marker in NON_AUTHORITY_SOURCE_MARKERS:
+        plural_marker = f"{marker}s"
+        if normalized_source in {marker, plural_marker}:
+            return True
+        if normalized_source.startswith(f"{marker}-") or normalized_source.startswith(f"{plural_marker}-"):
+            return True
+    return False
 
 
 def _authority_type_or_inherit(

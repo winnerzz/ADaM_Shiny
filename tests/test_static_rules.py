@@ -181,6 +181,10 @@ class StaticRuleTests(unittest.TestCase):
         self.assertEqual(payload["policy"]["policy_id"], "generated_r_contract_v1")
         self.assertEqual(payload["policy"]["rule_governance"]["engine_scope"], "generic_contracts_only")
         self.assertIn("source-backed rule packs", payload["policy"]["rule_governance"]["demo_observation_policy"])
+        self.assertIn(
+            "cannot be admitted as binding rule-pack sources",
+            payload["policy"]["rule_governance"]["non_authority_source_policy"],
+        )
         self.assertIn("CDISC", payload["non_compliance_disclaimer"])
 
     def test_static_rule_report_finding_metadata_prevents_anonymous_rules(self) -> None:
@@ -362,11 +366,67 @@ class StaticRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(StaticRuleError, "invalid authority_type"):
             validate_static_rule_pack_payload(payload)
 
+    def test_static_rule_pack_admission_rejects_non_authority_pack_source(self) -> None:
+        for source in [
+            "demo-observation",
+            "demo_observation",
+            "demo observation",
+            "demo-observation-2026",
+            "implementation-note",
+            "candidate-rule",
+            "reviewer-note",
+        ]:
+            with self.subTest(source=source):
+                payload = {
+                    "pack_id": "candidate_rules",
+                    "authority_type": "user_policy",
+                    "source": source,
+                    "version": "draft",
+                    "scope": ["all-adam"],
+                    "rules": [
+                        {
+                            "rule_id": "CANDIDATE_RULE",
+                            "description": "A demo observation must stay out of binding rule packs.",
+                            "severity": "warning",
+                            "source": "local-policy",
+                            "version": "draft",
+                            "scope": ["all-adam"],
+                            "evidence": "notes/candidate.md#rule",
+                        }
+                    ],
+                }
+
+                with self.assertRaisesRegex(StaticRuleError, "not a binding rule authority"):
+                    validate_static_rule_pack_payload(payload)
+
+    def test_static_rule_pack_admission_rejects_non_authority_rule_source(self) -> None:
+        payload = {
+            "pack_id": "local_policy",
+            "authority_type": "user_policy",
+            "source": "local-policy",
+            "version": "1",
+            "scope": ["generated-r"],
+            "rules": [
+                {
+                    "rule_id": "LOCAL_POLICY_001",
+                    "description": "A candidate item cannot be admitted through an otherwise valid pack.",
+                    "severity": "warning",
+                    "source": "implementation-note",
+                    "version": "draft",
+                    "scope": ["generated-r"],
+                    "evidence": "notes/candidate.md#local-policy-001",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "not a binding rule authority"):
+            validate_static_rule_pack_payload(payload)
+
     def test_static_rule_pack_admission_rejects_rules_without_evidence(self) -> None:
         payload = {
             "pack_id": "candidate_rules",
             "authority_type": "user_policy",
-            "source": "implementation-note",
+            "source": "local-policy",
             "version": "draft",
             "scope": ["all-adam"],
             "rules": [
@@ -374,7 +434,7 @@ class StaticRuleTests(unittest.TestCase):
                     "rule_id": "CANDIDATE_RULE",
                     "description": "A demo observation that has not been sourced.",
                     "severity": "warning",
-                    "source": "implementation-note",
+                    "source": "local-policy",
                     "version": "draft",
                     "scope": ["all-adam"],
                 }

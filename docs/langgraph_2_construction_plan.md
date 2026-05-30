@@ -546,6 +546,11 @@ Design principle:
 - Rule-pack admission is a product/governance decision, not a quick code change:
   every clinical/static standards rule needs authority_type, source, version,
   scope, severity, and evidence before it can block a run.
+- `source` must also be a real rule authority. Values such as
+  `demo-observation`, `implementation-note`, `candidate-rule`, or
+  `reviewer-note` cannot be disguised as `user_policy` or a company standard.
+  They remain candidate backlog items or reviewer notes until promoted through
+  governance.
 - There is no "exception registry" inside the generic engine. If a future issue
   seems to require an exception, the engineering response must be one of:
   revise the approved spec contract, add a source-backed rule-pack item, or keep
@@ -605,6 +610,8 @@ Tasks:
   - rule-pack admission checks: reject rule-pack items without an allowed
     authority_type, source, version, scope, declared severity, and evidence
     pointer before they can affect code review or execution
+  - non-authority source checks: candidate/demo/reviewer/implementation notes
+    cannot enter binding rule packs as formal sources
   - future standards-pack rules: CDISC/P21/company-standard checks loaded from
     explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
@@ -684,6 +691,10 @@ LG2.5 slice implemented:
   (`cdisc_standard`, `p21_rule`, `company_standard`, or `user_policy`) at the
   pack level. Rule items inherit that authority and cannot override it with a
   different class.
+- `StaticRulePack` admission rejects non-authority sources such as
+  `demo-observation`, `implementation-note`, `candidate-rule`, and
+  `reviewer-note`, so implementation notes cannot be packaged as binding
+  static rules.
 
 LG2.5 slice verification:
 
@@ -1712,6 +1723,54 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.5 Static Rule Non-Authority Source Guard Slice
+
+Completed:
+
+- Tightened static-rule governance around rule-pack `source`, not just
+  `authority_type`.
+- `StaticRulePack` admission now rejects note-like sources before they can
+  become binding rules:
+  - `demo-observation`
+  - `implementation-note`
+  - `candidate-rule`
+  - `reviewer-note`
+- The rejection also covers underscore/space variants and suffixed forms such
+  as `demo-observation-2026`, so implementation notes cannot be renamed into
+  binding user policy.
+- Updated `StaticRulePolicy` governance metadata so generated static-check
+  reports explicitly state that note-like sources cannot be admitted as binding
+  rule-pack sources.
+- Updated the LG2 construction plan in English and Chinese to make this a hard
+  design rule.
+
+Current boundary:
+
+- This slice does not add any clinical, ADaM, CDISC, P21, study-specific,
+  dataset-specific, or variable-specific rule.
+- Reasonable `user_policy`, `company_standard`, `p21_rule`, and
+  `cdisc_standard` packs remain valid when they provide real source, version,
+  scope, severity, and evidence metadata.
+- Static checks remain generic contract/rule-pack governance. Demo observations
+  may inform candidate backlog items, but they cannot directly block a run.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_static_rules -v
+python -B -m unittest tests.test_static_rules tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result before suffix hardening: 26 static-rule tests passed; 151 related
+static/gateway/API tests passed.
+
+Subagent review:
+
+- Read-only subagent review returned GO.
+- No blocking issue was reported.
+- The reviewer suggested guarding suffixed note-like sources; this was applied
+  before final verification.
 
 ### 2026-05-30 - LG2.8 Legacy Workflow Write Boundary Slice
 
