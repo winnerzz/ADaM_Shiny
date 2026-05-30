@@ -12,6 +12,7 @@ from typing import Any
 from langgraph.checkpoint.memory import InMemorySaver
 
 from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_state, record_agent_decision, write_agent_audit_summary
+from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, project_graph_state_to_workflow
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -29,6 +30,52 @@ class GraphGatewayResult:
 
     graph_state: StudyRunState
     workflow_projection: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GraphGatewayExecutionResult(GraphGatewayResult):
+    """Graph-owned execution result plus API-facing execution fields."""
+
+    status: str
+    validation_status: str
+    output_path: str | None
+    validation_report_path: str | None
+    diagnostics_path: str | None
+    terminal_failure: bool
+    errors: list[str]
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
+class GraphGatewayCodeGenerationResult(GraphGatewayResult):
+    """Graph-owned code-generation result plus API-facing fields."""
+
+    code_path: str
+    generated_code: str
+    static_check_path: str | None
+    draft_spec_path: str | None
+    response_path: str | None
+    parsed_response_path: str | None
+    context_path: str | None
+    assumptions: list[str]
+    risk_points: list[str]
+    used_inputs: list[str]
+    expected_outputs: list[str]
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
+class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
+    """Graph-owned finalize-inputs result plus response-neutral fields."""
+
+    spec_source: str
+    warnings: list[str]
+    input_spec_path: str | None = None
+    approved_spec_path: str | None = None
+    draft_spec_path: str | None = None
+    draft_spec_prompt_path: str | None = None
+    draft_spec_response_path: str | None = None
+    draft_spec_variables: list[dict[str, Any]] | None = None
 
 
 class GraphGateway:
@@ -434,6 +481,120 @@ class GraphGateway:
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_approved_draft_spec_ready")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
+    def finalize_inputs(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        dependency_resolution: list[dict[str, Any]],
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayFinalizeInputsResult:
+        """Prepare product context and persist graph-owned spec readiness state."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
+        result = compile_dataset_graph().invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": "graph_product_prepare",
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "dependency_resolution": dependency_resolution,
+                "llm_provider": llm_provider,
+                "llm_exposure": llm_exposure,
+                "llm_client_builder": llm_client_builder,
+                "target_context_builder": target_context_builder,
+                "audit_artifacts": [],
+            }
+        )
+        if result.get("status") == "failed":
+            raise ValueError(str(result.get("real_run_error") or f"Could not finalize inputs for {target}."))
+        fingerprint = input_fingerprint(root)
+        warnings = list(result.get("product_context_warnings", []))
+        spec_source = str(result.get("spec_source") or "")
+        if spec_source == "input_spec":
+            input_spec_path = result.get("input_spec_path")
+            if not input_spec_path:
+                raise ValueError(f"Input spec detection did not return a path for {target}.")
+            gateway_result = self.record_input_spec_ready(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                input_spec_path=input_spec_path,
+                input_fingerprint_payload=fingerprint,
+                agent_decisions=list(result.get("agent_decisions", [])),
+                risk_flags=list(result.get("risk_flags", [])),
+            )
+            return GraphGatewayFinalizeInputsResult(
+                graph_state=gateway_result.graph_state,
+                workflow_projection=gateway_result.workflow_projection,
+                spec_source=spec_source,
+                warnings=warnings,
+                input_spec_path=str(input_spec_path),
+            )
+        if spec_source == "approved_draft_spec":
+            approved_spec_path = result.get("approved_spec_path")
+            if not approved_spec_path:
+                raise ValueError(f"Approved draft spec detection did not return a path for {target}.")
+            gateway_result = self.record_approved_draft_spec_ready(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                approved_spec_path=approved_spec_path,
+                input_fingerprint_payload=fingerprint,
+                agent_decisions=list(result.get("agent_decisions", [])),
+                risk_flags=list(result.get("risk_flags", [])),
+            )
+            return GraphGatewayFinalizeInputsResult(
+                graph_state=gateway_result.graph_state,
+                workflow_projection=gateway_result.workflow_projection,
+                spec_source=spec_source,
+                warnings=warnings,
+                approved_spec_path=str(approved_spec_path),
+            )
+
+        draft_path = result.get("draft_spec_path")
+        if not draft_path:
+            raise ValueError(f"Draft spec generation did not produce a reviewable spec for {target}.")
+        draft_variables = list(result.get("draft_spec_variables", []))
+        prompt_path = result.get("draft_spec_prompt_path") or ""
+        response_path = result.get("draft_spec_response_path") or ""
+        gateway_result = self.record_draft_spec_generation(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_path,
+            prompt_path=prompt_path,
+            response_path=response_path,
+            variables=draft_variables,
+            warnings=warnings,
+            input_fingerprint_payload=fingerprint,
+            agent_decisions=list(result.get("agent_decisions", [])),
+            risk_flags=list(result.get("risk_flags", [])),
+        )
+        return GraphGatewayFinalizeInputsResult(
+            graph_state=gateway_result.graph_state,
+            workflow_projection=gateway_result.workflow_projection,
+            spec_source=spec_source or "draft_spec",
+            warnings=warnings,
+            draft_spec_path=str(draft_path),
+            draft_spec_prompt_path=str(prompt_path),
+            draft_spec_response_path=str(response_path),
+            draft_spec_variables=draft_variables,
+        )
+
     def record_draft_spec_review(
         self,
         *,
@@ -755,6 +916,95 @@ class GraphGateway:
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_code_generation")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
 
+    def generate_code(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        dependency_resolution: list[dict[str, Any]],
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+        dependency_artifacts: list[dict[str, Any]] | None = None,
+    ) -> GraphGatewayCodeGenerationResult:
+        """Generate R code through DatasetGraph and persist the code-review interrupt."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
+        result = compile_dataset_graph().invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "dependency_resolution": dependency_resolution,
+                "llm_provider": llm_provider,
+                "llm_exposure": llm_exposure,
+                "llm_client_builder": llm_client_builder,
+                "target_context_builder": target_context_builder,
+                "audit_artifacts": [],
+            }
+        )
+        if result.get("status") == "failed":
+            message = str(result.get("real_run_error") or f"Code generation failed for {target}.")
+            if "No approved input_spec or approved draft spec is available" in message:
+                message = (
+                    f"No approved input_spec or approved draft spec is available for {target}. "
+                    "Generate and approve a draft spec before generating R code."
+                )
+            raise ValueError(message)
+
+        code_path = result.get("code_path")
+        generated_code = result.get("generated_code")
+        if not code_path or not generated_code:
+            raise ValueError(f"Code generation did not produce a reviewable R script for {target}.")
+        code_sha = f"sha256:{sha256_file(Path(str(code_path)))}"
+        static_check_path = result.get("static_check_path")
+        static_check_sha = f"sha256:{sha256_file(Path(str(static_check_path)))}" if static_check_path else None
+        spec_path = result.get("approved_spec_path") or result.get("input_spec_path") or result.get("draft_spec_path")
+        spec_sha = f"sha256:{sha256_file(Path(str(spec_path)))}" if spec_path else None
+        gateway_result = self.record_code_generation(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            code_path=Path(str(code_path)),
+            code_sha256=code_sha,
+            static_check_path=Path(str(static_check_path)) if static_check_path else None,
+            static_check_sha256=static_check_sha,
+            spec_source=result.get("spec_source"),
+            spec_path=Path(str(spec_path)) if spec_path else None,
+            spec_sha256=spec_sha,
+            dependency_artifacts=dependency_artifacts or [],
+            input_fingerprint_payload=input_fingerprint(root),
+            agent_decisions=list(result.get("agent_decisions", [])),
+            risk_flags=list(result.get("risk_flags", [])),
+        )
+        context_artifact = result.get("product_context_artifact")
+        return GraphGatewayCodeGenerationResult(
+            graph_state=gateway_result.graph_state,
+            workflow_projection=gateway_result.workflow_projection,
+            code_path=str(code_path),
+            generated_code=str(generated_code),
+            static_check_path=str(static_check_path) if static_check_path else None,
+            draft_spec_path=str(spec_path) if spec_path else None,
+            response_path=result.get("llm_response_path"),
+            parsed_response_path=result.get("parsed_response_path"),
+            context_path=context_artifact.path if isinstance(context_artifact, ArtifactRef) else None,
+            assumptions=list(result.get("code_assumptions", [])),
+            risk_points=list(result.get("code_risk_points", [])),
+            used_inputs=list(result.get("code_used_inputs", [])),
+            expected_outputs=list(result.get("code_expected_outputs", [])),
+            warnings=list(result.get("product_context_warnings", [])),
+        )
+
     def record_execution(
         self,
         *,
@@ -855,6 +1105,77 @@ class GraphGateway:
         self._persist_graph_state(root, next_state, node="execute_approved_code")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_execute_approved_code")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def execute_approved_code(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayExecutionResult:
+        """Execute approved generated R code through the graph-owned boundary."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="execute")
+        result = compile_dataset_graph().invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": "graph_product_execute",
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "audit_artifacts": [],
+            }
+        )
+        if result.get("failure_type") == "input_error" and result.get("real_run_error"):
+            raise ValueError(str(result["real_run_error"]))
+
+        response_status = str(
+            result.get("response_status") or ("completed" if result.get("status") == "completed" else "terminal_failure")
+        )
+        validation_report = result.get("validation_report") or {}
+        validation_status = str(result.get("real_validation_status") or validation_report.get("status") or "unknown")
+        terminal_failure = bool(result.get("terminal_failure"))
+        output_path = str(result.get("output_path") or "") or None
+        validation_report_path = str(result.get("validation_report_path") or "") or None
+        diagnostics_path = str(result.get("diagnostics_path") or "") or None
+        gateway_result = self.record_execution(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            execution_state={
+                "status": response_status,
+                "validation_status": validation_status,
+                "output_path": output_path,
+                "validation_report_path": validation_report_path,
+                "diagnostics_path": diagnostics_path,
+                "terminal_failure": terminal_failure,
+                "partial_output_usable": not terminal_failure,
+            },
+            validation_summary=validation_report,
+            artifacts=list((result.get("real_run_artifacts") or {}).values()),
+            failures=list(result.get("failure_records", [])),
+            input_fingerprint_payload=input_fingerprint(root),
+            agent_decisions=list(result.get("agent_decisions", [])),
+            risk_flags=list(result.get("risk_flags", [])),
+        )
+        return GraphGatewayExecutionResult(
+            graph_state=gateway_result.graph_state,
+            workflow_projection=gateway_result.workflow_projection,
+            status=response_status,
+            validation_status=validation_status,
+            output_path=output_path,
+            validation_report_path=validation_report_path,
+            diagnostics_path=diagnostics_path,
+            terminal_failure=terminal_failure,
+            errors=list(result.get("execution_errors", [])),
+            warnings=list(result.get("execution_warnings", [])),
+        )
 
     def record_compare(
         self,

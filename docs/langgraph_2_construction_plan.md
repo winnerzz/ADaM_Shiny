@@ -1652,6 +1652,155 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.2 GraphGateway-Owned Execution Slice
+
+Completed:
+
+- Added `GraphGateway.execute_approved_code()` as the graph-owned entry point
+  for approved R execution.
+- The new gateway method owns:
+  - terminal-failure preflight through `validate_product_step_start(step="execute")`
+  - `DatasetGraph` invocation in `graph_product_execute` mode
+  - response-field extraction for API compatibility
+  - canonical graph-state recording through `record_execution()`
+- Reduced `api/service.py::execute_approved_dataset_code()` to a compatibility
+  wrapper that validates the dependency plan, delegates execution to
+  `GraphGateway`, and returns the existing response shape.
+- Updated retry-gate tests to patch `adam_agent.graph.gateway.compile_dataset_graph`,
+  proving the execution graph call has moved out of the service layer.
+- Added gateway-level coverage that asserts approved-code execution invokes
+  `DatasetGraph` with `execution_mode == graph_product_execute`, persists
+  canonical `graph_state.json`, and refreshes the UI projection.
+
+Current boundary:
+
+- The public route path and UI behavior are unchanged.
+- Dependency-plan gating remains in the service compatibility wrapper for now;
+  a later slice can move dependency gate ownership into the gateway once the
+  service wrappers are further reduced.
+- This does not introduce autonomous retry or broader repair policy. Terminal
+  failure routing still depends on the existing human terminal-failure review
+  decisions.
+- Static rules remain governed by generic contracts and source-backed rule
+  packs; this slice does not add dataset/study/demo-specific static checks.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_retry_execution_review_allows_approved_code_execution_path -v
+```
+
+Result: 3 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules tests.test_reference_store -v
+```
+
+Result: 111 related gateway/API/static/reference tests passed.
+
+### 2026-05-30 - LG2.2 GraphGateway-Owned Code Generation Slice
+
+Completed:
+
+- Added `GraphGateway.generate_code()` as the graph-owned entry point for
+  generated R code creation and code-review interrupt persistence.
+- The new gateway method owns:
+  - terminal-failure preflight for `generate_code`
+  - `DatasetGraph` invocation in `graph_product_generate_code` mode
+  - generated-code/static-check/spec artifact hash extraction
+  - canonical graph-state recording through `record_code_generation()`
+  - API-facing field extraction for the existing response shape
+- Reduced `api/service.py::generate_dataset_code()` to:
+  - HTTP/request validation
+  - config/provider/exposure resolution
+  - dependency-plan gating
+  - delegation to `GraphGateway.generate_code()`
+  - compatibility response construction
+- Kept provider and context builders injectable from the service so provider
+  policy remains isolated and existing browser-scoped provider tests keep their
+  boundary.
+- Added gateway-level coverage that asserts generated-code orchestration invokes
+  `DatasetGraph` with `execution_mode == graph_product_generate_code`, writes
+  canonical graph state, and refreshes the UI projection.
+
+Current boundary:
+
+- The public route path and response shape are unchanged.
+- Dependency-plan gating still lives in the service compatibility wrapper for
+  this slice.
+- `finalize-inputs` still calls `DatasetGraph` directly from the service and is
+  the remaining large dataset product step to migrate.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_generate_code_uses_browser_scoped_real_provider_settings -v
+```
+
+Result: 3 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+```
+
+Result: 166 related gateway/API/graph/static/reference tests passed.
+
+### 2026-05-30 - LG2.2 GraphGateway-Owned Finalize Inputs Slice
+
+Completed:
+
+- Added `GraphGateway.finalize_inputs()` as the graph-owned entry point for the
+  upload-complete/spec-readiness checkpoint.
+- The new gateway method owns:
+  - terminal-failure preflight for `finalize_inputs`
+  - `DatasetGraph` invocation in `graph_product_prepare` mode
+  - input-spec ready recording through `record_input_spec_ready()`
+  - approved-draft-spec ready recording through
+    `record_approved_draft_spec_ready()`
+  - review-required draft-spec recording through
+    `record_draft_spec_generation()`
+- Reduced `api/service.py::finalize_dataset_inputs()` to:
+  - HTTP/request validation
+  - config/provider/exposure resolution
+  - dependency-plan gating
+  - delegation to `GraphGateway.finalize_inputs()`
+  - compatibility response construction
+- Removed the service-layer direct `compile_dataset_graph` import. The service
+  no longer invokes `DatasetGraph` directly for product `finalize`, `generate`,
+  or `execute` steps.
+- Added gateway-level coverage for:
+  - existing input_spec branch
+  - missing-spec draft-spec branch
+
+Current boundary:
+
+- The public route path and response shape are unchanged.
+- Dependency-plan gating still lives in the service compatibility wrapper for
+  this slice.
+- The separate explicit `/draft-spec` endpoint still performs its own draft
+  generation service flow and records the result through `GraphGateway`; this
+  was left out of scope to keep the migration slice bounded.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_uses_existing_input_spec_without_draft_generation tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_generates_review_required_draft_spec_when_spec_missing tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_passes_rscript_path_to_context_builder -v
+```
+
+Result: 5 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+Result: 168 related gateway/API/graph/static/reference tests passed; 49
+additional core tests passed.
+
 ### 2026-05-30 - LG2.5 Static-Rule Governance Clarification And Retry Regression Slice
 
 Completed:

@@ -8,6 +8,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
@@ -424,6 +425,98 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
 
+    def test_gateway_finalize_inputs_records_existing_input_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_finalize_input_spec") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        spec_path = spec_dir / "adae.json"
+        spec_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "spec_source": "input_spec",
+                "input_spec_path": str(spec_path.as_posix()),
+                "product_context_warnings": ["Context warning."],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            result = gateway.finalize_inputs(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_finalize_input_spec",
+                dataset="ADAE",
+                dependency_resolution=[],
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+                rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+            )
+
+        compile_graph.assert_called_once()
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        self.assertEqual(invoked_state["execution_mode"], "graph_product_prepare")
+        self.assertEqual(invoked_state["dataset"], "ADAE")
+        self.assertEqual(result.spec_source, "input_spec")
+        self.assertEqual(result.input_spec_path, str(spec_path.as_posix()))
+        self.assertEqual(result.warnings, ["Context warning."])
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_gateway_finalize_input_spec" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.spec_state["status"], "input_spec_ready")
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "input_spec_ready")
+
+    def test_gateway_finalize_inputs_records_review_required_draft_spec(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_finalize_draft_spec") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_gateway_finalize_draft_spec"
+        spec_dir = run_dir / "specs"
+        llm_dir = run_dir / "llm"
+        spec_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        draft_path = spec_dir / "adae_draft_spec.json"
+        prompt_path = llm_dir / "adae_draft_prompt.txt"
+        response_path = llm_dir / "adae_draft_response.json"
+        draft_path.write_text(json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM"}]}), encoding="utf-8")
+        prompt_path.write_text("draft prompt", encoding="utf-8")
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "spec_source": "missing_input_spec",
+                "draft_spec_path": str(draft_path.as_posix()),
+                "draft_spec_prompt_path": str(prompt_path.as_posix()),
+                "draft_spec_response_path": str(response_path.as_posix()),
+                "draft_spec_variables": [{"variable": "AETERM"}],
+                "product_context_warnings": ["Draft warning."],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            result = gateway.finalize_inputs(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_finalize_draft_spec",
+                dataset="ADAE",
+                dependency_resolution=[],
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        self.assertEqual(result.spec_source, "missing_input_spec")
+        self.assertEqual(result.draft_spec_path, str(draft_path.as_posix()))
+        self.assertEqual(result.draft_spec_variables, [{"variable": "AETERM"}])
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads((run_dir / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(workflow_state["current_interrupt"], "draft_spec_review")
+
     def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
         study_dir.mkdir(parents=True)
@@ -459,6 +552,136 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.agent_audit_summary["agent_counts"]["execution_agent"], 1)
         self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "execution_agent")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_audit_summary"]["decision_count"], 1)
+
+    def test_gateway_generates_code_through_dataset_graph_and_records_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_generate_code") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_gateway_generate_code"
+        code_dir = run_dir / "code"
+        llm_dir = run_dir / "llm"
+        spec_dir = study_dir / "input_spec"
+        code_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        spec_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text(
+            "dir.create('outputs', showWarnings = FALSE)\n"
+            "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_lg2_gateway_generate_code",
+            "ADAE",
+            code_path,
+        )
+        response_path = llm_dir / "adae_llm_response.json"
+        parsed_path = llm_dir / "adae_parsed_response.json"
+        spec_path = spec_dir / "ads_adae_full.json"
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+        parsed_path.write_text(json.dumps({"dataset": "ADAE", "r_code": code_path.read_text(encoding="utf-8")}), encoding="utf-8")
+        spec_path.write_text(json.dumps({"dataset": "ADAE", "variables": [{"variable": "USUBJID"}]}), encoding="utf-8")
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "code_path": str(code_path.as_posix()),
+                "generated_code": code_path.read_text(encoding="utf-8"),
+                "static_check_path": str(static_path.as_posix()),
+                "input_spec_path": str(spec_path.as_posix()),
+                "spec_source": "input_spec",
+                "llm_response_path": str(response_path.as_posix()),
+                "parsed_response_path": str(parsed_path.as_posix()),
+                "code_assumptions": ["Assumption under review."],
+                "code_risk_points": ["Review generated derivation."],
+                "code_used_inputs": ["AE"],
+                "code_expected_outputs": ["outputs/adae.csv"],
+                "product_context_warnings": ["Context warning."],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            result = gateway.generate_code(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_generate_code",
+                dataset="ADAE",
+                dependency_resolution=[],
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+                rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+            )
+
+        compile_graph.assert_called_once()
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        self.assertEqual(invoked_state["execution_mode"], "graph_product_generate_code")
+        self.assertEqual(invoked_state["dataset"], "ADAE")
+        self.assertEqual(invoked_state["study_dir"], str(study_dir))
+        self.assertEqual(result.code_path, str(code_path.as_posix()))
+        self.assertEqual(result.static_check_path, str(static_path.as_posix()))
+        self.assertEqual(result.draft_spec_path, str(spec_path.as_posix()))
+        self.assertEqual(result.warnings, ["Context warning."])
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (run_dir / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["static_check_sha256"], static_sha)
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["current_interrupt"], "code_review")
+
+    def test_gateway_executes_approved_code_through_dataset_graph_and_records_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_execute_approved_code") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass"},
+                "output_path": "runs/run_lg2_gateway_execute/outputs/adae.csv",
+                "validation_report_path": "runs/run_lg2_gateway_execute/validation/adae_validation_report.json",
+                "diagnostics_path": "",
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+
+            result = gateway.execute_approved_code(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_gateway_execute",
+                dataset="ADAE",
+                rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+            )
+
+        compile_graph.assert_called_once()
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        self.assertEqual(invoked_state["execution_mode"], "graph_product_execute")
+        self.assertEqual(invoked_state["dataset"], "ADAE")
+        self.assertEqual(invoked_state["study_dir"], str(study_dir))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.validation_status, "pass")
+        self.assertFalse(result.terminal_failure)
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_gateway_execute" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(dataset_state.status, "completed")
+        self.assertEqual(dataset_state.execution_state["status"], "completed")
+        self.assertEqual(dataset_state.execution_state["output_path"], "runs/run_lg2_gateway_execute/outputs/adae.csv")
+        self.assertEqual(dataset_state.agent_decisions[0]["agent"], "execution_agent")
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "completed")
 
     def test_gateway_draft_spec_review_rejects_changed_draft_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_draft_spec_hash") / "PSY201"

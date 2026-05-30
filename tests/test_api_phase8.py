@@ -1045,7 +1045,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(first_execution.status_code, 200, first_execution.text)
         self.assertTrue(first_execution.json()["terminal_failure"])
 
-        with patch("adam_agent.api.service.compile_dataset_graph") as compile_graph:
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
             second_execution = client.post(
                 "/runs/run_terminal_retry_gate/datasets/ADAE/execute-approved-code",
                 json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
@@ -1109,7 +1109,7 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(triage.status_code, 200, triage.text)
 
-        with patch("adam_agent.api.service.compile_dataset_graph") as compile_graph:
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
             compile_graph.return_value.invoke.return_value = {
                 "status": "completed",
                 "response_status": "completed",

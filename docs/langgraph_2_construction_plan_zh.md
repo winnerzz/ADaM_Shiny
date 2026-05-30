@@ -1467,6 +1467,149 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.2 GraphGateway-Owned Execution 切片
+
+已完成：
+
+- 新增 `GraphGateway.execute_approved_code()`，作为 approved R execution 的
+  graph-owned 入口。
+- 新 gateway method 负责：
+  - 通过 `validate_product_step_start(step="execute")` 做 terminal-failure
+    preflight；
+  - 用 `graph_product_execute` mode 调用 `DatasetGraph`；
+  - 抽取兼容 API response 所需字段；
+  - 通过 `record_execution()` 写回 canonical graph state。
+- 将 `api/service.py::execute_approved_dataset_code()` 收缩成 compatibility
+  wrapper：只校验 dependency plan、委托 `GraphGateway` 执行，并保持原 response
+  shape。
+- 更新 retry-gate 测试，把 patch 点从
+  `adam_agent.api.service.compile_dataset_graph` 移到
+  `adam_agent.graph.gateway.compile_dataset_graph`，证明 execution graph call
+  已经从 service 层移出。
+- 新增 gateway 层测试，确认 approved-code execution 会用
+  `execution_mode == graph_product_execute` 调用 `DatasetGraph`，写入 canonical
+  `graph_state.json`，并刷新 UI projection。
+
+当前边界：
+
+- public route path 和 UI 行为不变。
+- dependency-plan gate 暂时仍留在 service compatibility wrapper；等 service
+  wrapper 进一步收缩后，再把 dependency gate ownership 移到 gateway。
+- 本切片不增加自主 retry 或更宽的 repair policy。terminal failure routing
+  仍依赖现有 human terminal-failure review decision。
+- 静态规则继续遵守 generic contracts 和 source-backed rule packs 的治理边界；
+  本切片没有加入 dataset/study/demo-specific static checks。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_retry_execution_review_allows_approved_code_execution_path -v
+```
+
+结果：3 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules tests.test_reference_store -v
+```
+
+结果：111 related gateway/API/static/reference tests passed。
+
+### 2026-05-30 - LG2.2 GraphGateway-Owned Code Generation 切片
+
+已完成：
+
+- 新增 `GraphGateway.generate_code()`，作为 generated R code creation 和
+  code-review interrupt persistence 的 graph-owned 入口。
+- 新 gateway method 负责：
+  - `generate_code` 的 terminal-failure preflight；
+  - 用 `graph_product_generate_code` mode 调用 `DatasetGraph`；
+  - 抽取 generated-code/static-check/spec artifact hash；
+  - 通过 `record_code_generation()` 写 canonical graph state；
+  - 抽取兼容 API response 所需字段。
+- 将 `api/service.py::generate_dataset_code()` 收缩为：
+  - HTTP/request validation；
+  - config/provider/exposure resolution；
+  - dependency-plan gating；
+  - 委托 `GraphGateway.generate_code()`；
+  - 构造兼容 response。
+- provider builder 和 context builder 仍由 service 注入 gateway，避免把 provider
+  policy 写死进 gateway，也保留 browser-scoped provider 测试的边界。
+- 新增 gateway 层测试，确认 generated-code orchestration 会用
+  `execution_mode == graph_product_generate_code` 调用 `DatasetGraph`，写
+  canonical graph state，并刷新 UI projection。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- dependency-plan gate 本切片仍留在 service compatibility wrapper。
+- `finalize-inputs` 仍由 service 直接调用 `DatasetGraph`，它是剩下的主要
+  dataset product step migration。
+- 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_generate_code_uses_browser_scoped_real_provider_settings -v
+```
+
+结果：3 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+```
+
+结果：166 related gateway/API/graph/static/reference tests passed。
+
+### 2026-05-30 - LG2.2 GraphGateway-Owned Finalize Inputs 切片
+
+已完成：
+
+- 新增 `GraphGateway.finalize_inputs()`，作为 upload-complete/spec-readiness
+  checkpoint 的 graph-owned 入口。
+- 新 gateway method 负责：
+  - `finalize_inputs` 的 terminal-failure preflight；
+  - 用 `graph_product_prepare` mode 调用 `DatasetGraph`；
+  - 通过 `record_input_spec_ready()` 记录 input-spec ready；
+  - 通过 `record_approved_draft_spec_ready()` 记录 approved-draft-spec ready；
+  - 通过 `record_draft_spec_generation()` 记录 review-required draft spec。
+- 将 `api/service.py::finalize_dataset_inputs()` 收缩为：
+  - HTTP/request validation；
+  - config/provider/exposure resolution；
+  - dependency-plan gating；
+  - 委托 `GraphGateway.finalize_inputs()`；
+  - 构造兼容 response。
+- 移除 service 层直接 `compile_dataset_graph` import。现在 service 不再为产品
+  `finalize`、`generate`、`execute` 步骤直接调用 `DatasetGraph`。
+- 新增 gateway 层覆盖：
+  - existing input_spec 分支；
+  - missing-spec draft-spec 分支。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- dependency-plan gate 本切片仍留在 service compatibility wrapper。
+- 独立 `/draft-spec` endpoint 仍保留自己的 draft generation service flow，并通过
+  `GraphGateway` 记录结果；为了保持本切片范围可控，暂未迁移它。
+- 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_uses_existing_input_spec_without_draft_generation tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_generates_review_required_draft_spec_when_spec_missing tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_passes_rscript_path_to_context_builder -v
+```
+
+结果：5 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+```
+
+结果：168 related gateway/API/graph/static/reference tests passed；49
+additional core tests passed。
+
 ### 2026-05-30 - LG2.5 Static-Rule Governance Clarification And Retry Regression 切片
 
 已完成：

@@ -47,7 +47,6 @@ from adam_agent.graph.dependency_resolution import (
 )
 from adam_agent.graph.dependencies import plan_dataset_dependencies
 from adam_agent.graph.gateway import GraphGateway
-from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -473,57 +472,23 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     _assert_target_dependency_gate_open_for_product_step(plan, target)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
-    result = compile_dataset_graph().invoke(
-        {
-            "study_id": study_id,
-            "run_id": run_id,
-            "dataset": target,
-            "execution_mode": "graph_product_generate_code",
-            "study_dir": str(study_dir),
-            "rscript_path": getattr(request, "rscript_path", None) or "",
-            "dependency_resolution": plan.dependency_resolution,
-            "llm_provider": provider_config.__dict__,
-            "llm_exposure": exposure.model_dump(mode="json"),
-            "llm_client_builder": build_llm_client,
-            "target_context_builder": build_target_llm_context,
-            "audit_artifacts": [],
-        }
-    )
-    if result.get("status") == "failed":
-        message = str(result.get("real_run_error") or f"Code generation failed for {target}.")
-        if "No approved input_spec or approved draft spec is available" in message:
-            message = (
-                f"No approved input_spec or approved draft spec is available for {target}. "
-                "Generate and approve a draft spec before generating R code."
-            )
-        raise ApiServiceError(message)
-    code_path = result.get("code_path")
-    generated_code = result.get("generated_code")
-    if not code_path or not generated_code:
-        raise ApiServiceError(f"Code generation did not produce a reviewable R script for {target}.")
-    code_sha = f"sha256:{sha256_file(Path(str(code_path)))}"
-    static_check_path = result.get("static_check_path")
-    static_check_sha = f"sha256:{sha256_file(Path(str(static_check_path)))}" if static_check_path else None
-    draft_spec_path = result.get("approved_spec_path") or result.get("input_spec_path") or result.get("draft_spec_path")
-    spec_sha = f"sha256:{sha256_file(Path(str(draft_spec_path)))}" if draft_spec_path else None
-    GraphGateway().record_code_generation(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        dataset=target,
-        code_path=Path(str(code_path)),
-        code_sha256=code_sha,
-        static_check_path=Path(str(static_check_path)) if static_check_path else None,
-        static_check_sha256=static_check_sha,
-        spec_source=result.get("spec_source"),
-        spec_path=Path(str(draft_spec_path)) if draft_spec_path else None,
-        spec_sha256=spec_sha,
-        dependency_artifacts=_dependency_artifacts_for_dataset(plan.dependency_resolution, target),
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        agent_decisions=list(result.get("agent_decisions", [])),
-        risk_flags=list(result.get("risk_flags", [])),
-    )
-    warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings + [
+    try:
+        result = GraphGateway().generate_code(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            dependency_resolution=plan.dependency_resolution,
+            llm_provider=provider_config.__dict__,
+            llm_exposure=exposure.model_dump(mode="json"),
+            llm_client_builder=build_llm_client,
+            target_context_builder=build_target_llm_context,
+            rscript_path=getattr(request, "rscript_path", None) or "",
+            dependency_artifacts=_dependency_artifacts_for_dataset(plan.dependency_resolution, target),
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    warnings = result.warnings + plan.dependency_warnings + [
         "Static R checks are limited guardrails before human review; they do not prove full CDISC/ADaM IG/P21 compliance."
     ]
     return GenerateCodeResponse(
@@ -531,17 +496,17 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         run_id=run_id,
         dataset=target,
         status="code_generated",
-        code_path=str(code_path),
-        generated_code=str(generated_code),
-        assumptions=list(result.get("code_assumptions", [])),
-        risk_points=list(result.get("code_risk_points", [])),
-        used_inputs=list(result.get("code_used_inputs", [])),
-        expected_outputs=list(result.get("code_expected_outputs", [])),
-        context_path=result.get("product_context_artifact").path if result.get("product_context_artifact") else None,
-        draft_spec_path=draft_spec_path,
-        response_path=result.get("llm_response_path"),
-        parsed_response_path=result.get("parsed_response_path"),
-        static_check_path=static_check_path,
+        code_path=result.code_path,
+        generated_code=result.generated_code,
+        assumptions=result.assumptions,
+        risk_points=result.risk_points,
+        used_inputs=result.used_inputs,
+        expected_outputs=result.expected_outputs,
+        context_path=result.context_path,
+        draft_spec_path=result.draft_spec_path,
+        response_path=result.response_path,
+        parsed_response_path=result.parsed_response_path,
+        static_check_path=result.static_check_path,
         dependency_review_status=plan.dependency_review_status,
         warnings=warnings,
         **_graph_compatibility_metadata(study_dir, run_id),
@@ -571,42 +536,23 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     _assert_target_dependency_gate_open_for_product_step(plan, target)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
-    result = compile_dataset_graph().invoke(
-        {
-            "study_id": study_id,
-            "run_id": run_id,
-            "dataset": target,
-            "execution_mode": "graph_product_prepare",
-            "study_dir": str(study_dir),
-            "rscript_path": getattr(request, "rscript_path", None) or "",
-            "dependency_resolution": plan.dependency_resolution,
-            "llm_provider": provider_config.__dict__,
-            "llm_exposure": exposure.model_dump(mode="json"),
-            "llm_client_builder": build_llm_client,
-            "target_context_builder": build_target_llm_context,
-            "audit_artifacts": [],
-        }
-    )
-    if result.get("status") == "failed":
-        raise ApiServiceError(str(result.get("real_run_error") or f"Could not finalize inputs for {target}."))
-    warnings = list(result.get("product_context_warnings", [])) + plan.dependency_warnings
-    if result.get("spec_source") == "input_spec":
-        input_spec_path = result.get("input_spec_path")
-        if not input_spec_path:
-            raise ApiServiceError(f"Input spec detection did not return a path for {target}.")
-        try:
-            GraphGateway().record_input_spec_ready(
-                study_dir=study_dir,
-                study_id=study_id,
-                run_id=run_id,
-                dataset=target,
-                input_spec_path=input_spec_path,
-                input_fingerprint_payload=input_fingerprint(study_dir),
-                agent_decisions=list(result.get("agent_decisions", [])),
-                risk_flags=list(result.get("risk_flags", [])),
-            )
-        except ValueError as exc:
-            raise ApiServiceError(str(exc)) from exc
+    try:
+        result = GraphGateway().finalize_inputs(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            dependency_resolution=plan.dependency_resolution,
+            llm_provider=provider_config.__dict__,
+            llm_exposure=exposure.model_dump(mode="json"),
+            llm_client_builder=build_llm_client,
+            target_context_builder=build_target_llm_context,
+            rscript_path=getattr(request, "rscript_path", None) or "",
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    warnings = result.warnings + plan.dependency_warnings
+    if result.spec_source == "input_spec":
         return FinalizeInputsResponse(
             study_id=study_id,
             run_id=run_id,
@@ -616,27 +562,11 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             draft_spec_required=False,
             next_action="generate_code",
             message=f"Approved input_spec found for {target}. Draft spec generation is not needed.",
-            input_spec_path=input_spec_path,
+            input_spec_path=result.input_spec_path,
             warnings=warnings,
             **_graph_compatibility_metadata(study_dir, run_id),
         )
-    if result.get("spec_source") == "approved_draft_spec":
-        approved_spec_path = result.get("approved_spec_path")
-        if not approved_spec_path:
-            raise ApiServiceError(f"Approved draft spec detection did not return a path for {target}.")
-        try:
-            GraphGateway().record_approved_draft_spec_ready(
-                study_dir=study_dir,
-                study_id=study_id,
-                run_id=run_id,
-                dataset=target,
-                approved_spec_path=approved_spec_path,
-                input_fingerprint_payload=input_fingerprint(study_dir),
-                agent_decisions=list(result.get("agent_decisions", [])),
-                risk_flags=list(result.get("risk_flags", [])),
-            )
-        except ValueError as exc:
-            raise ApiServiceError(str(exc)) from exc
+    if result.spec_source == "approved_draft_spec":
         return FinalizeInputsResponse(
             study_id=study_id,
             run_id=run_id,
@@ -647,38 +577,21 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             approved_draft_spec_available=True,
             next_action="generate_code",
             message=f"A previously approved draft spec is available for {target}.",
-            approved_spec_path=approved_spec_path,
+            approved_spec_path=result.approved_spec_path,
             warnings=warnings,
             **_graph_compatibility_metadata(study_dir, run_id),
         )
-    draft_path = result.get("draft_spec_path")
-    if not draft_path:
-        raise ApiServiceError(f"Draft spec generation did not produce a reviewable spec for {target}.")
     draft_response = DraftSpecResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
         status="draft_spec_generated",
-        spec_path=draft_path,
-        prompt_path=result.get("draft_spec_prompt_path") or "",
-        response_path=result.get("draft_spec_response_path") or "",
-        variables=list(result.get("draft_spec_variables", [])),
+        spec_path=result.draft_spec_path or "",
+        prompt_path=result.draft_spec_prompt_path or "",
+        response_path=result.draft_spec_response_path or "",
+        variables=list(result.draft_spec_variables or []),
         warnings=warnings,
         **_graph_compatibility_metadata(study_dir, run_id),
-    )
-    GraphGateway().record_draft_spec_generation(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        dataset=target,
-        draft_spec_path=draft_response.spec_path,
-        prompt_path=draft_response.prompt_path,
-        response_path=draft_response.response_path,
-        variables=draft_response.variables,
-        warnings=draft_response.warnings,
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        agent_decisions=list(result.get("agent_decisions", [])),
-        risk_flags=list(result.get("risk_flags", [])),
     )
     return FinalizeInputsResponse(
         study_id=study_id,
@@ -1038,68 +951,29 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
     except FileNotFoundError as exc:
         raise ApiServiceError("Graph state does not exist for this run. Generate code through the graph flow before execution.") from exc
     _assert_target_dependency_gate_open_for_product_step(plan, target)
+    gateway = GraphGateway()
     try:
-        GraphGateway().validate_product_step_start(
+        result = gateway.execute_approved_code(
             study_dir=study_dir,
+            study_id=study_id,
             run_id=run_id,
             dataset=target,
-            step="execute",
+            rscript_path=getattr(request, "rscript_path", None) or "",
         )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    result = compile_dataset_graph().invoke(
-        {
-            "study_id": study_id,
-            "run_id": run_id,
-            "dataset": target,
-            "execution_mode": "graph_product_execute",
-            "study_dir": str(study_dir),
-            "rscript_path": getattr(request, "rscript_path", None) or "",
-            "audit_artifacts": [],
-        }
-    )
-    if result.get("failure_type") == "input_error" and result.get("real_run_error"):
-        raise ApiServiceError(str(result["real_run_error"]))
-    response_status = str(result.get("response_status") or ("completed" if result.get("status") == "completed" else "terminal_failure"))
-    validation_report = result.get("validation_report") or {}
-    validation_status = str(result.get("real_validation_status") or validation_report.get("status") or "unknown")
-    terminal_failure = bool(result.get("terminal_failure"))
-    output_path = str(result.get("output_path") or "") or None
-    validation_report_path = str(result.get("validation_report_path") or "") or None
-    diagnostics_path = str(result.get("diagnostics_path") or "") or None
-    GraphGateway().record_execution(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=run_id,
-        dataset=target,
-        execution_state={
-            "status": response_status,
-            "validation_status": validation_status,
-            "output_path": output_path,
-            "validation_report_path": validation_report_path,
-            "diagnostics_path": diagnostics_path,
-            "terminal_failure": terminal_failure,
-            "partial_output_usable": not terminal_failure,
-        },
-        validation_summary=validation_report,
-        artifacts=list((result.get("real_run_artifacts") or {}).values()),
-        failures=list(result.get("failure_records", [])),
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        agent_decisions=list(result.get("agent_decisions", [])),
-        risk_flags=list(result.get("risk_flags", [])),
-    )
     return ExecuteCodeResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
-        status=response_status,
-        validation_status=validation_status,
-        output_path=output_path,
-        validation_report_path=validation_report_path,
-        diagnostics_path=diagnostics_path,
-        terminal_failure=terminal_failure,
-        errors=list(result.get("execution_errors", [])),
-        warnings=list(result.get("execution_warnings", [])),
+        status=result.status,
+        validation_status=result.validation_status,
+        output_path=result.output_path,
+        validation_report_path=result.validation_report_path,
+        diagnostics_path=result.diagnostics_path,
+        terminal_failure=result.terminal_failure,
+        errors=result.errors,
+        warnings=result.warnings,
         **_graph_compatibility_metadata(study_dir, run_id),
     )
 
