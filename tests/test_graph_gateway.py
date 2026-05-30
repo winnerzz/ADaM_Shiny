@@ -1677,11 +1677,21 @@ class GraphGatewayTests(unittest.TestCase):
             (study_dir / "runs" / "run_lg2_compare" / "workflow_state.json").read_text(encoding="utf-8")
         )
         dataset_state = result.graph_state.datasets["ADAE"]
+        validation_decisions = [
+            item for item in dataset_state.agent_decisions if item["agent"] == "validation_agent"
+        ]
         self.assertEqual(dataset_state.compare_summary["status"], "missing_reference")
         self.assertEqual(dataset_state.result_summary.compare_status, "missing_reference")
+        self.assertEqual(validation_decisions[0]["decision"], "reference_compare_recorded")
+        self.assertEqual(validation_decisions[0]["status"], "missing_reference")
+        self.assertEqual(validation_decisions[0]["outputs"]["compare_status"], "missing_reference")
+        self.assertIn("reference_compare_limited_scope", dataset_state.risk_flags)
         self.assertIn("compare_report_adae", [artifact.artifact_id for artifact in dataset_state.artifacts])
+        self.assertIn("validation_agent", [item["agent"] for item in result.graph_state.agent_decisions])
+        self.assertEqual(result.graph_state.agent_audit_summary["datasets"]["ADAE"]["agent_counts"]["validation_agent"], 1)
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["compare_summary"]["status"], "missing_reference")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_audit_summary"]["agent_counts"]["validation_agent"], 1)
 
     def test_gateway_writes_compare_report_artifact_when_requested(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_compare_report_writer") / "PSY201"

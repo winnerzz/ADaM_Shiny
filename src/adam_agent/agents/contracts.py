@@ -20,6 +20,7 @@ AgentRole = Literal[
     "code_agent",
     "static_review_agent",
     "execution_agent",
+    "validation_agent",
     "diagnosis_repair_agent",
     "audit_agent",
 ]

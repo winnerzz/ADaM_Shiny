@@ -1629,6 +1629,37 @@ class GraphGateway:
                     dataset_state,
                     _artifact_ref(target, "compare_report", "output", report_path, kind="compare_report"),
                 )
+        _append_agent_decisions(
+            dataset_state,
+            [
+                record_agent_decision(
+                    agent="validation_agent",
+                    node="compare_reference_output",
+                    decision="reference_compare_recorded",
+                    dataset=target,
+                    status=str(summary.get("status") or "unknown"),
+                    reason=(
+                        "Recorded generated-vs-reference ADaM comparison as validation evidence. "
+                        "This does not establish clinical derivation correctness."
+                    ),
+                    inputs={
+                        "input_fingerprint_digest": fingerprint.get("digest"),
+                        "reference_role": "comparison_evidence_only",
+                    },
+                    outputs={
+                        "compare_status": summary.get("status"),
+                        "report_path": str(report_path.as_posix()) if report_path else None,
+                    },
+                    risk_flags=["reference_compare_limited_scope"],
+                    artifact_ids=[
+                        artifact.artifact_id
+                        for artifact in dataset_state.artifacts
+                        if artifact.kind == "compare_report"
+                    ],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, ["reference_compare_limited_scope"])
         existing_summary = dataset_state.result_summary
         output_artifact_ids = [
             artifact.artifact_id
@@ -1660,6 +1691,7 @@ class GraphGateway:
             next_state.status = "needs_review"
         else:
             _roll_up_study_state(next_state)
+        _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
         self._persist_graph_state(root, next_state, node="compare_reference_output")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_compare_reference_output")

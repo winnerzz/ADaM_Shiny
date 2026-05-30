@@ -453,6 +453,9 @@ Agent roles:
 - Execution Agent:
   - runs approved code in the configured sandbox
   - never edits code
+- Validation Agent:
+  - records validation and generated-vs-reference comparison evidence
+  - labels scope limits instead of claiming clinical correctness
 - Diagnosis/Repair Agent:
   - classifies failures
   - routes to repair code, revise spec, request input, or terminal failure
@@ -1748,6 +1751,37 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.4 Validation Agent Compare Audit Slice
+
+Completed:
+
+- Extended the bounded agent role contract with `validation_agent`.
+- `GraphGateway.record_compare()` now records a `validation_agent` decision
+  whenever generated-vs-reference ADaM comparison evidence is persisted.
+- The decision records:
+  - compare status
+  - compare report artifact id when available
+  - current input fingerprint digest
+  - `reference_compare_limited_scope` risk flag
+- The study-level and dataset-level audit summaries now show compare evidence
+  as an auditable post-processing agent decision, not as an unowned service-side
+  state mutation.
+
+Current boundary:
+
+- `validation_agent` is a bounded graph/audit role, not an autonomous reviewer.
+- Reference ADaM remains comparison/output-shape evidence only. This slice does
+  not let reference ADaM define derivation logic.
+- The compare algorithm remains the existing structural/sample comparison. This
+  does not claim clinical derivation correctness or CDISC/P21 compliance.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state -v
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
+```
 
 ### 2026-05-30 - LG2.6 Local R Environment-Control Slice
 

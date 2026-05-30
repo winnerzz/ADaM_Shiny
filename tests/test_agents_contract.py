@@ -71,6 +71,15 @@ class AgentContractTests(unittest.TestCase):
                 status="completed",
                 reason="R execution completed.",
             ),
+            record_agent_decision(
+                agent="validation_agent",
+                node="compare_reference_output",
+                decision="reference_compare_recorded",
+                dataset="ADAE",
+                status="differences",
+                reason="Reference comparison was recorded as limited validation evidence.",
+                risk_flags=["reference_compare_limited_scope"],
+            ),
         ]
 
         summary = build_agent_audit_summary(
@@ -78,18 +87,25 @@ class AgentContractTests(unittest.TestCase):
             run_id="run_agent_summary",
             status="completed",
             target_datasets=["ADAE"],
-            datasets={"ADAE": {"status": "completed", "risk_flags": ["static_check_limited_scope"]}},
+            datasets={
+                "ADAE": {
+                    "status": "completed",
+                    "risk_flags": ["static_check_limited_scope", "reference_compare_limited_scope"],
+                }
+            },
             agent_decisions=decisions,
-            risk_flags=["static_check_limited_scope"],
+            risk_flags=["static_check_limited_scope", "reference_compare_limited_scope"],
         )
 
         self.assertEqual(summary["summary_type"], "agent_audit_summary")
         self.assertEqual(summary["summary_writer"]["agent"], "audit_agent")
-        self.assertEqual(summary["decision_count"], 2)
+        self.assertEqual(summary["decision_count"], 3)
         self.assertEqual(summary["agent_counts"]["code_agent"], 1)
-        self.assertEqual(summary["datasets"]["ADAE"]["decision_count"], 2)
+        self.assertEqual(summary["agent_counts"]["validation_agent"], 1)
+        self.assertEqual(summary["datasets"]["ADAE"]["decision_count"], 3)
         self.assertEqual(summary["datasets"]["ADAE"]["status"], "completed")
         self.assertIn("static_check_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
+        self.assertIn("reference_compare_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
         self.assertIn("graph_state.json", summary["limitations"][0])
 
 

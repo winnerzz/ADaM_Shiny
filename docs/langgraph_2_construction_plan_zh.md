@@ -386,6 +386,9 @@ Agent 角色：
 - Execution Agent：
   - 在配置好的 sandbox 中执行 approved code
   - 不修改代码
+- Validation Agent：
+  - 记录 validation 和 generated-vs-reference comparison evidence
+  - 标记 scope limits，不声称临床推导正确性
 - Diagnosis/Repair Agent：
   - 分类失败
   - 路由到 repair code、revise spec、request input 或 terminal failure
@@ -1556,6 +1559,36 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.4 Validation Agent Compare Audit 切片
+
+已完成：
+
+- 在受控 agent role contract 中增加 `validation_agent`。
+- `GraphGateway.record_compare()` 每次持久化 generated-vs-reference ADaM
+  compare evidence 时，都会记录一条 `validation_agent` decision。
+- 该 decision 记录：
+  - compare status
+  - compare report artifact id（如果存在）
+  - 当前 input fingerprint digest
+  - `reference_compare_limited_scope` risk flag
+- study-level 和 dataset-level audit summary 现在能看到 compare evidence 是
+  一个可审计的后处理 agent decision，而不是无归属的 service-side state mutation。
+
+当前边界：
+
+- `validation_agent` 是受控 graph/audit role，不是自主审稿人。
+- Reference ADaM 仍然只是 comparison/output-shape evidence。本切片不允许
+  reference ADaM 决定 derivation logic。
+- compare algorithm 仍然是现有结构/样本比较，不声称证明临床推导正确性，也不
+  声称 CDISC/P21 compliance。
+
+验证：
+
+```text
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state -v
+python -B -m unittest tests.test_agents_contract tests.test_graph_gateway tests.test_api_phase8 -v
+```
 
 ### 2026-05-30 - LG2.6 Local R Environment-Control 切片
 
