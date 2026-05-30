@@ -19,6 +19,7 @@ try:
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
+    from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
@@ -31,6 +32,7 @@ except ModuleNotFoundError:
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
+    from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
     from adam_agent.schemas.routing import FailureRecord
     from adam_agent.tools.artifacts import sha256_file
@@ -1056,6 +1058,106 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["static_check_sha256"], static_sha)
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
+
+    def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"
+        run_id = "run_lg2_gateway_owned_dependency_plan"
+        run_dir = study_dir / "runs" / run_id
+        output_dir = run_dir / "outputs"
+        code_dir = run_dir / "code"
+        spec_dir = study_dir / "input_spec"
+        output_dir.mkdir(parents=True)
+        code_dir.mkdir()
+        spec_dir.mkdir(parents=True)
+        adsl_path = output_dir / "adsl.csv"
+        adsl_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text(
+            "dir.create('outputs', showWarnings = FALSE)\n"
+            "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        gateway = GraphGateway()
+        gateway.record_execution(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADSL",
+            execution_state={
+                "status": "completed",
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(adsl_path.as_posix()),
+            },
+            validation_summary={"status": "passed"},
+            artifacts=[
+                ArtifactRef(
+                    artifact_id="output_adam_psy201_run_lg2_gateway_owned_dependency_plan_adsl",
+                    kind="output_adam",
+                    path=str(adsl_path.as_posix()),
+                    sha256=f"sha256:{sha256_file(adsl_path)}",
+                    dataset="ADSL",
+                    format="csv",
+                    role="output",
+                )
+            ],
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADAE"],
+        )
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "needs_review",
+                "code_path": str(code_path.as_posix()),
+                "generated_code": code_path.read_text(encoding="utf-8"),
+                "static_check_path": str(static_path.as_posix()),
+                "input_spec_path": str((spec_dir / "adae.json").as_posix()),
+                "spec_source": "input_spec",
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+            result = gateway.generate_code(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        invoked_state = compile_graph.return_value.invoke.call_args.args[0]
+        resolution = invoked_state["dependency_resolution"]
+        self.assertEqual(len(resolution), 1)
+        self.assertEqual(resolution[0]["target_dataset"], "ADAE")
+        self.assertEqual(resolution[0]["required_dataset"], "ADSL")
+        self.assertEqual(resolution[0]["resolution_status"], "available")
+        self.assertEqual(resolution[0]["artifact_source"], "run_output")
+        self.assertEqual(resolution[0]["artifact_path"], str(adsl_path.as_posix()))
+
+        dependency_artifacts = result.graph_state.datasets["ADAE"].code_state["dependency_artifacts"]
+        self.assertEqual(
+            dependency_artifacts,
+            [
+                {
+                    "required_dataset": "ADSL",
+                    "artifact_path": str(adsl_path.as_posix()),
+                    "artifact_sha256": f"sha256:{sha256_file(adsl_path)}",
+                    "artifact_source": "run_output",
+                }
+            ],
+        )
+        self.assertEqual(result.graph_state.datasets["ADSL"].status, "completed")
+        self.assertEqual(result.graph_state.dependency_review_status, "accepted")
 
     def test_gateway_executes_approved_code_through_dataset_graph_and_records_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_approved_code") / "PSY201"

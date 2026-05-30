@@ -1700,6 +1700,40 @@ python -m compileall -q src\adam_agent
 
 结果：6 gateway tests passed；5 API tests passed；compileall passed。
 
+### 2026-05-30 - LG2.8 Gateway-Owned Dependency Plan 验证切片
+
+已完成：
+
+- 增加回归测试，证明 `GraphGateway.generate_code()` 使用的是 gateway-owned
+  canonical dependency plan 中的 dependency resolution，而不是调用方传入的
+  dependency list。
+- 该测试先 seed 一个 graph-backed 且 completed 的 `ADSL` run output，再重新
+  plan `ADAE`，随后验证：
+  - `DatasetGraph` invocation 收到当前 graph plan 里的 `ADAE -> ADSL`
+    dependency resolution；
+  - generated-code state 记录同一个 graph-backed runtime dependency artifact；
+  - runtime dependency artifact 指向 `run_output`，不是 reference ADaM。
+- 未修改 runtime logic；现有实现已经满足这个边界，本切片只是补防回归测试。
+
+当前边界：
+
+- `GraphGateway.record_code_generation()` 仍是 tests 和 graph internals 使用的
+  lower-level trusted persistence boundary。产品调用方应使用
+  `GraphGateway.generate_code()`，由它从 graph-owned dependency plan 派生
+  dependency artifacts。
+- 本切片不改变 dependency planning semantics、UI 行为、static rules、R
+  execution 或 provider behavior。
+- static-rule governance 不变：静态检查仍然是 generic contract/rule-pack
+  checks，不是 demo/study/dataset-specific rules。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_uses_gateway_owned_dependency_plan -v
+```
+
+结果：1 focused test passed。
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
 
 已完成：
