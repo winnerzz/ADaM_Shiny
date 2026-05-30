@@ -508,6 +508,38 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   通用 declared contract，或它属于哪个带来源治理信息的 rule-pack item。否则
   只能进入 reviewer note 或 backlog candidate。
 
+静态规则架构调整：
+
+- 每个候选规则必须拆成两个对象来看：
+  - `RuleObservation`：问题是在哪里被观察到的，例如 demo 失败、用户审核意见、
+    或一段糟糕的 generated script。它只能作为调查证据，不能直接 block run。
+  - `RuleAuthority`：系统为什么有权强制执行这条规则，例如 system execution
+    boundary、approved spec、user policy，或已经准入的 rule-pack item。
+- generic engine 里只能放 evaluator function。Evaluator 只能回答这类问题：
+  - artifact 是否绑定当前 code hash？
+  - code 是否调用了禁止的 execution primitive？
+  - code 是否可见地满足调用方声明的 output contract？
+  - 带来源的 rule-pack item 是否有足够 metadata 可以被执行？
+- 所有领域词都必须作为 policy/rule-pack 参数传入 evaluator。Engine 代码里不能
+  携带 clinical variable、dataset 名、study 名、legacy program 名或 reference
+  output pattern。
+- 所以后续每条 static rule definition 必须包含：
+  - 稳定的 `rule_id`
+  - `rule_family`：artifact contract、execution boundary、spec contract 或
+    standards pack
+  - authority source：system contract、approved spec、user policy 或 rule pack
+  - 当前 run 或 rule pack 传入的 parameter payload
+  - severity 和 confidence
+  - evidence pointer
+  - 面向 reviewer 的 limitation text，说明这条规则不能证明什么
+- 一个具体 failure 只有完成这条转换链后，才能成为 blocking rule：
+  observation -> generic rule shape -> authority binding -> deterministic
+  evaluator -> audit-visible report。任何一步缺失时，产品只能把它显示成
+  reviewer note，不能给 engine 打补丁。
+- 新增 static check 的回归测试必须证明通用性。每条新的 blocking static rule
+  至少需要一个中性的 non-demo fixture，并且要有 source-level guard，防止规则
+  依赖最初的 demo/study/dataset/variable 名称。
+
 任务：
 
 - 添加 reference tool interfaces：

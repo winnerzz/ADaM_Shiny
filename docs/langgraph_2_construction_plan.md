@@ -600,6 +600,42 @@ Design principle:
   state the rule as either a generic declared contract or a governed rule-pack
   item. If not, the item remains a reviewer note or backlog candidate.
 
+Static-rule architecture adjustment:
+
+- Treat every proposed rule as two separate objects:
+  - `RuleObservation`: where the problem was noticed, such as a failed demo,
+    a user review comment, or a bad generated script. This is evidence for
+    investigation only and cannot block a run.
+  - `RuleAuthority`: the declared contract that allows the system to enforce
+    the rule, such as a system execution boundary, an approved spec, user
+    policy, or an admitted rule-pack item.
+- The generic engine may contain evaluator functions only. Evaluators answer
+  questions such as:
+  - is this artifact bound to the current code hash?
+  - does the code attempt a forbidden execution primitive?
+  - does the code visibly satisfy caller-declared output contracts?
+  - does a source-backed rule-pack item have enough metadata to be enforceable?
+- Evaluators must receive all domain terms as policy/rule-pack parameters.
+  They must not carry clinical variables, dataset names, study names, legacy
+  program names, or reference-output patterns in engine code.
+- A future static rule definition must therefore include:
+  - stable `rule_id`
+  - `rule_family`: artifact contract, execution boundary, spec contract, or
+    standards pack
+  - authority source: system contract, approved spec, user policy, or rule pack
+  - parameter payload supplied by the current run or rule pack
+  - severity and confidence
+  - evidence pointer
+  - human-readable limitation text that states what the rule does not prove
+- A concrete failure can become a blocking rule only after this conversion:
+  observation -> generic rule shape -> authority binding -> deterministic
+  evaluator -> audit-visible report. If any step is missing, the product should
+  show the issue as a reviewer note rather than patch the engine.
+- Regression tests for new static checks must prove generality. Each new
+  blocking static rule needs at least one neutral, non-demo fixture and a
+  source-level guard that prevents the rule from depending on the original
+  demo/study/dataset/variable name.
+
 Tasks:
 
 - Add reference tool interfaces:
