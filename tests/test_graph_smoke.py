@@ -341,6 +341,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_smoke",
                 "target_datasets": ["ADSL", "ADAE"],
+                "execution_mode": "stub",
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -417,6 +418,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_isolation",
                 "dataset": "ADSL",
+                "execution_mode": "stub",
                 "stub_scenario": "success",
                 "audit_artifacts": [],
             }
@@ -426,6 +428,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_isolation",
                 "dataset": "ADAE",
+                "execution_mode": "stub",
                 "stub_scenario": "code_error_then_success",
                 "audit_artifacts": [],
             }
@@ -437,6 +440,41 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adae["repair_attempts"], 1)
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
+
+    def test_dataset_graph_missing_execution_mode_fails_closed_not_completed_stub(self) -> None:
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_missing_execution_mode",
+                "dataset": "ADAE",
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "input_error")
+        self.assertIn("requires an explicit execution_mode", result["real_run_error"])
+        self.assertEqual(result["summary"].status, "failed")
+
+    def test_dataset_graph_unknown_execution_mode_fails_closed_not_completed_stub(self) -> None:
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_unknown_execution_mode",
+                "dataset": "ADAE",
+                "execution_mode": "legacy_auto_magic",
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "input_error")
+        self.assertIn("got legacy_auto_magic", result["real_run_error"])
+        self.assertNotEqual(result["summary"].validation_status, "passed_stub")
 
     def test_dataset_graph_product_nodes_do_not_flow_through_legacy_stub_chain(self) -> None:
         graph = compile_dataset_graph().get_graph()
@@ -977,6 +1015,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_blocked",
                 "target_datasets": ["ADSL", "ADAE"],
+                "execution_mode": "stub",
                 "stub_scenarios": {"ADSL": "fail_adsl"},
                 "dataset_results": [],
                 "blocked_datasets": [],
@@ -998,6 +1037,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase74_downstream_missing_dependency",
                 "target_datasets": ["ADAE"],
+                "execution_mode": "stub",
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -1018,6 +1058,25 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["dependency_resolution"], [])
         self.assertEqual(result["status"], "completed")
 
+    def test_study_graph_missing_execution_mode_fails_closed_not_completed_stub(self) -> None:
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_study_missing_execution_mode",
+                "target_datasets": ["ADAE"],
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADAE"].status, "failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertNotEqual(summaries["ADAE"].validation_status, "passed_stub")
+
     def test_downstream_request_uses_available_dependency_artifact_without_running_it(self) -> None:
         study_dir = _workspace_dir("phase74_available_dependency") / "PSY201"
         reference_dir = study_dir / "reference_adam"
@@ -1030,6 +1089,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase74_available_dependency",
                 "target_datasets": ["ADAE"],
+                "execution_mode": "stub",
                 "study_dir": str(study_dir),
                 "dataset_results": [],
                 "blocked_datasets": [],
@@ -1588,6 +1648,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase74_approved_dependency_generation",
                 "target_datasets": ["ADAE", "ADCM"],
+                "execution_mode": "stub",
                 "approved_dependency_datasets": ["ADSL"],
                 "dataset_results": [],
                 "blocked_datasets": [],
@@ -1633,6 +1694,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase74_midstream_dependency_requires_parent",
                 "target_datasets": ["ADTTE"],
+                "execution_mode": "stub",
                 "study_dir": str(study_dir),
                 "approved_dependency_datasets": ["ADLB"],
                 "dataset_results": [],
@@ -1661,6 +1723,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase7_downstream_fail",
                 "target_datasets": ["ADSL", "ADAE"],
+                "execution_mode": "stub",
                 "stub_scenarios": {"ADAE": "fail_adsl"},
                 "dataset_results": [],
                 "blocked_datasets": [],
@@ -1699,6 +1762,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase7_midstream_block",
                 "target_datasets": ["ADAE", "ADTTE"],
+                "execution_mode": "stub",
                 "study_dir": str(study_dir),
                 "approved_dependency_datasets": ["ADSL", "ADLB"],
                 "stub_scenarios": {"ADLB": "fail_adsl"},
@@ -1829,6 +1893,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_checkpoint",
                 "target_datasets": ["ADSL", "ADAE"],
+                "execution_mode": "stub",
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -1851,6 +1916,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "study_id": "PSY201",
                 "run_id": "run_phase3_reducer",
                 "target_datasets": ["ADSL", "ADAE", "ADCM"],
+                "execution_mode": "stub",
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],

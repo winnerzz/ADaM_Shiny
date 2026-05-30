@@ -3432,3 +3432,38 @@ python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_
   `approveRun.ready` 也要求 `!progressBlocked`，并优先展示 graph-owned blocked
   reason。
 - 最终 review 返回 GO。
+
+### 2026-05-30 - LG2.8 Legacy Stub 显式启用切片
+
+已完成：
+
+- `DatasetGraph` 在 `execution_mode` 缺失或未知时不再落入 legacy fake stub
+  chain。
+- `StudyGraph` 不再给 dataset task 自动补 `execution_mode="stub"`。只有明确
+  想跑 legacy/test stub 的调用方，才需要显式传入 `execution_mode="stub"`。
+- `graph_product_execute` 仍然是合法产品模式：prepare 阶段只初始化 execution
+  state，真正 R execution 仍由专门的 `execute_approved_code` node 负责。
+- 原本用于验证 legacy stub 的 smoke tests 现在都显式声明 stub mode。新增回归
+  测试证明缺失 execution mode 会 fail closed，而不是生成 completed stub dataset。
+
+当前边界：
+
+- 本切片不删除 legacy stub nodes；只是把它们收紧成显式 compatibility/test
+  behavior。Product graph modes 和 LLM downstream modes 不变。
+- static-rule governance 不变，并继续按“从原则出发”的规则边界推进。本切片
+  不新增任何 static rule。后续 static check 只能以 generic
+  artifact/execution/spec contract evaluator 的形式进入，或者作为带
+  authority/source/version/scope/severity/evidence 的 versioned rule-pack item
+  进入；demo、study、dataset 或单个 variable 观察不能直接升级成 blocking
+  rule。
+
+验证：
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_smoke -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_runs_legacy_stub_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_blocks_legacy_llm_run_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+```
+
+结果：compileall passed；57 个 graph smoke tests passed；focused gateway
+compatibility/product tests passed。

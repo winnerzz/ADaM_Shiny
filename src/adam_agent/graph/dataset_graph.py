@@ -75,6 +75,10 @@ def _is_graph_product_execute_mode(state: DatasetGraphState) -> bool:
     return state.get("execution_mode") == "graph_product_execute"
 
 
+def _is_legacy_stub_mode(state: DatasetGraphState) -> bool:
+    return state.get("execution_mode") == "stub"
+
+
 def _skips_stub_nodes(state: DatasetGraphState) -> bool:
     return (
         _is_llm_downstream_mode(state)
@@ -105,6 +109,32 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
             "real_run_error": (
                 "execution_mode=real_adsl_minimal is retired from DatasetGraph. "
                 "Use the unified ADaM split flow or an llm_downstream_* execution mode."
+            ),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
+    if _is_graph_product_execute_mode(state):
+        return {
+            "status": "running",
+            "repair_attempts": state.get("repair_attempts", 0),
+            "max_repair_attempts": state.get("max_repair_attempts", 3),
+            "sandbox_runs": state.get("sandbox_runs", 0),
+        }
+
+    if not _is_legacy_stub_mode(state):
+        mode = state.get("execution_mode") or "missing"
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": (
+                f"DatasetGraph requires an explicit execution_mode; got {mode}. "
+                "Use graph_product_prepare, graph_product_generate_code, graph_product_execute, "
+                "llm_downstream_provider, llm_downstream_r_sandbox, llm_downstream_stubbed, "
+                "or explicit legacy/test mode stub."
             ),
             "real_run_artifacts": {},
             "real_validation_status": "not_run",

@@ -507,6 +507,9 @@ Design principle:
 
 - Static checks are a policy/rule-pack layer, not a growing list of one-off
   patches for PSY201, ADAE, ADSL, or any single demo variable.
+- Static-rule design starts from first principles: define the reusable contract
+  being checked before writing code. A concrete failure may motivate a rule, but
+  it is not itself the rule.
 - Static-rule work must start from a reusable rule shape, not from a failed
   example. The implementation question is always "what general contract is
   violated?" rather than "how do we stop this one file from failing?"
@@ -571,6 +574,12 @@ Design principle:
   seems to require an exception, the engineering response must be one of:
   revise the approved spec contract, add a source-backed rule-pack item, or keep
   the issue as a non-blocking reviewer note until it has proper authority.
+- Before any new blocking static rule is implemented, it must pass an
+  abstraction gate: after removing the original study name, uploaded file name,
+  dataset name, and individual variable anecdote, the rule must still be
+  explainable as either a generic declared-contract check or a governed
+  rule-pack item. If it cannot pass that gate, it remains a reviewer note or
+  backlog candidate.
 - When a check is heuristic or incomplete, it must be warning/informational and
   must record that it does not prove clinical correctness.
 - Every static finding must carry rule-governance metadata:
@@ -3765,3 +3774,41 @@ Subagent review:
   `progressBlocked` predicate. `approveRun.ready` now also requires
   `!progressBlocked` and shows the graph-owned blocked reason first.
 - Final review returned GO.
+
+### 2026-05-30 - LG2.8 Explicit Legacy Stub Opt-In Slice
+
+Completed:
+
+- `DatasetGraph` no longer falls into the legacy fake stub chain when
+  `execution_mode` is missing or unknown.
+- `StudyGraph` no longer auto-fills `execution_mode="stub"` for dataset tasks.
+  Callers that intentionally exercise legacy/test stub behavior must pass
+  `execution_mode="stub"` explicitly.
+- `graph_product_execute` remains a valid product mode: prepare initializes
+  execution state and the dedicated `execute_approved_code` node still owns R
+  execution.
+- Smoke tests that intentionally verify legacy stub behavior now declare
+  explicit stub mode. New regression tests prove that missing execution mode
+  fails closed instead of producing a completed stub dataset.
+
+Current boundary:
+
+- This slice does not remove the legacy stub nodes; it makes them explicit
+  compatibility/test behavior. Product graph modes and LLM downstream modes are
+  unchanged.
+- Static-rule governance is unchanged and remains first-principles. This slice
+  adds no static rule. Future static checks must enter either as generic
+  artifact/execution/spec contract evaluators or as governed versioned rule-pack
+  items; demo, study, dataset, or variable observations cannot be promoted
+  directly into blocking rules.
+
+Verification:
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_smoke -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_runs_legacy_stub_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_blocks_legacy_llm_run_to_completion_with_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+```
+
+Result: compileall passed; 57 graph smoke tests passed; focused gateway
+compatibility/product tests passed.
