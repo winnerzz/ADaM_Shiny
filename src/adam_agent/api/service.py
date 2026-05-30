@@ -922,37 +922,31 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
     output_path = _usable_generated_output_path(run_dir, target)
     reference_path = _reference_path(root, target)
     compare = _compare_dataset_files(target, output_path, reference_path)
-    compare = _write_compare_report(run_dir, target, compare)
-    _record_compare_in_graph_state(root, run_id, target, compare)
-    return compare
+    return _record_compare_in_graph_state(root, run_id, target, compare)
 
 
-def _write_compare_report(run_dir: Path, dataset: str, compare: DatasetCompareResponse) -> DatasetCompareResponse:
-    compare_dir = run_dir / "compare"
-    compare_dir.mkdir(parents=True, exist_ok=True)
-    report_path = compare_dir / f"{dataset.lower()}_compare_report.json"
-    payload = compare.model_dump(mode="json")
-    payload["report_path"] = str(report_path.as_posix())
-    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return DatasetCompareResponse(**payload)
-
-
-def _record_compare_in_graph_state(root: Path, run_id: str, dataset: str, compare: DatasetCompareResponse) -> None:
+def _record_compare_in_graph_state(root: Path, run_id: str, dataset: str, compare: DatasetCompareResponse) -> DatasetCompareResponse:
     gateway = GraphGateway()
     try:
         graph_state = gateway.load_graph_state(study_dir=root, run_id=run_id)
         study_id = graph_state.study_id
     except FileNotFoundError:
-        return
-    gateway.record_compare(
+        return compare
+    result = gateway.record_compare(
         study_dir=root,
         study_id=study_id,
         run_id=run_id,
         dataset=dataset,
         compare_summary=compare.model_dump(mode="json"),
-        compare_report_path=compare.report_path,
+        write_compare_report=True,
         input_fingerprint_payload=input_fingerprint(root),
     )
+    dataset_state = result.graph_state.datasets.get(dataset.strip().upper())
+    if dataset_state is None:
+        return compare
+    payload = dict(dataset_state.compare_summary)
+    payload = {key: value for key, value in payload.items() if key in DatasetCompareResponse.model_fields}
+    return DatasetCompareResponse(**payload)
 
 
 def dataset_download_path(study_dir: str | Path, run_id: str, dataset: str, kind: str) -> Path:
@@ -1888,8 +1882,9 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
     reader = SDTMReader()
     compare_summary = _compare_dataset_files(dataset, output_path, reference_path)
     if compare_summary.status not in {"missing_generated", "missing_reference"}:
-        compare_summary = _write_compare_report(run_dir, dataset, compare_summary)
-    _record_compare_in_graph_state(root, run_id, dataset, compare_summary)
+        compare_summary = _record_compare_in_graph_state(root, run_id, dataset, compare_summary)
+    else:
+        compare_summary = _record_compare_in_graph_state(root, run_id, dataset, compare_summary)
     compare_status = compare_summary.status if compare_summary.status != "missing_generated" else result.get("compare_status")
 
     return DatasetReview(

@@ -562,6 +562,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(compare.status_code, 200, compare.text)
         self.assertEqual(compare.json()["dataset"], "ADAE")
         self.assertFalse((run_dir / "graph_state.json").exists())
+        self.assertFalse((run_dir / "compare" / "adae_compare_report.json").exists())
 
     def test_review_summary_updates_graph_compare_when_reference_disappears(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_compare_missing_refresh")

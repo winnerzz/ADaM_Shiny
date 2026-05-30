@@ -1447,6 +1447,41 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["compare_summary"]["status"], "missing_reference")
 
+    def test_gateway_writes_compare_report_artifact_when_requested(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_report_writer") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_report_writer",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.record_compare(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_report_writer",
+            dataset="ADAE",
+            compare_summary={
+                "dataset": "ADAE",
+                "status": "missing_reference",
+                "generated_file": "adae.csv",
+                "note": "No reference ADaM was found for this dataset.",
+            },
+            write_compare_report=True,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        report_path = study_dir / "runs" / "run_lg2_compare_report_writer" / "compare" / "adae_compare_report.json"
+        report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(report_payload["dataset"], "ADAE")
+        self.assertEqual(report_payload["status"], "missing_reference")
+        self.assertEqual(report_payload["report_path"], str(report_path.as_posix()))
+        self.assertEqual(dataset_state.compare_summary["report_path"], str(report_path.as_posix()))
+        self.assertIn("compare_report_adae", [artifact.artifact_id for artifact in dataset_state.artifacts])
+
     def test_gateway_compare_requires_existing_graph_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_compare_requires_state") / "PSY201"
         study_dir.mkdir(parents=True)

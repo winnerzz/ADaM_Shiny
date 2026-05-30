@@ -1768,6 +1768,42 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_re
 Result: 3 focused ownership/cleanup tests passed; 4 existing draft-spec review
 regression tests passed.
 
+### 2026-05-30 - LG2.2 Gateway-Owned Compare Report Artifact Slice
+
+Completed:
+
+- Moved compare-report artifact writing behind `GraphGateway.record_compare()`.
+- The service still computes the current CSV structural/reference comparison,
+  but it no longer writes `runs/{run_id}/compare/{dataset}_compare_report.json`
+  directly for graph-backed runs.
+- `GraphGateway.record_compare()` can now write the compare report artifact,
+  record the artifact in canonical dataset state, update compare summary, and
+  refresh the UI `workflow_state.json` projection in one graph-owned transition.
+- Kept the compatibility behavior for ad-hoc compare calls without graph state:
+  the endpoint returns a transient compare response but does not create a graph
+  state or canonical compare report.
+- Added gateway and API coverage for gateway-written compare reports and for
+  the no-graph-state compatibility boundary.
+
+Current boundary:
+
+- This does not change the compare algorithm. It is still an initial CSV
+  structural and sampled-cell comparison, not a clinical conformance validator.
+- Reference ADaM remains comparison/output-shape evidence only. This slice does
+  not make reference ADaM a derivation authority.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_updates_graph_compare_when_reference_disappears tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+```
+
+Result: 6 focused compare tests passed; 178 related gateway/API/graph/static/
+reference tests passed.
+
 ### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice
 
 Completed:

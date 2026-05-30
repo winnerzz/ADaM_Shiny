@@ -1521,6 +1521,7 @@ class GraphGateway:
         dataset: str,
         compare_summary: dict[str, Any],
         compare_report_path: str | Path | None = None,
+        write_compare_report: bool = False,
         input_fingerprint_payload: dict[str, Any] | None = None,
     ) -> GraphGatewayResult:
         """Persist reference-compare results into canonical graph state."""
@@ -1540,9 +1541,15 @@ class GraphGateway:
         existing_run_interrupt = next_state.current_interrupt
         summary = dict(compare_summary)
         summary["input_fingerprint"] = fingerprint
+        report_path: Path | None = Path(compare_report_path) if compare_report_path else None
+        if write_compare_report:
+            report_path = report_path or root / "runs" / run_id / "compare" / f"{target.lower()}_compare_report.json"
+            payload = dict(summary)
+            payload["report_path"] = str(report_path.as_posix())
+            _write_json(report_path, payload)
+            summary["report_path"] = str(report_path.as_posix())
         dataset_state.compare_summary.update(summary)
-        if compare_report_path:
-            report_path = Path(compare_report_path)
+        if report_path:
             if report_path.exists() and report_path.is_file():
                 _upsert_artifact(
                     dataset_state,
@@ -1569,7 +1576,7 @@ class GraphGateway:
             metadata={
                 **(existing_summary.metadata if existing_summary else {}),
                 "graph_compare_recorded": True,
-                "compare_report_path": str(Path(compare_report_path).as_posix()) if compare_report_path else None,
+                "compare_report_path": str(report_path.as_posix()) if report_path else None,
             },
         )
         dataset_state.updated_at = utc_now()
