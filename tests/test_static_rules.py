@@ -222,6 +222,7 @@ class StaticRuleTests(unittest.TestCase):
     def test_static_rule_pack_admission_accepts_source_backed_rules(self) -> None:
         payload = {
             "pack_id": "company_standards_v1",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "2026.05",
             "scope": ["all-adam"],
@@ -241,11 +242,85 @@ class StaticRuleTests(unittest.TestCase):
         rule_pack = validate_static_rule_pack_payload(payload)
 
         self.assertEqual(rule_pack.pack_id, "company_standards_v1")
+        self.assertEqual(rule_pack.authority_type, "company_standard")
+        self.assertEqual(rule_pack.rules[0].authority_type, "company_standard")
         self.assertEqual(rule_pack.rules[0].source_id, "company-standard:2026.05:COMPANY_TRACEABILITY_001")
+
+    def test_static_rule_pack_admission_accepts_explicit_matching_rule_authority(self) -> None:
+        payload = {
+            "pack_id": "p21_rules_v1",
+            "authority_type": "p21_rule",
+            "source": "p21",
+            "version": "2026.05",
+            "scope": ["generated-r"],
+            "rules": [
+                {
+                    "rule_id": "P21_TRACEABILITY_001",
+                    "description": "Rule item may repeat the pack authority when it matches.",
+                    "severity": "info",
+                    "authority_type": "p21_rule",
+                    "source": "p21",
+                    "version": "2026.05",
+                    "scope": ["generated-r"],
+                    "evidence": "references/p21/rules.md#traceability-001",
+                }
+            ],
+        }
+
+        rule_pack = validate_static_rule_pack_payload(payload)
+
+        self.assertEqual(rule_pack.authority_type, "p21_rule")
+        self.assertEqual(rule_pack.rules[0].authority_type, "p21_rule")
+
+    def test_static_rule_pack_admission_rejects_rules_without_authority_type(self) -> None:
+        payload = {
+            "pack_id": "candidate_rules",
+            "source": "implementation-note",
+            "version": "draft",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "CANDIDATE_RULE",
+                    "description": "A demo observation must not enter as an anonymous authority.",
+                    "severity": "warning",
+                    "source": "implementation-note",
+                    "version": "draft",
+                    "scope": ["all-adam"],
+                    "evidence": "notes/candidate.md#rule",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "authority_type"):
+            validate_static_rule_pack_payload(payload)
+
+    def test_static_rule_pack_admission_rejects_invalid_pack_authority_type(self) -> None:
+        payload = {
+            "pack_id": "candidate_rules",
+            "authority_type": "implementation_note",
+            "source": "implementation-note",
+            "version": "draft",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "CANDIDATE_RULE",
+                    "description": "Implementation notes are not a rule authority class.",
+                    "severity": "warning",
+                    "source": "implementation-note",
+                    "version": "draft",
+                    "scope": ["all-adam"],
+                    "evidence": "notes/candidate.md#rule",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "invalid authority_type"):
+            validate_static_rule_pack_payload(payload)
 
     def test_static_rule_pack_admission_rejects_rules_without_evidence(self) -> None:
         payload = {
             "pack_id": "candidate_rules",
+            "authority_type": "user_policy",
             "source": "implementation-note",
             "version": "draft",
             "scope": ["all-adam"],
@@ -267,6 +342,7 @@ class StaticRuleTests(unittest.TestCase):
     def test_static_rule_pack_admission_rejects_non_string_provenance_fields(self) -> None:
         payload = {
             "pack_id": "standards_pack",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "1",
             "scope": ["all-adam"],
@@ -289,6 +365,7 @@ class StaticRuleTests(unittest.TestCase):
     def test_static_rule_pack_admission_rejects_invalid_severity_and_scope(self) -> None:
         missing_scope = {
             "pack_id": "standards_pack",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "1",
             "rules": [],
@@ -298,6 +375,7 @@ class StaticRuleTests(unittest.TestCase):
 
         invalid_severity = {
             "pack_id": "standards_pack",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "1",
             "scope": ["all-adam"],
@@ -319,6 +397,7 @@ class StaticRuleTests(unittest.TestCase):
     def test_static_rule_pack_admission_rejects_duplicate_rules_and_non_string_scope(self) -> None:
         duplicate_rules = {
             "pack_id": "standards_pack",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "1",
             "scope": ["all-adam"],
@@ -348,6 +427,7 @@ class StaticRuleTests(unittest.TestCase):
 
         non_string_scope = {
             "pack_id": "standards_pack",
+            "authority_type": "company_standard",
             "source": "company-standard",
             "version": "1",
             "scope": ["all-adam"],
@@ -373,6 +453,7 @@ class StaticRuleTests(unittest.TestCase):
             json.dumps(
                 {
                     "pack_id": "local_policy",
+                    "authority_type": "user_policy",
                     "source": "local-policy",
                     "version": "1",
                     "scope": ["generated-r"],
@@ -397,6 +478,30 @@ class StaticRuleTests(unittest.TestCase):
 
         self.assertEqual(rule_pack.rules[0].severity, "info")
         self.assertFalse(rule_pack.rules[0].enabled)
+
+    def test_static_rule_pack_admission_rejects_rule_authority_mismatch(self) -> None:
+        payload = {
+            "pack_id": "standards_pack",
+            "authority_type": "company_standard",
+            "source": "company-standard",
+            "version": "1",
+            "scope": ["all-adam"],
+            "rules": [
+                {
+                    "rule_id": "RULE_001",
+                    "description": "Rule items cannot smuggle a different authority class.",
+                    "severity": "warning",
+                    "authority_type": "user_policy",
+                    "source": "company-standard",
+                    "version": "1",
+                    "scope": ["all-adam"],
+                    "evidence": "references/company/rules.md#rule-001",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(StaticRuleError, "must match the parent rule pack"):
+            validate_static_rule_pack_payload(payload)
 
     def test_static_rule_artifact_validation_rejects_incomplete_pass_report(self) -> None:
         workspace = _workspace_dir("static_rules_incomplete")

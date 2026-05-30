@@ -21,10 +21,12 @@ from adam_agent.tools.artifacts import sha256_file
 StaticRuleSeverity = Literal["error", "warning", "info"]
 StaticRuleCategory = Literal["artifact_contract", "execution_boundary", "spec_contract", "standards_pack"]
 StaticRuleSourceType = Literal["system_contract", "approved_spec", "standards_pack", "user_policy"]
+StaticRulePackAuthorityType = Literal["cdisc_standard", "p21_rule", "company_standard", "user_policy"]
 
 STATIC_RULE_SEVERITIES = {"error", "warning", "info"}
 STATIC_RULE_CATEGORIES = {"artifact_contract", "execution_boundary", "spec_contract", "standards_pack"}
 STATIC_RULE_SOURCE_TYPES = {"system_contract", "approved_spec", "standards_pack", "user_policy"}
+STATIC_RULE_PACK_AUTHORITY_TYPES = {"cdisc_standard", "p21_rule", "company_standard", "user_policy"}
 SOURCE_ID_REQUIRED_TYPES = {"approved_spec", "standards_pack", "user_policy"}
 
 
@@ -69,6 +71,7 @@ class StaticRulePackItem:
     rule_id: str
     description: str
     severity: StaticRuleSeverity
+    authority_type: StaticRulePackAuthorityType
     source: str
     version: str
     scope: tuple[str, ...]
@@ -84,6 +87,7 @@ class StaticRulePackItem:
             "rule_id": self.rule_id,
             "description": self.description,
             "severity": self.severity,
+            "authority_type": self.authority_type,
             "source": self.source,
             "version": self.version,
             "scope": list(self.scope),
@@ -98,6 +102,7 @@ class StaticRulePack:
     """Admitted standards/company rule pack with explicit provenance."""
 
     pack_id: str
+    authority_type: StaticRulePackAuthorityType
     source: str
     version: str
     scope: tuple[str, ...]
@@ -106,6 +111,7 @@ class StaticRulePack:
     def as_dict(self) -> dict[str, Any]:
         return {
             "pack_id": self.pack_id,
+            "authority_type": self.authority_type,
             "source": self.source,
             "version": self.version,
             "scope": list(self.scope),
@@ -138,6 +144,8 @@ class StaticRulePolicy:
                 "engine_scope": "generic_contracts_only",
                 "demo_observation_policy": "Demo observations can become static rules only after promotion into source-backed rule packs.",
                 "clinical_rule_policy": "clinical/domain rules require approved specs or versioned standards packs",
+                "rule_pack_admission_policy": "A standards/company rule pack must declare authority_type, source, version, scope, severity, and evidence before it can affect review or execution.",
+                "candidate_rule_policy": "Candidate rules and demo observations are reviewer notes until promoted through rule-pack admission.",
             },
         }
 
@@ -299,18 +307,29 @@ def validate_static_rule_pack_payload(payload: Any) -> StaticRulePack:
     if not isinstance(payload, dict):
         raise StaticRuleError("Static rule pack must be a JSON object.")
     pack_id = _required_text(payload, "pack_id", context="Static rule pack")
+    authority_type = _required_authority_type(payload.get("authority_type"), context=f"Static rule pack {pack_id}")
     source = _required_text(payload, "source", context=f"Static rule pack {pack_id}")
     version = _required_text(payload, "version", context=f"Static rule pack {pack_id}")
     scope = _required_scope(payload.get("scope"), context=f"Static rule pack {pack_id}")
     rules_payload = payload.get("rules")
     if not isinstance(rules_payload, list) or not rules_payload:
         raise StaticRuleError(f"Static rule pack {pack_id} must include at least one rule item.")
-    rules = tuple(_validate_rule_pack_item(item, pack_id=pack_id, index=index) for index, item in enumerate(rules_payload))
+    rules = tuple(
+        _validate_rule_pack_item(item, pack_id=pack_id, index=index, pack_authority_type=authority_type)
+        for index, item in enumerate(rules_payload)
+    )
     rule_ids = [rule.rule_id for rule in rules]
     duplicates = sorted({rule_id for rule_id in rule_ids if rule_ids.count(rule_id) > 1})
     if duplicates:
         raise StaticRuleError(f"Static rule pack {pack_id} has duplicate rule_id values: {', '.join(duplicates)}.")
-    return StaticRulePack(pack_id=pack_id, source=source, version=version, scope=scope, rules=rules)
+    return StaticRulePack(
+        pack_id=pack_id,
+        authority_type=authority_type,
+        source=source,
+        version=version,
+        scope=scope,
+        rules=rules,
+    )
 
 
 def validate_static_rule_report_artifact(
@@ -361,7 +380,13 @@ def validate_static_rule_report_artifact(
     return payload
 
 
-def _validate_rule_pack_item(item: Any, *, pack_id: str, index: int) -> StaticRulePackItem:
+def _validate_rule_pack_item(
+    item: Any,
+    *,
+    pack_id: str,
+    index: int,
+    pack_authority_type: StaticRulePackAuthorityType,
+) -> StaticRulePackItem:
     context = f"Static rule pack {pack_id} rule[{index}]"
     if not isinstance(item, dict):
         raise StaticRuleError(f"{context} must be an object.")
@@ -370,6 +395,7 @@ def _validate_rule_pack_item(item: Any, *, pack_id: str, index: int) -> StaticRu
     severity = _required_text(item, "severity", context=context)
     if severity not in STATIC_RULE_SEVERITIES:
         raise StaticRuleError(f"{context} has invalid severity: {severity}.")
+    authority_type = _authority_type_or_inherit(item.get("authority_type"), inherited=pack_authority_type, context=context)
     source = _required_text(item, "source", context=context)
     version = _required_text(item, "version", context=context)
     scope = _required_scope(item.get("scope"), context=context)
@@ -381,6 +407,7 @@ def _validate_rule_pack_item(item: Any, *, pack_id: str, index: int) -> StaticRu
         rule_id=rule_id,
         description=description,
         severity=severity,  # type: ignore[arg-type]
+        authority_type=authority_type,
         source=source,
         version=version,
         scope=scope,
@@ -408,6 +435,35 @@ def _required_scope(value: Any, *, context: str) -> tuple[str, ...]:
     if not scope:
         raise StaticRuleError(f"{context} must include scope as a non-empty list.")
     return scope
+
+
+def _required_authority_type(value: Any, *, context: str) -> StaticRulePackAuthorityType:
+    if not isinstance(value, str):
+        allowed = ", ".join(sorted(STATIC_RULE_PACK_AUTHORITY_TYPES))
+        raise StaticRuleError(f"{context} must include authority_type as one of: {allowed}.")
+    authority_type = value.strip()
+    if authority_type not in STATIC_RULE_PACK_AUTHORITY_TYPES:
+        raise StaticRuleError(
+            f"{context} has invalid authority_type: {authority_type or '<missing>'}. "
+            f"Allowed values: {', '.join(sorted(STATIC_RULE_PACK_AUTHORITY_TYPES))}."
+        )
+    return authority_type  # type: ignore[return-value]
+
+
+def _authority_type_or_inherit(
+    value: Any,
+    *,
+    inherited: StaticRulePackAuthorityType,
+    context: str,
+) -> StaticRulePackAuthorityType:
+    if value is None:
+        return inherited
+    authority_type = _required_authority_type(value, context=context)
+    if authority_type != inherited:
+        raise StaticRuleError(
+            f"{context} authority_type must match the parent rule pack authority_type: {inherited}."
+        )
+    return authority_type
 
 
 def _merge_policy(

@@ -510,9 +510,9 @@ Design principle:
   - `StaticRulePolicy`: run-specific configuration, such as required output
     paths, current code hash, declared target dataset, and caller-provided
     identifiers from approved specs.
-  - `StaticRulePack`: optional standards/company rules with explicit source,
-    version, scope, severity, and evidence. Clinical/domain knowledge enters
-    here, not inside the engine.
+  - `StaticRulePack`: optional standards/company rules with explicit
+    authority_type, source, version, scope, severity, and evidence.
+    Clinical/domain knowledge enters here, not inside the engine.
 - A static rule may inspect generic artifacts and contracts:
   - generated-code path/hash binding
   - expected output file contract
@@ -530,15 +530,15 @@ Design principle:
   visibly produced by the generated code"; it must not say "this dataset must
   derive TRTEMFL this exact way" unless that rule comes from an explicit
   approved spec, company standard, or referenced CDISC/P21 rule pack.
-- Dataset-specific standards should enter as versioned rule packs with source,
-  scope, severity, and evidence. The engine remains generic; the rule pack
-  supplies domain knowledge.
+- Dataset-specific standards should enter as versioned rule packs with
+  authority_type, source, scope, severity, and evidence. The engine remains
+  generic; the rule pack supplies domain knowledge.
 - Demo-discovered issues may create candidate rules only after being converted
   into a source-backed rule-pack item. Until then they are implementation notes
   or tests for generic contracts, not production static rules.
 - Rule-pack admission is a product/governance decision, not a quick code change:
-  every clinical/static standards rule needs a source, version, scope, severity,
-  and evidence before it can block a run.
+  every clinical/static standards rule needs authority_type, source, version,
+  scope, severity, and evidence before it can block a run.
 - There is no "exception registry" inside the generic engine. If a future issue
   seems to require an exception, the engineering response must be one of:
   revise the approved spec contract, add a source-backed rule-pack item, or keep
@@ -552,8 +552,11 @@ Design principle:
     `standards_pack`, or `user_policy`
   - optional `source_id`: spec artifact id, rule-pack id, or policy id
 - New blocking clinical rules are not allowed in the generic engine. They must
-  be added through a versioned standards/company rule pack with source, scope,
-  severity, and evidence, then reviewed as a rule-pack change.
+  be added through a versioned rule pack with explicit `authority_type`,
+  source, scope, severity, and evidence, then reviewed as a rule-pack change.
+  Accepted authority classes are limited to CDISC standards, P21 rules, company
+  standards, or user policy. A demo observation or implementation note is not a
+  rule authority.
 - The first LG2.5 hardening priority is therefore rule-pack admission and
   provenance, not a broader list of clinical rules. Adding a new ADaM/CDISC
   rule before the rule-pack contract exists is treated as a design error.
@@ -565,7 +568,8 @@ Design principle:
   other study must first be expressed as one of:
   - a broader artifact/execution/spec contract that applies without knowing the
     study or dataset name
-  - a versioned rule-pack item with source, scope, severity, and evidence
+  - a versioned rule-pack item with authority_type, source, scope, severity,
+    and evidence
   - a non-blocking reviewer note or candidate-rule backlog item
 - If an engineer cannot explain a static check without naming a demo study,
   a specific uploaded file, or a single clinical variable exception, that check
@@ -588,11 +592,12 @@ Tasks:
     approved spec variables, with warnings when code cannot be cheaply proven to
     produce expected variables
   - rule-pack loader contract: load only explicit standards/company rules with
-    source/version/scope/severity/evidence metadata, and keep missing packs as a
-    visible limitation rather than silently replacing them with heuristics
-  - rule-pack admission checks: reject rule-pack items without a source,
-    version, scope, declared severity, and evidence pointer before they can
-    affect code review or execution
+    authority_type/source/version/scope/severity/evidence metadata, and keep
+    missing packs as a visible limitation rather than silently replacing them
+    with heuristics
+  - rule-pack admission checks: reject rule-pack items without an allowed
+    authority_type, source, version, scope, declared severity, and evidence
+    pointer before they can affect code review or execution
   - future standards-pack rules: CDISC/P21/company-standard checks loaded from
     explicit references rather than hard-coded demo observations
   - later: spec variable vs generated code output mismatch where cheaply detectable
@@ -617,8 +622,8 @@ Tasks:
   - Where does the rule authority come from: system contract, approved spec,
     user policy, or versioned rule pack?
   - Is the rule independent of demo-study names and file-specific observations?
-  - If it blocks a run, where are source, version, scope, severity, and evidence
-    recorded?
+  - If it blocks a run, where are authority_type, source, version, scope,
+    severity, and evidence recorded?
 - Keep all checks labeled by confidence:
   - blocking error
   - warning
@@ -658,6 +663,10 @@ LG2.5 slice implemented:
   category/source/severity values and requires non-system sources such as
   approved specs, standards packs, or user policy to carry a non-empty
   `source_id`.
+- `StaticRulePack` admission now requires an explicit `authority_type`
+  (`cdisc_standard`, `p21_rule`, `company_standard`, or `user_policy`) at the
+  pack level. Rule items inherit that authority and cannot override it with a
+  different class.
 
 LG2.5 slice verification:
 
@@ -1687,6 +1696,71 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.5 Static Rule Authority Admission Slice
+
+Completed:
+
+- Tightened the static-rule design so the generic engine remains a
+  contract/rule-pack layer, not a list of demo or dataset-specific fixes.
+- Added `authority_type` to `StaticRulePack` and `StaticRulePackItem`.
+- Allowed authority classes are intentionally narrow:
+  - `cdisc_standard`
+  - `p21_rule`
+  - `company_standard`
+  - `user_policy`
+- Rule-pack items inherit the pack authority. If an item declares a different
+  authority type, admission fails closed.
+- Static-rule policy output now records rule-pack admission and candidate-rule
+  governance notes, so reports explain that demo observations remain reviewer
+  notes until promoted through a governed rule-pack process.
+- Updated the construction plan language to require
+  authority_type/source/version/scope/severity/evidence before any future
+  standards rule can affect review or execution.
+
+Current boundary:
+
+- This slice does not add any clinical, ADaM, CDISC, P21, study-specific, or
+  dataset-specific static rule.
+- Current generated-R checks remain limited to generic artifact contracts,
+  execution-boundary checks, and caller-approved spec identifier visibility.
+- Existing rule-pack payloads without `authority_type` are intentionally
+  rejected. No current product path depends on loading legacy rule-pack payloads.
+
+Subagent review:
+
+- Subagent review returned GO.
+- The reviewer found no blocking issue and confirmed the change keeps static
+  rules generic rather than patch-like.
+- Non-blocking follow-up: future audit hardening may validate that an authority
+  type semantically matches its source/version, not just that required fields
+  are present.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_static_rules -v
+```
+
+Result: 23 tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+Result: 116 tests passed.
+
+```text
+python -B -m unittest tests.test_static_rules tests.test_state_schemas tests.test_graph_smoke -v
+```
+
+Result: 89 tests passed.
+
+```text
+python -m compileall -q src\adam_agent
+```
+
+Result: passed.
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation Slice
 
 Completed:
@@ -1716,7 +1790,8 @@ Static-rule boundary reaffirmed:
 - Static checks remain generic contract/rule-pack checks.
 - Future blocking rules must verify a declared contract and identify their
   authority source: system contract, approved spec, user policy, or a
-  source-backed versioned rule pack with source, scope, severity, and evidence.
+  source-backed versioned rule pack with authority_type, source, scope,
+  severity, and evidence.
 - Demo failures or PSY201 observations may become tests for a generic contract
   or candidates for a governed rule-pack item; they must not be embedded as
   dataset/study/file-specific branches in the generic static-rule engine.
@@ -1959,8 +2034,9 @@ Current boundary:
 
 - This slice does not add any new clinical/static ADaM rule.
 - Static checks remain generic contract/rule-pack checks. A future
-  dataset-specific standards rule must enter through a source-backed rule pack,
-  not through branches in the generic engine.
+  dataset-specific standards rule must enter through a source-backed rule pack
+  with authority_type/source/scope/severity/evidence, not through branches in
+  the generic engine.
 - This slice does not change terminal-failure routing semantics:
   `retry_execution`, `repair_code`, `revise_spec`, `request_new_input`,
   `skip_dataset`, and `continue_other_datasets` keep the existing behavior.
@@ -2437,8 +2513,8 @@ Completed:
 - Added `validate_static_rule_pack_payload()` and `load_static_rule_pack()` so
   standards/company rules must pass provenance admission before any later slice
   can use them.
-- Admission currently requires source, version, scope, declared severity,
-  evidence, and unique `rule_id` values.
+- Admission currently requires authority_type, source, version, scope, declared
+  severity, evidence, and unique `rule_id` values.
 - Scope values must be explicit strings. This prevents ambiguous object-shaped
   scope payloads from becoming hidden engine logic.
 

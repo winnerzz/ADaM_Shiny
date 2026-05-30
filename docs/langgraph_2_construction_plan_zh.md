@@ -436,8 +436,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
     全、声明契约和 rule-pack 执行。
   - `StaticRulePolicy`：当前 run 的配置，例如 required output path、当前 code
     hash、声明 target dataset、approved spec 传入的 identifiers。
-  - `StaticRulePack`：可选的 standards/company rules，必须带 source、version、
-    scope、severity、evidence。临床/领域知识只能从这里进入，不能写死在 engine。
+  - `StaticRulePack`：可选的 standards/company rules，必须带 authority_type、
+    source、version、scope、severity、evidence。临床/领域知识只能从这里进入，
+    不能写死在 engine。
 - 静态规则可以检查通用 artifacts 和 contracts：
   - generated code 的 path/hash 绑定
   - expected output file contract
@@ -450,18 +451,24 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - artifact integrity 或 hash/path mismatch
   - 用户已经 approved 的显式 contract
   - 带 evidence 和 declared severity 的 versioned rule-pack rule
+- 新增 blocking clinical rule 不能写进 generic engine。它必须通过带明确
+  `authority_type`、source、scope、severity 和 evidence 的 versioned rule pack
+  进入，并作为 rule-pack 变更接受审核。允许的 authority class 只限 CDISC
+  standard、P21 rule、company standard 或 user policy。demo 观察或实现备注不是
+  规则权威来源。
 - 静态规则不能从 demo 数据观察中发明临床推导逻辑。例如它可以说“approved
   spec 中列出的变量在 generated code 里不可见”；但不能说“这个数据集必须按
   某种固定方式推导 TRTEMFL”，除非这条规则来自明确的 approved spec、company
   standard 或带来源的 CDISC/P21 rule pack。
-- 数据集相关 standards 应该作为带版本、来源、适用范围、severity 和 evidence
-  的 rule pack 输入。规则引擎保持通用，领域知识由 rule pack 提供。
+- 数据集相关 standards 应该作为带 authority_type、版本、来源、适用范围、
+  severity 和 evidence 的 rule pack 输入。规则引擎保持通用，领域知识由 rule
+  pack 提供。
 - demo 中发现的问题只能先形成 candidate rule。只有当它被转换成带来源的
   rule-pack item 后，才能成为生产静态规则；在此之前只能作为实现备注或通用
   contract 的测试，不应写成生产逻辑。
 - rule-pack 准入是产品/治理决策，不是随手改代码。任何 clinical/static
-  standards rule 要能 block 一个 run，必须先有 source、version、scope、
-  severity 和 evidence。
+  standards rule 要能 block 一个 run，必须先有 authority_type、source、
+  version、scope、severity 和 evidence。
 - generic engine 里不能有“例外登记表”。如果未来某个问题看起来需要例外处理，
   工程上的处理只能是：修正 approved spec contract，加入带来源的 rule-pack
   item，或在具备正式来源前保留为不 blocking 的 reviewer note。
@@ -474,7 +481,8 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   run 中已经声明的 contract，而不是记住某个临床个案。未来在 PSY201 或其他
   study 中发现的问题，只能先被表达成以下三种形态之一：
   - 不依赖 study 名或 dataset 名的 artifact/execution/spec contract
-  - 带 source、scope、severity、evidence 的 versioned rule-pack item
+  - 带 authority_type、source、scope、severity、evidence 的 versioned
+    rule-pack item
   - 不 blocking 的 reviewer note 或 candidate-rule backlog
 - 如果一个 static check 需要靠“某个 demo study、某个上传文件、某个单独变量
   特例”才能解释清楚，它就不能进入 generic static-rule engine。
@@ -494,11 +502,13 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - spec/code consistency rules：从 approved spec variables 传入的 identifier
     可见性检查；当无法低成本证明 generated code 产出 expected variables 时，只
     给 warning
-  - rule-pack loader contract：只加载带 source/version/scope/severity/evidence
-    metadata 的显式 standards/company rules；缺失 rule pack 必须显示成限制，不
-    能用静默 heuristic 顶替
-  - rule-pack admission checks：没有 source、version、scope、declared severity
-    和 evidence pointer 的 rule-pack item，不能影响 code review 或 execution
+  - rule-pack loader contract：只加载带
+    authority_type/source/version/scope/severity/evidence metadata 的显式
+    standards/company rules；缺失 rule pack 必须显示成限制，不能用静默
+    heuristic 顶替
+  - rule-pack admission checks：没有 allowed authority_type、source、version、
+    scope、declared severity 和 evidence pointer 的 rule-pack item，不能影响
+    code review 或 execution
   - future standards-pack rules：从显式 references 加载 CDISC/P21/company
     standard 检查，不把 demo 观察硬编码进引擎
   - 后续：在便宜可做时检查 spec variable 与 generated code output 是否不一致
@@ -520,7 +530,8 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - 规则权威来自哪里：system contract、approved spec、user policy，还是
     versioned rule pack？
   - 这条规则是否不依赖 demo-study 名和某个文件观察？
-  - 如果它能 block run，source、version、scope、severity、evidence 记录在哪？
+  - 如果它能 block run，authority_type、source、version、scope、severity、
+    evidence 记录在哪？
 - 所有检查都标记置信等级：
   - blocking error
   - warning
@@ -549,6 +560,9 @@ LG2.5 当前 slice 已实现：
 - 测试使用 `CUSTOM`/`ANY` 这类通用数据集名，防止规则退化成 demo-shaped patch。
 - 测试还覆盖残缺 static report，以及拿另一份 R script 的 passing static report
   冒充当前代码检查结果的绕过场景。
+- `StaticRulePack` 准入现在要求 pack 级显式 `authority_type`
+  (`cdisc_standard`, `p21_rule`, `company_standard`, `user_policy`)。rule item
+  继承该 authority，不能用不同 authority class 偷渡规则。
 
 LG2.5 当前 slice 验证：
 
@@ -1498,6 +1512,68 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.5 Static Rule Authority Admission 切片
+
+已完成：
+
+- 收紧静态规则设计，确保 generic engine 仍是 contract/rule-pack 层，而不是
+  demo 或 dataset-specific 补丁清单。
+- 给 `StaticRulePack` 和 `StaticRulePackItem` 增加 `authority_type`。
+- 允许的 authority class 被刻意限制为：
+  - `cdisc_standard`
+  - `p21_rule`
+  - `company_standard`
+  - `user_policy`
+- rule-pack item 继承 pack authority。如果 item 声明不同 authority type，
+  准入会 fail closed。
+- Static-rule policy 输出现在记录 rule-pack admission 与 candidate-rule 治理
+  说明，让报告明确：demo observations 在通过受治理的 rule-pack 流程前，只能是
+  reviewer notes。
+- 更新施工方案措辞：未来任何 standards rule 要影响 review 或 execution，必须先
+  具备 authority_type/source/version/scope/severity/evidence。
+
+当前边界：
+
+- 本切片不新增任何 clinical、ADaM、CDISC、P21、study-specific 或
+  dataset-specific static rule。
+- 当前 generated-R checks 仍只覆盖 generic artifact contracts、
+  execution-boundary checks，以及 caller-approved spec identifier visibility。
+- 没有 `authority_type` 的旧 rule-pack payload 会被有意拒绝。当前产品路径没有
+  依赖加载这类 legacy rule-pack payload。
+
+子 agent 审查：
+
+- 子 agent 复审返回 GO。
+- 未发现 blocking issue，并确认本改动保持了“静态规则通用化、非补丁式”的方向。
+- 非阻断后续项：未来 audit hardening 可以校验 authority type 与 source/version
+  的语义匹配，而不只是字段存在。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_static_rules -v
+```
+
+结果：23 tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+```
+
+结果：116 tests passed。
+
+```text
+python -B -m unittest tests.test_static_rules tests.test_state_schemas tests.test_graph_smoke -v
+```
+
+结果：89 tests passed。
+
+```text
+python -m compileall -q src\adam_agent
+```
+
+结果：passed。
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
 
 已完成：
@@ -1526,8 +1602,8 @@ python -B -m unittest tests.test_api_phase8 -v
 - 本切片不新增任何 clinical/static ADaM rule。
 - 静态检查仍然只做 generic contract/rule-pack checks。
 - 未来 blocking rule 必须验证某个已经声明的 contract，并说明权威来源：
-  system contract、approved spec、user policy，或带 source、scope、severity、
-  evidence 的 source-backed versioned rule pack。
+  system contract、approved spec、user policy，或带 authority_type、source、
+  scope、severity、evidence 的 source-backed versioned rule pack。
 - demo failure 或 PSY201 观察只能成为 generic contract 的测试，或进入受治理的
   rule-pack item 候选；不能作为 dataset/study/file-specific 分支写入 generic
   static-rule engine。
@@ -2210,8 +2286,8 @@ passed。
 - 新增 `validate_static_rule_pack_payload()` 和 `load_static_rule_pack()`，
   后续 standards/company rules 必须先通过 provenance 准入，才能在未来切片中
   被使用。
-- 当前准入要求 source、version、scope、declared severity、evidence，以及
-  唯一的 `rule_id`。
+- 当前准入要求 authority_type、source、version、scope、declared severity、
+  evidence，以及唯一的 `rule_id`。
 - scope value 必须是明确字符串，避免 object-shaped scope payload 变成隐藏的
   engine 逻辑。
 
