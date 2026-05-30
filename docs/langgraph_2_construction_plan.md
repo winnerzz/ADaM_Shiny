@@ -2407,11 +2407,19 @@ Completed:
   state or canonical compare report.
 - Added gateway and API coverage for gateway-written compare reports and for
   the no-graph-state compatibility boundary.
+- Clarified the read/write boundary: `/review-summary` may compute a transient
+  compare status for display, but it must not call `record_compare()` or mutate
+  canonical graph/workflow state. Explicit `/datasets/{dataset}/compare` remains
+  the compare/report persistence action.
 
 Current boundary:
 
 - This does not change the compare algorithm. It is still an initial CSV
   structural and sampled-cell comparison, not a clinical conformance validator.
+- Review-summary is a read-model endpoint. If reference files change after a
+  prior explicit compare, the summary can show the current transient comparison
+  while graph state keeps the last explicit compare record until the user runs
+  compare again.
 - Reference ADaM remains comparison/output-shape evidence only. This slice does
   not make reference ADaM a derivation authority.
 - Static checks remain generic contract/rule-pack checks. This slice does not
@@ -2420,11 +2428,11 @@ Current boundary:
 Focused verification:
 
 ```text
-python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_updates_graph_compare_when_reference_disappears tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
 python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
 ```
 
-Result: 6 focused compare tests passed; 178 related gateway/API/graph/static/
+Result: 7 focused compare/read-model tests passed; 178 related gateway/API/graph/static/
 reference tests passed.
 
 ### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice

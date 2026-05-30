@@ -2178,11 +2178,17 @@ regression tests passed。
   response，但不创建 graph state，也不写 canonical compare report。
 - 新增 gateway 和 API 覆盖，验证 Gateway 写 compare report，以及无 graph
   state 时的兼容边界。
+- 明确 read/write 边界：`/review-summary` 可以为展示临时计算 compare status，
+  但不能调用 `record_compare()`，也不能修改 canonical graph/workflow state。
+  显式 `/datasets/{dataset}/compare` 仍是 compare/report 持久化动作。
 
 当前边界：
 
 - 本切片不改变 compare algorithm。它仍然只是初始 CSV 结构和 sampled-cell
   comparison，不是 clinical conformance validator。
+- review-summary 是 read-model endpoint。reference 文件在上一次显式 compare
+  后发生变化时，summary 可以展示当前临时比较状态；graph state 仍保留上一次
+  显式 compare 记录，直到用户再次运行 compare。
 - Reference ADaM 仍然只是 compare/output-shape evidence。本切片不把 reference
   ADaM 变成 derivation authority。
 - 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
@@ -2191,11 +2197,11 @@ regression tests passed。
 Focused verification：
 
 ```text
-python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_updates_graph_compare_when_reference_disappears tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_writes_compare_report_artifact_when_requested tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_requires_existing_graph_state -v
 python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
 ```
 
-结果：6 focused compare tests passed；178 related gateway/API/graph/static/
+结果：7 focused compare/read-model tests passed；178 related gateway/API/graph/static/
 reference tests passed。
 
 ### 2026-05-30 - LG2.2 显式 Draft-Spec Gateway 切片

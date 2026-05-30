@@ -129,6 +129,26 @@ class Phase8ApiTests(unittest.TestCase):
                 f"{wrapper.__name__} must use GraphGateway product methods, not low-level recorders.",
             )
 
+    def test_review_summary_read_model_helpers_do_not_record_compare(self) -> None:
+        from adam_agent.api import service
+
+        called_names: set[str] = set()
+        for helper in [service.build_run_review_summary, service._dataset_review]:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(helper)))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Attribute):
+                    called_names.add(node.func.attr)
+                elif isinstance(node.func, ast.Name):
+                    called_names.add(node.func.id)
+
+        forbidden_writes = {"record_compare", "_record_compare_in_graph_state", "update_workflow_state"}
+        self.assertTrue(
+            forbidden_writes.isdisjoint(called_names),
+            "review-summary read-model helpers must not mutate graph/workflow state.",
+        )
+
     def test_index_serves_local_web_ui(self) -> None:
         client = TestClient(create_app())
 
@@ -743,7 +763,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertFalse((run_dir / "graph_state.json").exists())
         self.assertFalse((run_dir / "compare" / "adae_compare_report.json").exists())
 
-    def test_review_summary_updates_graph_compare_when_reference_disappears(self) -> None:
+    def test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_compare_missing_refresh")
         client = TestClient(create_app())
         plan = client.post(
@@ -786,11 +806,14 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(summary.status_code, 200, summary.text)
+        dataset_review = summary.json()["dataset_reviews"][0]
+        self.assertEqual(dataset_review["dataset"], "ADAE")
+        self.assertEqual(dataset_review["compare_summary"]["status"], "missing_reference")
         graph_state = client.get(
             "/runs/run_compare_missing_refresh/graph-state",
             params={"study_dir": str(study_dir)},
         ).json()
-        self.assertEqual(graph_state["datasets"]["ADAE"]["compare_summary"]["status"], "missing_reference")
+        self.assertEqual(graph_state["datasets"]["ADAE"]["compare_summary"]["status"], "match")
         _assert_run_projection(self, study_dir, "run_compare_missing_refresh")
 
     def test_adsl_uses_same_split_flow_as_other_adam_targets(self) -> None:

@@ -1781,10 +1781,6 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
     reference_path = _reference_path(root, dataset)
     reader = SDTMReader()
     compare_summary = _compare_dataset_files(dataset, output_path, reference_path)
-    if compare_summary.status not in {"missing_generated", "missing_reference"}:
-        compare_summary = _record_compare_in_graph_state(root, run_id, dataset, compare_summary)
-    else:
-        compare_summary = _record_compare_in_graph_state(root, run_id, dataset, compare_summary)
     compare_status = compare_summary.status if compare_summary.status != "missing_generated" else result.get("compare_status")
 
     return DatasetReview(
