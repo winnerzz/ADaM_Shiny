@@ -1783,10 +1783,9 @@ Current boundary:
 - This is a responsibility cleanup only. It does not change route paths,
   response schemas, dependency planning semantics, terminal-failure routing,
   LLM provider behavior, static checks, or R execution.
-- Dependency-plan gating is still explicitly invoked from the compatibility
-  service before calling gateway product methods. A future slice should move
-  that gate into composite GraphGateway entry points so service wrappers become
-  thinner.
+- Superseded by the next LG2.8 slice below: dependency-plan gating has now
+  moved into GraphGateway product methods, leaving compatibility service
+  wrappers responsible for request/config parsing and response shaping.
 - This slice does not add any clinical/static ADaM rule. Static checks remain
   limited to generic contracts and source-backed rule-pack governance. Demo
   observations must not be promoted into blocking checks unless they are first
@@ -1812,6 +1811,65 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 ```
 
 Result: 118 tests passed.
+
+### 2026-05-30 - LG2.8 Gateway Product Dependency Gate Ownership Slice
+
+Completed:
+
+- Moved dependency-plan gating into GraphGateway product methods for:
+  - finalize inputs
+  - explicit draft spec generation through `finalize_inputs(force_new_draft_spec=True)`
+  - R code generation
+  - approved R execution
+- Removed direct `dependency_gate_for_product_step()` calls and dependency-artifact
+  construction from the FastAPI compatibility service wrappers.
+- Kept the explicit `dependency_gate_for_product_step()` method as a diagnostic
+  and dependency-review API boundary, but product steps no longer depend on the
+  service layer to call it first.
+- Added GraphGateway-owned dependency artifact resolution for code generation,
+  excluding reference ADaM from satisfying runtime dependencies.
+- Removed the external `dependency_artifacts` injection surface from the
+  `GraphGateway.generate_code()` product method. Runtime dependency artifacts
+  are always derived from the gateway-owned dependency plan before code-review
+  state is recorded.
+- Added a dependency-review handoff inside GraphGateway:
+  - blocking dependency statuses still fail closed before any product graph call
+  - nonblocking `no_dependency_evidence` review is preserved in audit metadata
+    but no longer leaves a study-level `dependency_review` interrupt that hides
+    the product-level `draft_spec_review` or `code_review` interrupt
+- Tightened coverage so:
+  - product service wrappers must not directly call either
+    `validate_product_step_start()` or `dependency_gate_for_product_step()`
+  - `GraphGateway.generate_code()` must not expose a caller-provided
+    `dependency_artifacts` parameter
+
+Current boundary:
+
+- Public route paths and response schemas are unchanged.
+- FastAPI service wrappers still resolve config/provider overrides and build
+  API response models. They no longer own terminal-failure preflight or
+  dependency-plan gating for product steps.
+- Study-level dependency planning still belongs to `StudyGraph`; this slice
+  only moves the product-step gate and handoff responsibility into
+  `GraphGateway`.
+- Static-rule governance is unchanged. This slice does not add clinical,
+  dataset-specific, study-specific, or demo-specific static checks.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+```
+
+Result: 5 focused tests passed.
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_generate_code_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_draft_spec_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry -v
+python -m compileall -q src\adam_agent
+```
+
+Result: 6 gateway tests passed; 5 API tests passed; compileall passed.
 
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation Slice
 

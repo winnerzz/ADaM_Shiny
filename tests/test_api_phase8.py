@@ -99,6 +99,7 @@ class Phase8ApiTests(unittest.TestCase):
             service.finalize_dataset_inputs,
             service.generate_dataset_draft_spec,
             service.generate_dataset_code,
+            service.execute_approved_dataset_code,
         ]
 
         for wrapper in wrappers:
@@ -112,6 +113,7 @@ class Phase8ApiTests(unittest.TestCase):
                 elif isinstance(node.func, ast.Name):
                     called_names.add(node.func.id)
             self.assertNotIn("validate_product_step_start", called_names)
+            self.assertNotIn("dependency_gate_for_product_step", called_names)
 
     def test_index_serves_local_web_ui(self) -> None:
         client = TestClient(create_app())

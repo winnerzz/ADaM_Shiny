@@ -63,6 +63,8 @@ class GraphGatewayCodeGenerationResult(GraphGatewayResult):
     used_inputs: list[str]
     expected_outputs: list[str]
     warnings: list[str]
+    dependency_review_status: str | None = None
+    dependency_warnings: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,8 @@ class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
 
     spec_source: str
     warnings: list[str]
+    dependency_review_status: str | None = None
+    dependency_warnings: list[str] | None = None
     input_spec_path: str | None = None
     approved_spec_path: str | None = None
     draft_spec_path: str | None = None
@@ -658,9 +662,9 @@ class GraphGateway:
         study_id: str,
         run_id: str,
         dataset: str,
-        dependency_resolution: list[dict[str, Any]],
         llm_provider: dict[str, Any],
         llm_exposure: dict[str, Any],
+        dependency_resolution: list[dict[str, Any]] | None = None,
         llm_client_builder: Any | None = None,
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
@@ -670,6 +674,13 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
+        plan = self.dependency_gate_for_product_step(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+        dependency_resolution = list(plan.dependency_resolution)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
         result = compile_dataset_graph().invoke(
             {
@@ -709,11 +720,18 @@ class GraphGateway:
                 agent_decisions=list(result.get("agent_decisions", [])),
                 risk_flags=list(result.get("risk_flags", [])),
             )
+            projection = self._handoff_dependency_review_to_product_step(
+                root=root,
+                state=gateway_result.graph_state,
+                gate=plan,
+            )
             return GraphGatewayFinalizeInputsResult(
                 graph_state=gateway_result.graph_state,
-                workflow_projection=gateway_result.workflow_projection,
+                workflow_projection=projection,
                 spec_source=spec_source,
                 warnings=warnings,
+                dependency_review_status=gateway_result.graph_state.dependency_review_status,
+                dependency_warnings=list(plan.dependency_warnings),
                 input_spec_path=str(input_spec_path),
             )
         if spec_source == "approved_draft_spec":
@@ -730,11 +748,18 @@ class GraphGateway:
                 agent_decisions=list(result.get("agent_decisions", [])),
                 risk_flags=list(result.get("risk_flags", [])),
             )
+            projection = self._handoff_dependency_review_to_product_step(
+                root=root,
+                state=gateway_result.graph_state,
+                gate=plan,
+            )
             return GraphGatewayFinalizeInputsResult(
                 graph_state=gateway_result.graph_state,
-                workflow_projection=gateway_result.workflow_projection,
+                workflow_projection=projection,
                 spec_source=spec_source,
                 warnings=warnings,
+                dependency_review_status=gateway_result.graph_state.dependency_review_status,
+                dependency_warnings=list(plan.dependency_warnings),
                 approved_spec_path=str(approved_spec_path),
             )
 
@@ -758,11 +783,19 @@ class GraphGateway:
             agent_decisions=list(result.get("agent_decisions", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
+        projection = self._handoff_dependency_review_to_product_step(
+            root=root,
+            state=gateway_result.graph_state,
+            gate=plan,
+            preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
+        )
         return GraphGatewayFinalizeInputsResult(
             graph_state=gateway_result.graph_state,
-            workflow_projection=gateway_result.workflow_projection,
+            workflow_projection=projection,
             spec_source=spec_source or "draft_spec",
             warnings=warnings,
+            dependency_review_status=gateway_result.graph_state.dependency_review_status,
+            dependency_warnings=list(plan.dependency_warnings),
             draft_spec_path=str(draft_path),
             draft_spec_prompt_path=str(prompt_path),
             draft_spec_response_path=str(response_path),
@@ -776,9 +809,9 @@ class GraphGateway:
         study_id: str,
         run_id: str,
         dataset: str,
-        dependency_resolution: list[dict[str, Any]],
         llm_provider: dict[str, Any],
         llm_exposure: dict[str, Any],
+        dependency_resolution: list[dict[str, Any]] | None = None,
         llm_client_builder: Any | None = None,
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
@@ -1275,18 +1308,25 @@ class GraphGateway:
         study_id: str,
         run_id: str,
         dataset: str,
-        dependency_resolution: list[dict[str, Any]],
         llm_provider: dict[str, Any],
         llm_exposure: dict[str, Any],
+        dependency_resolution: list[dict[str, Any]] | None = None,
         llm_client_builder: Any | None = None,
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
-        dependency_artifacts: list[dict[str, Any]] | None = None,
     ) -> GraphGatewayCodeGenerationResult:
         """Generate R code through DatasetGraph and persist the code-review interrupt."""
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
+        plan = self.dependency_gate_for_product_step(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+        dependency_resolution = list(plan.dependency_resolution)
+        dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
         result = compile_dataset_graph().invoke(
             {
@@ -1339,10 +1379,16 @@ class GraphGateway:
             agent_decisions=list(result.get("agent_decisions", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
+        projection = self._handoff_dependency_review_to_product_step(
+            root=root,
+            state=gateway_result.graph_state,
+            gate=plan,
+            preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
+        )
         context_artifact = result.get("product_context_artifact")
         return GraphGatewayCodeGenerationResult(
             graph_state=gateway_result.graph_state,
-            workflow_projection=gateway_result.workflow_projection,
+            workflow_projection=projection,
             code_path=str(code_path),
             generated_code=str(generated_code),
             static_check_path=str(static_check_path) if static_check_path else None,
@@ -1355,6 +1401,8 @@ class GraphGateway:
             used_inputs=list(result.get("code_used_inputs", [])),
             expected_outputs=list(result.get("code_expected_outputs", [])),
             warnings=list(result.get("product_context_warnings", [])),
+            dependency_review_status=gateway_result.graph_state.dependency_review_status,
+            dependency_warnings=list(plan.dependency_warnings),
         )
 
     def record_execution(
@@ -1471,6 +1519,18 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
+        try:
+            self.dependency_gate_for_product_step(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                start_if_missing=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(
+                "Graph state does not exist for this run. Generate code through the graph flow before execution."
+            ) from exc
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="execute")
         self._assert_approved_code_execution_ready(study_dir=root, run_id=run_id, dataset=target)
         result = compile_dataset_graph().invoke(
@@ -2115,6 +2175,24 @@ class GraphGateway:
         dataset_state.input_fingerprint = fingerprint
         return dataset_state
 
+    def _handoff_dependency_review_to_product_step(
+        self,
+        *,
+        root: Path,
+        state: StudyRunState,
+        gate: GraphGatewayDependencyGateResult,
+        preferred_interrupt: InterruptState | None = None,
+    ) -> dict[str, Any]:
+        _clear_nonblocking_dependency_review_interrupt(state, gate)
+        _roll_up_study_state(state, preferred_interrupt=preferred_interrupt)
+        _sync_study_agent_decisions(state)
+        self._persist_graph_state(root, state, node="dependency_gate_product_handoff")
+        return project_graph_state_to_workflow(
+            root,
+            state,
+            node="graph_gateway_dependency_gate_product_handoff",
+        )
+
 
 def _normalize_dataset_list(values: list[str]) -> list[str]:
     normalized = []
@@ -2217,6 +2295,54 @@ def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target:
             f"{dataset} dependency plan requires human review before this step. "
             f"Review-required sources: {sources}."
         )
+
+
+def _clear_nonblocking_dependency_review_interrupt(state: StudyRunState, gate: GraphGatewayDependencyGateResult) -> None:
+    """Clear study-level dependency review after the gate proves the target can continue."""
+
+    interrupt = state.current_interrupt
+    if interrupt is None or interrupt.name != "dependency_review" or interrupt.status != "open":
+        return
+    if gate.dependency_review_status != "review_required":
+        return
+    blocking_decisions = [
+        decision
+        for decision in gate.dependency_decisions
+        if decision.get("review_required") is True and str(decision.get("source", "")) != "no_dependency_evidence"
+    ]
+    if blocking_decisions or gate.blocked_datasets or gate.dependency_warnings:
+        return
+    state.current_interrupt = None
+    state.dependency_review_status = "accepted"
+    state.dependency_plan["dependency_review_status_before_product_step"] = "review_required"
+    state.dependency_plan["dependency_review_auto_accepted_reason"] = (
+        "Only no_dependency_evidence decisions required review; product draft/spec/code review now carries that risk."
+    )
+
+
+def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
+    target_dataset = target.strip().upper()
+    artifacts: list[dict[str, Any]] = []
+    for record in dependency_resolution:
+        if str(record.get("target_dataset", "")).strip().upper() != target_dataset:
+            continue
+        if record.get("resolution_status") != "available":
+            continue
+        if record.get("artifact_source") == "reference_adam":
+            continue
+        artifact_path = record.get("artifact_path")
+        artifact_sha = record.get("artifact_sha256")
+        if not artifact_path or not artifact_sha:
+            continue
+        artifacts.append(
+            {
+                "required_dataset": str(record.get("required_dataset", "")).strip().upper(),
+                "artifact_path": str(artifact_path),
+                "artifact_sha256": str(artifact_sha),
+                "artifact_source": record.get("artifact_source"),
+            }
+        )
+    return artifacts
 
 
 def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: str) -> None:

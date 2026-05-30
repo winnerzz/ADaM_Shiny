@@ -1595,9 +1595,9 @@ python -m compileall -q src\adam_agent
 
 - 这是责任边界清理，不改变 route path、response schema、dependency planning
   semantic、terminal-failure routing、LLM provider、static checks 或 R execution。
-- dependency-plan gate 仍由 compatibility service 在调用 gateway product method
-  前显式触发。后续切片应把这个 gate 移入 GraphGateway composite entrypoints，
-  让 service wrappers 继续变薄。
+- 已被下一段 LG2.8 切片取代：dependency-plan gate 现在已经移入
+  GraphGateway product methods；compatibility service wrappers 只负责
+  request/config 解析和 API response shape。
 - 本切片不新增任何 clinical/static ADaM rule。静态检查仍然只做 generic
   contracts 和 source-backed rule-pack governance。Demo 观察不能直接升级为
   blocking check，除非先被改写成通用 contract，或通过带 authority、scope、
@@ -1622,6 +1622,63 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 ```
 
 结果：118 tests passed。
+
+### 2026-05-30 - LG2.8 Gateway Product Dependency Gate Ownership 切片
+
+已完成：
+
+- 将 dependency-plan gate 移入 GraphGateway product methods，覆盖：
+  - finalize inputs
+  - 通过 `finalize_inputs(force_new_draft_spec=True)` 进入的显式 draft spec
+    generation
+  - R code generation
+  - approved R execution
+- 从 FastAPI compatibility service wrappers 中移除直接
+  `dependency_gate_for_product_step()` 调用和 dependency artifact 构造。
+- 保留显式 `dependency_gate_for_product_step()` 作为诊断和 dependency-review
+  API 边界，但产品步骤不再依赖 service 层先调用它。
+- 将 code generation 所需的 dependency artifact 解析移入 GraphGateway，并继续
+  排除 reference ADaM，避免 reference ADaM 被当成 runtime dependency。
+- 移除 `GraphGateway.generate_code()` product method 对外部
+  `dependency_artifacts` 的注入口。runtime dependency artifacts 总是由
+  gateway-owned dependency plan 派生后再写入 code-review state。
+- 在 GraphGateway 内新增 dependency-review handoff：
+  - blocking dependency status 仍然在进入产品图前 fail closed；
+  - 非阻断的 `no_dependency_evidence` review 会保留在审计 metadata 中，但不再
+    留下一个 study-level `dependency_review` interrupt 去遮住产品级
+    `draft_spec_review` 或 `code_review` interrupt。
+- 加强回归测试，确认：
+  - product service wrappers 不能直接调用 `validate_product_step_start()` 或
+    `dependency_gate_for_product_step()`；
+  - `GraphGateway.generate_code()` 不暴露 caller-provided
+    `dependency_artifacts` 参数。
+
+当前边界：
+
+- public route path 和 response schema 不变。
+- FastAPI service wrappers 仍负责 config/provider override 解析和 API response
+  model 构造。它们不再拥有 product step 的 terminal-failure preflight 或
+  dependency-plan gate。
+- study-level dependency planning 仍属于 `StudyGraph`；本切片只把 product-step
+  gate 和 handoff responsibility 移入 `GraphGateway`。
+- static-rule governance 不变。本切片不新增 clinical、dataset-specific、
+  study-specific 或 demo-specific static check。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+```
+
+结果：5 focused tests passed。
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_generate_code_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_draft_spec_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry -v
+python -m compileall -q src\adam_agent
+```
+
+结果：6 gateway tests passed；5 API tests passed；compileall passed。
 
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
 

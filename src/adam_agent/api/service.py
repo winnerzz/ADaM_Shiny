@@ -467,15 +467,6 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
-    try:
-        plan = gateway.dependency_gate_for_product_step(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-        )
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -484,17 +475,15 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
             study_id=study_id,
             run_id=run_id,
             dataset=target,
-            dependency_resolution=plan.dependency_resolution,
             llm_provider=provider_config.__dict__,
             llm_exposure=exposure.model_dump(mode="json"),
             llm_client_builder=build_llm_client,
             target_context_builder=build_target_llm_context,
             rscript_path=getattr(request, "rscript_path", None) or "",
-            dependency_artifacts=_dependency_artifacts_for_dataset(plan.dependency_resolution, target),
         )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    warnings = result.warnings + plan.dependency_warnings + [
+    warnings = result.warnings + list(result.dependency_warnings or []) + [
         "Static R checks are limited guardrails before human review; they do not prove full CDISC/ADaM IG/P21 compliance."
     ]
     return GenerateCodeResponse(
@@ -513,7 +502,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         response_path=result.response_path,
         parsed_response_path=result.parsed_response_path,
         static_check_path=result.static_check_path,
-        dependency_review_status=plan.dependency_review_status,
+        dependency_review_status=result.dependency_review_status,
         warnings=warnings,
         **_graph_compatibility_metadata(study_dir, run_id),
     )
@@ -529,15 +518,6 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
-    try:
-        plan = gateway.dependency_gate_for_product_step(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-        )
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -546,7 +526,6 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             study_id=study_id,
             run_id=run_id,
             dataset=target,
-            dependency_resolution=plan.dependency_resolution,
             llm_provider=provider_config.__dict__,
             llm_exposure=exposure.model_dump(mode="json"),
             llm_client_builder=build_llm_client,
@@ -555,7 +534,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    warnings = result.warnings + plan.dependency_warnings
+    warnings = result.warnings + list(result.dependency_warnings or [])
     if result.spec_source == "input_spec":
         return FinalizeInputsResponse(
             study_id=study_id,
@@ -626,15 +605,6 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
-    try:
-        plan = gateway.dependency_gate_for_product_step(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-        )
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -643,7 +613,6 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
             study_id=study_id,
             run_id=run_id,
             dataset=target,
-            dependency_resolution=plan.dependency_resolution,
             llm_provider=provider_config.__dict__,
             llm_exposure=exposure.model_dump(mode="json"),
             llm_client_builder=build_llm_client,
@@ -652,7 +621,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         )
     except ValueError as exc:
         raise ApiServiceError(f"Draft spec generation failed: {exc}") from exc
-    warnings = result.warnings + plan.dependency_warnings
+    warnings = result.warnings + list(result.dependency_warnings or [])
     return DraftSpecResponse(
         study_id=study_id,
         run_id=run_id,
@@ -747,18 +716,6 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     gateway = GraphGateway()
-    try:
-        gateway.dependency_gate_for_product_step(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            start_if_missing=False,
-        )
-    except FileNotFoundError as exc:
-        raise ApiServiceError("Graph state does not exist for this run. Generate code through the graph flow before execution.") from exc
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     try:
         result = gateway.execute_approved_code(
             study_dir=study_dir,
@@ -1242,31 +1199,6 @@ def _sample_row_counts(context: dict[str, Any]) -> dict[str, int]:
 
 def _default_mock_generated_code_response(target: str) -> str:
     return default_mock_generated_code_response(target)
-
-
-def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
-    target_dataset = target.strip().upper()
-    artifacts: list[dict[str, Any]] = []
-    for record in dependency_resolution:
-        if str(record.get("target_dataset", "")).strip().upper() != target_dataset:
-            continue
-        if record.get("resolution_status") != "available":
-            continue
-        if record.get("artifact_source") == "reference_adam":
-            continue
-        artifact_path = record.get("artifact_path")
-        artifact_sha = record.get("artifact_sha256")
-        if not artifact_path or not artifact_sha:
-            continue
-        artifacts.append(
-            {
-                "required_dataset": str(record.get("required_dataset", "")).strip().upper(),
-                "artifact_path": str(artifact_path),
-                "artifact_sha256": str(artifact_sha),
-                "artifact_source": record.get("artifact_source"),
-            }
-        )
-    return artifacts
 
 
 def _approved_dependencies_from_graph_state(study_dir: Path, run_id: str) -> list[str]:

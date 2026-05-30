@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import sqlite3
 import sys
 import unittest
@@ -696,6 +697,11 @@ class GraphGatewayTests(unittest.TestCase):
         workflow_state = json.loads((run_dir / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(result.graph_state.dependency_review_status, "accepted")
+        self.assertEqual(
+            result.graph_state.dependency_plan["dependency_review_status_before_product_step"],
+            "review_required",
+        )
         self.assertEqual(workflow_state["current_interrupt"], "draft_spec_review")
 
     def test_gateway_generate_draft_spec_forces_fresh_draft_and_rejects_input_spec(self) -> None:
@@ -929,6 +935,11 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(gate.dependency_review_status, "accepted")
         self.assertIn("ADAE", gate.runnable_datasets)
         self.assertEqual(gate.dependency_resolution, [])
+
+    def test_gateway_generate_code_does_not_accept_external_dependency_artifacts(self) -> None:
+        signature = inspect.signature(GraphGateway.generate_code)
+
+        self.assertNotIn("dependency_artifacts", signature.parameters)
 
     def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
