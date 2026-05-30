@@ -1734,6 +1734,35 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ge
 
 结果：1 focused test passed。
 
+### 2026-05-30 - LG2.8 Product Service Low-Level Recorder Guard 切片
+
+已完成：
+
+- 加强 product service wrapper 的 AST 防回归测试，确保 finalize inputs、显式
+  draft spec generation、R code generation 和 approved R execution 这些兼容
+  endpoint 不能直接调用低层 GraphGateway recorder methods。
+- 被保护的 service wrappers 必须继续通过 GraphGateway product methods 进入，
+  例如 `finalize_inputs()`、`generate_draft_spec()`、`generate_code()` 和
+  `execute_approved_code()`。
+- 这是 regression guard，不修改 runtime logic。
+
+当前边界：
+
+- `GraphGateway.record_compare()` 仍是 compare/report compatibility boundary，
+  不属于本切片保护的 spec/code/execute 产品链。
+- 低层 recorder methods 仍可供 tests 和 graph internals 使用，但 compatibility
+  product endpoints 不应把它们当业务入口。
+- static-rule governance 不变。本切片不新增 clinical、dataset-specific、
+  study-specific 或 demo-specific static check。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight -v
+```
+
+结果：1 focused test passed。
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
 
 已完成：

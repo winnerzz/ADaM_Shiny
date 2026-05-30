@@ -114,6 +114,20 @@ class Phase8ApiTests(unittest.TestCase):
                     called_names.add(node.func.id)
             self.assertNotIn("validate_product_step_start", called_names)
             self.assertNotIn("dependency_gate_for_product_step", called_names)
+            forbidden_low_level_recorders = {
+                "record_code_generation",
+                "record_input_spec_ready",
+                "record_draft_spec_generation",
+                "record_approved_draft_spec_ready",
+                "record_execution",
+                "record_code_review",
+                "record_draft_spec_review",
+                "record_terminal_failure_review",
+            }
+            self.assertTrue(
+                forbidden_low_level_recorders.isdisjoint(called_names),
+                f"{wrapper.__name__} must use GraphGateway product methods, not low-level recorders.",
+            )
 
     def test_index_serves_local_web_ui(self) -> None:
         client = TestClient(create_app())

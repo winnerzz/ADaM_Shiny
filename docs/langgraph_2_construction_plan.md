@@ -1932,6 +1932,38 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ge
 
 Result: 1 focused test passed.
 
+### 2026-05-30 - LG2.8 Product Service Low-Level Recorder Guard Slice
+
+Completed:
+
+- Strengthened the product service wrapper AST guard so the compatibility
+  endpoints for finalize inputs, explicit draft spec generation, R code
+  generation, and approved R execution cannot call low-level GraphGateway
+  recorder methods directly.
+- The guarded service wrappers must continue to enter through GraphGateway
+  product methods such as `finalize_inputs()`, `generate_draft_spec()`,
+  `generate_code()`, and `execute_approved_code()`.
+- This is a regression guard only; no runtime logic was changed.
+
+Current boundary:
+
+- `GraphGateway.record_compare()` remains a compare/report compatibility
+  boundary and is not part of the spec/code/execute product chain guarded in
+  this slice.
+- Lower-level recorder methods remain available for tests and graph internals,
+  but compatibility product endpoints should not use them as business entry
+  points.
+- Static-rule governance remains unchanged. This slice does not add clinical,
+  dataset-specific, study-specific, or demo-specific static checks.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight -v
+```
+
+Result: 1 focused test passed.
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation Slice
 
 Completed:
