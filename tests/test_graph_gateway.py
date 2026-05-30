@@ -1643,6 +1643,97 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.result_summary.metadata["terminal_failure_next_action"], "repair_generated_code")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["current_interrupt"], "terminal_failure")
 
+    def test_gateway_review_terminal_failure_entrypoint_persists_triage(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_entrypoint") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_review_entrypoint",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_review_entrypoint",
+        ).model_copy(deep=True)
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_entrypoint")
+
+        result = gateway.review_terminal_failure(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_review_entrypoint",
+            dataset="ADAE",
+            decision="retry_execution",
+            reviewer="tester",
+            notes="Retry after reviewing diagnostics.",
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(result.decision, "retry_execution")
+        self.assertIsNone(result.current_interrupt)
+        self.assertEqual(result.next_action, "retry_approved_execution")
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(dataset_state.human_commands[-1].interrupt, "terminal_failure")
+        self.assertEqual(dataset_state.human_commands[-1].action, "retry_execution")
+
+    def test_gateway_review_terminal_failure_entrypoint_rejects_invalid_decision(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_invalid_decision") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_review_invalid_decision",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_review_invalid_decision",
+        ).model_copy(deep=True)
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_invalid_decision")
+
+        with self.assertRaisesRegex(ValueError, "Terminal failure decision must be"):
+            gateway.review_terminal_failure(
+                study_dir=study_dir,
+                run_id="run_lg2_terminal_failure_review_invalid_decision",
+                dataset="ADAE",
+                decision="approve_anyway",
+                reviewer="tester",
+            )
+
+    def test_gateway_review_terminal_failure_entrypoint_requires_open_terminal_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_not_waiting") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_review_not_waiting",
+            target_datasets=["ADAE"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "not waiting for terminal_failure review"):
+            gateway.review_terminal_failure(
+                study_dir=study_dir,
+                run_id="run_lg2_terminal_failure_review_not_waiting",
+                dataset="ADAE",
+                decision="retry_execution",
+                reviewer="tester",
+            )
+
     def test_gateway_skip_terminal_failure_marks_study_failed(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_skip") / "PSY201"
         study_dir.mkdir(parents=True)

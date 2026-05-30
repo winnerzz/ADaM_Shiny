@@ -86,6 +86,15 @@ class GraphGatewayDraftSpecReviewResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayTerminalFailureReviewResult(GraphGatewayResult):
+    """Graph-owned terminal-failure review result plus API-facing fields."""
+
+    decision: str
+    current_interrupt: str | None
+    next_action: str
+
+
+@dataclass(frozen=True)
 class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
     """Graph-owned finalize-inputs result plus response-neutral fields."""
 
@@ -1689,6 +1698,69 @@ class GraphGateway:
         self._persist_graph_state(root, next_state, node="terminal_failure_review")
         projection = project_graph_state_to_workflow(root, next_state, node="graph_gateway_terminal_failure_review")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def review_terminal_failure(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayTerminalFailureReviewResult:
+        """Validate and persist a terminal-failure triage decision."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        allowed = {
+            "retry_execution",
+            "repair_code",
+            "revise_spec",
+            "request_new_input",
+            "skip_dataset",
+            "continue_other_datasets",
+        }
+        if normalized_decision not in allowed:
+            raise ValueError(
+                "Terminal failure decision must be retry_execution, repair_code, revise_spec, "
+                "request_new_input, skip_dataset, or continue_other_datasets."
+            )
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ValueError("Graph state must exist before terminal failure review.") from exc
+        if target not in graph_state.datasets:
+            raise ValueError(f"Dataset is not part of this graph run: {target}")
+        command = HumanCommand(
+            interrupt="terminal_failure",
+            action=normalized_decision,
+            dataset=target,
+            reviewer=reviewer,
+            notes=notes,
+            payload={"decision": normalized_decision},
+        )
+        result = self.record_terminal_failure_review(
+            study_dir=root,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=target,
+            command=command,
+            input_fingerprint_payload=input_fingerprint_payload or input_fingerprint(root),
+        )
+        reviewed_dataset = result.graph_state.datasets[target]
+        current_interrupt = None
+        if reviewed_dataset.current_interrupt is not None and reviewed_dataset.current_interrupt.status == "open":
+            current_interrupt = reviewed_dataset.current_interrupt.name
+        return GraphGatewayTerminalFailureReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=result.workflow_projection,
+            decision=normalized_decision,
+            current_interrupt=current_interrupt,
+            next_action=str(reviewed_dataset.execution_state.get("next_action") or ""),
+        )
 
     def validate_product_step_start(
         self,

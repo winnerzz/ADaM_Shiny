@@ -461,6 +461,14 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   误。
 - 任何启发式或不完整检查都只能作为 warning/informational，并且必须记录“不能
   证明临床推导正确”。
+- “通用”不是“看见 demo 里某个问题就写一条 if 规则”。通用规则必须检查当前
+  run 中已经声明的 contract，而不是记住某个临床个案。未来在 PSY201 或其他
+  study 中发现的问题，只能先被表达成以下三种形态之一：
+  - 不依赖 study 名或 dataset 名的 artifact/execution/spec contract
+  - 带 source、scope、severity、evidence 的 versioned rule-pack item
+  - 不 blocking 的 reviewer note 或 candidate-rule backlog
+- 如果一个 static check 需要靠“某个 demo study、某个上传文件、某个单独变量
+  特例”才能解释清楚，它就不能进入 generic static-rule engine。
 
 任务：
 
@@ -490,6 +498,12 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - 增加 source-level 回归保护：dataset 名、demo study 名、demo 中观察到的临床
   变量个案可以出现在测试或 rule-pack fixture 中，但不能作为 generic engine 的
   分支逻辑。
+- 给未来每个 static-check PR 增加 rule-design review checklist：
+  - 这条规则检查的是哪个已经声明的 contract？
+  - 规则权威来自哪里：system contract、approved spec、user policy，还是
+    versioned rule pack？
+  - 这条规则是否不依赖 demo-study 名和某个文件观察？
+  - 如果它能 block run，source、version、scope、severity、evidence 记录在哪？
 - 所有检查都标记置信等级：
   - blocking error
   - warning
@@ -1466,6 +1480,68 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2 静态规则边界与 Terminal-Failure Review Gateway 切片
+
+已完成：
+
+- 按产品级约束加固 LG2.5 static-rule 方案：静态检查必须是通用
+  contract/rule-pack 检查，不能变成针对 PSY201、某个上传文件、某个 ADaM
+  dataset，或 demo 中某个临床变量个案的补丁规则。
+- 增加未来 static-check 工作的 rule-design review checklist：每条能 block
+  run 的规则都必须说明它检查的 declared contract，以及规则权威来源：
+  system contract、approved spec、user policy，或带 source/scope/severity/evidence
+  的 versioned rule pack。
+- 新增 `GraphGateway.review_terminal_failure()`，作为 terminal-failure triage
+  compatibility endpoint 的 graph-owned 入口。
+- `persist_terminal_failure_review()` 现在把 graph-state loading、dataset
+  validation、action normalization 和 `HumanCommand` construction 委托给
+  `GraphGateway`。
+- 增加 gateway-level 回归测试，确认新入口能持久化 retry triage decision、
+  清理 terminal-failure interrupt，并在 canonical graph state 中记录 next action。
+- 增加 wrapper 负向测试，确认 `GraphGateway.review_terminal_failure()` 会拒绝不支
+  持的 decision，并且当 dataset 没有处于 open `terminal_failure` interrupt 时
+  不允许写入 review 状态。
+
+当前边界：
+
+- 本切片不新增任何 clinical/static ADaM rule。
+- 静态检查继续只做 generic contract/rule-pack checks。未来 dataset-specific
+  standards rule 必须通过带来源的 rule pack 进入，不能写成 generic engine 里的
+  分支逻辑。
+- 本切片不改变 terminal-failure routing semantics：
+  `retry_execution`、`repair_code`、`revise_spec`、`request_new_input`、
+  `skip_dataset`、`continue_other_datasets` 保持既有行为。
+- `record_terminal_failure_review()` 仍是 tests 和 graph internals 使用的
+  lower-level recorder；`review_terminal_failure()` 是更安全的 compatibility
+  endpoint 入口。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_skip_terminal_failure_marks_study_failed tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_retry_execution_review_allows_approved_code_execution_path tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_skip_dataset_does_not_unlock_code_regeneration -v
+```
+
+结果：子 agent review 前，初始 7 tests passed。子 agent review 后补充两个
+wrapper 负向测试，9 个 focused tests passed。
+
+Broader verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+git diff --check -- src/adam_agent/graph/gateway.py src/adam_agent/api/service.py tests/test_graph_gateway.py docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+python -m compileall -q src/adam_agent
+```
+
+结果：181 个 gateway/API/graph/static/reference 相关测试通过；49 个 core tests
+通过；diff check 和 compileall 通过。
+
+子 agent 审查：
+
+- 子 agent review 返回 GO。
+- 未报告 major business、logic 或 schema issue。
+- 唯一建议是给新 gateway wrapper 增加直接负向测试；提交前已补上。
 
 ### 2026-05-30 - LG2.2 Gateway Execution Approval Preflight 切片
 
