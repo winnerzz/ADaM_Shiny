@@ -83,6 +83,52 @@ class SandboxBoundaryTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 125)
         self.assertIn("working_dir must equal sandbox run_dir", result.stderr)
 
+    def test_local_rscript_boundary_rejects_forbidden_r_calls_before_execution(self) -> None:
+        run_dir = _workspace_dir("sandbox_forbidden_call") / "runs" / "run_001"
+        run_dir.mkdir(parents=True)
+        script_path = run_dir / "build_any.R"
+        script_path.write_text("system('whoami')\n", encoding="utf-8")
+        runner = LocalRscriptSandboxRunner(run_dir=run_dir, rscript_path=None)
+
+        result = runner.run(
+            RRunRequest(
+                code="",
+                dataset="ANY",
+                run_id="run_001",
+                working_dir=str(run_dir),
+                script_path=str(script_path),
+            )
+        )
+
+        self.assertEqual(result.exit_code, 125)
+        self.assertIn("forbidden call", result.stderr)
+        self.assertIn("system()", result.stderr)
+        self.assertNotIn("Rscript is not available", result.stderr)
+
+    def test_local_rscript_boundary_ignores_forbidden_call_words_in_strings_and_comments(self) -> None:
+        run_dir = _workspace_dir("sandbox_forbidden_call_literal") / "runs" / "run_001"
+        run_dir.mkdir(parents=True)
+        script_path = run_dir / "build_any.R"
+        script_path.write_text(
+            "# system('not-a-call')\n"
+            "message(\"system('not-a-call')\")\n",
+            encoding="utf-8",
+        )
+        runner = LocalRscriptSandboxRunner(run_dir=run_dir, rscript_path=None)
+
+        result = runner.run(
+            RRunRequest(
+                code="",
+                dataset="ANY",
+                run_id="run_001",
+                working_dir=str(run_dir),
+                script_path=str(script_path),
+            )
+        )
+
+        self.assertNotEqual(result.exit_code, 125)
+        self.assertNotIn("forbidden call", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1535,6 +1535,36 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.6 Sandbox Forbidden-Call Preflight 切片
+
+已完成：
+
+- 在 `LocalRscriptSandboxRunner` 内新增第二层 fail-closed 执行边界。
+- local sandbox 会在启动 Rscript 前扫描即将执行的 R code，并阻止 `system()`
+  这类 forbidden R calls。
+- 新增中立的 `r_safety` helper，并由 static rules 与 sandbox preflight 共同
+  复用，避免 execution-boundary checks 变成两份会漂移的补丁清单。
+- detector 会忽略注释和字符串字面量，所以 `"system('not-a-call')"` 这种提示文
+  本不会误触发 sandbox block。
+
+当前边界：
+
+- 这仍然不是生产级隔离。Local Rscript 仍是 developer runner，validation
+  report 必须继续标记为 not hardened。
+- 本切片只增加通用 execution-boundary guard，不新增 clinical、ADaM、CDISC、
+  dataset-specific、study-specific 或 demo-specific rule。
+- Static code review 仍是 review 前的主要 gate。Sandbox preflight 是最后一
+  层执行保护，用于防止 approved code artifact 被篡改或绕过正常 review path
+  后仍直接执行。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_r_safety tests.test_sandbox tests.test_static_rules -v
+```
+
+结果：33 个 shared R-safety、sandbox、static-rule tests passed。
+
 ### 2026-05-30 - LG2.5 Static Rule 非权威 Source Guard 切片
 
 已完成：

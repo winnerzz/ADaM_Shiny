@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from adam_agent.tools.artifacts import sha256_file
+from adam_agent.tools.r_safety import (
+    DEFAULT_FORBIDDEN_R_CALLS,
+    find_forbidden_r_call_matches,
+    r_code_without_comments_and_strings,
+)
 
 
 StaticRuleSeverity = Literal["error", "warning", "info"]
@@ -195,17 +200,6 @@ class StaticRuleReport:
             "notes": list(self.notes),
             "non_compliance_disclaimer": "These checks do not prove full CDISC, ADaM IG, P21, or company-standard compliance.",
         }
-
-
-DEFAULT_FORBIDDEN_R_CALLS = (
-    "system",
-    "system2",
-    "shell",
-    "unlink",
-    "file.remove",
-    "download.file",
-    "install.packages",
-)
 
 
 def run_generated_r_static_checks(
@@ -521,20 +515,21 @@ def _merge_policy(
 
 def _dangerous_call_findings(code_without_strings: str, forbidden_calls: tuple[str, ...]) -> list[StaticRuleFinding]:
     findings = []
-    for call in forbidden_calls:
-        pattern = re.compile(rf"(?<![A-Za-z0-9_.]){re.escape(call)}\s*\(", flags=re.IGNORECASE)
-        match = pattern.search(code_without_strings)
-        if match:
-            findings.append(
-                StaticRuleFinding(
-                    rule_id="R_FORBIDDEN_CALL",
-                    severity="error",
-                    message=f"Generated R code uses forbidden call: {call}().",
-                    category="execution_boundary",
-                    source_type="system_contract",
-                    evidence=match.group(0),
-                )
+    for call, evidence in find_forbidden_r_call_matches(
+        code_without_strings,
+        forbidden_calls,
+        code_is_stripped=True,
+    ):
+        findings.append(
+            StaticRuleFinding(
+                rule_id="R_FORBIDDEN_CALL",
+                severity="error",
+                message=f"Generated R code uses forbidden call: {call}().",
+                category="execution_boundary",
+                source_type="system_contract",
+                evidence=evidence,
             )
+        )
     return findings
 
 
@@ -549,35 +544,7 @@ def _r_string_literals(code: str) -> list[str]:
 
 
 def _strip_r_comments_and_strings(code: str) -> str:
-    result: list[str] = []
-    in_string: str | None = None
-    escaped = False
-    index = 0
-    while index < len(code):
-        character = code[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == in_string:
-                in_string = None
-            result.append(" ")
-            index += 1
-            continue
-        if character in {"'", '"'}:
-            in_string = character
-            result.append(" ")
-            index += 1
-            continue
-        if character == "#":
-            while index < len(code) and code[index] not in {"\r", "\n"}:
-                result.append(" ")
-                index += 1
-            continue
-        result.append(character)
-        index += 1
-    return "".join(result)
+    return r_code_without_comments_and_strings(code)
 
 
 def _strip_r_comments(code: str) -> str:

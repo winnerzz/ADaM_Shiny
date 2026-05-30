@@ -1724,6 +1724,39 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.6 Sandbox Forbidden-Call Preflight Slice
+
+Completed:
+
+- Added a second fail-closed execution-boundary guard inside
+  `LocalRscriptSandboxRunner`.
+- The local sandbox now scans the R code that is about to execute and blocks
+  forbidden R calls such as `system()` before starting Rscript.
+- Added a neutral `r_safety` helper and reused it from both static rules and
+  sandbox preflight, so execution-boundary checks share one generic
+  implementation instead of drifting into separate patch lists.
+- The detector ignores comments and string literals, so warning text like
+  `"system('not-a-call')"` does not trigger a sandbox block.
+
+Current boundary:
+
+- This is still not production isolation. Local Rscript remains a developer
+  runner and the validation report must continue to mark it as not hardened.
+- This slice adds a generic execution-boundary guard only. It does not add
+  clinical, ADaM, CDISC, dataset-specific, study-specific, or demo-specific
+  rules.
+- Static code review remains the primary pre-review gate. Sandbox preflight is
+  a last-mile execution guard in case approved code artifacts are tampered with
+  or invoked outside the normal review path.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_r_safety tests.test_sandbox tests.test_static_rules -v
+```
+
+Result: 33 shared R-safety, sandbox, and static-rule tests passed.
+
 ### 2026-05-30 - LG2.5 Static Rule Non-Authority Source Guard Slice
 
 Completed:

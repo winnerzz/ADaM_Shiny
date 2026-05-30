@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from adam_agent.tools.r_runner import LocalRRunner, RRunRequest, RRunResult
+from adam_agent.tools.r_safety import find_forbidden_r_calls
 
 
 @runtime_checkable
@@ -107,6 +108,11 @@ class LocalRscriptSandboxRunner:
         for output_path in self.allowed_output_paths:
             if not _is_relative_to(output_path, self.run_dir):
                 errors.append(f"allowed output path is outside sandbox run_dir: {output_path.as_posix()}")
+        if not errors:
+            forbidden_calls = find_forbidden_r_calls(_r_code_for_preflight(request, script_path))
+            if forbidden_calls:
+                calls = ", ".join(f"{call}()" for call in forbidden_calls)
+                errors.append(f"generated R code uses forbidden call before local execution: {calls}")
         return errors
 
 
@@ -125,3 +131,11 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _r_code_for_preflight(request: RRunRequest, script_path: Path) -> str:
+    if request.code:
+        return request.code
+    if script_path.exists() and script_path.is_file():
+        return script_path.read_text(encoding="utf-8", errors="replace")
+    return ""
