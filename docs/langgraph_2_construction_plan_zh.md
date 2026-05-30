@@ -3223,3 +3223,42 @@ python -m compileall -q src\adam_agent
 
 结果：4 个 focused API tests passed；4 个 focused gateway tests passed；
 compileall passed。
+
+### 2026-05-30 - LG2.8 Upload Invalidation Gateway Ownership 切片
+
+已完成：
+
+- 新增 `GraphGateway.mark_study_inputs_changed()`，作为上传文件后输入证据变化
+  失效处理的唯一高层入口。
+- 简化 `api/service.py::save_uploaded_file_bytes()`：service 只负责保存文件、
+  重新扫描输入，并把 run invalidation 全部委托给 gateway。
+- 保留 upload response 的公开字段：
+  - `touched_runs` 继续作为 compatibility projection/read-model 字段；
+  - `touched_graph_runs` 继续作为 canonical graph-state invalidation 信号；
+  - `skipped_graph_runs` 报告无法加载的 canonical graph run。
+- 增加边界测试，证明 upload service helper 调用
+  `GraphGateway.mark_study_inputs_changed()`，不再直接调用
+  `invalidate_active_workflows()` 或 `mark_all_inputs_changed()`。
+- 增加 gateway 测试，证明高层 upload invalidation 入口能同时返回旧兼容触达
+  列表和 graph 触达列表，并保持 projection consistency。
+
+当前边界：
+
+- `invalidate_active_workflows()` 仍作为 compatibility projection helper 保留，
+  但 FastAPI service upload helper 不再直接调用它。Product service code 应使用
+  `GraphGateway.mark_study_inputs_changed()`。
+- 旧字段名 `touched_runs` 只为 API/UI 兼容保留。新的 graph-aware 行为应以
+  `touched_graph_runs` 为准。
+- 本切片不改变 dependency planning semantics、generation、execution、compare、
+  UI layout、route paths 或 sandbox behavior。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。Static rules
+  仍然只能是 generic contract checks 或 governed rule-pack items。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_scans_canonical_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_preserves_existing_stale_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_reports_corrupt_graph_state_as_skipped tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_study_inputs_changed_returns_legacy_and_graph_touches tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_workflow_state_stale tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation tests.test_api_phase8.Phase8ApiTests.test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing tests.test_api_phase8.Phase8ApiTests.test_upload_reports_corrupt_graph_state_as_skipped -v
+```
+
+结果：9 个 focused tests passed。

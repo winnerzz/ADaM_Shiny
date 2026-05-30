@@ -260,6 +260,23 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("compare_reference_output", called_names)
         self.assertNotIn("record_compare", called_names)
 
+    def test_upload_endpoint_delegates_input_invalidation_to_gateway(self) -> None:
+        from adam_agent.api import service
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(service.save_uploaded_file_bytes)))
+        called_names: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute):
+                called_names.add(node.func.attr)
+            elif isinstance(node.func, ast.Name):
+                called_names.add(node.func.id)
+
+        self.assertIn("mark_study_inputs_changed", called_names)
+        self.assertNotIn("invalidate_active_workflows", called_names)
+        self.assertNotIn("mark_all_inputs_changed", called_names)
+
     def test_index_serves_local_web_ui(self) -> None:
         client = TestClient(create_app())
 

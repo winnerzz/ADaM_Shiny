@@ -917,6 +917,32 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.touched_graph_runs, [])
         self.assertEqual(result.skipped_graph_runs, ["run_corrupt"])
 
+    def test_gateway_mark_study_inputs_changed_returns_legacy_and_graph_touches(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_mark_study_inputs_changed") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        sdtm_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_upload_gateway_boundary",
+            target_datasets=["ADAE"],
+        )
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        result = gateway.mark_study_inputs_changed(study_dir=study_dir)
+
+        self.assertIn("digest", result.input_fingerprint)
+        self.assertTrue(result.input_diff["changed"])
+        self.assertEqual(result.touched_runs, ["run_upload_gateway_boundary"])
+        self.assertEqual(result.touched_graph_runs, ["run_upload_gateway_boundary"])
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_upload_gateway_boundary")
+        workflow_state = json.loads((study_dir / "runs" / "run_upload_gateway_boundary" / "workflow_state.json").read_text(encoding="utf-8"))
+        consistency = workflow_projection_consistency(workflow_state, graph_state)
+        self.assertEqual(graph_state.dependency_review_status, "stale")
+        self.assertTrue(consistency["consistent"], consistency["mismatches"])
+
     def test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_dependency_gate") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

@@ -15,7 +15,12 @@ from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_stat
 from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
 from adam_agent.graph.study_graph import compile_study_graph
-from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, project_graph_state_to_workflow
+from adam_agent.graph.workflow_state import (
+    compare_fingerprints,
+    input_fingerprint,
+    invalidate_active_workflows,
+    project_graph_state_to_workflow,
+)
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.routing import FailureRecord
@@ -142,8 +147,11 @@ class GraphGatewayDependencyReviewResult(GraphGatewayResult):
 
 @dataclass(frozen=True)
 class GraphGatewayInputInvalidationResult:
-    """Canonical graph runs touched after study input evidence changes."""
+    """Canonical and compatibility projections touched after study input changes."""
 
+    input_fingerprint: dict[str, Any]
+    input_diff: dict[str, Any]
+    touched_runs: list[str]
     touched_graph_runs: list[str]
     skipped_graph_runs: list[str]
 
@@ -2079,12 +2087,21 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         new_fingerprint = input_fingerprint(root)
+        latest_diff: dict[str, Any] = {
+            "changed": bool(new_fingerprint.get("files")),
+            "added": [item["path"] for item in new_fingerprint.get("files", [])],
+            "removed": [],
+            "changed_files": [],
+            "old_digest": None,
+            "new_digest": new_fingerprint.get("digest"),
+        }
         touched: list[str] = []
         skipped: list[str] = []
         for run_id in self.list_graph_runs(study_dir=root):
             try:
                 old_state = self.load_graph_state(study_dir=root, run_id=run_id)
                 diff = compare_fingerprints(old_state.input_fingerprint, new_fingerprint)
+                latest_diff = diff
                 self.mark_inputs_changed(study_dir=root, run_id=run_id)
             except (OSError, ValueError, FileNotFoundError):
                 skipped.append(run_id)
@@ -2092,8 +2109,25 @@ class GraphGateway:
             if diff.get("changed"):
                 touched.append(run_id)
         return GraphGatewayInputInvalidationResult(
+            input_fingerprint=new_fingerprint,
+            input_diff=latest_diff,
+            touched_runs=[],
             touched_graph_runs=touched,
             skipped_graph_runs=skipped,
+        )
+
+    def mark_study_inputs_changed(self, *, study_dir: str | Path) -> GraphGatewayInputInvalidationResult:
+        """Invalidate graph-owned runs and legacy projections after uploaded evidence changes."""
+
+        root = Path(study_dir).expanduser()
+        legacy_invalidation = invalidate_active_workflows(root)
+        graph_invalidation = self.mark_all_inputs_changed(study_dir=root)
+        return GraphGatewayInputInvalidationResult(
+            input_fingerprint=legacy_invalidation.get("input_fingerprint", graph_invalidation.input_fingerprint),
+            input_diff=legacy_invalidation.get("input_diff", graph_invalidation.input_diff),
+            touched_runs=list(legacy_invalidation.get("touched_runs", [])),
+            touched_graph_runs=graph_invalidation.touched_graph_runs,
+            skipped_graph_runs=graph_invalidation.skipped_graph_runs,
         )
 
     def list_graph_runs(self, *, study_dir: str | Path) -> list[str]:

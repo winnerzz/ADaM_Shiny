@@ -3542,3 +3542,43 @@ python -m compileall -q src\adam_agent
 
 Result: 4 focused API tests passed; 4 focused gateway tests passed; compileall
 passed.
+
+### 2026-05-30 - LG2.8 Upload Invalidation Gateway Ownership Slice
+
+Completed:
+
+- Added `GraphGateway.mark_study_inputs_changed()` as the single high-level
+  entry point for upload-triggered input invalidation.
+- Reduced `api/service.py::save_uploaded_file_bytes()` so the service saves
+  files, rescans inputs, and delegates all run invalidation to the gateway.
+- Preserved the public upload response fields:
+  - `touched_runs` remains a compatibility projection/read-model field;
+  - `touched_graph_runs` remains the canonical graph-state invalidation signal;
+  - `skipped_graph_runs` reports canonical graph runs that could not be loaded.
+- Added boundary coverage proving the upload service helper calls
+  `GraphGateway.mark_study_inputs_changed()` and no longer calls
+  `invalidate_active_workflows()` or `mark_all_inputs_changed()` directly.
+- Added gateway coverage proving the high-level upload invalidation entry point
+  returns both compatibility and graph touch lists while preserving projection
+  consistency.
+
+Current boundary:
+
+- `invalidate_active_workflows()` still exists as a compatibility projection
+  helper, but it is no longer called by the FastAPI service upload helper.
+  Product service code should use `GraphGateway.mark_study_inputs_changed()`.
+- The old `touched_runs` name is retained only for API/UI compatibility. New
+  graph-aware behavior must rely on `touched_graph_runs`.
+- This does not change dependency planning semantics, generation, execution,
+  compare, UI layout, route paths, or sandbox behavior.
+- Static-rule governance is unchanged. No clinical, dataset-specific,
+  study-specific, demo-specific, or variable-specific static rule is added.
+  Static rules remain generic contract checks or governed rule-pack items only.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_scans_canonical_graph_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_preserves_existing_stale_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_all_inputs_changed_reports_corrupt_graph_state_as_skipped tests.test_graph_gateway.GraphGatewayTests.test_gateway_mark_study_inputs_changed_returns_legacy_and_graph_touches tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_workflow_state_stale tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation tests.test_api_phase8.Phase8ApiTests.test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing tests.test_api_phase8.Phase8ApiTests.test_upload_reports_corrupt_graph_state_as_skipped -v
+```
+
+Result: 9 focused tests passed.

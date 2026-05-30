@@ -51,8 +51,6 @@ from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
-    invalidate_active_workflows,
-    load_workflow_state,
     update_workflow_state,
 )
 from adam_agent.llm.clients import (
@@ -247,10 +245,14 @@ def save_uploaded_file_bytes(
         target.write_bytes(content)
         saved.append(str(target.as_posix()))
     summary = summarize_study_inputs(root, study_id=study_id or root.name)
-    upload_state = invalidate_active_workflows(root)
-    graph_invalidation = GraphGateway().mark_all_inputs_changed(study_dir=root)
-    upload_state["touched_graph_runs"] = graph_invalidation.touched_graph_runs
-    upload_state["skipped_graph_runs"] = graph_invalidation.skipped_graph_runs
+    graph_invalidation = GraphGateway().mark_study_inputs_changed(study_dir=root)
+    upload_state = {
+        "input_fingerprint": graph_invalidation.input_fingerprint,
+        "input_diff": graph_invalidation.input_diff,
+        "touched_runs": graph_invalidation.touched_runs,
+        "touched_graph_runs": graph_invalidation.touched_graph_runs,
+        "skipped_graph_runs": graph_invalidation.skipped_graph_runs,
+    }
     return normalized_role, folder_name, saved, summary, upload_state
 
 
