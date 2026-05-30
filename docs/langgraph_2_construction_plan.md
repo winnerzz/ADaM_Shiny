@@ -1813,6 +1813,37 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_loc
 python -B -m unittest tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.7 Human Review Queue Viewer Slice
+
+Completed:
+
+- Added a `Human Review Queue` panel to the local UI study dashboard.
+- The panel reads from the canonical `/graph-state` payload already loaded in
+  the browser:
+  - study-level `current_interrupt`
+  - per-dataset `current_interrupt`
+  - per-dataset `status` fallback for `needs_review` and `terminal_failure`
+- Review gates are displayed as human-readable cards for dependency review,
+  draft-spec review, code review, and terminal-failure triage.
+- Added UI contract coverage that asserts the queue is sourced from graph state
+  and does not expose raw JSON.
+
+Current boundary:
+
+- This is a read-only graph-state viewer. It does not create, close, approve,
+  reject, or mutate any graph interrupt.
+- It does not add a second human-review state machine. Canonical truth remains
+  `graph_state.json`.
+- It does not alter static-rule behavior. Static checks remain generic
+  contract/rule-pack governance, not demo/study/dataset-specific patches.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_state_progress_panel -v
+python -m compileall -q src\adam_agent
+```
+
 ### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit Slice
 
 Completed:

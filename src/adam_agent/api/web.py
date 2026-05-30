@@ -367,6 +367,55 @@ INDEX_HTML = r"""<!doctype html>
     .progress-step.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
     .progress-step.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
     .progress-step span { display: block; color: inherit; font-size: 10px; font-weight: 700; }
+    .review-queue-panel {
+      margin: 0 0 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf7;
+    }
+    .review-queue-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .review-queue-title {
+      display: block;
+      margin: 2px 0 3px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .review-queue-list {
+      display: grid;
+      gap: 7px;
+    }
+    .review-queue-item {
+      display: grid;
+      grid-template-columns: minmax(92px, 0.45fr) 1fr;
+      gap: 10px;
+      padding: 9px;
+      border: 1px solid #ead7a6;
+      border-radius: 7px;
+      background: #fffaf0;
+      font-size: 12px;
+    }
+    .review-queue-item.fail { border-color: #efc4be; background: #fff8f7; }
+    .review-queue-target {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .review-queue-action {
+      color: var(--text);
+      font-weight: 800;
+    }
+    .review-queue-detail {
+      margin-top: 2px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
     .graph-canvas {
       min-height: 180px;
       padding: 12px;
@@ -685,6 +734,7 @@ INDEX_HTML = r"""<!doctype html>
       header { align-items: flex-start; flex-direction: column; }
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
+      .review-queue-item { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -742,6 +792,17 @@ INDEX_HTML = r"""<!doctype html>
               <span class="pill warn" id="studyNextAction">setup</span>
             </div>
             <div class="study-progress-steps" id="studyProgressSteps"></div>
+          </div>
+          <div class="review-queue-panel" id="humanReviewQueuePanel">
+            <div class="review-queue-head">
+              <div>
+                <span class="status-label">Human Review Queue</span>
+                <span class="review-queue-title" id="humanReviewQueueTitle">No open review gate</span>
+                <div class="muted" id="humanReviewQueueDetail">Graph review gates will appear here when the workflow needs a human decision.</div>
+              </div>
+              <span class="pill" id="humanReviewQueueStatus">clear</span>
+            </div>
+            <div class="review-queue-list" id="humanReviewQueueList"></div>
           </div>
           <div class="metric-grid">
             <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
@@ -2111,6 +2172,7 @@ INDEX_HTML = r"""<!doctype html>
       byId('metricBlocked').textContent = String(blocked.length);
       setPill('graphStatus', blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
       renderStudyProgress(targets, runnable, blocked);
+      renderHumanReviewQueue();
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
       renderAgentAuditPanel();
@@ -2162,6 +2224,144 @@ INDEX_HTML = r"""<!doctype html>
         action: studyNextActionPill(active, activeStatus, blocked, inputCount),
         steps
       };
+    }
+
+    function renderHumanReviewQueue() {
+      const items = humanReviewQueueItems();
+      byId('humanReviewQueueTitle').textContent = items.length
+        ? `${items.length} review gate(s) open`
+        : 'No open review gate';
+      byId('humanReviewQueueDetail').textContent = items.length
+        ? 'Review gates are read from graph state and dataset state.'
+        : 'The graph has no open human decision gate for the active run.';
+      setPill('humanReviewQueueStatus', items.length ? 'review' : 'clear');
+      byId('humanReviewQueueList').innerHTML = items.length
+        ? items.map((item) => reviewQueueItemHtml(item)).join('')
+        : '<div class="muted">No dependency, draft-spec, code-review, or terminal-failure gate is open.</div>';
+    }
+
+    function humanReviewQueueItems() {
+      const graph = state.graphState || {};
+      const items = [];
+      const seen = new Set();
+      addReviewQueueItem(items, seen, graph.current_interrupt, {
+        scope: 'study',
+        status: graph.status,
+        reason: graph.dependency_review_status ? `Dependency review status: ${graph.dependency_review_status}.` : ''
+      });
+      for (const [dataset, datasetState] of Object.entries(graph.datasets || {})) {
+        const safeDatasetState = datasetState || {};
+        addReviewQueueItem(items, seen, safeDatasetState.current_interrupt, {
+          scope: 'dataset',
+          dataset,
+          status: safeDatasetState.status,
+          reason: safeDatasetState.current_interrupt?.reason || ''
+        });
+        if (!safeDatasetState.current_interrupt && ['needs_review', 'terminal_failure'].includes(String(safeDatasetState.status || '').toLowerCase())) {
+          addReviewQueueItem(items, seen, null, {
+            scope: 'dataset',
+            dataset,
+            status: safeDatasetState.status,
+            source: 'status',
+            reason: 'Dataset status indicates a review step, but no open interrupt payload is present.'
+          });
+        }
+      }
+      return items;
+    }
+
+    function addReviewQueueItem(items, seen, interrupt, context) {
+      const item = normalizeReviewQueueItem(interrupt, context);
+      if (!item) return;
+      const key = `${item.dataset || 'study'}:${item.name}:${item.source || 'interrupt'}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push(item);
+    }
+
+    function normalizeReviewQueueItem(interrupt, context) {
+      const dataset = String(context.dataset || '').toUpperCase();
+      if (interrupt) {
+        if (typeof interrupt === 'string') {
+          return {
+            scope: context.scope || 'study',
+            dataset,
+            name: interrupt,
+            status: 'open',
+            source: 'interrupt',
+            reason: context.reason || ''
+          };
+        }
+        const name = interrupt.name || interrupt.interrupt || '';
+        const interruptStatus = String(interrupt.status || 'open').toLowerCase();
+        if (!name || interruptStatus !== 'open') return null;
+        return {
+          scope: context.scope || (interrupt.dataset ? 'dataset' : 'study'),
+          dataset: String(interrupt.dataset || dataset || '').toUpperCase(),
+          name,
+          status: interruptStatus,
+          source: 'interrupt',
+          reason: interrupt.reason || context.reason || ''
+        };
+      }
+      const status = String(context.status || '').toLowerCase();
+      if (status === 'needs_review' || status === 'terminal_failure') {
+        return {
+          scope: context.scope || 'dataset',
+          dataset,
+          name: status === 'terminal_failure' ? 'terminal_failure' : 'review_required',
+          status,
+          source: context.source || 'status',
+          reason: context.reason || ''
+        };
+      }
+      return null;
+    }
+
+    function reviewQueueItemHtml(item) {
+      const isFailure = item.name === 'terminal_failure' || item.status === 'terminal_failure';
+      const target = item.dataset || 'Study';
+      return `
+        <div class="review-queue-item ${isFailure ? 'fail' : ''}">
+          <div>
+            <div class="review-queue-target">${escapeHtml(target)}</div>
+            <span class="pill ${isFailure ? 'fail' : 'warn'}">${escapeHtml(readableInterruptName(item.name))}</span>
+          </div>
+          <div>
+            <div class="review-queue-action">${escapeHtml(reviewQueueActionText(item))}</div>
+            <div class="review-queue-detail">${escapeHtml(reviewQueueDetailText(item))}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function readableInterruptName(name) {
+      const labels = {
+        dependency_review: 'Dependency review',
+        draft_spec_review: 'Draft spec review',
+        code_review: 'Code review',
+        terminal_failure: 'Terminal failure',
+        review_required: 'Review required'
+      };
+      return labels[name] || titleFromToken(name || 'review');
+    }
+
+    function reviewQueueActionText(item) {
+      const labels = {
+        dependency_review: 'Review dependency plan before product steps continue.',
+        draft_spec_review: 'Review the generated draft spec before code generation.',
+        code_review: 'Review generated R code before local execution.',
+        terminal_failure: 'Review diagnostics and choose repair, retry, or skip.',
+        review_required: 'Open the dataset and continue the active review step.'
+      };
+      return labels[item.name] || 'Review this graph gate before continuing.';
+    }
+
+    function reviewQueueDetailText(item) {
+      const source = item.source === 'status'
+        ? `Status marker: ${item.status}.`
+        : 'Open graph interrupt.';
+      return [source, item.reason || 'No additional reason was recorded.'].join(' ');
     }
 
     function graphInterruptLabel() {

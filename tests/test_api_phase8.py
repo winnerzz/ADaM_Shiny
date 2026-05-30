@@ -251,6 +251,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("operationBanner", response.text)
         self.assertIn("globalStatusDetail", response.text)
         self.assertIn("studyProgressPanel", response.text)
+        self.assertIn("humanReviewQueuePanel", response.text)
+        self.assertIn("Human Review Queue", response.text)
+        self.assertIn("renderHumanReviewQueue", response.text)
+        self.assertIn("humanReviewQueueItems", response.text)
+        self.assertIn("reviewQueueActionText", response.text)
         self.assertIn("agentAuditPanel", response.text)
         self.assertIn("Agent Audit", response.text)
         self.assertIn("renderAgentAuditPanel", response.text)
@@ -317,6 +322,24 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("targetSpecGateSatisfied(active)", html)
         self.assertIn("generatedFor(active)?.status === 'stale'", html)
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
+
+    def test_index_exposes_human_review_queue_from_graph_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        queue_body = html.split("function renderHumanReviewQueue()", 1)[1].split("function graphInterruptLabel()", 1)[0]
+        self.assertIn("state.graphState", queue_body)
+        self.assertIn("graph.current_interrupt", queue_body)
+        self.assertIn("const safeDatasetState = datasetState || {};", queue_body)
+        self.assertIn("safeDatasetState.current_interrupt", queue_body)
+        self.assertIn("safeDatasetState.status", queue_body)
+        self.assertIn("Review dependency plan before product steps continue.", queue_body)
+        self.assertIn("Review generated R code before local execution.", queue_body)
+        self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
+        self.assertNotIn("JSON.stringify", queue_body)
 
     def test_index_exposes_agent_audit_from_graph_state(self) -> None:
         client = TestClient(create_app())

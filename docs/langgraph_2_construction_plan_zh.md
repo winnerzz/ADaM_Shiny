@@ -1617,6 +1617,36 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_loc
 python -B -m unittest tests.test_api_phase8 -v
 ```
 
+### 2026-05-30 - LG2.7 Human Review Queue Viewer 切片
+
+已完成：
+
+- 在本地 UI 的 study dashboard 中增加 `Human Review Queue` panel。
+- 该 panel 读取浏览器里已经加载的 canonical `/graph-state` payload：
+  - study-level `current_interrupt`
+  - per-dataset `current_interrupt`
+  - per-dataset `status` fallback，用于显示 `needs_review` 和
+    `terminal_failure`
+- 以可读卡片显示 dependency review、draft-spec review、code review 和
+  terminal-failure triage 等人工审核门。
+- 增加 UI contract 测试，确认 queue 来自 graph state，且不把 raw JSON 直接展示给用户。
+
+当前边界：
+
+- 这是只读 graph-state viewer，不创建、不关闭、不 approve/reject、不修改任何
+  graph interrupt。
+- 不新增第二套 human-review state machine。canonical truth 仍然是
+  `graph_state.json`。
+- 不改变 static-rule 行为。静态检查仍然是 generic contract/rule-pack
+  governance，不是 demo/study/dataset-specific 补丁。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_state_progress_panel -v
+python -m compileall -q src\adam_agent
+```
+
 ### 2026-05-30 - LG2.4 Diagnosis/Repair Agent Triage Audit 切片
 
 已完成：
