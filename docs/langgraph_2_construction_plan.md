@@ -491,6 +491,13 @@ Design principle:
 
 - Static checks are a policy/rule-pack layer, not a growing list of one-off
   patches for PSY201, ADAE, ADSL, or any single demo variable.
+- Static-rule work must start from a reusable rule shape, not from a failed
+  example. The implementation question is always "what general contract is
+  violated?" rather than "how do we stop this one file from failing?"
+- A rule is acceptable only when its scope can be written without naming a demo
+  study, a legacy program, a reference ADaM file, or a hand-picked clinical
+  variable. If that cannot be done, the observation stays as a reviewer note or
+  candidate rule-pack backlog item.
 - Static checks should be designed from first principles as reusable contract
   checks. A demo failure is only evidence that a broader contract may be
   missing; it is not itself a production rule.
@@ -624,6 +631,16 @@ Tasks:
   - Is the rule independent of demo-study names and file-specific observations?
   - If it blocks a run, where are authority_type, source, version, scope,
     severity, and evidence recorded?
+- Add an implementation acceptance checklist for every future static-rule
+  change:
+  - The generic engine code contains no study-name, dataset-name, demo-folder,
+    legacy-program, or reference-output special branches.
+  - Any dataset/domain-specific knowledge is loaded through a governed rule
+    pack or comes from the approved spec for the current run.
+  - The test that motivated the rule includes at least one generic/non-demo
+    fixture so the rule proves a reusable contract instead of memorizing the
+    current demo.
+  - The report text states what the rule checks and what it does not prove.
 - Keep all checks labeled by confidence:
   - blocking error
   - warning
@@ -1832,6 +1849,10 @@ Completed:
   `GraphGateway.generate_code()` product method. Runtime dependency artifacts
   are always derived from the gateway-owned dependency plan before code-review
   state is recorded.
+- Removed the external `dependency_resolution` injection surface from
+  `GraphGateway.finalize_inputs()`, `GraphGateway.generate_draft_spec()`, and
+  `GraphGateway.generate_code()`. Those product methods now always read
+  dependency resolution from the gateway-owned plan.
 - Added a dependency-review handoff inside GraphGateway:
   - blocking dependency statuses still fail closed before any product graph call
   - nonblocking `no_dependency_evidence` review is preserved in audit metadata
@@ -1842,6 +1863,8 @@ Completed:
     `validate_product_step_start()` or `dependency_gate_for_product_step()`
   - `GraphGateway.generate_code()` must not expose a caller-provided
     `dependency_artifacts` parameter
+  - GraphGateway product spec/code methods must not expose caller-provided
+    `dependency_resolution`
 
 Current boundary:
 
@@ -1858,10 +1881,10 @@ Current boundary:
 Focused verification:
 
 ```text
-python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_graph_gateway.GraphGatewayTests.test_gateway_product_spec_methods_do_not_accept_external_dependency_resolution tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
 ```
 
-Result: 5 focused tests passed.
+Result: 6 focused tests passed.
 
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v

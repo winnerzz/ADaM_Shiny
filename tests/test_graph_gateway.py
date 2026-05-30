@@ -629,7 +629,6 @@ class GraphGatewayTests(unittest.TestCase):
                 study_id="PSY201",
                 run_id="run_lg2_gateway_finalize_input_spec",
                 dataset="ADAE",
-                dependency_resolution=[],
                 llm_provider={"provider": "mock", "model": "mock-model"},
                 llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
@@ -685,7 +684,6 @@ class GraphGatewayTests(unittest.TestCase):
                 study_id="PSY201",
                 run_id="run_lg2_gateway_finalize_draft_spec",
                 dataset="ADAE",
-                dependency_resolution=[],
                 llm_provider={"provider": "mock", "model": "mock-model"},
                 llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
             )
@@ -736,7 +734,6 @@ class GraphGatewayTests(unittest.TestCase):
                 study_id="PSY201",
                 run_id="run_lg2_gateway_force_draft_spec",
                 dataset="ADAE",
-                dependency_resolution=[],
                 llm_provider={"provider": "mock", "model": "mock-model"},
                 llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
             )
@@ -761,7 +758,6 @@ class GraphGatewayTests(unittest.TestCase):
                     study_id="PSY201",
                     run_id="run_lg2_gateway_force_draft_spec_input",
                     dataset="ADAE",
-                    dependency_resolution=[],
                     llm_provider={"provider": "mock", "model": "mock-model"},
                     llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 )
@@ -940,6 +936,12 @@ class GraphGatewayTests(unittest.TestCase):
         signature = inspect.signature(GraphGateway.generate_code)
 
         self.assertNotIn("dependency_artifacts", signature.parameters)
+        self.assertNotIn("dependency_resolution", signature.parameters)
+
+    def test_gateway_product_spec_methods_do_not_accept_external_dependency_resolution(self) -> None:
+        for method in [GraphGateway.finalize_inputs, GraphGateway.generate_draft_spec]:
+            signature = inspect.signature(method)
+            self.assertNotIn("dependency_resolution", signature.parameters)
 
     def test_gateway_records_execution_agent_decision_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execution_agent_decision") / "PSY201"
@@ -1029,7 +1031,6 @@ class GraphGatewayTests(unittest.TestCase):
                 study_id="PSY201",
                 run_id="run_lg2_gateway_generate_code",
                 dataset="ADAE",
-                dependency_resolution=[],
                 llm_provider={"provider": "mock", "model": "mock-model"},
                 llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",

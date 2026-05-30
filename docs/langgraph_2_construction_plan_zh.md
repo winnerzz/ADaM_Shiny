@@ -422,6 +422,12 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 
 - 静态检查是 policy/rule-pack 层，不是不断追加 PSY201、ADAE、ADSL 或某个
   demo 变量特例的补丁清单。
+- 静态规则开发必须先抽象出可复用的 rule shape，不能从某个失败样例直接写
+  补丁。每次新增规则时先问“违反了哪个通用 contract”，而不是“怎么让这个
+  文件不失败”。
+- 一条规则只有在不命名某个 demo study、legacy program、reference ADaM 文件
+  或手挑临床变量的情况下也能讲清楚适用范围，才允许进入实现。否则它只能是
+  reviewer note 或 candidate rule-pack backlog item。
 - 静态检查要从底层原则设计成可复用的 contract check。demo 中出现的失败只能
   说明“可能缺一个更通用的 contract”，它本身不能直接变成生产规则。
 - 这是硬架构边界：通用 static-check engine 不能按 dataset 名、study 名、demo
@@ -532,6 +538,14 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   - 这条规则是否不依赖 demo-study 名和某个文件观察？
   - 如果它能 block run，authority_type、source、version、scope、severity、
     evidence 记录在哪？
+- 给未来每个 static-rule change 增加 implementation acceptance checklist：
+  - generic engine code 里没有 study-name、dataset-name、demo-folder、
+    legacy-program 或 reference-output 的特殊分支。
+  - 任何 dataset/domain-specific knowledge 都必须通过 governed rule pack 加载，
+    或来自当前 run 的 approved spec。
+  - 触发这条规则的测试至少包含一个 generic/non-demo fixture，证明它检查的是
+    可复用 contract，而不是记住当前 demo。
+  - report text 必须说明这条规则检查什么，以及它不能证明什么。
 - 所有检查都标记置信等级：
   - blocking error
   - warning
@@ -1642,6 +1656,10 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 - 移除 `GraphGateway.generate_code()` product method 对外部
   `dependency_artifacts` 的注入口。runtime dependency artifacts 总是由
   gateway-owned dependency plan 派生后再写入 code-review state。
+- 移除 `GraphGateway.finalize_inputs()`、`GraphGateway.generate_draft_spec()`
+  和 `GraphGateway.generate_code()` 对外部 `dependency_resolution` 的注入口。
+  这些 product methods 现在总是从 gateway-owned plan 读取 dependency
+  resolution。
 - 在 GraphGateway 内新增 dependency-review handoff：
   - blocking dependency status 仍然在进入产品图前 fail closed；
   - 非阻断的 `no_dependency_evidence` review 会保留在审计 metadata 中，但不再
@@ -1651,7 +1669,9 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
   - product service wrappers 不能直接调用 `validate_product_step_start()` 或
     `dependency_gate_for_product_step()`；
   - `GraphGateway.generate_code()` 不暴露 caller-provided
-    `dependency_artifacts` 参数。
+    `dependency_artifacts` 参数；
+  - GraphGateway product spec/code methods 不暴露 caller-provided
+    `dependency_resolution` 参数。
 
 当前边界：
 
@@ -1667,10 +1687,10 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 Focused verification：
 
 ```text
-python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_graph_gateway.GraphGatewayTests.test_gateway_generate_code_does_not_accept_external_dependency_artifacts tests.test_graph_gateway.GraphGatewayTests.test_gateway_product_spec_methods_do_not_accept_external_dependency_resolution tests.test_api_phase8.Phase8ApiTests.test_execute_rejects_changed_runtime_dependency_artifact -v
 ```
 
-结果：5 focused tests passed。
+结果：6 focused tests passed。
 
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_starts_plan_and_blocks_unresolved_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_gate_returns_plan_when_open tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
