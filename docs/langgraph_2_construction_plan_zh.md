@@ -1574,6 +1574,55 @@ python -m compileall -q src\adam_agent
 
 结果：passed。
 
+### 2026-05-30 - LG2.8 Service Preflight Ownership 切片
+
+已完成：
+
+- 从 FastAPI compatibility service wrappers 中移除对
+  `GraphGateway.validate_product_step_start()` 的直接调用，覆盖：
+  - finalize inputs
+  - draft spec generation
+  - code generation
+- fail-closed 行为继续保留在 GraphGateway product methods 内部。service 层仍负责
+  request shape 和 API response，但不再拥有这些 product steps 的
+  terminal-failure preflight routing。
+- 新增 AST 回归测试，确认这些 service wrappers 不再直接调用 gateway preflight
+  method。
+- 新增运行时回归测试，确认 `/draft-spec` 会先被 GraphGateway terminal-failure
+  preflight 拦截，不会绕过进入 DatasetGraph。
+
+当前边界：
+
+- 这是责任边界清理，不改变 route path、response schema、dependency planning
+  semantic、terminal-failure routing、LLM provider、static checks 或 R execution。
+- dependency-plan gate 仍由 compatibility service 在调用 gateway product method
+  前显式触发。后续切片应把这个 gate 移入 GraphGateway composite entrypoints，
+  让 service wrappers 继续变薄。
+- 本切片不新增任何 clinical/static ADaM rule。静态检查仍然只做 generic
+  contracts 和 source-backed rule-pack governance。Demo 观察不能直接升级为
+  blocking check，除非先被改写成通用 contract，或通过带 authority、scope、
+  severity、evidence 的 versioned rule pack 准入。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_api_phase8.Phase8ApiTests.test_draft_spec_uses_gateway_terminal_failure_preflight -v
+```
+
+结果：2 tests passed。
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_generate_code_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_draft_spec_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_requires_repair_code_before_regenerating_code tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review -v
+```
+
+结果：7 tests passed。
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+结果：118 tests passed。
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation 切片
 
 已完成：

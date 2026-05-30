@@ -465,10 +465,6 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    try:
-        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="generate_code")
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:
@@ -531,10 +527,6 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    try:
-        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="finalize_inputs")
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:
@@ -632,10 +624,6 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    try:
-        GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="draft_spec")
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:

@@ -1761,6 +1761,58 @@ python -m compileall -q src\adam_agent
 
 Result: passed.
 
+### 2026-05-30 - LG2.8 Service Preflight Ownership Slice
+
+Completed:
+
+- Removed direct `GraphGateway.validate_product_step_start()` calls from the
+  FastAPI compatibility service wrappers for:
+  - finalize inputs
+  - draft spec generation
+  - code generation
+- Kept the fail-closed behavior inside GraphGateway product methods. The service
+  layer still validates request shape and builds API responses, but it no longer
+  owns terminal-failure preflight routing for those product steps.
+- Added an AST-based regression test asserting these service wrappers do not
+  call the gateway preflight method directly.
+- Added a runtime regression test proving `/draft-spec` is blocked by
+  GraphGateway terminal-failure preflight before DatasetGraph invocation.
+
+Current boundary:
+
+- This is a responsibility cleanup only. It does not change route paths,
+  response schemas, dependency planning semantics, terminal-failure routing,
+  LLM provider behavior, static checks, or R execution.
+- Dependency-plan gating is still explicitly invoked from the compatibility
+  service before calling gateway product methods. A future slice should move
+  that gate into composite GraphGateway entry points so service wrappers become
+  thinner.
+- This slice does not add any clinical/static ADaM rule. Static checks remain
+  limited to generic contracts and source-backed rule-pack governance. Demo
+  observations must not be promoted into blocking checks unless they are first
+  rewritten as generic contracts or admitted through a versioned rule pack with
+  authority, scope, severity, and evidence.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_do_not_own_terminal_failure_preflight tests.test_api_phase8.Phase8ApiTests.test_draft_spec_uses_gateway_terminal_failure_preflight -v
+```
+
+Result: 2 tests passed.
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_generate_code_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_draft_spec_dependency_gate_does_not_write_service_start_projection tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_requires_repair_code_before_regenerating_code tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review -v
+```
+
+Result: 7 tests passed.
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+```
+
+Result: 118 tests passed.
+
 ### 2026-05-30 - LG2.8 Graph-State Input Upload Invalidation Slice
 
 Completed:

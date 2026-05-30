@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import csv
+import inspect
 import json
 import sys
+import textwrap
 import unittest
 import uuid
 from pathlib import Path
@@ -88,6 +91,27 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_product_service_wrappers_do_not_own_terminal_failure_preflight(self) -> None:
+        from adam_agent.api import service
+
+        wrappers = [
+            service.finalize_dataset_inputs,
+            service.generate_dataset_draft_spec,
+            service.generate_dataset_code,
+        ]
+
+        for wrapper in wrappers:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(wrapper)))
+            called_names: set[str] = set()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Attribute):
+                    called_names.add(node.func.attr)
+                elif isinstance(node.func, ast.Name):
+                    called_names.add(node.func.id)
+            self.assertNotIn("validate_product_step_start", called_names)
 
     def test_index_serves_local_web_ui(self) -> None:
         client = TestClient(create_app())
@@ -1226,6 +1250,64 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(second_execution.status_code, 400, second_execution.text)
         self.assertIn("Terminal failure must be reviewed before retrying execution", second_execution.json()["detail"])
+        compile_graph.assert_not_called()
+
+    def test_draft_spec_uses_gateway_terminal_failure_preflight(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_draft_spec_gate")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_terminal_draft_gate/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / "run_terminal_draft_gate" / "code" / "build_adae.R"
+        code_path.write_text(
+            "dir.create('outputs', showWarnings = FALSE)\n"
+            "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_terminal_draft_gate", "ADAE", code_path)
+        from adam_agent.graph.gateway import GraphGateway
+
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id="run_terminal_draft_gate",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review = client.post(
+            "/runs/run_terminal_draft_gate/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+        first_execution = client.post(
+            "/runs/run_terminal_draft_gate/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(first_execution.status_code, 200, first_execution.text)
+        self.assertTrue(first_execution.json()["terminal_failure"])
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            draft_spec = client.post(
+                "/runs/run_terminal_draft_gate/datasets/ADAE/draft-spec",
+                json={
+                    "study_dir": str(study_dir),
+                    "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+
+        self.assertEqual(draft_spec.status_code, 400, draft_spec.text)
+        self.assertIn("Terminal failure must be reviewed", draft_spec.json()["detail"])
         compile_graph.assert_not_called()
 
     def test_retry_execution_review_allows_approved_code_execution_path(self) -> None:
