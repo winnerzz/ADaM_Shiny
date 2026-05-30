@@ -1693,6 +1693,42 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ex
 
 Result: 2 focused tests passed.
 
+### 2026-05-30 - LG2.2 Gateway-Owned Code Review Artifact Slice
+
+Completed:
+
+- Added `GraphGateway.review_code()` as the graph-owned entry point for the
+  code-review compatibility endpoint.
+- The gateway now owns the full code-review transition:
+  - verify generated code is recorded in canonical graph state
+  - verify current generated-code hash, static-check artifact, approved spec
+    hash, dependency artifact hashes, and input fingerprint
+  - write `runs/{run_id}/review/{dataset}_code_review.json`
+  - persist the code-review decision into `graph_state.json`
+  - refresh the UI `workflow_state.json` projection
+- Reduced `api/service.py::persist_code_review()` to request validation,
+  delegation to `GraphGateway.review_code()`, and compatibility response
+  construction.
+- Added gateway tests for the direct review-code entry point and for cleanup
+  when graph-state recording fails after the review artifact is written.
+
+Current boundary:
+
+- Public route paths and response shapes are unchanged.
+- This moves artifact/state ownership into the gateway; it does not create a
+  new LangGraph interrupt-resume API yet.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_writes_artifact_and_records_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_cleans_artifact_when_recording_fails tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_dataset_code_review_in_canonical_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_code_review_cleans_approval_json_when_graph_recording_fails tests.test_api_phase8.Phase8ApiTests.test_code_review_requires_graph_generated_code_state tests.test_api_phase8.Phase8ApiTests.test_code_approval_is_invalidated_when_code_or_inputs_change -v
+```
+
+Result: 3 focused gateway tests passed; 4 focused API tests passed.
+
 ### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice
 
 Completed:

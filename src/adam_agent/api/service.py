@@ -796,105 +796,27 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Code review decision must be approve or reject.")
     study_id = study_dir.name
-    run_dir = study_dir / "runs" / run_id
-    code_path = run_dir / "code" / f"build_{target.lower()}.R"
-    if not code_path.exists() or not code_path.is_file():
-        raise ApiServiceError(f"Generated R code does not exist for review: {code_path}")
-    current_fingerprint = input_fingerprint(study_dir)
-    review_dir = study_dir / "runs" / run_id / "review"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    review_path = review_dir / f"{target.lower()}_code_review.json"
-    static_check_path = study_dir / "runs" / run_id / "static_checks" / f"{target.lower()}_static_check.json"
-    code_sha = f"sha256:{sha256_file(code_path)}"
-    static_check_sha = f"sha256:{sha256_file(static_check_path)}" if static_check_path.exists() else None
-    graph_code_state = _graph_code_state(study_dir, run_id, target)
-    spec_path = graph_code_state.get("spec_path")
-    spec_sha = graph_code_state.get("spec_sha256")
-    if spec_path and not spec_sha:
-        raise ApiServiceError("Generated-code graph state is missing the approved spec hash. Regenerate code before review.")
-    if spec_path and spec_sha:
-        current_spec_path = Path(str(spec_path))
-        if not current_spec_path.exists() or not current_spec_path.is_file():
-            raise ApiServiceError(f"Approved spec used for code generation no longer exists: {current_spec_path}")
-        if f"sha256:{sha256_file(current_spec_path)}" != spec_sha:
-            raise ApiServiceError("Approved spec changed after code generation. Regenerate code before review.")
     gateway = GraphGateway()
     try:
-        gateway.validate_code_review(
-            study_dir=study_dir,
-            run_id=run_id,
-            dataset=target,
-            code_sha256=code_sha,
-            static_check_sha256=static_check_sha,
-            spec_sha256=spec_sha,
-            input_fingerprint_payload=current_fingerprint,
-        )
-    except ValueError as exc:
-        raise ApiServiceError(str(exc)) from exc
-    command = HumanCommand(
-        interrupt="code_review",
-        action="approve" if decision == "approve" else "reject",
-        dataset=target,
-        reviewer=request.reviewer,
-        notes=request.notes,
-        payload={
-            "review_path": str(review_path.as_posix()),
-            "code_path": str(code_path.as_posix()),
-            "code_sha256": code_sha,
-            "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
-            "static_check_sha256": static_check_sha,
-            "spec_source": graph_code_state.get("spec_source"),
-            "spec_path": spec_path,
-            "spec_sha256": spec_sha,
-        },
-    )
-    payload = {
-        "study_id": study_id,
-        "run_id": run_id,
-        "dataset": target,
-        "decision": decision,
-        "reviewer": request.reviewer,
-        "notes": request.notes,
-        "approved": decision == "approve",
-        "reviewed_at": datetime.now().isoformat(timespec="seconds"),
-        "input_fingerprint": current_fingerprint,
-        "code_path": str(code_path.as_posix()),
-        "code_sha256": code_sha,
-        "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
-        "static_check_sha256": static_check_sha,
-        "spec_source": graph_code_state.get("spec_source"),
-        "spec_path": spec_path,
-        "spec_sha256": spec_sha,
-    }
-    review_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    try:
-        gateway.record_code_review(
+        result = gateway.review_code(
             study_dir=study_dir,
             study_id=study_id,
             run_id=run_id,
             dataset=target,
-            command=command,
-            review_path=review_path,
-            code_path=code_path,
-            code_sha256=code_sha,
-            static_check_path=static_check_path if static_check_path.exists() else None,
-            static_check_sha256=static_check_sha,
-            input_fingerprint_payload=current_fingerprint,
+            decision=decision,
+            reviewer=request.reviewer,
+            notes=request.notes,
         )
-    except Exception as exc:
-        if not _graph_code_review_matches_review_path(study_dir, run_id, target, review_path):
-            review_path.unlink(missing_ok=True)
-        if isinstance(exc, ValueError):
-            raise ApiServiceError(str(exc)) from exc
-        raise
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
     return CodeReviewResponse(
         study_id=study_id,
         run_id=run_id,
         dataset=target,
-        decision=decision,
-        review_path=str(review_path.as_posix()),
-        approved=decision == "approve",
-        static_check_path=str(static_check_path.as_posix()) if static_check_path.exists() else None,
+        decision=result.decision,
+        review_path=result.review_path,
+        approved=result.approved,
+        static_check_path=result.static_check_path,
         **_graph_compatibility_metadata(study_dir, run_id),
     )
 
@@ -1440,26 +1362,6 @@ def _sample_row_counts(context: dict[str, Any]) -> dict[str, int]:
 
 def _default_mock_generated_code_response(target: str) -> str:
     return default_mock_generated_code_response(target)
-
-
-def _graph_code_state(study_dir: Path, run_id: str, target: str) -> dict[str, Any]:
-    try:
-        graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
-    except FileNotFoundError:
-        return {}
-    dataset_state = graph_state.datasets.get(target.strip().upper())
-    if dataset_state is None:
-        return {}
-    return dict(dataset_state.code_state)
-
-
-def _graph_code_review_matches_review_path(study_dir: Path, run_id: str, target: str, review_path: Path) -> bool:
-    code_state = _graph_code_state(study_dir, run_id, target)
-    return (
-        code_state.get("status") == "approved"
-        and code_state.get("decision") == "approve"
-        and str(Path(str(code_state.get("review_path") or "")).as_posix()) == str(review_path.as_posix())
-    )
 
 
 def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:

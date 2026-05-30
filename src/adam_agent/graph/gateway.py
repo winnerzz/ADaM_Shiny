@@ -66,6 +66,16 @@ class GraphGatewayCodeGenerationResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayCodeReviewResult(GraphGatewayResult):
+    """Graph-owned code-review result plus API-facing fields."""
+
+    decision: str
+    review_path: str
+    approved: bool
+    static_check_path: str | None
+
+
+@dataclass(frozen=True)
 class GraphGatewayFinalizeInputsResult(GraphGatewayResult):
     """Graph-owned finalize-inputs result plus response-neutral fields."""
 
@@ -175,6 +185,120 @@ class GraphGateway:
         self._persist_graph_state(study_dir, next_state, node=f"resume_{command.interrupt}")
         projection = project_graph_state_to_workflow(study_dir, next_state, node=f"graph_gateway_resume_{command.interrupt}")
         return GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
+
+    def review_code(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayCodeReviewResult:
+        """Write the code-review artifact and persist the graph-owned decision."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Code review decision must be approve or reject.")
+        run_dir = root / "runs" / run_id
+        code_path = run_dir / "code" / f"build_{target.lower()}.R"
+        if not code_path.exists() or not code_path.is_file():
+            raise ValueError(f"Generated R code does not exist for review: {code_path}")
+        fingerprint = input_fingerprint_payload or input_fingerprint(root)
+        review_dir = run_dir / "review"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        review_path = review_dir / f"{target.lower()}_code_review.json"
+        static_check_path = run_dir / "static_checks" / f"{target.lower()}_static_check.json"
+        static_path_for_state = static_check_path if static_check_path.exists() else None
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        static_check_sha = f"sha256:{sha256_file(static_check_path)}" if static_check_path.exists() else None
+        code_state = self._generated_code_state(root, run_id=run_id, dataset=target)
+        spec_path = code_state.get("spec_path")
+        spec_sha = code_state.get("spec_sha256")
+        if spec_path and not spec_sha:
+            raise ValueError("Generated-code graph state is missing the approved spec hash. Regenerate code before review.")
+        if spec_path and spec_sha:
+            current_spec_path = Path(str(spec_path))
+            if not current_spec_path.exists() or not current_spec_path.is_file():
+                raise ValueError(f"Approved spec used for code generation no longer exists: {current_spec_path}")
+            if f"sha256:{sha256_file(current_spec_path)}" != spec_sha:
+                raise ValueError("Approved spec changed after code generation. Regenerate code before review.")
+        self.validate_code_review(
+            study_dir=root,
+            run_id=run_id,
+            dataset=target,
+            code_sha256=code_sha,
+            static_check_sha256=static_check_sha,
+            spec_sha256=spec_sha,
+            input_fingerprint_payload=fingerprint,
+        )
+        command = HumanCommand(
+            interrupt="code_review",
+            action="approve" if normalized_decision == "approve" else "reject",
+            dataset=target,
+            reviewer=reviewer,
+            notes=notes,
+            payload={
+                "review_path": str(review_path.as_posix()),
+                "code_path": str(code_path.as_posix()),
+                "code_sha256": code_sha,
+                "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
+                "static_check_sha256": static_check_sha,
+                "spec_source": code_state.get("spec_source"),
+                "spec_path": spec_path,
+                "spec_sha256": spec_sha,
+            },
+        )
+        payload = {
+            "study_id": study_id,
+            "run_id": run_id,
+            "dataset": target,
+            "decision": normalized_decision,
+            "reviewer": reviewer,
+            "notes": notes,
+            "approved": normalized_decision == "approve",
+            "reviewed_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "input_fingerprint": fingerprint,
+            "code_path": str(code_path.as_posix()),
+            "code_sha256": code_sha,
+            "static_check_path": str(static_check_path.as_posix()) if static_check_path.exists() else None,
+            "static_check_sha256": static_check_sha,
+            "spec_source": code_state.get("spec_source"),
+            "spec_path": spec_path,
+            "spec_sha256": spec_sha,
+        }
+        _write_json(review_path, payload)
+        try:
+            result = self.record_code_review(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                command=command,
+                review_path=review_path,
+                code_path=code_path,
+                code_sha256=code_sha,
+                static_check_path=static_path_for_state,
+                static_check_sha256=static_check_sha,
+                input_fingerprint_payload=fingerprint,
+            )
+        except Exception:
+            if not self._graph_code_review_matches_review_path(root, run_id=run_id, dataset=target, review_path=review_path):
+                review_path.unlink(missing_ok=True)
+            raise
+        return GraphGatewayCodeReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=result.workflow_projection,
+            decision=normalized_decision,
+            review_path=str(review_path.as_posix()),
+            approved=normalized_decision == "approve",
+            static_check_path=str(static_check_path.as_posix()) if static_check_path.exists() else None,
+        )
 
     def record_code_review(
         self,
@@ -1454,6 +1578,30 @@ class GraphGateway:
             return
         _assert_terminal_failure_step_allowed(dataset_state, step=step)
 
+    def _generated_code_state(self, study_dir: Path, *, run_id: str, dataset: str) -> dict[str, Any]:
+        try:
+            graph_state = self.load_graph_state(study_dir=study_dir, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ValueError("Generated code must be recorded in graph state before code review.") from exc
+        dataset_state = graph_state.datasets.get(dataset.strip().upper())
+        if dataset_state is None or dataset_state.code_state.get("status") != "generated":
+            raise ValueError("Generated code must be recorded in graph state before code review.")
+        return dict(dataset_state.code_state)
+
+    def _graph_code_review_matches_review_path(self, study_dir: Path, *, run_id: str, dataset: str, review_path: Path) -> bool:
+        try:
+            graph_state = self.load_graph_state(study_dir=study_dir, run_id=run_id)
+        except FileNotFoundError:
+            return False
+        dataset_state = graph_state.datasets.get(dataset.strip().upper())
+        if dataset_state is None:
+            return False
+        code_state = dataset_state.code_state
+        return (
+            code_state.get("status") in {"approved", "rejected"}
+            and str(Path(str(code_state.get("review_path") or "")).as_posix()) == str(review_path.as_posix())
+        )
+
     def _assert_approved_code_execution_ready(self, *, study_dir: Path, run_id: str, dataset: str) -> None:
         """Fail closed before execution if graph-owned code review is not current."""
 
@@ -1996,6 +2144,13 @@ def _read_json_if_exists(path: str | Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _write_json(path: str | Path, payload: dict[str, Any]) -> Path:
+    item = Path(path)
+    item.parent.mkdir(parents=True, exist_ok=True)
+    item.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return item
 
 
 def _write_graph_sqlite_checkpoint(

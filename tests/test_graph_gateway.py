@@ -338,6 +338,87 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "approved")
 
+    def test_gateway_review_code_writes_artifact_and_records_canonical_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_review_code_entrypoint") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_review_code_entrypoint"
+        code_dir = run_dir / "code"
+        code_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_review_code_entrypoint", "ADAE", code_path)
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_code_entrypoint",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        result = gateway.review_code(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_code_entrypoint",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Gateway owns the review artifact.",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        review_path = Path(result.review_path)
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(result.decision, "approve")
+        self.assertTrue(result.approved)
+        self.assertEqual(result.static_check_path, str(static_path.as_posix()))
+        self.assertEqual(review_payload["decision"], "approve")
+        self.assertEqual(review_payload["code_sha256"], f"sha256:{sha256_file(code_path)}")
+        self.assertEqual(dataset_state.code_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["review_path"], str(review_path.as_posix()))
+        self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["code_state"]["status"], "approved")
+
+    def test_gateway_review_code_cleans_artifact_when_recording_fails(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_review_code_cleanup") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_review_code_cleanup"
+        code_dir = run_dir / "code"
+        code_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_review_code_cleanup", "ADAE", code_path)
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_review_code_cleanup",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        with patch.object(gateway, "record_code_review", side_effect=ValueError("forced graph failure")):
+            with self.assertRaisesRegex(ValueError, "forced graph failure"):
+                gateway.review_code(
+                    study_dir=study_dir,
+                    study_id="PSY201",
+                    run_id="run_lg2_review_code_cleanup",
+                    dataset="ADAE",
+                    decision="approve",
+                    reviewer="tester",
+                    input_fingerprint_payload=input_fingerprint(study_dir),
+                )
+
+        self.assertFalse((run_dir / "review" / "adae_code_review.json").exists())
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_review_code_cleanup")
+        self.assertEqual(reloaded.datasets["ADAE"].code_state["status"], "generated")
+
     def test_gateway_records_draft_spec_review_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_draft_spec_review") / "PSY201"
         run_dir = study_dir / "runs" / "run_lg2_draft_spec_review"

@@ -1504,6 +1504,41 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ex
 
 结果：2 focused tests passed。
 
+### 2026-05-30 - LG2.2 Gateway-Owned Code Review Artifact 切片
+
+已完成：
+
+- 新增 `GraphGateway.review_code()`，作为 code-review compatibility endpoint
+  的 graph-owned 入口。
+- Gateway 现在拥有完整 code-review transition：
+  - 验证 generated code 已记录在 canonical graph state 中
+  - 验证当前 generated-code hash、static-check artifact、approved spec hash、
+    dependency artifact hash 和 input fingerprint
+  - 写入 `runs/{run_id}/review/{dataset}_code_review.json`
+  - 将 code-review decision 持久化进 `graph_state.json`
+  - 刷新 UI 使用的 `workflow_state.json` projection
+- 将 `api/service.py::persist_code_review()` 收缩为 request validation、
+  委托 `GraphGateway.review_code()` 和 compatibility response construction。
+- 新增 gateway 测试，覆盖直接 review-code 入口，以及 review artifact 写出后
+  graph-state recording 失败时的清理行为。
+
+当前边界：
+
+- public route path 和 response shape 不变。
+- 本切片把 artifact/state ownership 移入 Gateway，但还没有新增真正的
+  LangGraph interrupt-resume API。
+- 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_writes_artifact_and_records_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_cleans_artifact_when_recording_fails tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_dataset_code_review_in_canonical_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_code_review_cleans_approval_json_when_graph_recording_fails tests.test_api_phase8.Phase8ApiTests.test_code_review_requires_graph_generated_code_state tests.test_api_phase8.Phase8ApiTests.test_code_approval_is_invalidated_when_code_or_inputs_change -v
+```
+
+结果：3 focused gateway tests passed；4 focused API tests passed。
+
 ### 2026-05-30 - LG2.2 显式 Draft-Spec Gateway 切片
 
 已完成：
