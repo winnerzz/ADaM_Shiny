@@ -749,8 +749,49 @@ class GraphGatewayTests(unittest.TestCase):
 
     def test_gateway_executes_approved_code_through_dataset_graph_and_records_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_approved_code") / "PSY201"
-        study_dir.mkdir(parents=True)
+        run_id = "run_lg2_gateway_execute"
+        run_dir = study_dir / "runs" / run_id
+        code_dir = run_dir / "code"
+        review_dir = run_dir / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adae.R"
+        review_path = review_dir / "adae_code_review.json"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
         gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+                notes="Approved graph-native execution test.",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
 
         with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
             compile_graph.return_value.invoke.return_value = {
@@ -773,7 +814,7 @@ class GraphGatewayTests(unittest.TestCase):
             result = gateway.execute_approved_code(
                 study_dir=study_dir,
                 study_id="PSY201",
-                run_id="run_lg2_gateway_execute",
+                run_id=run_id,
                 dataset="ADAE",
                 rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
             )
@@ -789,14 +830,47 @@ class GraphGatewayTests(unittest.TestCase):
 
         dataset_state = result.graph_state.datasets["ADAE"]
         workflow_state = json.loads(
-            (study_dir / "runs" / "run_lg2_gateway_execute" / "workflow_state.json").read_text(encoding="utf-8")
+            (run_dir / "workflow_state.json").read_text(encoding="utf-8")
         )
         self.assertEqual(dataset_state.status, "completed")
         self.assertEqual(dataset_state.execution_state["status"], "completed")
         self.assertEqual(dataset_state.execution_state["output_path"], "runs/run_lg2_gateway_execute/outputs/adae.csv")
-        self.assertEqual(dataset_state.agent_decisions[0]["agent"], "execution_agent")
+        self.assertIn("execution_agent", [item["agent"] for item in dataset_state.agent_decisions])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "completed")
+
+    def test_gateway_execute_requires_graph_approved_code_before_dataset_graph_invocation(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_execute_requires_code_review") / "PSY201"
+        run_id = "run_lg2_execute_requires_code_review"
+        code_dir = study_dir / "runs" / run_id / "code"
+        code_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            with self.assertRaisesRegex(ValueError, "approved code-review decision"):
+                gateway.execute_approved_code(
+                    study_dir=study_dir,
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+                )
+
+        compile_graph.assert_not_called()
 
     def test_gateway_draft_spec_review_rejects_changed_draft_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_draft_spec_hash") / "PSY201"

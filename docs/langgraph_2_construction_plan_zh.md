@@ -1467,6 +1467,43 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.2 Gateway Execution Approval Preflight 切片
+
+已完成：
+
+- 将“执行前必须在 canonical graph state 中存在已批准 code review”这个
+  preflight 前移到 `GraphGateway.execute_approved_code()`。
+- Gateway 现在会先验证 graph-owned code-review decision，再调用
+  `DatasetGraph` 的 `graph_product_execute` mode。
+- 这个 preflight 复用现有 graph execution contract 检查：
+  - `code_state.status` 和 `decision` 已批准
+  - 当前 input fingerprint
+  - review artifact path
+  - generated R code hash
+  - static-check artifact path/hash/schema/status
+  - 如存在 approved spec，则检查 spec path/hash
+  - runtime dependency artifact hash
+- 新增 gateway 测试，确认当 graph state 只有 generated code、但没有 approved
+  code-review decision 时，会在调用 `DatasetGraph` 之前 fail closed。
+- 更新正向 gateway execution 测试，使其按产品流程 seed：
+  generate-code -> code-review -> execute。
+
+当前边界：
+
+- 这是 workflow contract hardening，不是新增 clinical/static ADaM rule。
+- 静态检查继续只做 generic contract/rule-pack checks。本切片不增加任何
+  clinical、dataset-specific、study-specific 或 demo-specific rule。
+- 更深层 execution boundary 仍保留同样的 approval 检查；本次只是增加更早的
+  fail-closed gate，不替代 sandbox 侧验证。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_execute_requires_graph_approved_code_before_dataset_graph_invocation -v
+```
+
+结果：2 focused tests passed。
+
 ### 2026-05-30 - LG2.2 显式 Draft-Spec Gateway 切片
 
 已完成：

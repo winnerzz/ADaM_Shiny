@@ -1652,6 +1652,47 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.2 Gateway Execution Approval Preflight Slice
+
+Completed:
+
+- Moved the "approved code must exist in canonical graph state" execution
+  preflight up into `GraphGateway.execute_approved_code()`.
+- The gateway now verifies the graph-owned code-review decision before invoking
+  `DatasetGraph` in `graph_product_execute` mode.
+- The preflight reuses the existing graph execution contract checks for:
+  - approved `code_state.status` and `decision`
+  - current input fingerprint
+  - review artifact path
+  - generated R code hash
+  - static-check artifact path/hash/schema/status
+  - approved spec path/hash when present
+  - runtime dependency artifact hashes
+- Added gateway coverage that asserts execution is blocked before
+  `DatasetGraph` invocation when graph state has generated code but no approved
+  code-review decision.
+- Updated the positive gateway execution test so it seeds the same
+  generate-code -> code-review -> execute approval chain used by the product
+  flow.
+
+Current boundary:
+
+- This is a workflow-contract hardening slice, not a new clinical/static ADaM
+  rule.
+- Static checks remain generic contract/rule-pack checks. This slice does not
+  add clinical, dataset-specific, study-specific, or demo-specific rules.
+- The deeper execution boundary still performs the same approval checks again,
+  so this change adds an earlier fail-closed gate rather than replacing the
+  sandbox-side validation.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_execute_requires_graph_approved_code_before_dataset_graph_invocation -v
+```
+
+Result: 2 focused tests passed.
+
 ### 2026-05-30 - LG2.2 Explicit Draft-Spec Gateway Slice
 
 Completed:

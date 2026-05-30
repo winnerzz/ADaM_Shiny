@@ -13,6 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_state, record_agent_decision, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph
+from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, project_graph_state_to_workflow
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -1203,6 +1204,7 @@ class GraphGateway:
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="execute")
+        self._assert_approved_code_execution_ready(study_dir=root, run_id=run_id, dataset=target)
         result = compile_dataset_graph().invoke(
             {
                 "study_id": study_id,
@@ -1451,6 +1453,18 @@ class GraphGateway:
         if dataset_state is None:
             return
         _assert_terminal_failure_step_allowed(dataset_state, step=step)
+
+    def _assert_approved_code_execution_ready(self, *, study_dir: Path, run_id: str, dataset: str) -> None:
+        """Fail closed before execution if graph-owned code review is not current."""
+
+        target = dataset.strip().upper()
+        run_dir = study_dir / "runs" / run_id
+        code_path = run_dir / "code" / f"build_{target.lower()}.R"
+        review_path = run_dir / "review" / f"{target.lower()}_code_review.json"
+        try:
+            assert_graph_code_review_current(study_dir, run_id, target, review_path, code_path)
+        except GraphExecutionError as exc:
+            raise ValueError(_execution_preflight_error_message(str(exc))) from exc
 
     def load_graph_state(self, *, study_dir: str | Path, run_id: str) -> StudyRunState:
         """Load the durable canonical graph state for a local run."""
@@ -1763,6 +1777,18 @@ def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: s
             raise ValueError(f"Dependency artifact used for code generation no longer exists: {artifact_path}")
         if f"sha256:{sha256_file(artifact_path)}" != expected_sha:
             raise ValueError(stale_message)
+
+
+def _execution_preflight_error_message(message: str) -> str:
+    """Keep API-facing execution approval errors stable after gateway preflight moves earlier."""
+
+    if message.startswith("Graph state does not contain an approved code-review decision"):
+        return f"Generated code must be approved before sandbox execution. {message}"
+    if message.startswith("Graph code approval is stale"):
+        return message.replace("Graph code approval is stale", "Code approval is stale", 1)
+    if message.startswith("Generated code changed after graph approval"):
+        return message.replace("Generated code changed after graph approval", "Generated code changed after approval", 1)
+    return message
 
 
 def _assert_approved_draft_spec_current(
