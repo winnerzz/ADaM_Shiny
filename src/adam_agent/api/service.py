@@ -402,6 +402,7 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
         dependency_decisions=list(graph_state.dependency_decisions),
         dependency_resolution=list(graph_state.dependency_resolution),
         dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
+        graph_state_path=str((study_dir / "runs" / request.run_id / "graph_state.json").as_posix()),
         workflow_state_path=str((study_dir / "runs" / request.run_id / "workflow_state.json").as_posix()),
     )
 

@@ -3434,3 +3434,27 @@ python -m compileall -q src\adam_agent
 ```
 
 Result: 3 focused gateway/API tests passed; compileall passed.
+
+### 2026-05-30 - LG2.8 Prepare Response Graph-State Metadata Slice
+
+Completed:
+
+- Added `graph_state_path` to `RunPlanResponse`.
+- Updated `prepare_run_plan()` so `/runs/prepare` responses expose both the
+  canonical `graph_state.json` path and the compatibility `workflow_state.json`
+  projection path.
+- Added regression coverage for the service helper and FastAPI endpoint shape.
+
+Current boundary:
+
+- This is compatibility/read-model observability only.
+- It does not change dependency planning semantics, interrupts, generation,
+  execution, compare, UI layout, or sandbox behavior.
+- Static-rule governance is unchanged. No clinical, dataset-specific,
+  study-specific, demo-specific, or variable-specific static rule is added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_prepare_run_plan_uses_graph_projection tests.test_graph_gateway.GraphGatewayTests.test_graph_state_endpoint_returns_canonical_state -v
+```

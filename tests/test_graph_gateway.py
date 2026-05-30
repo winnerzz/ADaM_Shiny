@@ -152,10 +152,12 @@ class GraphGatewayTests(unittest.TestCase):
         )
 
         workflow_path = study_dir / "runs" / "run_lg2_api_prepare" / "workflow_state.json"
+        graph_path = study_dir / "runs" / "run_lg2_api_prepare" / "graph_state.json"
         workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
 
         self.assertEqual(response.dependency_review_status, "review_required")
         self.assertEqual(response.target_datasets, ["ADAE"])
+        self.assertEqual(response.graph_state_path, str(graph_path.as_posix()))
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
 
@@ -177,6 +179,9 @@ class GraphGatewayTests(unittest.TestCase):
             },
         )
         self.assertEqual(prepared.status_code, 200, prepared.text)
+        prepared_payload = prepared.json()
+        self.assertEqual(prepared_payload["graph_state_path"], str((study_dir / "runs" / "run_lg2_api_graph_state" / "graph_state.json").as_posix()))
+        self.assertEqual(prepared_payload["workflow_state_path"], str((study_dir / "runs" / "run_lg2_api_graph_state" / "workflow_state.json").as_posix()))
 
         response = client.get(
             "/runs/run_lg2_api_graph_state/graph-state",

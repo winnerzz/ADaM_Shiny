@@ -68,6 +68,7 @@ class RunPlanResponse(StrictBaseModel):
     dependency_decisions: list[dict[str, Any]] = Field(default_factory=list)
     dependency_resolution: list[dict[str, Any]] = Field(default_factory=list)
     dependency_warnings: list[str] = Field(default_factory=list)
+    graph_state_path: str | None = None
     workflow_state_path: str | None = None
 
 
