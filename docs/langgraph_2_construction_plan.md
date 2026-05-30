@@ -1713,6 +1713,44 @@ python -B -m unittest tests.test_api_phase8 -v
 
 Result: 58 tests passed.
 
+### 2026-05-30 - LG2.8 Legacy Workflow Write Boundary Slice
+
+Completed:
+
+- Concentrated the remaining service-layer `workflow_state.json` direct writes
+  into two explicitly named legacy `/runs` compatibility helpers:
+  - `_write_legacy_run_blocked_workflow_state`
+  - `_write_legacy_run_completion_workflow_state`
+- Updated `run_study_from_request()` so its main flow delegates those writes
+  instead of calling `update_workflow_state()` inline.
+- Added an AST regression guard that scans `api/service.py` and fails if any
+  new service function writes workflow state directly outside those legacy
+  helpers.
+- Added a second AST guard so the legacy helpers can be called only by
+  `run_study_from_request()`, preventing them from becoming reusable
+  service-layer state writers.
+- Kept the product endpoint boundary unchanged: product dataset actions still
+  enter through `GraphGateway` product methods and must not call low-level
+  recorders or workflow-state write helpers.
+
+Current boundary:
+
+- This slice does not remove the legacy `/runs` shim; it only makes its direct
+  projection writes explicit and guarded.
+- Upload invalidation remains graph-owned through `GraphGateway.mark_all_inputs_changed()`
+  plus the existing legacy projection invalidation helper.
+- Static-rule behavior is unchanged. Static checks remain generic
+  contract/rule-pack checks, not demo/study/dataset-specific patches.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_legacy_run_endpoint_owns_only_remaining_service_workflow_writes tests.test_api_phase8.Phase8ApiTests.test_run_study_from_request_delegates_legacy_workflow_writes tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+```
+
+Result: 4 tests passed before the helper-caller guard; focused helper guards
+were rerun afterward and passed.
+
 ### 2026-05-30 - LG2.5 Static Rule Authority Admission Slice
 
 Completed:

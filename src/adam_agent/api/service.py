@@ -121,6 +121,74 @@ def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[st
     }
 
 
+def _write_legacy_run_blocked_workflow_state(
+    *,
+    study_dir: str | Path,
+    run_id: str,
+    study_id: str,
+    request: RunStudyRequest,
+    execution_mode: str,
+) -> None:
+    """Write the legacy `/runs` blocked-state compatibility projection."""
+
+    root = Path(study_dir)
+    run_dir = root / "runs" / run_id
+    update_workflow_state(
+        root,
+        run_id,
+        study_id=study_id,
+        node="run_study_request_blocked",
+        status="blocked",
+        current_interrupt="split_flow_required",
+        input_fingerprint_payload=input_fingerprint(root),
+        extra={
+            "requested_datasets": [str(item).strip().upper() for item in request.target_datasets],
+            "execution_mode": execution_mode,
+            "blocked_reason": "LLM ADaM generation must use the draft/spec/code-review/execute API flow.",
+            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+            "legacy_endpoint": "POST /runs",
+            "product_flow_required": True,
+            "graph_state_path": None,
+            "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+        },
+    )
+
+
+def _write_legacy_run_completion_workflow_state(
+    *,
+    study_dir: str | Path,
+    run_id: str,
+    study_id: str,
+    response: RunStudyResponse,
+) -> None:
+    """Write the legacy `/runs` completion-state compatibility projection."""
+
+    root = Path(study_dir)
+    update_workflow_state(
+        root,
+        run_id,
+        study_id=study_id,
+        node="run_study_request",
+        status=response.status,
+        input_fingerprint_payload=input_fingerprint(root),
+        extra={
+            "requested_datasets": response.requested_datasets,
+            "target_datasets": response.target_datasets,
+            "runnable_datasets": response.runnable_datasets,
+            "blocked_datasets": response.blocked_datasets,
+            "dependency_review_status": response.dependency_review_status,
+            "execution_mode": response.execution_mode,
+            "dataset_results": response.dataset_results,
+            "audit_manifest": response.audit_manifest,
+            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
+            "legacy_endpoint": "POST /runs",
+            "product_flow_required": False,
+            "graph_state_path": response.graph_state_path,
+            "workflow_state_path": response.workflow_state_path,
+        },
+    )
+
+
 def ensure_study_workspace(request: StudyWorkspaceRequest) -> StudyInputSummary:
     """Create or open a local study workspace and return its input summary."""
 
@@ -259,25 +327,12 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
     if execution_mode is None:
         execution_mode = "stub"
     if execution_mode in {"llm_downstream_provider", "llm_downstream_r_sandbox"}:
-        run_dir = study_dir / "runs" / config.run_id
-        update_workflow_state(
-            study_dir,
-            config.run_id,
+        _write_legacy_run_blocked_workflow_state(
+            study_dir=study_dir,
+            run_id=config.run_id,
             study_id=study_id,
-            node="run_study_request_blocked",
-            status="blocked",
-            current_interrupt="split_flow_required",
-            input_fingerprint_payload=input_fingerprint(study_dir),
-            extra={
-                "requested_datasets": [str(item).strip().upper() for item in request.target_datasets],
-                "execution_mode": execution_mode,
-                "blocked_reason": "LLM ADaM generation must use the draft/spec/code-review/execute API flow.",
-                "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
-                "legacy_endpoint": "POST /runs",
-                "product_flow_required": True,
-                "graph_state_path": None,
-                "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
-            },
+            request=request,
+            execution_mode=execution_mode,
         )
         raise ApiServiceError(
             "LLM ADaM generation cannot run through POST /runs because it would bypass review gates. "
@@ -307,28 +362,11 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
         }
     )
     response = _response_from_graph_result(result, execution_mode=execution_mode, study_dir=study_dir)
-    update_workflow_state(
-        study_dir,
-        config.run_id,
+    _write_legacy_run_completion_workflow_state(
+        study_dir=study_dir,
+        run_id=config.run_id,
         study_id=study_id,
-        node="run_study_request",
-        status=response.status,
-        input_fingerprint_payload=input_fingerprint(study_dir),
-        extra={
-            "requested_datasets": response.requested_datasets,
-            "target_datasets": response.target_datasets,
-            "runnable_datasets": response.runnable_datasets,
-            "blocked_datasets": response.blocked_datasets,
-            "dependency_review_status": response.dependency_review_status,
-            "execution_mode": response.execution_mode,
-            "dataset_results": response.dataset_results,
-            "audit_manifest": response.audit_manifest,
-            "workflow_control": LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
-            "legacy_endpoint": "POST /runs",
-            "product_flow_required": False,
-            "graph_state_path": response.graph_state_path,
-            "workflow_state_path": response.workflow_state_path,
-        },
+        response=response,
     )
     return response
 

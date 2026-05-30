@@ -1526,6 +1526,42 @@ python -B -m unittest tests.test_api_phase8 -v
 
 结果：58 tests passed。
 
+### 2026-05-30 - LG2.8 Legacy Workflow Write Boundary 切片
+
+已完成：
+
+- 将 service 层剩余的 `workflow_state.json` 直接写入收口到两个明确命名的旧
+  `/runs` 兼容 helper：
+  - `_write_legacy_run_blocked_workflow_state`
+  - `_write_legacy_run_completion_workflow_state`
+- 更新 `run_study_from_request()`，让主体流程委托这两个 helper，而不是内联调用
+  `update_workflow_state()`。
+- 增加 AST 回归保护：扫描 `api/service.py`，如果未来有任何新的 service function
+  在这两个 legacy helper 之外直接写 workflow state，测试会失败。
+- 增加第二条 AST guard：这两个 legacy helper 只能由 `run_study_from_request()`
+  调用，防止它们变成可被其他 service function 复用的状态写入口。
+- 产品 endpoint 边界保持不变：dataset product actions 仍必须进入
+  `GraphGateway` product methods，不能调用低层 recorder 或 workflow-state 写入
+  helper。
+
+当前边界：
+
+- 本切片不删除旧 `/runs` shim；只是把它的 direct projection writes 明确化并加
+  guard。
+- 上传失效仍通过 `GraphGateway.mark_all_inputs_changed()` 加现有 legacy projection
+  invalidation helper 处理。
+- 静态规则行为不变。Static checks 仍然是 generic contract/rule-pack checks，不是
+  demo/study/dataset-specific 补丁。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_legacy_run_endpoint_owns_only_remaining_service_workflow_writes tests.test_api_phase8.Phase8ApiTests.test_run_study_from_request_delegates_legacy_workflow_writes tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+```
+
+结果：新增 helper-caller guard 前 4 tests passed；补充 helper-caller guard 后，
+focused helper guards 重新运行通过。
+
 ### 2026-05-30 - LG2.5 Static Rule Authority Admission 切片
 
 已完成：
