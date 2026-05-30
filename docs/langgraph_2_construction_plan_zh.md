@@ -1562,6 +1562,39 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_legacy_run_endpo
 结果：新增 helper-caller guard 前 4 tests passed；补充 helper-caller guard 后，
 focused helper guards 重新运行通过。
 
+### 2026-05-30 - LG2.2 DatasetGraph Non-Legacy Route Guard 切片
+
+已完成：
+
+- 给 `DatasetGraph` 增加 route-level 回归保护，确保非 legacy modes 不会落回旧
+  stub chain：
+  - `graph_product_prepare`
+  - `graph_product_generate_code`
+  - `graph_product_execute`
+  - `llm_downstream_stubbed`
+  - `llm_downstream_provider`
+  - `llm_downstream_r_sandbox`
+  - 已退休的 `real_adsl_minimal`
+- 保留已有 graph-shape guard：product agent nodes 直接进入
+  `summarize_dataset`，不进入 `draft_lineage_stub`。
+- 不删除 legacy stub nodes。它们仍只通过显式 `stub_chain` 分支供旧测试/兼容使用。
+
+当前边界：
+
+- 这是 regression guard，不改变 `DatasetGraph` runtime behavior、product steps、
+  LLM prompts、R execution 或 sandbox handling。
+- Stub modes 仍存在，但 product 和 LLM downstream 路径现在有测试保护，避免意外
+  回流到旧 stub chain。
+- 静态规则行为不变，仍然是 generic contract/rule-pack layer。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_nodes_do_not_flow_through_legacy_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+```
+
+结果：4 tests passed。
+
 ### 2026-05-30 - LG2.5 Static Rule Authority Admission 切片
 
 已完成：

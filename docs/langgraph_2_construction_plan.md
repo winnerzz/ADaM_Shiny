@@ -1751,6 +1751,41 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_legacy_run_endpo
 Result: 4 tests passed before the helper-caller guard; focused helper guards
 were rerun afterward and passed.
 
+### 2026-05-30 - LG2.2 DatasetGraph Non-Legacy Route Guard Slice
+
+Completed:
+
+- Added a route-level regression guard for `DatasetGraph` so non-legacy modes
+  cannot fall through into the old stub chain:
+  - `graph_product_prepare`
+  - `graph_product_generate_code`
+  - `graph_product_execute`
+  - `llm_downstream_stubbed`
+  - `llm_downstream_provider`
+  - `llm_downstream_r_sandbox`
+  - retired `real_adsl_minimal`
+- Kept the existing graph-shape guard that product agent nodes route directly
+  to `summarize_dataset`, not to `draft_lineage_stub`.
+- Did not remove legacy stub nodes. They remain reachable only through the
+  explicit `stub_chain` branch for old tests/compatibility.
+
+Current boundary:
+
+- This is a regression guard only. It does not change `DatasetGraph` runtime
+  behavior, product steps, LLM prompts, R execution, or sandbox handling.
+- Stub modes still exist, but the product and LLM downstream paths are now
+  protected against accidental routing back into them.
+- Static-rule behavior is unchanged and remains a generic contract/rule-pack
+  layer.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_nodes_do_not_flow_through_legacy_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+```
+
+Result: 4 tests passed.
+
 ### 2026-05-30 - LG2.5 Static Rule Authority Admission Slice
 
 Completed:

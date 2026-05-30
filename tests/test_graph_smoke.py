@@ -20,6 +20,7 @@ try:
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
+    from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -33,6 +34,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
+    from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -445,6 +447,35 @@ class GraphSmokeTests(unittest.TestCase):
             self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
 
         self.assertIn(("prepare_dataset", "draft_lineage_stub", "stub_chain"), edges)
+
+    def test_dataset_graph_non_legacy_modes_never_route_to_stub_chain(self) -> None:
+        mode_cases = [
+            ("graph_product_prepare", {"spec_source": "input_spec"}, "summarize"),
+            ("graph_product_prepare", {"spec_source": "missing_input_spec"}, "draft_spec_agent"),
+            ("graph_product_generate_code", {}, "generate_r_code_agent"),
+            ("graph_product_execute", {}, "execute_approved_code"),
+            ("llm_downstream_stubbed", {}, "summarize"),
+            ("llm_downstream_provider", {}, "summarize"),
+            ("llm_downstream_r_sandbox", {}, "summarize"),
+            ("real_adsl_minimal", {}, "summarize"),
+        ]
+
+        for execution_mode, extra, expected_route in mode_cases:
+            with self.subTest(execution_mode=execution_mode, extra=extra):
+                state = {
+                    "study_id": "PSY201",
+                    "run_id": "run_non_legacy_route_guard",
+                    "dataset": "ADAE",
+                    "execution_mode": execution_mode,
+                    "status": "needs_review",
+                    "audit_artifacts": [],
+                    **extra,
+                }
+
+                route = route_after_product_context(state)
+
+                self.assertEqual(route, expected_route)
+                self.assertNotEqual(route, "stub_chain")
 
     def test_graph_product_execute_prepare_does_not_run_r_before_execute_node(self) -> None:
         with patch("adam_agent.graph.dataset_graph.execute_approved_r_code") as execute:
