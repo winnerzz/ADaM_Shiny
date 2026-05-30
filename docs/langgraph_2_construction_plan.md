@@ -1757,6 +1757,38 @@ python -B -m unittest tests.test_r_safety tests.test_sandbox tests.test_static_r
 
 Result: 33 shared R-safety, sandbox, and static-rule tests passed.
 
+### 2026-05-30 - LG2.7 Reference Evidence Dependency Map Slice
+
+Completed:
+
+- Tightened the local UI dependency map wording so Reference ADaM is not shown
+  as a runtime dependency by itself.
+- Split the browser projection into:
+  - runtime availability: selected/planned/runnable in this run
+  - reference evidence: uploaded Reference ADaM for compare/output-shape
+    evidence only
+- Dataset status now labels pure Reference ADaM presence as `reference
+  evidence`, not a ready runtime input.
+- Added a UI contract regression that prevents the dependency map from
+  treating `hasReferenceAdamEvidence()` as runtime availability.
+
+Current boundary:
+
+- This is a UI graph-state viewer correction only. It does not change backend
+  dependency planning, graph execution, LLM prompts, or sandbox behavior.
+- Reference ADaM remains usable as comparison/output-shape/dependency evidence,
+  but it is not derivation authority and does not satisfy runtime dependency
+  availability by itself.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+```
+
+Result: 2 focused UI dependency-map tests passed; full
+`tests.test_api_phase8` passed 73 tests.
+
 ### 2026-05-30 - LG2.5 Static Rule Non-Authority Source Guard Slice
 
 Completed:

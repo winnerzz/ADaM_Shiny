@@ -2218,9 +2218,13 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function dependencyStepHtml(dependency, index, runnable, targets) {
-      const available = dependencyAvailable(dependency, runnable, targets);
-      const evidence = hasDatasetEvidence(dependency) ? 'provided in Reference ADaM' : (runnable || []).includes(dependency) ? 'planned/runnable in this run' : (targets || []).includes(dependency) ? 'selected as a target' : 'missing';
-      return `<li><span class="step-dot">${index + 2}</span><span>Requires upstream ADaM <strong>${escapeHtml(dependency)}</strong>: ${available ? 'available' : 'needs user action'} (${escapeHtml(evidence)}).</span></li>`;
+      const runtimeAvailable = dependencyRuntimeAvailable(dependency, runnable, targets);
+      const referenceEvidence = hasReferenceAdamEvidence(dependency);
+      const evidence = dependencyEvidenceText(dependency, runnable, targets);
+      const authorityNote = referenceEvidence
+        ? ' Reference ADaM is comparison/output-shape evidence only; it is not derivation authority or a runtime dependency by itself.'
+        : '';
+      return `<li><span class="step-dot">${index + 2}</span><span>Requires upstream ADaM <strong>${escapeHtml(dependency)}</strong>: ${runtimeAvailable ? 'runtime input available or planned' : 'needs user action'} (${escapeHtml(evidence)}).${escapeHtml(authorityNote)}</span></li>`;
     }
 
     function dependencyDecisionFor(target) {
@@ -2240,7 +2244,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!reviewFor(target) && !executionFor(target)) return 'Next: review the generated R code, then approve local execution.';
       if (executionFor(target)?.status === 'completed') return 'Next: inspect the generated ADaM table, compare result, and downloads.';
       if (executionFor(target)?.status === 'terminal_failure') return 'Execution failed. Review diagnostics before retrying.';
-      if (status === 'reference') return 'This dataset is available as reference evidence. Select another output target if you want to generate code.';
+      if (status === 'reference evidence') return 'Reference ADaM is available for compare/output-shape evidence only. It is not an approved derivation rule or runtime input by itself.';
       return 'Next: continue with the active review step shown below.';
     }
 
@@ -2287,7 +2291,7 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    function hasDatasetEvidence(dataset) {
+    function hasReferenceAdamEvidence(dataset) {
       return Boolean((state.inputSummary?.reference_adam || []).find((item) => item.dataset === dataset));
     }
 
@@ -2296,8 +2300,15 @@ INDEX_HTML = r"""<!doctype html>
       return decision?.dependencies || [];
     }
 
-    function dependencyAvailable(dependency, runnable, targets) {
-      return hasDatasetEvidence(dependency) || (runnable || []).includes(dependency) || (targets || []).includes(dependency);
+    function dependencyRuntimeAvailable(dependency, runnable, targets) {
+      return (runnable || []).includes(dependency) || (targets || []).includes(dependency);
+    }
+
+    function dependencyEvidenceText(dependency, runnable, targets) {
+      if ((runnable || []).includes(dependency)) return 'planned/runnable in this run';
+      if ((targets || []).includes(dependency)) return 'selected as a target in this run';
+      if (hasReferenceAdamEvidence(dependency)) return 'reference ADaM uploaded for compare/output-shape evidence only';
+      return 'missing';
     }
 
     function datasetStatus(target, runnable, blocked) {
@@ -2309,8 +2320,8 @@ INDEX_HTML = r"""<!doctype html>
       if (generatedFor(target)?.status === 'stale') return 'stale';
       if (generatedFor(target)?.generated_code || persisted?.generated_code) return 'needs review';
       if (generatedFor(target)) return 'reload code';
-      if (hasDatasetEvidence(target)) return 'reference';
       if ((runnable || []).includes(target)) return 'ready';
+      if (hasReferenceAdamEvidence(target)) return 'reference evidence';
       if (state.plan) return 'waiting';
       return 'candidate';
     }

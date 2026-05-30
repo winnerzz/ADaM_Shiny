@@ -1565,6 +1565,37 @@ python -B -m unittest tests.test_r_safety tests.test_sandbox tests.test_static_r
 
 结果：33 个 shared R-safety、sandbox、static-rule tests passed。
 
+### 2026-05-30 - LG2.7 Reference Evidence Dependency Map 切片
+
+已完成：
+
+- 收紧 local UI 的 dependency map 文案，避免把 Reference ADaM 显示成可单独满
+  足的 runtime dependency。
+- 将浏览器侧投影拆成两类含义：
+  - runtime availability：本 run 中已选择、已计划或 runnable；
+  - reference evidence：上传的 Reference ADaM，只用于 compare/output-shape
+    evidence。
+- dataset status 现在把纯 Reference ADaM 存在标为 `reference evidence`，而
+  不是 ready runtime input。
+- 增加 UI contract regression，防止 dependency map 把
+  `hasReferenceAdamEvidence()` 当成 runtime availability。
+
+当前边界：
+
+- 这是 UI graph-state viewer 的语义修正，不改变 backend dependency planning、
+  graph execution、LLM prompts 或 sandbox behavior。
+- Reference ADaM 仍可作为 comparison/output-shape/dependency evidence，但它
+  不是 derivation authority，也不能单独满足 runtime dependency availability。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+```
+
+结果：2 个 focused UI dependency-map tests passed；完整
+`tests.test_api_phase8` passed 73 tests。
+
 ### 2026-05-30 - LG2.5 Static Rule 非权威 Source Guard 切片
 
 已完成：

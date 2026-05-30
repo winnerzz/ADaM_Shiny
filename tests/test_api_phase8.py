@@ -374,9 +374,29 @@ class Phase8ApiTests(unittest.TestCase):
         view_handler = html.split("for (const button of node.querySelectorAll('[data-target-view]'))", 1)[1].split("byId('generateCodeButton')", 1)[0]
         self.assertIn("state.selectedTarget = button.dataset.targetView;", view_handler)
         self.assertNotIn("selectedTargetsForPlan", view_handler)
-        dataset_card_handler = html.split("for (const card of node.querySelectorAll('[data-card-target]'))", 1)[1].split("function hasDatasetEvidence", 1)[0]
+        dataset_card_handler = html.split("for (const card of node.querySelectorAll('[data-card-target]'))", 1)[1].split("function hasReferenceAdamEvidence", 1)[0]
         self.assertIn("state.selectedTarget = card.dataset.cardTarget;", dataset_card_handler)
         self.assertNotIn("preparePlan();", dataset_card_handler)
+
+    def test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        dependency_body = html.split("function dependencyStepHtml(dependency, index, runnable, targets)", 1)[1].split("function dependencyDecisionFor(target)", 1)[0]
+        runtime_body = html.split("function dependencyRuntimeAvailable(dependency, runnable, targets)", 1)[1].split("function dependencyEvidenceText(dependency, runnable, targets)", 1)[0]
+        self.assertIn("Reference ADaM is comparison/output-shape evidence only", dependency_body)
+        self.assertIn("not derivation authority or a runtime dependency by itself", dependency_body)
+        self.assertIn("runtime input available or planned", dependency_body)
+        self.assertIn("needs user action", dependency_body)
+        self.assertNotIn("hasReferenceAdamEvidence(dependency)", runtime_body)
+        self.assertIn("reference ADaM uploaded for compare/output-shape evidence only", html)
+        self.assertIn("reference evidence", html)
+        self.assertNotIn("provided in Reference ADaM", html)
+        status_body = html.split("function datasetStatus(target, runnable, blocked)", 1)[1].split("async function generateCode()", 1)[0]
+        self.assertLess(status_body.index("(runnable || []).includes(target)"), status_body.index("hasReferenceAdamEvidence(target)"))
 
     def test_product_workspace_endpoint_creates_hidden_default_workspace(self) -> None:
         client = TestClient(create_app())
