@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import unittest
@@ -218,6 +219,50 @@ class StaticRuleTests(unittest.TestCase):
         }
         found = sorted(token for token in forbidden_engine_tokens if token in engine_source)
         self.assertEqual(found, [], "Generic static-rule engine must not embed demo or dataset-specific ADaM logic.")
+
+    def test_static_rule_engine_branching_does_not_use_demo_or_dataset_literals(self) -> None:
+        engine_source = (ROOT / "src" / "adam_agent" / "tools" / "static_rules.py").read_text(encoding="utf-8")
+        tree = ast.parse(engine_source)
+        forbidden_tokens = {
+            "psy201",
+            "demo-data",
+            "adae",
+            "adsl",
+            "adlb",
+            "adcm",
+            "adex",
+            "addm",
+            "adsae",
+            "trtemfl",
+            "relgr1",
+            "aeterm",
+            "trtsdt",
+            "trtedt",
+            "usubjid",
+        }
+        branch_tests: list[ast.AST] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.If, ast.IfExp, ast.While, ast.Assert)):
+                branch_tests.append(node.test)
+            elif isinstance(node, ast.comprehension):
+                branch_tests.extend(node.ifs)
+            elif isinstance(node, ast.Match):
+                branch_tests.append(node.subject)
+
+        offenders: list[str] = []
+        for branch in branch_tests:
+            for node in ast.walk(branch):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    value = node.value.lower()
+                    matched = sorted(token for token in forbidden_tokens if token in value)
+                    for token in matched:
+                        offenders.append(f"line {getattr(node, 'lineno', '?')}: {token} in {node.value!r}")
+
+        self.assertEqual(
+            offenders,
+            [],
+            "Generic static-rule engine branch conditions must not depend on demo, dataset, or clinical-variable literals.",
+        )
 
     def test_static_rule_pack_admission_accepts_source_backed_rules(self) -> None:
         payload = {

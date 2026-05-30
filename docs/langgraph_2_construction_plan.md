@@ -2677,6 +2677,9 @@ Completed:
 - Added a source-level regression guard that keeps demo study names, dataset
   names, and demo-derived clinical variable anecdotes out of the generic
   `static_rules.py` engine.
+- Strengthened that guard with an AST-level branch scan: generic static-rule
+  branch conditions cannot depend on demo/study/dataset names or hand-picked
+  clinical-variable literals.
 - Added a positive terminal-failure retry regression: after a human
   `retry_execution` review, `/execute-approved-code` is allowed to enter the
   graph-owned `graph_product_execute` path and records the retry follow-up as
@@ -2687,6 +2690,9 @@ Current boundary:
 - The static-rule guard is intentionally about the generic engine. Dataset names
   and standards terms may still appear in tests or future versioned rule-pack
   fixtures.
+- The AST guard is intentionally structural. It blocks branch conditions that
+  would turn the generic engine into a patch table, while still allowing
+  dataset terms in tests, approved specs, and governed rule-pack fixtures.
 - The retry regression uses a mocked DatasetGraph return value. It proves the
   compatibility wrapper gate and graph-state recording path, not real R
   execution.
@@ -2699,7 +2705,7 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires
 python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules tests.test_sandbox -v
 ```
 
-Result: 14 static-rule tests passed; 3 focused retry tests passed; 205 core
+Result: 24 static-rule tests passed; 3 focused retry tests passed; 205 core
 tests passed.
 
 Subagent review:

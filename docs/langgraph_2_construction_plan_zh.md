@@ -2439,6 +2439,8 @@ additional core tests passed。
   evidence。
 - 增加 source-level 回归保护，防止 demo study 名、dataset 名、demo 中观察到
   的临床变量个案进入 generic `static_rules.py` engine。
+- 进一步增加 AST-level 分支扫描：generic static-rule 的分支条件不能依赖 demo/
+  study/dataset 名或手挑的临床变量字面量。
 - 增加 terminal-failure retry 正向回归：人工选择 `retry_execution` 后，
   `/execute-approved-code` 可以进入 graph-owned `graph_product_execute` 路径，
   并在 graph state 中记录 retry follow-up 已由 execute 消费。
@@ -2447,6 +2449,8 @@ additional core tests passed。
 
 - static-rule guard 只针对 generic engine。dataset 名和 standards 术语仍可以
   出现在测试或未来带版本的 rule-pack fixtures 中。
+- AST guard 是结构性约束：它阻止 generic engine 的分支条件退化成补丁表，但仍
+  允许 dataset 术语出现在测试、approved spec 和受治理的 rule-pack fixture 中。
 - retry 回归使用 mocked DatasetGraph return value，证明的是 compatibility
   wrapper gate 和 graph-state recording path，不是真实 R 执行。
 
@@ -2458,7 +2462,7 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_requires
 python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_graph_smoke tests.test_api_phase8 tests.test_graph_gateway tests.test_state_schemas tests.test_llm_generated_code tests.test_static_rules tests.test_sandbox -v
 ```
 
-结果：14 static-rule tests passed；3 focused retry tests passed；205 core tests
+结果：24 static-rule tests passed；3 focused retry tests passed；205 core tests
 passed。
 
 子 agent 审查：
