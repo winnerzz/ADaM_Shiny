@@ -79,6 +79,10 @@ def _is_legacy_stub_mode(state: DatasetGraphState) -> bool:
     return state.get("execution_mode") == "stub"
 
 
+def _is_legacy_stub_graph_enabled(state: DatasetGraphState) -> bool:
+    return bool(state.get("legacy_stub_graph_enabled"))
+
+
 def _skips_stub_nodes(state: DatasetGraphState) -> bool:
     return (
         _is_llm_downstream_mode(state)
@@ -123,6 +127,21 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
             "sandbox_runs": state.get("sandbox_runs", 0),
         }
 
+    if _is_legacy_stub_mode(state):
+        return {
+            "status": "failed",
+            "failure_type": "input_error",
+            "route": "fail",
+            "real_run_completed": False,
+            "real_run_error": (
+                "execution_mode=stub is available only through the explicit "
+                "legacy/test dataset graph compiler."
+            ),
+            "real_run_artifacts": {},
+            "real_validation_status": "not_run",
+            "sandbox_runs": 0,
+        }
+
     if not _is_legacy_stub_mode(state):
         mode = state.get("execution_mode") or "missing"
         return {
@@ -146,6 +165,20 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
         "repair_attempts": state.get("repair_attempts", 0),
         "max_repair_attempts": state.get("max_repair_attempts", 3),
         "sandbox_runs": state.get("sandbox_runs", 0),
+    }
+
+
+def prepare_legacy_stub_dataset(state: DatasetGraphState) -> DatasetGraphState:
+    """Prepare the explicit legacy/test stub graph."""
+
+    if not _is_legacy_stub_mode(state):
+        return prepare_dataset(state)
+    return {
+        "status": "running",
+        "repair_attempts": state.get("repair_attempts", 0),
+        "max_repair_attempts": state.get("max_repair_attempts", 3),
+        "sandbox_runs": state.get("sandbox_runs", 0),
+        "legacy_stub_graph_enabled": True,
     }
 
 
@@ -1057,72 +1090,79 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
-def build_dataset_graph():
-    """Build the dataset-level skeleton graph."""
+def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
+    """Build the dataset-level graph.
+
+    The default graph is the product graph. The old synthetic stub chain is
+    available only through the explicit legacy/test compiler below.
+    """
 
     graph = StateGraph(DatasetGraphState)
-    graph.add_node("prepare_dataset", prepare_dataset)
+    graph.add_node(
+        "prepare_dataset",
+        prepare_legacy_stub_dataset if include_legacy_stub_chain else prepare_dataset,
+    )
     graph.add_node("draft_spec_agent", draft_spec_agent_node)
     graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
     graph.add_node("execute_approved_code", execute_approved_code_node)
-    graph.add_node("draft_lineage_stub", draft_lineage_stub)
-    graph.add_node("draft_spec_stub", draft_spec_stub)
-    graph.add_node("route_risk_stub", route_risk_stub)
-    graph.add_node("human_review_stub", human_review_stub)
-    graph.add_node("generate_code_stub", generate_code_stub)
-    graph.add_node("run_sandbox_stub", run_sandbox_stub)
-    graph.add_node("classify_result_stub", classify_result_stub)
-    graph.add_node("repair_code_stub", repair_code_stub)
-    graph.add_node("revise_spec_stub", revise_spec_stub)
     graph.add_node("summarize_dataset", summarize_dataset)
+    if include_legacy_stub_chain:
+        graph.add_node("draft_lineage_stub", draft_lineage_stub)
+        graph.add_node("draft_spec_stub", draft_spec_stub)
+        graph.add_node("route_risk_stub", route_risk_stub)
+        graph.add_node("human_review_stub", human_review_stub)
+        graph.add_node("generate_code_stub", generate_code_stub)
+        graph.add_node("run_sandbox_stub", run_sandbox_stub)
+        graph.add_node("classify_result_stub", classify_result_stub)
+        graph.add_node("repair_code_stub", repair_code_stub)
+        graph.add_node("revise_spec_stub", revise_spec_stub)
 
     graph.add_edge(START, "prepare_dataset")
-    graph.add_conditional_edges(
-        "prepare_dataset",
-        route_after_product_context,
-        {
-            "draft_spec_agent": "draft_spec_agent",
-            "generate_r_code_agent": "generate_r_code_agent",
-            "execute_approved_code": "execute_approved_code",
-            "summarize": "summarize_dataset",
-            "stub_chain": "draft_lineage_stub",
-        },
-    )
+    route_map = {
+        "draft_spec_agent": "draft_spec_agent",
+        "generate_r_code_agent": "generate_r_code_agent",
+        "execute_approved_code": "execute_approved_code",
+        "summarize": "summarize_dataset",
+    }
+    if include_legacy_stub_chain:
+        route_map["stub_chain"] = "draft_lineage_stub"
+    graph.add_conditional_edges("prepare_dataset", route_after_product_context, route_map)
     graph.add_edge("draft_spec_agent", "summarize_dataset")
     graph.add_edge("generate_r_code_agent", "summarize_dataset")
     graph.add_edge("execute_approved_code", "summarize_dataset")
-    graph.add_edge("draft_lineage_stub", "draft_spec_stub")
-    graph.add_edge("draft_spec_stub", "route_risk_stub")
-    graph.add_conditional_edges(
-        "route_risk_stub",
-        route_after_risk,
-        {
-            "continue": "generate_code_stub",
-            "human_review": "human_review_stub",
-        },
-    )
-    graph.add_conditional_edges(
-        "human_review_stub",
-        route_after_product_prepare_review,
-        {
-            "summarize": "summarize_dataset",
-            "continue": "generate_code_stub",
-        },
-    )
-    graph.add_edge("generate_code_stub", "run_sandbox_stub")
-    graph.add_edge("run_sandbox_stub", "classify_result_stub")
-    graph.add_conditional_edges(
-        "classify_result_stub",
-        route_after_sandbox,
-        {
-            "success": "summarize_dataset",
-            "repair_code": "repair_code_stub",
-            "revise_spec": "revise_spec_stub",
-            "fail": "summarize_dataset",
-        },
-    )
-    graph.add_edge("repair_code_stub", "run_sandbox_stub")
-    graph.add_edge("revise_spec_stub", "generate_code_stub")
+    if include_legacy_stub_chain:
+        graph.add_edge("draft_lineage_stub", "draft_spec_stub")
+        graph.add_edge("draft_spec_stub", "route_risk_stub")
+        graph.add_conditional_edges(
+            "route_risk_stub",
+            route_after_risk,
+            {
+                "continue": "generate_code_stub",
+                "human_review": "human_review_stub",
+            },
+        )
+        graph.add_conditional_edges(
+            "human_review_stub",
+            route_after_product_prepare_review,
+            {
+                "summarize": "summarize_dataset",
+                "continue": "generate_code_stub",
+            },
+        )
+        graph.add_edge("generate_code_stub", "run_sandbox_stub")
+        graph.add_edge("run_sandbox_stub", "classify_result_stub")
+        graph.add_conditional_edges(
+            "classify_result_stub",
+            route_after_sandbox,
+            {
+                "success": "summarize_dataset",
+                "repair_code": "repair_code_stub",
+                "revise_spec": "revise_spec_stub",
+                "fail": "summarize_dataset",
+            },
+        )
+        graph.add_edge("repair_code_stub", "run_sandbox_stub")
+        graph.add_edge("revise_spec_stub", "generate_code_stub")
     graph.add_edge("summarize_dataset", END)
     return graph
 
@@ -1150,7 +1190,9 @@ def route_after_product_context(state: DatasetGraphState) -> str:
         return "draft_spec_agent"
     if _is_graph_product_prepare_mode(state):
         return "summarize"
-    return "stub_chain"
+    if _is_legacy_stub_mode(state) and _is_legacy_stub_graph_enabled(state):
+        return "stub_chain"
+    return "summarize"
 
 
 def _llm_request_for_code_generation(
@@ -1466,7 +1508,13 @@ def _merge_json_artifact(path: str | Path, payload: dict[str, object]) -> None:
 
 
 def compile_dataset_graph():
-    """Compile the dataset-level skeleton graph without its own checkpointer."""
+    """Compile the product dataset graph without its own checkpointer."""
 
     return build_dataset_graph().compile(name="dataset_graph")
+
+
+def compile_legacy_stub_dataset_graph():
+    """Compile the explicit legacy/test dataset graph that includes stub nodes."""
+
+    return build_dataset_graph(include_legacy_stub_chain=True).compile(name="legacy_stub_dataset_graph")
 

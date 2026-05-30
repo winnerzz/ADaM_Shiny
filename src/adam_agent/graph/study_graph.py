@@ -10,7 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
-from adam_agent.graph.dataset_graph import compile_dataset_graph
+from adam_agent.graph.dataset_graph import compile_dataset_graph, compile_legacy_stub_dataset_graph
 from adam_agent.graph.dependency_resolution import (
     approved_dependency_targets,
     available_dependency_targets,
@@ -718,7 +718,10 @@ def _run_dataset_tasks(tasks: list[DatasetTask]) -> list[DatasetGraphState]:
 
 
 def _invoke_dataset_task(task: DatasetTask) -> DatasetGraphState:
-    dataset_graph = compile_dataset_graph()
+    if task.get("execution_mode") == "stub":
+        dataset_graph = compile_legacy_stub_dataset_graph()
+    else:
+        dataset_graph = compile_dataset_graph()
     return dataset_graph.invoke(task)
 
 

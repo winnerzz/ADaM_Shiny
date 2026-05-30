@@ -107,6 +107,7 @@ class DatasetGraphState(TypedDict, total=False):
     llm_client_builder: object
     target_context_builder: object
     force_new_draft_spec: bool
+    legacy_stub_graph_enabled: bool
     real_run_completed: bool
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]

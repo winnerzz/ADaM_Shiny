@@ -3467,3 +3467,43 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ru
 
 结果：compileall passed；57 个 graph smoke tests passed；focused gateway
 compatibility/product tests passed。
+
+### 2026-05-30 - LG2.8 Product DatasetGraph / Legacy StubGraph 分离切片
+
+已完成：
+
+- `compile_dataset_graph()` 现在只编译产品 DatasetGraph，不再包含旧的 synthetic
+  `*_stub` nodes。
+- 新增 `compile_legacy_stub_dataset_graph()`，只有这个 legacy/test compiler 会包含
+  stub chain。
+- `execution_mode="stub"` 在产品图里会 fail closed；即使调用方试图传入内部
+  stub 标记，也不能让产品图进入 stub chain。Stub 执行只能通过显式 legacy/test
+  graph compiler 进入。
+- `StudyGraph` 只有在显式 `execution_mode="stub"` 的 compatibility/test run 中
+  才分发到 legacy stub graph。Product modes 和 LLM downstream modes 仍走产品
+  DatasetGraph。
+- Graph smoke tests 现在证明：
+  - 产品图拓扑不包含 legacy stub nodes；
+  - legacy stub graph 才包含显式 stub chain；
+  - 直接对产品图发起 `stub` 请求会 fail closed；
+  - 现有显式 legacy stub compatibility 行为仍可用。
+
+当前边界：
+
+- 本切片仍保留 legacy stub node functions，用于 compatibility tests 和旧 `/runs`
+  stub 行为；它做的是把 stub 从默认产品图拓扑中拆出去，而不是立刻删除所有
+  历史测试脚手架。
+- static-rule governance 不变。本切片不新增任何 static rule，也不新增
+  clinical、dataset-specific、study-specific、demo-specific 或 variable-specific
+  check。
+
+验证：
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_state_isolation_across_stub_runs tests.test_graph_smoke.GraphSmokeTests.test_product_dataset_graph_rejects_stub_mode_without_legacy_compiler tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_dataset_graph_contains_only_explicit_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```
+
+结果：focused graph split tests passed；compileall passed；228 个相关
+graph/gateway/API/static-rule tests passed。

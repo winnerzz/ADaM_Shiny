@@ -3812,3 +3812,43 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ru
 
 Result: compileall passed; 57 graph smoke tests passed; focused gateway
 compatibility/product tests passed.
+
+### 2026-05-30 - LG2.8 Product DatasetGraph / Legacy StubGraph Split Slice
+
+Completed:
+
+- `compile_dataset_graph()` now compiles the product dataset graph without the
+  old synthetic `*_stub` nodes.
+- Added `compile_legacy_stub_dataset_graph()` as the only compiler that includes
+  the legacy/test stub chain.
+- `execution_mode="stub"` is rejected by the product graph even if caller input
+  tries to set internal stub flags. Stub execution can only enter through the
+  explicit legacy/test graph compiler.
+- `StudyGraph` dispatches to the legacy stub graph only for explicit
+  `execution_mode="stub"` compatibility/test runs. Product and LLM downstream
+  modes still use the product dataset graph.
+- Graph smoke tests now prove:
+  - product graph topology does not include legacy stub nodes;
+  - the legacy stub graph contains the explicit stub chain;
+  - direct product-graph `stub` requests fail closed;
+  - existing explicit legacy stub compatibility behavior still works.
+
+Current boundary:
+
+- This slice still keeps legacy stub node functions for compatibility tests and
+  old `/runs` stub behavior. It removes them from the default product graph
+  topology rather than deleting all historical test scaffolding.
+- Static-rule governance is unchanged. This slice adds no static rule and no
+  clinical, dataset-specific, study-specific, demo-specific, or
+  variable-specific check.
+
+Verification:
+
+```text
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_state_isolation_across_stub_runs tests.test_graph_smoke.GraphSmokeTests.test_product_dataset_graph_rejects_stub_mode_without_legacy_compiler tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_dataset_graph_contains_only_explicit_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```
+
+Result: focused graph split tests passed; compileall passed; 228 related
+graph/gateway/API/static-rule tests passed.

@@ -19,6 +19,7 @@ LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 try:
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.dataset_graph import compile_legacy_stub_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.gateway import GraphGateway
@@ -33,6 +34,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.graph.dependencies import plan_dataset_dependencies
     from adam_agent.graph.dataset_graph import compile_dataset_graph
+    from adam_agent.graph.dataset_graph import compile_legacy_stub_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.gateway import GraphGateway
@@ -411,7 +413,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertFalse((study_dir / "runs" / "run_graph_unified_adsl" / "audit" / "adsl_manifest.json").exists())
 
     def test_dataset_state_isolation_across_stub_runs(self) -> None:
-        dataset_graph = compile_dataset_graph()
+        dataset_graph = compile_legacy_stub_dataset_graph()
 
         adsl = dataset_graph.invoke(
             {
@@ -476,13 +478,48 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("got legacy_auto_magic", result["real_run_error"])
         self.assertNotEqual(result["summary"].validation_status, "passed_stub")
 
-    def test_dataset_graph_product_nodes_do_not_flow_through_legacy_stub_chain(self) -> None:
+    def test_product_dataset_graph_rejects_stub_mode_without_legacy_compiler(self) -> None:
+        dataset_graph = compile_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_product_graph_rejects_stub_mode",
+                "dataset": "ADAE",
+                "execution_mode": "stub",
+                "legacy_stub_graph_enabled": True,
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "input_error")
+        self.assertIn("legacy/test dataset graph compiler", result["real_run_error"])
+        self.assertNotEqual(result["summary"].status, "completed")
+
+    def test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes(self) -> None:
         graph = compile_dataset_graph().get_graph()
         edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
+        node_names = {node.id for node in graph.nodes.values()}
 
         for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
             self.assertIn((product_node, "summarize_dataset", None), edges)
             self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
+
+        for legacy_node in {
+            "draft_lineage_stub",
+            "draft_spec_stub",
+            "generate_code_stub",
+            "run_sandbox_stub",
+            "repair_code_stub",
+            "revise_spec_stub",
+        }:
+            self.assertNotIn(legacy_node, node_names)
+        self.assertNotIn(("prepare_dataset", "draft_lineage_stub", "stub_chain"), edges)
+
+    def test_legacy_stub_dataset_graph_contains_only_explicit_stub_chain(self) -> None:
+        graph = compile_legacy_stub_dataset_graph().get_graph()
+        edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
 
         self.assertIn(("prepare_dataset", "draft_lineage_stub", "stub_chain"), edges)
 
