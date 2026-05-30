@@ -53,7 +53,6 @@ from adam_agent.graph.workflow_state import (
     input_fingerprint,
     invalidate_active_workflows,
     load_workflow_state,
-    mark_workflow_inputs_current,
     update_workflow_state,
 )
 from adam_agent.llm.clients import (
@@ -455,7 +454,6 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="generate_code")
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="generate_code_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:
@@ -522,7 +520,6 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="finalize_inputs")
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="finalize_inputs_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:
@@ -624,7 +621,6 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         GraphGateway().validate_product_step_start(study_dir=study_dir, run_id=run_id, dataset=target, step="draft_spec")
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
-    mark_workflow_inputs_current(study_dir, run_id, study_id=study_id, node="draft_spec_start")
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
     gateway = GraphGateway()
     try:

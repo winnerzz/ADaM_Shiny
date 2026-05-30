@@ -760,22 +760,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Approved draft spec changed after approval", generated.json()["detail"])
 
     def test_finalize_inputs_blocks_review_required_dependency_evidence(self) -> None:
-        study_dir = _workspace_dir("phase8_dependency_review_blocks_finalize") / "MY_STUDY"
-        sdtm_dir = study_dir / "input_sdtm"
-        spec_dir = study_dir / "input_spec"
-        legacy_dir = study_dir / "legacy_code"
-        output_dir = study_dir / "runs" / "run_dependency_warning" / "outputs"
-        sdtm_dir.mkdir(parents=True)
-        spec_dir.mkdir()
-        legacy_dir.mkdir()
-        output_dir.mkdir(parents=True)
-        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
-        (output_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
-        (spec_dir / "adae.json").write_text(
-            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
-            encoding="utf-8",
-        )
-        (legacy_dir / "ADAE.sas").write_text("data adae; merge ae adsl; by usubjid; run;", encoding="utf-8")
+        study_dir = _study_with_blocked_adae_dependency("phase8_dependency_review_blocks_finalize")
         client = TestClient(create_app())
 
         response = client.post(
@@ -785,6 +770,46 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("cannot continue until dependency issues are resolved", response.json()["detail"])
+        workflow_state = json.loads((study_dir / "runs" / "run_dependency_gate" / "workflow_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertNotEqual(workflow_state["last_node"], "finalize_inputs_start")
+        _assert_run_projection(self, study_dir, "run_dependency_gate")
+
+    def test_generate_code_dependency_gate_does_not_write_service_start_projection(self) -> None:
+        study_dir = _study_with_blocked_adae_dependency("phase8_dependency_review_blocks_generate")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_dependency_generate_gate/datasets/ADAE/generate-code",
+            json={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot continue until dependency issues are resolved", response.json()["detail"])
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_dependency_generate_gate" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertNotEqual(workflow_state["last_node"], "generate_code_start")
+        _assert_run_projection(self, study_dir, "run_dependency_generate_gate")
+
+    def test_draft_spec_dependency_gate_does_not_write_service_start_projection(self) -> None:
+        study_dir = _study_with_blocked_adae_dependency("phase8_dependency_review_blocks_draft")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_dependency_draft_gate/datasets/ADAE/draft-spec",
+            json={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot continue until dependency issues are resolved", response.json()["detail"])
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_dependency_draft_gate" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertNotEqual(workflow_state["last_node"], "draft_spec_start")
+        _assert_run_projection(self, study_dir, "run_dependency_draft_gate")
 
     def test_finalize_inputs_blocks_dependency_warning(self) -> None:
         study_dir = _workspace_dir("phase8_dependency_warning_blocks_finalize") / "MY_STUDY"
@@ -2679,6 +2704,26 @@ def _study_with_adae_inputs(name: str) -> Path:
         encoding="utf-8",
     )
     (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+    return study_dir
+
+
+def _study_with_blocked_adae_dependency(name: str) -> Path:
+    study_dir = _workspace_dir(name) / "MY_STUDY"
+    sdtm_dir = study_dir / "input_sdtm"
+    spec_dir = study_dir / "input_spec"
+    legacy_dir = study_dir / "legacy_code"
+    output_dir = study_dir / "runs" / "run_prior_adlb_output" / "outputs"
+    sdtm_dir.mkdir(parents=True)
+    spec_dir.mkdir()
+    legacy_dir.mkdir()
+    output_dir.mkdir(parents=True)
+    (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+    (output_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
+    (spec_dir / "adae.json").write_text(
+        json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+        encoding="utf-8",
+    )
+    (legacy_dir / "ADAE.sas").write_text("data adae; merge ae adsl; by usubjid; run;", encoding="utf-8")
     return study_dir
 
 

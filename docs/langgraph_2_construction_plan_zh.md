@@ -13,14 +13,18 @@ LangGraph-2 的核心原则：
 - `src/adam_agent/api/service.py` 里有目前最完整的真实流程：依赖计划、确认输入、draft spec、draft spec 审核、生成代码、代码审核、执行已审核 R、验证、比较、下载。
 - `src/adam_agent/graph/study_graph.py` 已有 study 级依赖计划、dataset 批次、分发、汇总和 study audit manifest。
 - `src/adam_agent/graph/dataset_graph.py` 已有 dataset 图骨架、LLM downstream 执行模式、失败路由和结果汇总。
-- `src/adam_agent/graph/workflow_state.py` 目前会持久化 `workflow_state.json` 和 SQLite sidecar checkpoint history，供当前 UI/API 流程使用。
+- `src/adam_agent/graph/workflow_state.py` 目前仍会持久化兼容用的
+  `workflow_state.json` read model 和 SQLite sidecar history，供当前 UI/API
+  展示层使用。
 - `src/adam_agent/llm/`、`src/adam_agent/downstream/`、`src/adam_agent/tools/` 已经形成了可复用的工具边界。
 - ADSL 已修正为和其他 AD target 一样走统一 ADaM 产品流程。旧的 `src/adam_agent/adsl/` 只作为 legacy/regression 保留。
 
 当前架构偏差：
 
 - 真实 human-in-the-loop 流程主要还在 FastAPI service 函数里，不在 LangGraph `interrupt` 节点里。
-- `workflow_state.json` 仍是当前产品状态源；LangGraph checkpointer 还不是单一事实来源。
+- `workflow_state.json` 仍作为 UI/API 兼容 read model 存在，但产品事实来源正在
+  收敛到 canonical `graph_state.json`；剩余的直接兼容写入都应视为要移除或隔离
+  的 legacy surface。
 - `DatasetGraph` 里仍有早期 `*_stub` 节点，图还不是完整产品工作流。
 - 当前产品更像“受控流水线 + LLM 调用”，还不是明确专家角色分工的多智能体图。
 - UI 的 dataset card 和 target 切换仍更像单 target 控制器，不像多个持久 dataset run 的图状态视图。
@@ -418,6 +422,8 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 
 - 静态检查是 policy/rule-pack 层，不是不断追加 PSY201、ADAE、ADSL 或某个
   demo 变量特例的补丁清单。
+- 静态检查要从底层原则设计成可复用的 contract check。demo 中出现的失败只能
+  说明“可能缺一个更通用的 contract”，它本身不能直接变成生产规则。
 - 这是硬架构边界：通用 static-check engine 不能按 dataset 名、study 名、demo
   文件夹或某个临床变量个案分支。demo 中观察到的问题只能变成通用 contract 的
   测试，或进入带来源的 rule-pack item。
@@ -456,6 +462,9 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - rule-pack 准入是产品/治理决策，不是随手改代码。任何 clinical/static
   standards rule 要能 block 一个 run，必须先有 source、version、scope、
   severity 和 evidence。
+- generic engine 里不能有“例外登记表”。如果未来某个问题看起来需要例外处理，
+  工程上的处理只能是：修正 approved spec contract，加入带来源的 rule-pack
+  item，或在具备正式来源前保留为不 blocking 的 reviewer note。
 - 所以 LG2.5 的第一优先级是 rule-pack 准入和 provenance，而不是继续增加临床
   检查项。rule-pack contract 没有建立前就新增 ADaM/CDISC 规则，应视为设计错
   误。
@@ -498,6 +507,14 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
 - 增加 source-level 回归保护：dataset 名、demo study 名、demo 中观察到的临床
   变量个案可以出现在测试或 rule-pack fixture 中，但不能作为 generic engine 的
   分支逻辑。
+- 每条静态规则进入实现前必须走 rule lifecycle checklist：
+  - candidate observation：在 demo/test/real run 中发现的问题，不能直接 block
+    生产流程
+  - generic contract：把问题改写成不依赖 dataset/study/file 特例的通用契约
+  - authority binding：明确来源是 system contract、approved spec、user
+    policy，还是 versioned rule pack
+  - implemented check：写成确定性 evaluator，并带完整 audit metadata
+  - reviewer visibility：报告里说明检查范围，以及它不能证明什么
 - 给未来每个 static-check PR 增加 rule-design review checklist：
   - 这条规则检查的是哪个已经声明的 contract？
   - 规则权威来自哪里：system contract、approved spec、user policy，还是
@@ -1480,6 +1497,72 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 结果：58 tests passed。
+
+### 2026-05-30 - LG2.8 产品 Read-Model 写入隔离切片
+
+已完成：
+
+- 移除产品 compatibility endpoints 对 `mark_workflow_inputs_current()` 的直接调用：
+  - `generate-code`
+  - `finalize-inputs`
+  - 显式 `draft-spec`
+- 这些 endpoint 现在不再在 graph-owned 产品步骤之前写 service-owned `*_start`
+  checkpoint；`workflow_state.json` 更新交给 `GraphGateway`/canonical graph
+  projection。
+- 增加 API 回归覆盖：当 `finalize-inputs`、`generate-code` 或显式
+  `draft-spec` 被 dependency gate 阻止时，持久化的 `workflow_state.json`
+  仍然是 LangGraph projection，不会被覆盖成 service-owned `*_start` node。
+- 更新 LG2 baseline：`workflow_state.json` 是 compatibility read model，不是
+  产品事实来源；剩余直接兼容写入都属于要移除或隔离的 legacy surface。
+
+当前边界：
+
+- 本切片不删除 `workflow_state.json`；当前 UI 仍把它作为 compatibility
+  projection 读取。
+- Upload invalidation 和旧 `/runs` 非 LLM compatibility path 仍使用
+  workflow-state helpers。本切片只移除产品 split-flow start writes，避免它们与
+  graph projection 竞争。
+- Canonical input fingerprint 保护仍在 `GraphGateway` 和 graph state records
+  中完成。
+
+Focused verification：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code -v
+```
+
+结果：初始 3 个 focused tests passed。子 agent review 后，为 `generate-code`
+和显式 `draft-spec` 补充两个 dependency-gate read-model 测试；3 个
+read-model isolation tests passed。
+
+Broader verification：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+git diff --check -- src/adam_agent/api/service.py tests/test_api_phase8.py docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+python -m compileall -q src/adam_agent
+```
+
+结果：183 个 gateway/API/graph/static/reference 相关测试通过；49 个 core tests
+通过；diff check 和 compileall 通过。
+
+静态规则方案调整：
+
+- LG2.5 方案现在明确：静态规则必须从底层原则设计成可复用的 contract check，
+  不能把 demo failure 直接写成补丁规则。
+- 增加 rule lifecycle checklist：candidate observation -> generic contract
+  -> authority binding -> deterministic check -> reviewer visibility。
+- 再次明确 generic engine 里没有“例外登记表”；未来 clinical/domain rule 要能
+  block run，必须先进入 approved spec 或带来源的 rule pack。
+
+子 agent 审查：
+
+- 子 agent review 返回 GO。
+- 未报告 blocking finding。
+- 主要非阻塞建议是把相同的 rejected-gate read-model invariant 补到
+  `generate-code` 和显式 `draft-spec`；提交前已补上。
+- 小幅清理测试 helper 名称后，最终子 agent 复核仍未发现 blocking finding。
 
 ### 2026-05-30 - LG2 静态规则边界与 Terminal-Failure Review Gateway 切片
 

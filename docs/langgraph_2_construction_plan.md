@@ -21,8 +21,9 @@ Current useful assets:
   planning, dataset batching, dispatch, reduction, and study audit manifest.
 - `src/adam_agent/graph/dataset_graph.py` contains the dataset graph skeleton,
   LLM downstream execution modes, failure routing, and summary reduction.
-- `src/adam_agent/graph/workflow_state.py` persists `workflow_state.json` and a
-  SQLite sidecar checkpoint history for the current UI/API flow.
+- `src/adam_agent/graph/workflow_state.py` still persists the compatibility
+  `workflow_state.json` read model and a SQLite sidecar history for the current
+  UI/API flow.
 - `src/adam_agent/llm/`, `src/adam_agent/downstream/`, and
   `src/adam_agent/tools/` already provide useful tool boundaries.
 - ADSL has been corrected to follow the same ADaM product flow as other AD
@@ -32,8 +33,9 @@ Current architectural deviations:
 
 - The real human-in-the-loop workflow is mostly in FastAPI service functions,
   not in LangGraph `interrupt` nodes.
-- `workflow_state.json` is the current product state source; LangGraph
-  checkpointer is not the single source of truth.
+- `workflow_state.json` still exists as a UI/API compatibility read model, but
+  product truth is converging on canonical `graph_state.json`; remaining direct
+  compatibility writes must be treated as legacy surfaces to remove or isolate.
 - `DatasetGraph` still contains early `*_stub` nodes. The graph is not yet the
   full product workflow.
 - The current product is a controlled pipeline with LLM calls, not yet a true
@@ -489,6 +491,9 @@ Design principle:
 
 - Static checks are a policy/rule-pack layer, not a growing list of one-off
   patches for PSY201, ADAE, ADSL, or any single demo variable.
+- Static checks should be designed from first principles as reusable contract
+  checks. A demo failure is only evidence that a broader contract may be
+  missing; it is not itself a production rule.
 - This is a hard architecture boundary: the generic static-check engine must
   not branch on dataset names, study names, demo folders, or individual clinical
   variable anecdotes. Those observations may only become tests for generic
@@ -534,6 +539,10 @@ Design principle:
 - Rule-pack admission is a product/governance decision, not a quick code change:
   every clinical/static standards rule needs a source, version, scope, severity,
   and evidence before it can block a run.
+- There is no "exception registry" inside the generic engine. If a future issue
+  seems to require an exception, the engineering response must be one of:
+  revise the approved spec contract, add a source-backed rule-pack item, or keep
+  the issue as a non-blocking reviewer note until it has proper authority.
 - When a check is heuristic or incomplete, it must be warning/informational and
   must record that it does not prove clinical correctness.
 - Every static finding must carry rule-governance metadata:
@@ -594,6 +603,15 @@ Tasks:
   demo study names, and demo-derived clinical variable anecdotes may appear in
   tests or rule-pack fixtures, but not as branching logic inside the generic
   engine.
+- Add a rule lifecycle checklist before implementation:
+  - candidate observation: problem found in demo/test/real run, cannot block
+    production
+  - generic contract: problem restated without dataset/study/file-specific
+    assumptions
+  - authority binding: source is system contract, approved spec, user policy, or
+    versioned rule pack
+  - implemented check: deterministic evaluator with audit metadata
+  - reviewer visibility: report explains scope and what the rule does not prove
 - Add a rule-design review checklist for every future static-check PR:
   - What declared contract is being checked?
   - Where does the rule authority come from: system contract, approved spec,
@@ -1668,6 +1686,78 @@ python -B -m unittest tests.test_api_phase8 -v
 ```
 
 Result: 58 tests passed.
+
+### 2026-05-30 - LG2.8 Product Read-Model Write Isolation Slice
+
+Completed:
+
+- Removed direct `mark_workflow_inputs_current()` calls from the product
+  compatibility endpoints:
+  - `generate-code`
+  - `finalize-inputs`
+  - explicit `draft-spec`
+- These endpoints now leave `workflow_state.json` updates to
+  `GraphGateway`/canonical graph projection instead of writing a service-owned
+  `*_start` checkpoint before the graph-owned product step.
+- Added API regression coverage for dependency-gated product calls:
+  when the graph gate blocks `finalize-inputs`, `generate-code`, or explicit
+  `draft-spec`, the persisted `workflow_state.json` remains a LangGraph
+  projection and is not overwritten with a service-owned `*_start` node.
+- Updated the LG2 baseline wording: `workflow_state.json` is a compatibility
+  read model, not product truth; direct compatibility writes are legacy surfaces
+  to remove or isolate.
+
+Current boundary:
+
+- This slice does not remove `workflow_state.json`; the current UI still reads
+  it as a compatibility projection.
+- Upload invalidation and old `/runs` non-LLM compatibility paths still use
+  workflow-state helpers. This slice only removes product split-flow start
+  writes that competed with graph projection.
+- Canonical input fingerprint protection remains in `GraphGateway` and graph
+  state records.
+
+Focused verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_review_required_dependency_evidence tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_retry_execution_does_not_unlock_code_regeneration tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code -v
+```
+
+Result: the initial 3 focused tests passed. After subagent review, two more
+dependency-gate read-model tests were added for `generate-code` and explicit
+`draft-spec`; the 3 read-model isolation tests passed.
+
+Broader verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_graph_smoke tests.test_static_rules tests.test_reference_store -v
+python -B -m unittest tests.test_agents_contract tests.test_llm_context tests.test_prompt_compaction tests.test_downstream_runner tests.test_state_schemas tests.test_llm_generated_code tests.test_sandbox -v
+git diff --check -- src/adam_agent/api/service.py tests/test_api_phase8.py docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+python -m compileall -q src/adam_agent
+```
+
+Result: 183 related gateway/API/graph/static/reference tests passed; 49 core
+tests passed; diff check and compileall passed.
+
+Static-rule plan adjustment:
+
+- The LG2.5 plan now explicitly says static rules must be designed as reusable
+  contract checks from first principles, not as demo failure patches.
+- Added a rule lifecycle checklist: candidate observation -> generic contract
+  -> authority binding -> deterministic check -> reviewer visibility.
+- Reiterated that the generic engine has no exception registry; future
+  clinical/domain rules must enter through approved specs or source-backed rule
+  packs before they can block a run.
+
+Subagent review:
+
+- Subagent review returned GO.
+- It reported no blocking findings.
+- Its main non-blocking suggestion was to add the same rejected-gate read-model
+  invariant for `generate-code` and explicit `draft-spec`; those tests were
+  added before commit.
+- After a small helper-name cleanup, final subagent re-review again reported no
+  blocking findings.
 
 ### 2026-05-30 - LG2 Static-Rule Boundary And Terminal-Failure Review Gateway Slice
 
