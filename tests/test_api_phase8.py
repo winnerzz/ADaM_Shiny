@@ -168,6 +168,29 @@ class Phase8ApiTests(unittest.TestCase):
             "Service helpers must delegate state changes to GraphGateway instead of writing workflow_state directly.",
         )
 
+    def test_service_layer_reads_graph_state_only_for_graph_state_endpoint(self) -> None:
+        from adam_agent.api import service
+
+        graph_state_readers: list[str] = []
+        for name, obj in vars(service).items():
+            if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
+                continue
+            tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+            calls_load_graph_state = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "load_graph_state"
+                for node in ast.walk(tree)
+            )
+            if calls_load_graph_state:
+                graph_state_readers.append(name)
+
+        self.assertEqual(
+            sorted(graph_state_readers),
+            ["read_run_graph_state"],
+            "Service helpers should not inspect graph internals except for the explicit graph-state read endpoint.",
+        )
+
     def test_run_study_from_request_delegates_legacy_run_state_to_gateway(self) -> None:
         from adam_agent.api import service
 

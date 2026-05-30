@@ -1139,24 +1139,6 @@ def _default_mock_generated_code_response(target: str) -> str:
     return default_mock_generated_code_response(target)
 
 
-def _approved_dependencies_from_graph_state(study_dir: Path, run_id: str) -> list[str]:
-    """Return dependency generation approvals that were persisted by human review."""
-
-    try:
-        graph_state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
-    except FileNotFoundError:
-        return []
-    approved: list[str] = []
-    for command in graph_state.human_commands:
-        if command.interrupt != "dependency_review" or command.action != "approve":
-            continue
-        for item in command.payload.get("approved_dependency_datasets", []):
-            dataset = str(item).strip().upper()
-            if dataset and dataset not in approved:
-                approved.append(dataset)
-    return approved
-
-
 def _approved_draft_spec_payload(study_dir: Path, run_id: str, target: str) -> dict[str, Any] | None:
     approved_path = study_dir / "runs" / run_id / "approved_specs" / f"{target.lower()}_approved_spec.json"
     review_path = study_dir / "runs" / run_id / "reviews" / f"{target.lower()}_draft_spec_review.json"
