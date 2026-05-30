@@ -185,6 +185,18 @@ class StaticRuleTests(unittest.TestCase):
             "cannot be admitted as binding rule-pack sources",
             payload["policy"]["rule_governance"]["non_authority_source_policy"],
         )
+        self.assertIn(
+            "generic declared contract",
+            payload["policy"]["rule_governance"]["rule_abstraction_gate_policy"],
+        )
+        self.assertIn(
+            "must not contain demo",
+            payload["policy"]["rule_governance"]["no_exception_registry_policy"],
+        )
+        self.assertTrue(
+            any("generic declared contract" in note for note in payload["notes"]),
+            "Static-rule reports must expose the abstraction gate for future blocking rules.",
+        )
         self.assertIn("CDISC", payload["non_compliance_disclaimer"])
 
     def test_static_rule_report_finding_metadata_prevents_anonymous_rules(self) -> None:

@@ -591,6 +591,11 @@ Design principle:
 - If an engineer cannot explain a static check without naming a demo study,
   a specific uploaded file, or a single clinical variable exception, that check
   is not allowed in the generic static-rule engine.
+- Static-rule design must pass an abstraction gate before implementation:
+  the reviewer should be able to delete the motivating demo name, file name,
+  dataset name, and variable anecdote from the issue description and still
+  state the rule as either a generic declared contract or a governed rule-pack
+  item. If not, the item remains a reviewer note or backlog candidate.
 
 Tasks:
 
@@ -636,6 +641,12 @@ Tasks:
     versioned rule pack
   - implemented check: deterministic evaluator with audit metadata
   - reviewer visibility: report explains scope and what the rule does not prove
+- Add a rule-abstraction gate to static-check artifacts and future reviews:
+  - a concrete failure may motivate investigation, but cannot be the rule text
+  - the implemented rule must be described without demo/study/file-specific
+    names unless those names are part of a governed rule pack scope
+  - the audit report must remind reviewers that new blocking rules need a
+    generic declared contract or admitted source-backed rule-pack authority
 - Add a rule-design review checklist for every future static-check PR:
   - What declared contract is being checked?
   - Where does the rule authority come from: system contract, approved spec,

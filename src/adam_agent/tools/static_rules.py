@@ -159,6 +159,8 @@ class StaticRulePolicy:
                 "rule_pack_admission_policy": "A standards/company rule pack must declare authority_type, source, version, scope, severity, and evidence before it can affect review or execution.",
                 "non_authority_source_policy": "Candidate rules, demo observations, implementation notes, and reviewer notes cannot be admitted as binding rule-pack sources.",
                 "candidate_rule_policy": "Candidate rules and demo observations are reviewer notes until promoted through rule-pack admission.",
+                "rule_abstraction_gate_policy": "A single demo, file, dataset, or variable observation cannot become a blocking static rule until it is restated as a generic declared contract or admitted through a source-backed rule pack.",
+                "no_exception_registry_policy": "The generic static-rule engine must not contain demo, study, dataset, file, or variable exception branches.",
             },
         }
 
@@ -709,6 +711,7 @@ def _report(
             "Blocking checks currently cover generic R safety calls and caller-provided output contracts.",
             "Identifier checks are caller-provided visibility checks, not proof of clinical derivation correctness.",
             "Demo observations must be promoted into source-backed rule packs before becoming static rules.",
+            "A new blocking static rule must first be justified as a generic declared contract or as an admitted source-backed rule-pack item.",
             "Additional standards-aware policies belong in later LG2.5 increments.",
         ],
     )

@@ -500,6 +500,10 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
   暗示需要新增检查，必须先把它改写成通用 contract，或改写成带治理信息的
   rule-pack item；如果无法完成这个改写，就只能作为 reviewer note 暴露给人，
   不能作为 blocking static rule。
+- static-rule 设计在实现前必须通过一层 abstraction gate：把触发问题的 demo
+  名、文件名、dataset 名和单个变量个案都删掉后，仍然能说清楚它检查的是哪个
+  通用 declared contract，或它属于哪个带来源治理信息的 rule-pack item。否则
+  只能进入 reviewer note 或 backlog candidate。
 
 任务：
 
@@ -541,6 +545,12 @@ policy 检查，不能写成针对 demo 或某个 ADaM 数据集的补丁规则�
     policy，还是 versioned rule pack
   - implemented check：写成确定性 evaluator，并带完整 audit metadata
   - reviewer visibility：报告里说明检查范围，以及它不能证明什么
+- 给 static-check artifact 和未来 review 增加 rule-abstraction gate：
+  - 具体 failure 可以触发调查，但不能直接作为规则文本
+  - 实现后的规则必须能在不依赖 demo/study/file 名称的情况下说明清楚，除非这些
+    名称属于受治理 rule pack 的 scope
+  - audit report 必须提醒 reviewer：新的 blocking rule 需要通用 declared
+    contract，或已经准入的 source-backed rule-pack authority
 - 给未来每个 static-check PR 增加 rule-design review checklist：
   - 这条规则检查的是哪个已经声明的 contract？
   - 规则权威来自哪里：system contract、approved spec、user policy，还是
