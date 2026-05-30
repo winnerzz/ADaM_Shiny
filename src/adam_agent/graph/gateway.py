@@ -2249,6 +2249,31 @@ class GraphGateway:
             if (run_dir / "graph_state.json").is_file()
         ]
 
+    def progress_summary(self, *, study_dir: str | Path, run_id: str) -> dict[str, Any]:
+        """Return a graph-owned read model for UI progress and next actions."""
+
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        datasets = [_dataset_progress_item(graph_state, dataset) for dataset in _progress_dataset_order(graph_state)]
+        next_item = _study_next_action(graph_state, datasets)
+        run_dir = root / "runs" / run_id
+        return {
+            "study_id": graph_state.study_id,
+            "run_id": graph_state.run_id,
+            "status": graph_state.status,
+            "next_action": next_item["next_action"],
+            "action_label": next_item["action_label"],
+            "current_interrupt": _interrupt_payload(graph_state.current_interrupt),
+            "dependency_review_status": graph_state.dependency_review_status,
+            "plan_stale": bool(graph_state.dependency_plan.get("plan_stale")),
+            "target_datasets": list(graph_state.target_datasets),
+            "runnable_datasets": list(graph_state.runnable_datasets),
+            "blocked_datasets": list(graph_state.blocked_datasets),
+            "datasets": datasets,
+            "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
+            "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+        }
+
     def _generated_code_state(self, study_dir: Path, *, run_id: str, dataset: str) -> dict[str, Any]:
         try:
             graph_state = self.load_graph_state(study_dir=study_dir, run_id=run_id)
@@ -2860,6 +2885,218 @@ def _open_study_interrupt(state: StudyRunState) -> InterruptState | None:
     if interrupt is not None and interrupt.status == "open" and interrupt.dataset is None:
         return interrupt
     return None
+
+
+def _progress_dataset_order(state: StudyRunState) -> list[str]:
+    datasets: list[str] = []
+    for dataset in list(state.target_datasets) + sorted(state.datasets):
+        normalized = str(dataset).strip().upper()
+        if normalized and normalized not in datasets:
+            datasets.append(normalized)
+    return datasets
+
+
+def _study_next_action(state: StudyRunState, datasets: list[dict[str, Any]]) -> dict[str, str]:
+    if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
+        return {
+            "next_action": "replan_dependencies",
+            "action_label": "Study inputs changed. Re-run dependency planning before continuing.",
+        }
+    if state.dependency_review_status in {"blocked", "warning", "review_required"}:
+        return {
+            "next_action": "review_dependency_plan",
+            "action_label": "Review dependency plan.",
+        }
+    interrupt = state.current_interrupt
+    if interrupt is not None and interrupt.status == "open":
+        if interrupt.dataset:
+            dataset = interrupt.dataset.strip().upper()
+            return {
+                "next_action": _action_for_interrupt(interrupt.name),
+                "action_label": f"Review {dataset}: {_interrupt_label(interrupt.name)}",
+            }
+        return {
+            "next_action": _action_for_interrupt(interrupt.name),
+            "action_label": _interrupt_label(interrupt.name),
+        }
+    for item in datasets:
+        if not item.get("blocked") and item.get("next_action") not in {"complete", "wait_for_plan", "blocked"}:
+            return {
+                "next_action": str(item.get("next_action") or "continue"),
+                "action_label": f"{item['dataset']}: {item.get('action_label') or 'Continue workflow'}",
+            }
+    if state.status == "completed":
+        return {"next_action": "complete", "action_label": "All planned datasets are complete."}
+    return {"next_action": "prepare_dependency_plan", "action_label": "Prepare or refresh the dependency plan."}
+
+
+def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]:
+    target = dataset.strip().upper()
+    dataset_state = state.datasets.get(target)
+    block = _blocked_dataset_progress_reason(state, target)
+    if dataset_state is None:
+        return {
+            "dataset": target,
+            "status": "pending",
+            "next_action": "wait_for_plan",
+            "action_label": "Wait for dependency planning.",
+            "blocked": bool(block),
+            "blocked_reason": block,
+            "current_interrupt": None,
+            "spec_status": "",
+            "code_status": "",
+            "execution_status": "",
+            "validation_status": "",
+            "compare_status": "",
+            "warnings": [],
+        }
+    next_item = _dataset_next_action(dataset_state, blocked_reason=block)
+    return {
+        "dataset": target,
+        "status": dataset_state.status,
+        "next_action": next_item["next_action"],
+        "action_label": next_item["action_label"],
+        "blocked": bool(block),
+        "blocked_reason": block,
+        "current_interrupt": _interrupt_payload(dataset_state.current_interrupt),
+        "spec_status": str(dataset_state.spec_state.get("status") or ""),
+        "code_status": str(dataset_state.code_state.get("status") or ""),
+        "execution_status": str(dataset_state.execution_state.get("status") or ""),
+        "validation_status": str(
+            dataset_state.validation_summary.get("status")
+            or dataset_state.execution_state.get("validation_status")
+            or ""
+        ),
+        "compare_status": str(dataset_state.compare_summary.get("status") or ""),
+        "warnings": _dataset_progress_warnings(dataset_state),
+    }
+
+
+def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str) -> dict[str, str]:
+    interrupt = dataset_state.current_interrupt
+    if interrupt is not None and interrupt.status == "open":
+        return {
+            "next_action": _action_for_interrupt(interrupt.name),
+            "action_label": _interrupt_label(interrupt.name),
+        }
+    if blocked_reason:
+        return {"next_action": "blocked", "action_label": blocked_reason}
+    execution_next = str(dataset_state.execution_state.get("next_action") or "").strip()
+    if execution_next:
+        return {"next_action": execution_next, "action_label": _next_action_label(execution_next)}
+    if dataset_state.status == "terminal_failure":
+        return {
+            "next_action": "review_terminal_failure",
+            "action_label": "Review execution diagnostics and choose a controlled follow-up.",
+        }
+    if dataset_state.status in {"completed", "completed_stub"}:
+        return {"next_action": "complete", "action_label": "Generated output is available for review and compare."}
+    spec_status = str(dataset_state.spec_state.get("status") or "").strip()
+    code_status = str(dataset_state.code_state.get("status") or "").strip()
+    execution_status = str(dataset_state.execution_state.get("status") or "").strip()
+    if code_status == "approved":
+        return {"next_action": "execute_approved_code", "action_label": "Run the approved R code locally."}
+    if code_status == "generated":
+        return {"next_action": "review_code", "action_label": "Review generated R code before execution."}
+    if spec_status == "draft_generated":
+        return {"next_action": "review_draft_spec", "action_label": "Review the generated draft spec before code generation."}
+    if spec_status in {"input_spec_ready", "approved"}:
+        return {"next_action": "generate_code", "action_label": "Generate R code from the approved spec evidence."}
+    if spec_status == "stale" or code_status == "stale" or execution_status == "stale":
+        return {"next_action": "reconfirm_inputs", "action_label": "Study inputs changed. Reconfirm inputs before continuing."}
+    return {"next_action": "finalize_inputs", "action_label": "Confirm uploaded evidence and prepare the spec gate."}
+
+
+def _blocked_dataset_progress_reason(state: StudyRunState, dataset: str) -> str:
+    if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
+        return "Dependency plan is stale because study inputs changed."
+    blocked = [
+        block
+        for block in state.blocked_datasets
+        if str(block.get("dataset", "")).strip().upper() == dataset
+    ]
+    if blocked:
+        reasons = [str(block.get("reason") or "blocked") for block in blocked]
+        return f"Dependency review required: {'; '.join(reasons)}."
+    if state.dependency_review_status in {"blocked", "warning"}:
+        return "Study-level dependency review must be resolved before product steps continue."
+    blocking_sources = _blocking_review_required_sources(state.dependency_decisions, dataset)
+    if blocking_sources:
+        return f"Dependency plan requires human review before product steps continue: {', '.join(blocking_sources)}."
+    if dataset not in [item.strip().upper() for item in state.runnable_datasets]:
+        return "Dataset is not runnable in the current dependency plan."
+    return ""
+
+
+def _blocking_review_required_sources(decisions: list[dict[str, Any]], dataset: str) -> list[str]:
+    target = dataset.strip().upper()
+    sources: list[str] = []
+    for decision in decisions:
+        if str(decision.get("dataset", "")).strip().upper() != target:
+            continue
+        if decision.get("review_required") is not True:
+            continue
+        source = str(decision.get("source", "")).strip()
+        if source == "no_dependency_evidence":
+            continue
+        sources.append(source or "unknown")
+    return sources
+
+
+def _interrupt_payload(interrupt: InterruptState | None) -> dict[str, Any] | None:
+    if interrupt is None:
+        return None
+    return interrupt.model_dump(mode="json")
+
+
+def _interrupt_label(name: str) -> str:
+    return {
+        "dependency_review": "Review dependency plan.",
+        "draft_spec_review": "Review draft spec.",
+        "code_review": "Review generated R code.",
+        "terminal_failure": "Review terminal execution failure.",
+        "dependency_user_action_required": "Resolve dependency requirement.",
+    }.get(name, "Review required.")
+
+
+def _action_for_interrupt(name: str) -> str:
+    return {
+        "dependency_review": "review_dependency_plan",
+        "draft_spec_review": "review_draft_spec",
+        "code_review": "review_code",
+        "terminal_failure": "review_terminal_failure",
+        "dependency_user_action_required": "resolve_dependency",
+    }.get(name, "review_required")
+
+
+def _next_action_label(action: str) -> str:
+    return {
+        "retry_approved_execution": "Retry the already approved execution step.",
+        "repair_generated_code": "Regenerate or repair R code before another execution.",
+        "revise_approved_spec": "Revise the approved spec before regenerating code.",
+        "request_new_study_input": "Upload corrected or additional study inputs.",
+        "skip_failed_dataset": "Dataset was marked to be skipped after review.",
+        "continue_other_datasets": "Continue with other runnable datasets.",
+    }.get(action, "Continue the graph-controlled workflow.")
+
+
+def _dataset_progress_warnings(dataset_state: DatasetRunState) -> list[str]:
+    warnings: list[str] = []
+    for state_map in [dataset_state.spec_state, dataset_state.code_state, dataset_state.execution_state]:
+        raw_warnings = state_map.get("warnings")
+        if isinstance(raw_warnings, list):
+            for item in raw_warnings:
+                warning = str(item).strip()
+                if warning and warning not in warnings:
+                    warnings.append(warning)
+        stale_reason = str(state_map.get("stale_reason") or "").strip()
+        if stale_reason and stale_reason not in warnings:
+            warnings.append(stale_reason)
+    for failure in dataset_state.failures:
+        message = str(getattr(failure, "message", "") or "").strip()
+        if message and message not in warnings:
+            warnings.append(message)
+    return warnings
 
 
 def _terminal_failure_next_action(action: str) -> str:

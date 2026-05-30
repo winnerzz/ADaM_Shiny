@@ -3313,3 +3313,68 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_bl
 ```
 
 结果：8 个 focused tests passed。
+
+### 2026-05-30 - LG2.8 Graph-Owned Progress Read Model 切片
+
+已完成：
+
+- 新增 `GraphGateway.progress_summary()`，作为 run progress 和 next action
+  的 graph-owned read model。
+- 新增 `GET /runs/{run_id}/progress`，让 UI 直接询问 gateway：当前 graph
+  state 到底意味着什么，而不是在浏览器端自己从 raw JSON 拼流程逻辑。
+- 新增 response contracts：
+  - `RunProgressResponse`
+  - `DatasetProgressItem`
+- progress payload 会返回：
+  - study-level status 和 current interrupt；
+  - graph-owned next action；
+  - per-dataset status、current interrupt、spec/code/execution/validation/
+    compare status；
+  - dataset 自己的下一步动作是否被 study-level dependency gate 暂时阻塞。
+- 增加测试证明：
+  - next-action read model 归 gateway 所有；
+  - FastAPI endpoint 能暴露该 read model；
+  - service helper 只委托 `GraphGateway.progress_summary()`，不直接调用
+    `load_graph_state()` 读取内部状态。
+  - stale dependency plan 会显示为 `replan_dependencies`，而不是被普通
+    dependency review 文案掩盖。
+  - progress blocking 与真实 product dependency gate 对
+    review-required dependency evidence 的阻塞逻辑保持一致。
+
+当前边界：
+
+- 这是 read-model 切片，不改变 dependency planning、draft-spec generation、
+  code generation、code review、execution、compare、route semantics 或 UI
+  layout。
+- endpoint 仍通过 `GraphGateway` 读取当前 canonical `graph_state.json`。这
+  是向 graph-owned UI orchestration 迈进的一步，不是 native LangGraph
+  interrupt/checkpointer replacement。
+- static-rule governance 不变。本切片不新增任何 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific static rule。Static rules
+  仍然只能是 generic contract checks 或 governed rule-pack items。
+- static-rule 设计原则继续收紧为“从原则出发、可复用”：未来任何 blocking
+  ADaM/CDISC/company check 都必须表达成 generic contract，或者通过带版本、
+  source、scope、severity、evidence 的 rule pack admission 进入，不能把 demo
+  失败现象直接写成补丁规则。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+git diff --check -- src\adam_agent\api\models.py src\adam_agent\api\service.py src\adam_agent\api\app.py src\adam_agent\graph\gateway.py tests\test_graph_gateway.py tests\test_api_phase8.py
+```
+
+结果：focused tests passed；compileall passed；168 个相关 gateway/API/static-rule
+tests passed；diff check passed。
+
+子 agent review：
+
+- 初次 review 返回 NO-GO，指出两个 progress-read-model 问题：
+  - stale input fingerprints 可能被展示成普通 dependency review，而不是
+    replan action；
+  - 来自真实 evidence source 的 `review_required` dependency decisions 可能
+    在 progress 中显示为未阻塞，但 product methods 实际会拒绝继续。
+- 两个问题均已修复，并增加 regression tests。
+- 最终相关验证通过 168 个 gateway/API/static-rule tests。

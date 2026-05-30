@@ -72,6 +72,43 @@ class RunPlanResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class DatasetProgressItem(StrictBaseModel):
+    """Graph-owned next-step summary for one dataset."""
+
+    dataset: str
+    status: str
+    next_action: str
+    action_label: str
+    blocked: bool = False
+    blocked_reason: str = ""
+    current_interrupt: dict[str, Any] | None = None
+    spec_status: str = ""
+    code_status: str = ""
+    execution_status: str = ""
+    validation_status: str = ""
+    compare_status: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RunProgressResponse(StrictBaseModel):
+    """Graph-owned progress summary for UI guidance."""
+
+    study_id: str
+    run_id: str
+    status: str
+    next_action: str
+    action_label: str
+    current_interrupt: dict[str, Any] | None = None
+    dependency_review_status: str | None = None
+    plan_stale: bool = False
+    target_datasets: list[str] = Field(default_factory=list)
+    runnable_datasets: list[str] = Field(default_factory=list)
+    blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
+    datasets: list[DatasetProgressItem] = Field(default_factory=list)
+    graph_state_path: str
+    workflow_state_path: str
+
+
 class DependencyReviewRequest(StrictBaseModel):
     """Persist a human decision on the graph-native dependency plan."""
 

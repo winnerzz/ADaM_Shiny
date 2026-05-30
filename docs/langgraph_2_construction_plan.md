@@ -3637,3 +3637,71 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_bl
 ```
 
 Result: 8 focused tests passed.
+
+### 2026-05-30 - LG2.8 Graph-Owned Progress Read Model Slice
+
+Completed:
+
+- Added `GraphGateway.progress_summary()` as a graph-owned read model for run
+  progress and next actions.
+- Added `GET /runs/{run_id}/progress` so the UI can ask the gateway what the
+  current graph state means instead of reconstructing workflow logic from
+  browser state or raw JSON.
+- Added response contracts:
+  - `RunProgressResponse`
+  - `DatasetProgressItem`
+- The progress payload reports:
+  - study-level status and current interrupt;
+  - graph-owned next action;
+  - per-dataset status, current interrupt, spec/code/execution/validation/
+    compare status;
+  - whether a dataset's local next action is currently blocked by a
+    study-level dependency gate.
+- Added tests proving:
+  - the gateway owns the next-action read model;
+  - the FastAPI endpoint exposes it;
+  - the service helper delegates to `GraphGateway.progress_summary()` and does
+    not call `load_graph_state()` directly.
+  - stale dependency plans are surfaced as `replan_dependencies` instead of a
+    generic dependency-review action.
+  - progress blocking mirrors the product dependency gate for review-required
+    dependency evidence.
+
+Current boundary:
+
+- This is a read-model slice only. It does not change dependency planning,
+  draft-spec generation, code generation, code review, execution, compare,
+  route semantics, or UI layout.
+- The endpoint still reads from the current canonical `graph_state.json`
+  through `GraphGateway`. It is a step toward graph-owned UI orchestration, not
+  a native LangGraph interrupt/checkpointer replacement.
+- Static-rule governance is unchanged. This slice adds no clinical,
+  dataset-specific, study-specific, demo-specific, or variable-specific static
+  rule. Static rules remain generic contract checks or governed rule-pack
+  items only.
+- Static-rule design remains first-principles and reusable: future blocking
+  ADaM/CDISC/company checks must be expressed as generic contracts or admitted
+  through versioned source-backed rule packs, not as patches for observed demo
+  failures.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+python -m compileall -q src\adam_agent
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+git diff --check -- src\adam_agent\api\models.py src\adam_agent\api\service.py src\adam_agent\api\app.py src\adam_agent\graph\gateway.py tests\test_graph_gateway.py tests\test_api_phase8.py
+```
+
+Result: focused tests passed; compileall passed; 168 related
+gateway/API/static-rule tests passed; diff check passed.
+
+Subagent review:
+
+- Initial review returned NO-GO for two progress-read-model issues:
+  - stale input fingerprints could be presented as a normal dependency review
+    instead of a replan action;
+  - `review_required` dependency decisions from real evidence sources could be
+    unblocked in progress even though product methods would reject them.
+- Both issues were fixed and covered with regression tests.
+- Final related verification passed with 168 gateway/API/static-rule tests.

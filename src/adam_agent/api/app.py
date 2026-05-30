@@ -30,6 +30,7 @@ from adam_agent.api.models import (
     LLMConnectionTestResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
+    RunProgressResponse,
     RunPlanRequest,
     RunPlanResponse,
     RunStudyRequest,
@@ -60,6 +61,7 @@ from adam_agent.api.service import (
     read_dataset_table_page,
     read_run_graph_state,
     read_run_json_artifact,
+    read_run_progress,
     run_study_from_request,
     save_uploaded_file_bytes,
     summarize_study_inputs,
@@ -254,6 +256,16 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         try:
             return read_run_graph_state(study_dir, run_id)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/progress", response_model=RunProgressResponse)
+    def run_progress(
+        run_id: str,
+        study_dir: str = Query(..., description="Path to the local study folder."),
+    ) -> RunProgressResponse:
+        try:
+            return read_run_progress(study_dir, run_id)
         except ApiServiceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -29,6 +29,7 @@ from adam_agent.api.models import (
     LLMConnectionTestResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
+    RunProgressResponse,
     RunPlanRequest,
     RunPlanResponse,
     RunStudyRequest,
@@ -743,6 +744,16 @@ def read_run_graph_state(study_dir: str | Path, run_id: str) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise ApiServiceError(str(exc)) from exc
     return state.model_dump(mode="json")
+
+
+def read_run_progress(study_dir: str | Path, run_id: str) -> RunProgressResponse:
+    """Read graph-owned progress guidance for one local run."""
+
+    try:
+        payload = GraphGateway().progress_summary(study_dir=study_dir, run_id=run_id)
+    except FileNotFoundError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    return RunProgressResponse(**payload)
 
 
 def read_dataset_table_page(

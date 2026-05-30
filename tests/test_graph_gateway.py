@@ -2313,6 +2313,127 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("ADAE", result.graph_state.datasets)
         self.assertEqual(result.graph_state.datasets["ADAE"].current_interrupt.name, "code_review")
 
+    def test_gateway_progress_summary_reports_graph_owned_next_actions(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress") / "PSY201"
+        input_spec = study_dir / "input_spec"
+        input_spec.mkdir(parents=True)
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress",
+            target_datasets=["ADAE", "ADCM"],
+        )
+        code_path = study_dir / "runs" / "run_lg2_progress" / "code" / "build_adae.R"
+        code_path.parent.mkdir(parents=True)
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names=FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_lg2_progress", "ADAE", code_path)
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+        )
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress")
+
+        self.assertEqual(progress["status"], "needs_review")
+        self.assertEqual(progress["current_interrupt"]["name"], "dependency_review")
+        self.assertEqual(progress["next_action"], "review_dependency_plan")
+        by_dataset = {item["dataset"]: item for item in progress["datasets"]}
+        self.assertEqual(by_dataset["ADAE"]["next_action"], "review_code")
+        self.assertEqual(by_dataset["ADAE"]["action_label"], "Review generated R code.")
+        self.assertTrue(by_dataset["ADAE"]["blocked"])
+        self.assertIn("Study-level dependency review", by_dataset["ADAE"]["blocked_reason"])
+        self.assertEqual(by_dataset["ADCM"]["next_action"], "blocked")
+        self.assertIn("Study-level dependency review", by_dataset["ADCM"]["blocked_reason"])
+        self.assertTrue(Path(progress["graph_state_path"]).exists())
+
+    def test_gateway_progress_summary_prioritizes_stale_plan_replan(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_stale") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_stale",
+            target_datasets=["ADAE"],
+        )
+        gateway.record_input_spec_ready(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_stale",
+            dataset="ADAE",
+            input_spec_path=spec_dir / "adae.json",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+        gateway.mark_inputs_changed(study_dir=study_dir, run_id="run_lg2_progress_stale")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_stale")
+
+        self.assertEqual(progress["current_interrupt"]["name"], "dependency_review")
+        self.assertEqual(progress["dependency_review_status"], "stale")
+        self.assertEqual(progress["next_action"], "replan_dependencies")
+        self.assertTrue(progress["plan_stale"])
+        by_dataset = {item["dataset"]: item for item in progress["datasets"]}
+        self.assertEqual(by_dataset["ADAE"]["next_action"], "review_draft_spec")
+        self.assertTrue(by_dataset["ADAE"]["blocked"])
+        self.assertIn("stale", by_dataset["ADAE"]["blocked_reason"])
+
+    def test_gateway_progress_summary_blocks_review_required_dependency_sources(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_review_required") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_review_required",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_review_required",
+        ).model_copy(deep=True)
+        state.dependency_review_status = "review_required"
+        state.dependency_decisions = [
+            {
+                "dataset": "ADAE",
+                "source": "legacy_code",
+                "decision": "requires_human_review",
+                "review_required": True,
+            }
+        ]
+        state.current_interrupt = None
+        state.datasets["ADAE"].current_interrupt = None
+        state.datasets["ADAE"].spec_state = {"status": "input_spec_ready"}
+        state.datasets["ADAE"].status = "pending"
+        gateway._persist_graph_state(study_dir, state, node="test_seed_review_required_progress")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_review_required")
+
+        self.assertEqual(progress["next_action"], "review_dependency_plan")
+        by_dataset = {item["dataset"]: item for item in progress["datasets"]}
+        self.assertTrue(by_dataset["ADAE"]["blocked"])
+        self.assertEqual(by_dataset["ADAE"]["next_action"], "blocked")
+        self.assertIn("legacy_code", by_dataset["ADAE"]["blocked_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

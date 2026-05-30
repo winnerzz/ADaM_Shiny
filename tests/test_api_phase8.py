@@ -191,6 +191,23 @@ class Phase8ApiTests(unittest.TestCase):
             "Service helpers should not inspect graph internals except for the explicit graph-state read endpoint.",
         )
 
+    def test_progress_endpoint_uses_graph_gateway_progress_read_model(self) -> None:
+        from adam_agent.api import service
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(service.read_run_progress)))
+        called_names: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute):
+                called_names.add(node.func.attr)
+            elif isinstance(node.func, ast.Name):
+                called_names.add(node.func.id)
+
+        self.assertIn("progress_summary", called_names)
+        self.assertNotIn("load_graph_state", called_names)
+        self.assertNotIn("project_graph_state_to_workflow", called_names)
+
     def test_run_study_from_request_delegates_legacy_run_state_to_gateway(self) -> None:
         from adam_agent.api import service
 
@@ -652,6 +669,36 @@ class Phase8ApiTests(unittest.TestCase):
         )
         self.assertEqual(blocked.status_code, 400)
         self.assertIn("dependency plan is stale", blocked.json()["detail"])
+
+    def test_progress_endpoint_reports_graph_owned_next_actions(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_progress_endpoint")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_progress_endpoint/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+
+        progress = client.get(
+            "/runs/run_progress_endpoint/progress",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(progress.status_code, 200, progress.text)
+        payload = progress.json()
+        self.assertEqual(payload["status"], "needs_review")
+        self.assertEqual(payload["current_interrupt"]["name"], "code_review")
+        self.assertEqual(payload["next_action"], "review_code")
+        self.assertTrue(payload["graph_state_path"].endswith("graph_state.json"))
+        by_dataset = {item["dataset"]: item for item in payload["datasets"]}
+        self.assertEqual(by_dataset["ADAE"]["next_action"], "review_code")
+        self.assertEqual(by_dataset["ADAE"]["action_label"], "Review generated R code.")
+        self.assertFalse(by_dataset["ADAE"]["blocked"])
+        self.assertEqual(by_dataset["ADAE"]["code_status"], "generated")
 
     def test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing(self) -> None:
         study_dir = _workspace_dir("phase8_upload_graph_state_only") / "MY_STUDY"
