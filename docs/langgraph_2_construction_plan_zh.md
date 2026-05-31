@@ -4076,3 +4076,50 @@ Python 文件；diff check passed。
 - 已按最小建议修正：`dataset_output_quality()` 也读取 validation report 中的
   terminal-failure 和 partial-output-usability 标记，并用分类矩阵测试和
   terminal-failure review-summary 回归覆盖该路径。
+
+### 2026-05-31 - LG2.8 Study Output Quality Rollup 切片
+
+已完成：
+
+- 在 dataset `output_quality` 之上新增 study 级 output-quality rollup read
+  model。
+- 通过 run progress API response 暴露 `output_quality_rollup`。
+- 修改 study 级 next-action 文案：如果计划内 targets 只有 review-only/demo
+  输出，不再把整个 run 描述成真实完成。
+- 修改 mixed completion 文案：让真实 runtime output 和 review-only/demo
+  output 在 study 级进度里明确分开。
+- 修改 dataset 级 completed label：review-only/demo output 不再和 real runtime
+  output 使用同一套“输出已可用”的文案。
+- 更新浏览器进度 header：当 rollup 显示 review-only complete 或 mixed
+  completion 时，顶部状态显示 `review only` 或 `mixed output`。
+
+当前边界：
+
+- 这仍然是 read-model 和 UI clarity 切片，不修改 canonical graph state、
+  dependency planning、dependency resolution、LLM generation、R execution、
+  compare 或 static-rule 行为。
+- 底层 dataset status 可以继续保留 `completed`，用于表示 review/demo artifact
+  已经产出；rollup 负责解释它是否是真实 runtime evidence。
+- 这不是临床正确性评分，只区分真实 runtime output 与“可审核但不能满足下游
+  runtime dependency”的输出。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_mixed_completion_quality tests.test_graph_gateway.GraphGatewayTests.test_study_output_quality_rollup_distinguishes_review_only_completion -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+结果：focused rollup/API/UI regressions 通过；更宽的 graph-gateway/API suite
+通过 151 个测试；AST syntax check 覆盖 80 个 Python 文件；`git diff --check`
+只有 CRLF line-ending warnings。
+
+子 agent review：
+
+- GO。未发现 blocking findings。
+- 审核确认 output-quality rollup 是纯 read-model 逻辑；stale plan、
+  dependency review、interrupt 的优先级仍高于 completed-quality 文案；API/UI
+  改动降低了用户误解风险，没有扩大业务语义。

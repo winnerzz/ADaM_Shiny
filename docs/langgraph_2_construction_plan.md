@@ -4465,3 +4465,53 @@ Subagent review:
   reads terminal-failure and partial-output-usability flags from validation
   reports, and the classification matrix plus terminal-failure review-summary
   regression cover that path.
+
+### 2026-05-31 - LG2.8 Study Output Quality Rollup Slice
+
+Completed:
+
+- Added a study-level output-quality rollup read model on top of dataset
+  `output_quality` signals.
+- Exposed `output_quality_rollup` through the run progress API response.
+- Changed study-level next-action wording so a run whose planned targets only
+  have review-only/demo outputs is not described as real completion.
+- Changed mixed completion wording so real runtime outputs and review-only/demo
+  outputs are visible as different quality classes.
+- Updated dataset-level completed labels so review-only/demo outputs do not use
+  the same user-facing text as real runtime outputs.
+- Updated the browser progress header to show `review only` or `mixed output`
+  when the run-level rollup says so.
+
+Current boundary:
+
+- This is still a read-model and UI clarity slice. It does not mutate canonical
+  graph state, dependency planning, dependency resolution, LLM generation,
+  R execution, compare, or static-rule behavior.
+- The underlying dataset status can remain `completed` for review/demo
+  artifacts. The new rollup explains whether those outputs are real runtime
+  evidence.
+- This does not add a clinical correctness score. It only separates real
+  runtime outputs from outputs that are visible for review but cannot satisfy
+  downstream runtime dependencies.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_mixed_completion_quality tests.test_graph_gateway.GraphGatewayTests.test_study_output_quality_rollup_distinguishes_review_only_completion -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+Result: focused rollup/API/UI regressions passed; the broader
+graph-gateway/API suite passed with 151 tests; AST syntax check covered 80
+Python files; `git diff --check` reported only CRLF line-ending warnings.
+
+Subagent review:
+
+- GO. No blocking findings.
+- The review confirmed that output-quality rollup is pure read-model logic,
+  that stale-plan/dependency-review/interrupt priority remains ahead of
+  completed-quality wording, and that API/UI changes reduce rather than create
+  user-facing ambiguity.
