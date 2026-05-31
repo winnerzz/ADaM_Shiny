@@ -429,6 +429,30 @@ Agent 角色：
 - 每个 agent 写 artifacts 和 risk flags。
 - Dataset run audit 能显示哪个 agent 做了哪个决策。
 
+当前实现状态：
+
+- 已在 `LangGraph-v2` 完成：
+  - 在 `src/adam_agent/agents/` 中新增 bounded agent 合同：
+    `AgentDecision`、`AgentNodeInput`、`AgentNodeOutput`。
+  - DatasetGraph 产品节点现在会为 evidence/spec/code、static review、
+    execution、validation/compare、diagnosis/repair、audit handoff 写出
+    typed node IO。
+  - GraphGateway 会保留 DatasetGraph 的 node IO；直接 recorder 路径没有
+    上游 node IO 时，也会补充兼容的 fallback node IO；dataset-level node
+    IO 会汇总到 canonical study state。
+  - Dependency planning 现在会写出 study-level `dependency_agent` node IO。
+  - 派生的 agent audit summary 现在展示 study 级和 dataset 级 node IO
+    计数、无效 node IO 计数、按 agent 统计的计数，以及最新 node output 摘要。
+  - 测试覆盖 node IO 合同校验、GraphGateway 持久化、StudyGraph audit
+    汇总、异常 node IO 可见性，并确认 compare、terminal failure、
+    dependency planning、execution、fallback recorder 等产品行为没有改变。
+- 边界：
+  - 当前已经完成的是“受控多智能体节点包装和审计可见性”。
+  - 这里的 agent 仍是受图和工具约束的节点，不是自由自治进程；不会绕过人工闸门，
+    也不会改变 Reference ADaM 不能作为推导权威的原则。
+  - 专门的 LLM repair、spec-revision 闭环，以及更深的 standards retrieval
+    仍属于后续 hardening 工作。
+
 ## 9. Phase LG2.5 - Reference 与 Static Rule 层
 
 目标：

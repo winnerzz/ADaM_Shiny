@@ -495,6 +495,33 @@ Exit criteria:
 - Each agent writes artifacts and risk flags.
 - A dataset run audit can show which agent made which decision.
 
+Current implementation status:
+
+- Done in `LangGraph-v2`:
+  - Added bounded agent contracts in `src/adam_agent/agents/` for
+    `AgentDecision`, `AgentNodeInput`, and `AgentNodeOutput`.
+  - DatasetGraph product nodes now emit typed node IO for evidence/spec/code,
+    static review, execution, validation/compare, diagnosis/repair, and audit
+    handoffs.
+  - GraphGateway preserves DatasetGraph node IO, adds compatible fallback node
+    IO for direct recorder paths, and rolls dataset-level node IO into the
+    canonical study state.
+  - Dependency planning now emits study-level `dependency_agent` node IO.
+  - The derived agent audit summary reports study-level and dataset-level node
+    IO counts, invalid node IO counts, per-agent counts, and latest node output
+    summaries.
+  - Tests cover node IO contract validation, graph gateway persistence,
+    StudyGraph audit rollup, malformed node IO visibility, and unchanged
+    product behavior around compare, terminal failure, dependency planning,
+    execution, and fallback recorder paths.
+- Boundary:
+  - The project now has bounded multi-agent node packaging and auditability.
+  - The agents remain controlled graph/tool nodes. They are not autonomous
+    free-form processes, do not bypass human gates, and do not change Reference
+    ADaM authority.
+  - Dedicated LLM repair, spec-revision loops, and deeper standards retrieval
+    remain later hardening work.
+
 ## 9. Phase LG2.5 - Reference And Static Rule Layer
 
 Goal:
