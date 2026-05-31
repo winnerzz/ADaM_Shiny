@@ -4313,3 +4313,39 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 git diff --check
 ```
+
+### 2026-05-31 - LG2.8 顶栏状态可读性 UI 切片
+
+已完成：
+
+- 将浏览器右上角状态区改成更清楚的 current-status read model：
+  - 当前正在做什么；
+  - 当前加载的 study；
+  - 当前查看的 active detail target；
+  - 从 graph progress/read model 读出的下一步；
+  - running、done、failed 三种操作进度状态。
+- 让顶栏概览在这些时机从已有状态刷新：
+  - API health check 后；
+  - Study Progress 渲染后；
+  - target 渲染或切换后；
+  - 页面初始化时。
+- 增加 UI contract tests，防止后续改动把顶栏状态字段或 progress refresh hook
+  弄丢。
+
+当前边界：
+
+- 这是浏览器 UI read-model 切片。
+- 不改变 canonical graph state、dependency planning、dependency resolution、
+  LLM generation、R execution、compare 或 static-rule 行为。
+- 不新增任何临床规则、demo-specific rule 或 blocking validation。
+- 顶栏只读取已有状态（`runProgress`、selected target、plan、input summary），
+  不成为第二套 workflow state machine。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check -- docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md src\adam_agent\api\web.py tests\test_api_phase8.py
+```

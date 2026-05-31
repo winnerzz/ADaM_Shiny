@@ -4714,3 +4714,41 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 git diff --check
 ```
+
+### 2026-05-31 - LG2.8 Top Status Readability UI Slice
+
+Completed:
+
+- Reworked the browser header status area into a compact current-status read
+  model:
+  - current operation;
+  - loaded study;
+  - active detail target;
+  - next action from the graph progress/read model;
+  - visible operation progress state for running, done, and failed operations.
+- Wired the header overview to refresh from existing UI/graph state after:
+  - API health checks;
+  - study-progress rendering;
+  - target rendering or target selection changes;
+  - initial page setup.
+- Added UI contract coverage so future changes keep the top status fields and
+  progress hooks present.
+
+Current boundary:
+
+- This is a browser UI read-model slice only.
+- It does not change canonical graph state, dependency planning, dependency
+  resolution, LLM generation, R execution, compare, or static-rule behavior.
+- It does not add clinical rules, demo-specific rules, or new blocking
+  validation.
+- The header reads from existing state (`runProgress`, selected target, plan,
+  and input summary); it does not become a second workflow state machine.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check -- docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md src\adam_agent\api\web.py tests\test_api_phase8.py
+```

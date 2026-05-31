@@ -307,6 +307,17 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Dataset Execution Cards", response.text)
         self.assertIn("operationBanner", response.text)
         self.assertIn("globalStatusDetail", response.text)
+        self.assertIn("headerStatusGrid", response.text)
+        self.assertIn("headerOperation", response.text)
+        self.assertIn("headerStudy", response.text)
+        self.assertIn("headerTarget", response.text)
+        self.assertIn("headerNextAction", response.text)
+        self.assertIn("headerOperationProgress", response.text)
+        self.assertIn("updateHeaderStatusOverview", response.text)
+        self.assertIn("recognizedInputCount", response.text)
+        self.assertIn("headerProgress.classList.add('running')", response.text)
+        self.assertIn("headerProgress.classList.add('done')", response.text)
+        self.assertIn("headerProgress.classList.add('failed')", response.text)
         self.assertIn("studyProgressPanel", response.text)
         self.assertIn("humanReviewQueuePanel", response.text)
         self.assertIn("Human Review Queue", response.text)
@@ -375,6 +386,8 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         html = response.text
+        render_progress_body = html.split("function renderStudyProgress(targets, runnable, blocked)", 1)[1].split("function studyProgressSummary", 1)[0]
+        self.assertIn("updateHeaderStatusOverview()", render_progress_body)
         progress_body = html.split("function studyProgressSummary(targets, runnable, blocked)", 1)[1].split("function renderHumanReviewQueue()", 1)[0]
         self.assertIn("state.runProgress", progress_body)
         self.assertIn("datasetProgressFor(active)", progress_body)

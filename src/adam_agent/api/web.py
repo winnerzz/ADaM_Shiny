@@ -82,6 +82,55 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.35;
       overflow-wrap: anywhere;
     }
+    .status-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 9px;
+    }
+    .status-chip {
+      min-height: 48px;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+    }
+    .status-chip span {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .status-chip strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+    .header-progress-track {
+      height: 7px;
+      overflow: hidden;
+      margin-top: 9px;
+      border-radius: 999px;
+      background: #e4e9f0;
+    }
+    .header-progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    .header-progress-bar.running {
+      width: 68%;
+      animation: progressPulse 1.2s ease-in-out infinite;
+    }
+    .header-progress-bar.done { width: 100%; background: var(--ok); }
+    .header-progress-bar.failed { width: 100%; background: var(--danger); }
     main {
       display: grid;
       grid-template-columns: 280px minmax(700px, 1fr);
@@ -777,6 +826,7 @@ INDEX_HTML = r"""<!doctype html>
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
       .review-queue-item { grid-template-columns: 1fr; }
+      .status-meta-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -789,10 +839,17 @@ INDEX_HTML = r"""<!doctype html>
     <div class="header-status">
       <div class="status-card">
         <div class="status-row">
-          <span class="status-label">System</span>
+          <span class="status-label">Current Status</span>
           <span class="pill warn" id="health">Checking API...</span>
         </div>
         <div class="status-detail" id="globalStatusDetail">Waiting for the local API health check.</div>
+        <div class="status-meta-grid" id="headerStatusGrid">
+          <div class="status-chip"><span>Now</span><strong id="headerOperation">Idle</strong></div>
+          <div class="status-chip"><span>Study</span><strong id="headerStudy">Not loaded</strong></div>
+          <div class="status-chip"><span>Target</span><strong id="headerTarget">None</strong></div>
+          <div class="status-chip"><span>Next</span><strong id="headerNextAction">Setup</strong></div>
+        </div>
+        <div class="header-progress-track"><div class="header-progress-bar" id="headerOperationProgress"></div></div>
       </div>
     </div>
   </header>
@@ -1184,21 +1241,28 @@ INDEX_HTML = r"""<!doctype html>
       const statusNode = byId('operationStatus');
       byId('operationTitle').textContent = title;
       byId('operationDetail').textContent = detail;
+      byId('headerOperation').textContent = title;
       statusNode.textContent = status;
       statusNode.className = 'pill';
       banner.className = 'operation-banner';
+      const headerProgress = byId('headerOperationProgress');
+      headerProgress.className = 'header-progress-bar';
       if (status === 'running') {
         banner.classList.add('busy');
         statusNode.classList.add('warn');
+        headerProgress.classList.add('running');
       } else if (status === 'failed') {
         banner.classList.add('fail');
         statusNode.classList.add('fail');
+        headerProgress.classList.add('failed');
       } else if (status === 'done') {
         banner.classList.add('done');
+        headerProgress.classList.add('done');
       } else if (status === 'waiting') {
         statusNode.classList.add('warn');
       }
       byId('globalStatusDetail').textContent = detail;
+      updateHeaderStatusOverview();
     }
 
     function beginOperation(title, detail) {
@@ -1211,6 +1275,28 @@ INDEX_HTML = r"""<!doctype html>
 
     function failOperation(title, error) {
       setOperation('failed', title, String(error));
+    }
+
+    function recognizedInputCount() {
+      return (
+        (state.inputSummary?.sdtm?.length || 0) +
+        (state.inputSummary?.specs?.length || 0) +
+        (state.inputSummary?.reference_adam?.length || 0) +
+        (state.inputSummary?.define?.length || 0) +
+        (state.inputSummary?.legacy_code?.length || 0)
+      );
+    }
+
+    function updateHeaderStatusOverview() {
+      const progress = state.runProgress || {};
+      const active = state.selectedTarget || '';
+      const blocked = progress.blocked_datasets || state.plan?.blocked_datasets || [];
+      const runnable = progress.runnable_datasets || state.plan?.runnable_datasets || [];
+      const activeStatus = active ? datasetStatus(active, runnable, blocked) : '';
+      const next = progress.next_action || byId('studyNextAction')?.textContent || studyNextActionPill(active, activeStatus, blocked, recognizedInputCount());
+      byId('headerStudy').textContent = state.studyId || (studyDir() ? 'Local study' : 'Not loaded');
+      byId('headerTarget').textContent = active || 'None';
+      byId('headerNextAction').textContent = next || 'Setup';
     }
 
     function setStep(index) {
@@ -1355,6 +1441,7 @@ INDEX_HTML = r"""<!doctype html>
         byId('globalStatusDetail').textContent = payload.status === 'ok'
           ? 'Local API is running. Choose demo data or upload study files.'
           : 'Local API responded but is not ready.';
+        updateHeaderStatusOverview();
       } catch {
         setPill('health', 'unavailable');
         failOperation('API unavailable', 'The browser cannot reach the local FastAPI service.');
@@ -1590,6 +1677,7 @@ INDEX_HTML = r"""<!doctype html>
       const node = byId('targetButtons');
       if (!targets.length) {
         node.innerHTML = '<span class="muted">No ADaM targets inferred yet.</span>';
+        updateHeaderStatusOverview();
         return;
       }
       if (!state.selectedTarget || !targets.includes(state.selectedTarget)) {
@@ -2305,6 +2393,7 @@ INDEX_HTML = r"""<!doctype html>
       byId('studyProgressTitle').textContent = summary.title;
       byId('studyProgressDetail').textContent = summary.detail;
       setPill('studyNextAction', summary.action);
+      updateHeaderStatusOverview();
       byId('studyProgressSteps').innerHTML = summary.steps.map((step) => `
         <div class="progress-step ${step.state}">
           ${escapeHtml(step.label)}
@@ -3375,6 +3464,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     updateLlmModeControls();
     renderActionAvailability();
+    updateHeaderStatusOverview();
     checkHealth();
   </script>
 </body>
