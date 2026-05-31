@@ -3907,3 +3907,51 @@ Subagent review:
   still blocked by the split-flow gate, DatasetGraph/legacy stub graph
   separation was not weakened, and static-rule governance remains generic
   contract/rule-pack only.
+
+### 2026-05-31 - LG2.8 Execution-Mode Entry Contract Slice
+
+Completed:
+
+- Added a shared execution-mode contract module for entry-point allowlists.
+- `POST /runs` now rejects unknown `execution_mode` values before invoking the
+  legacy graph path. The legacy endpoint allowlist is intentionally narrow:
+  `stub`, `llm_downstream_provider`, and `llm_downstream_r_sandbox`.
+- `adam-agent run-study` now rejects unknown `--execution-mode` values before
+  compiling/invoking `StudyGraph`. Its CLI allowlist keeps explicit developer
+  modes available while still rejecting arbitrary strings.
+- Updated the Phase 8.1 API contract so it no longer implies that arbitrary
+  modes are accepted by the legacy run endpoint.
+- Added API and CLI regressions proving unknown execution modes do not create
+  run directories or workflow projections.
+
+Current boundary:
+
+- This slice does not change DatasetGraph routing, product split-flow
+  endpoints, dependency planning, provider behavior, R execution, or UI state.
+- `llm_downstream_provider` and `llm_downstream_r_sandbox` are still accepted by
+  `POST /runs` only so they can be blocked with `split_flow_required`; they are
+  not product run-to-completion paths.
+- Static-rule governance is unchanged. This slice adds no clinical,
+  dataset-specific, study-specific, demo-specific, or variable-specific rule.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_api_phase8.Phase8ApiTests.test_create_run_requires_explicit_execution_mode_instead_of_implicit_stub tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_requires_explicit_execution_mode_with_mock_config tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_uses_configured_provider_boundary_with_mock tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_can_execute_llm_downstream_r_sandbox -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\api\service.py src\adam_agent\cli.py tests\test_api_phase8.py tests\test_graph_smoke.py docs\phase8_1_api_contract.md docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused API and CLI entry tests passed; 232 related
+API/graph/gateway/static-rule tests passed; diff check passed.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that unknown API/CLI modes are rejected before graph
+  invocation, omitted mode remains fail-closed, explicit legacy `stub`
+  compatibility remains available, explicit LLM `/runs` requests remain blocked
+  by the split-flow gate, CLI developer modes still work, Product Graph /
+  legacy stub boundaries were not weakened, and static-rule governance was
+  untouched.

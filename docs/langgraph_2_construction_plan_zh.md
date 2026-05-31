@@ -3558,3 +3558,47 @@ pycache 权限问题阻塞（`PermissionError` / `WinError 5`），不是语法�
   compatibility 仍保留；显式 LLM run-to-completion 仍会被 split-flow gate
   拦截；DatasetGraph/legacy stub graph 分离没有被削弱；static-rule
   governance 仍然只限 generic contract/rule-pack。
+
+### 2026-05-31 - LG2.8 Execution-Mode 入口契约切片
+
+已完成：
+
+- 新增共享 execution-mode contract 模块，用于入口层 allowlist。
+- `POST /runs` 现在会在调用 legacy graph path 之前拒绝未知
+  `execution_mode`。这个旧 endpoint 的 allowlist 被刻意收窄为：
+  `stub`、`llm_downstream_provider`、`llm_downstream_r_sandbox`。
+- `adam-agent run-study` 现在也会在 compile/invoke `StudyGraph` 之前拒绝未知
+  `--execution-mode`。CLI allowlist 保留显式 developer modes，但拒绝任意字符串。
+- 更新 Phase 8.1 API contract，避免文档暗示 legacy run endpoint 接受任意 mode。
+- 新增 API 和 CLI 回归测试，证明 unknown execution mode 不会创建 run 目录或
+  workflow projection。
+
+当前边界：
+
+- 本切片不改变 DatasetGraph routing、product split-flow endpoints、dependency
+  planning、provider behavior、R execution 或 UI state。
+- `llm_downstream_provider` 和 `llm_downstream_r_sandbox` 仍被 `POST /runs`
+  接受，只是为了写入 `split_flow_required` 并返回明确阻断；它们不是产品级
+  run-to-completion path。
+- static-rule governance 不变。本切片不新增 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_api_phase8.Phase8ApiTests.test_create_run_requires_explicit_execution_mode_instead_of_implicit_stub tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_requires_explicit_execution_mode_with_mock_config tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_uses_configured_provider_boundary_with_mock tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_can_execute_llm_downstream_r_sandbox -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\api\service.py src\adam_agent\cli.py tests\test_api_phase8.py tests\test_graph_smoke.py docs\phase8_1_api_contract.md docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused API 和 CLI entry tests passed；232 个相关
+API/graph/gateway/static-rule tests passed；diff check passed。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：未知 API/CLI mode 会在 graph invocation 前被拒绝；省略 mode
+  仍然 fail-closed；显式 legacy `stub` compatibility 仍保留；显式 LLM
+  `/runs` 请求仍会被 split-flow gate 拦截；CLI developer modes 仍可用；
+  Product Graph / legacy stub 边界没有被削弱；static-rule governance 未被改动。

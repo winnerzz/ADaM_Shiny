@@ -47,6 +47,12 @@ from adam_agent.graph.dependency_resolution import (
     resolve_dependency_availability,
 )
 from adam_agent.graph.dependencies import plan_dataset_dependencies
+from adam_agent.graph.execution_modes import (
+    LEGACY_RUN_BLOCKED_LLM_MODES,
+    LEGACY_RUN_ENDPOINT_MODES,
+    LLM_DOWNSTREAM_PROVIDER_MODE,
+    format_execution_modes,
+)
 from adam_agent.graph.gateway import GraphGateway, LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -255,15 +261,21 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=request.run_id)
     execution_mode = request.execution_mode
     if execution_mode is None and config.llm_provider.provider != "mock":
-        execution_mode = "llm_downstream_provider"
+        execution_mode = LLM_DOWNSTREAM_PROVIDER_MODE
     if execution_mode is None:
         raise ApiServiceError(
             "POST /runs requires an explicit execution_mode. "
             "Use execution_mode='stub' only for the legacy compatibility/test path, "
             "or use the split-flow endpoints for product LLM generation."
         )
+    if execution_mode not in LEGACY_RUN_ENDPOINT_MODES:
+        raise ApiServiceError(
+            f"Unsupported execution_mode for POST /runs: {execution_mode}. "
+            f"Allowed legacy endpoint modes: {format_execution_modes(LEGACY_RUN_ENDPOINT_MODES)}. "
+            "Use the split-flow endpoints for product LLM generation."
+        )
     gateway = GraphGateway()
-    if execution_mode in {"llm_downstream_provider", "llm_downstream_r_sandbox"}:
+    if execution_mode in LEGACY_RUN_BLOCKED_LLM_MODES:
         gateway.block_legacy_run_to_completion(
             study_dir=study_dir,
             run_id=config.run_id,

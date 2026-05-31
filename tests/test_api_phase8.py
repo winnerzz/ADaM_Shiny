@@ -902,6 +902,27 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("execution_mode='stub'", detail)
         self.assertFalse((study_dir / "runs" / "run_no_implicit_stub" / "workflow_state.json").exists())
 
+    def test_create_run_rejects_unknown_execution_mode_before_legacy_graph(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_api_unknown_execution_mode")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_unknown_execution_mode",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "legacy_auto_magic",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        detail = response.json()["detail"]
+        self.assertIn("Unsupported execution_mode for POST /runs", detail)
+        self.assertIn("legacy_auto_magic", detail)
+        self.assertIn("Allowed legacy endpoint modes", detail)
+        self.assertFalse((study_dir / "runs" / "run_unknown_execution_mode" / "workflow_state.json").exists())
+
     def test_generate_review_execute_split_flow(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_split_flow")
         client = TestClient(create_app())

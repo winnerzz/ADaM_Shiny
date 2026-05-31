@@ -51,6 +51,13 @@ they would bypass draft-spec, code-review, and execution approval gates. Use
 `POST /runs/prepare` and the dataset-level split-flow endpoints for real
 generation.
 
+Allowed `POST /runs` `execution_mode` values are intentionally narrow:
+`stub`, `llm_downstream_provider`, and `llm_downstream_r_sandbox`. `stub` is
+the only mode that may complete through this legacy endpoint. The two
+`llm_downstream_*` modes are accepted only so the endpoint can write the
+`split_flow_required` compatibility projection and reject the request with a
+clear migration message. Unknown modes are rejected before invoking the graph.
+
 Request:
 
 ```json

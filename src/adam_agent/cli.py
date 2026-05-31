@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 
 from adam_agent.adsl.runner import run_adsl_minimal
+from adam_agent.graph.execution_modes import (
+    CLI_RUN_STUDY_MODES,
+    LLM_DOWNSTREAM_PROVIDER_MODE,
+    format_execution_modes,
+)
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.tools.config import ConfigLoader
 
@@ -76,7 +81,7 @@ def main() -> int:
         config = ConfigLoader().load(args.config, study_id=study_id, run_id=args.run_id)
         execution_mode = args.execution_mode
         if execution_mode is None and config.llm_provider.provider != "mock":
-            execution_mode = "llm_downstream_provider"
+            execution_mode = LLM_DOWNSTREAM_PROVIDER_MODE
         if execution_mode is None:
             print(
                 json.dumps(
@@ -86,6 +91,21 @@ def main() -> int:
                             "run-study requires an explicit --execution-mode. "
                             "Use --execution-mode stub only for the legacy compatibility/test path, "
                             "or use split-flow product API endpoints for reviewed LLM generation."
+                        ),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 1
+        if execution_mode not in CLI_RUN_STUDY_MODES:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error": (
+                            f"Unsupported --execution-mode: {execution_mode}. "
+                            f"Allowed run-study modes: {format_execution_modes(CLI_RUN_STUDY_MODES)}."
                         ),
                     },
                     indent=2,
