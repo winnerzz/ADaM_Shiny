@@ -335,6 +335,11 @@ def _run_output_unusable_reason(
             return f"{prefix} its validation status is structural_stub_pass, which cannot satisfy runtime dependencies."
         if execution_state.get("stubbed_r_execution") is True:
             return f"{prefix} its execution state says R execution was stubbed."
+        generation_quality = execution_state.get("generation_quality")
+        if isinstance(generation_quality, dict) and generation_quality.get("not_real_derivation") is True:
+            return f"{prefix} its generation quality marks it as not_real_derivation."
+        if execution_state.get("not_real_derivation") is True:
+            return f"{prefix} its execution state marks it as not_real_derivation."
         if execution_state.get("terminal_failure") is True:
             return f"{prefix} its execution state records a terminal failure."
         if execution_state.get("partial_output_usable") is False:

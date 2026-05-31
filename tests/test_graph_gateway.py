@@ -17,7 +17,7 @@ TMP_ROOT = ROOT / ".tmp_tests"
 try:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
-    from adam_agent.graph.gateway import GraphGateway
+    from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -30,7 +30,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
-    from adam_agent.graph.gateway import GraphGateway
+    from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -61,6 +61,49 @@ def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, cod
 
 
 class GraphGatewayTests(unittest.TestCase):
+    def test_generation_quality_marks_only_mock_signals_as_not_real(self) -> None:
+        cases = [
+            (
+                "real_openai_compatible",
+                {
+                    "llm_provider": "openai-compatible",
+                    "llm_model": "gpt-5.5",
+                    "provider_alias": "custom-http",
+                    "transport": "openai-compatible",
+                },
+                {"provider": "openai-compatible", "model": "gpt-5.5"},
+                False,
+            ),
+            (
+                "mock_alias",
+                {
+                    "llm_provider": "openai-compatible",
+                    "llm_model": "gpt-5.5",
+                    "provider_alias": "mock",
+                    "transport": "openai-compatible",
+                },
+                {"provider": "openai-compatible", "model": "gpt-5.5"},
+                True,
+            ),
+            (
+                "mock_transport",
+                {
+                    "llm_provider": "openai-compatible",
+                    "llm_model": "gpt-5.5",
+                    "provider_alias": "custom-http",
+                    "transport": "mock",
+                },
+                {"provider": "openai-compatible", "model": "gpt-5.5"},
+                True,
+            ),
+        ]
+        for name, result, provider_config, expected_not_real in cases:
+            with self.subTest(name=name):
+                quality = _generation_quality_from_dataset_result(result, llm_provider=provider_config)
+                self.assertEqual(quality["not_real_derivation"], expected_not_real)
+                self.assertEqual(quality["llm_provider"], "openai-compatible")
+                self.assertEqual(quality["llm_model"], "gpt-5.5")
+
     def test_gateway_blocks_legacy_llm_run_to_completion_with_projection(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_legacy_block") / "PSY201"
         study_dir.mkdir(parents=True)
@@ -1162,6 +1205,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.current_interrupt.name, "code_review")
         self.assertEqual(dataset_state.code_state["status"], "generated")
         self.assertEqual(dataset_state.code_state["static_check_sha256"], static_sha)
+        self.assertTrue(dataset_state.code_state["generation_quality"]["not_real_derivation"])
+        self.assertEqual(dataset_state.code_state["generation_quality"]["llm_provider"], "mock")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
 
@@ -1358,9 +1403,93 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.status, "completed")
         self.assertEqual(dataset_state.execution_state["status"], "completed")
         self.assertEqual(dataset_state.execution_state["output_path"], "runs/run_lg2_gateway_execute/outputs/adae.csv")
+        self.assertEqual(dataset_state.execution_state["generation_quality"], {})
+        self.assertFalse(dataset_state.execution_state["not_real_derivation"])
         self.assertIn("execution_agent", [item["agent"] for item in dataset_state.agent_decisions])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "completed")
+
+    def test_gateway_execution_preserves_generation_quality_signal(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_execute_generation_quality") / "PSY201"
+        run_id = "run_lg2_execute_generation_quality"
+        run_dir = study_dir / "runs" / run_id
+        code_dir = run_dir / "code"
+        review_dir = run_dir / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adsl.R"
+        review_path = review_dir / "adsl_code_review.json"
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/adsl.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADSL", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        generation_quality = {
+            "llm_provider": "mock",
+            "llm_model": "mock-model",
+            "provider_alias": "mock",
+            "transport": "mock",
+            "not_real_derivation": True,
+        }
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADSL",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            generation_quality=generation_quality,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADSL",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADSL",
+                reviewer="tester",
+                notes="Approved mock-quality propagation test.",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass"},
+                "output_path": "runs/run_lg2_execute_generation_quality/outputs/adsl.csv",
+                "validation_report_path": "runs/run_lg2_execute_generation_quality/validation/adsl_validation_report.json",
+                "diagnostics_path": "",
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            result = gateway.execute_approved_code(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADSL",
+            )
+
+        dataset_state = result.graph_state.datasets["ADSL"]
+        self.assertEqual(dataset_state.execution_state["generation_quality"], generation_quality)
+        self.assertTrue(dataset_state.execution_state["not_real_derivation"])
 
     def test_gateway_execute_requires_graph_approved_code_before_dataset_graph_invocation(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_requires_code_review") / "PSY201"

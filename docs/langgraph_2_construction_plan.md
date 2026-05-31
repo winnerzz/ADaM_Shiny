@@ -4374,3 +4374,45 @@ Subagent review:
   unusable-run-output reason text into more precise messages for terminal
   failures, missing/corrupt graph state, mismatched output paths, and structural
   stub outputs.
+
+### 2026-05-31 - LG2.8 Not-Real Derivation Dependency Guard Slice
+
+Completed:
+
+- Added a code-generation quality record to GraphGateway-owned `code_state`.
+  It records provider/model metadata and marks mock-provider code as
+  `not_real_derivation`.
+- Propagated that quality record into `execution_state` after approved-code
+  execution, so the dependency resolver can make decisions from canonical graph
+  state instead of UI assumptions.
+- Tightened run-output dependency availability so a completed output marked
+  `not_real_derivation` cannot silently satisfy a downstream runtime ADaM
+  dependency.
+- Added regressions proving that a completed ADSL run output with
+  `generation_quality.not_real_derivation: true` leaves ADAE blocked as
+  `found_but_unusable`, and that mock code generation records the quality
+  signal in graph state.
+
+Current boundary:
+
+- This is a dependency-quality guard, not a judgment that all mock-assisted work
+  is useless. Mock-generated artifacts remain visible for UI smoke testing and
+  local review, but they no longer unlock downstream runtime dependencies.
+- Real provider output is not marked `not_real_derivation` by this slice. Its
+  clinical quality still depends on approved specs, human review, static checks,
+  local R execution, validation, and future stronger rules.
+- Pre-existing runs created before this quality field existed are not
+  retroactively classified. Regenerate or migrate them before using their
+  outputs as downstream runtime evidence.
+- This does not change provider calls, R execution, UI state, compare, or static
+  rule governance.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_generation_quality_marks_only_mock_signals_as_not_real tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_execution_preserves_generation_quality_signal tests.test_graph_smoke.GraphSmokeTests.test_not_real_derivation_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_not_real_derivation_run_output_dependency_does_not_satisfy_downstream tests.test_graph_smoke.GraphSmokeTests.test_completed_stub_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```

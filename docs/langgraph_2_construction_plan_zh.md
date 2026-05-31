@@ -3991,3 +3991,43 @@ Python 文件；diff check passed。
 - 根据 review 的非阻塞建议，本切片同时把 unusable-run-output reason 拆成更精
   确的消息，分别说明 terminal failure、缺失/损坏 graph state、output path 不
   匹配，以及 structural stub output 等原因。
+
+### 2026-05-31 - LG2.8 Not-Real Derivation Dependency Guard 切片
+
+已完成：
+
+- 在 GraphGateway 拥有的 `code_state` 中加入 code-generation quality record，
+  记录 provider/model 信息，并把 mock provider 生成的代码标记为
+  `not_real_derivation`。
+- approved-code execution 成功后，把这份质量信号带入 `execution_state`，这样
+  dependency resolver 可以只根据 canonical graph state 判断依赖是否可用，而
+  不需要依赖 UI 或 service 的临时约定。
+- 收紧 run-output dependency availability：即使上游状态是 `completed`，只要
+  output 被标记为 `not_real_derivation`，也不能静默满足下游 runtime ADaM
+  dependency。
+- 新增回归测试，证明 `generation_quality.not_real_derivation: true` 的 ADSL
+  run output 会让 ADAE 保持 `found_but_unusable` 阻塞；同时证明 mock code
+  generation 会把质量信号写入 graph state。
+
+当前边界：
+
+- 这是 dependency-quality guard，不代表所有 mock-assisted work 都毫无用途。
+  mock 产物仍可用于 UI smoke testing 和本地审核展示，但不能解锁下游 runtime
+  dependency。
+- 真实 provider 输出不会被本切片自动标记为 `not_real_derivation`。它的临床质
+  量仍取决于 approved spec、人工 code review、static checks、本地 R execution、
+  validation，以及未来更强的规则层。
+- 本质量字段出现之前创建的旧 run 不会被 retroactively 判定。若要把这些旧产
+  物作为下游 runtime evidence，应先重新生成或做状态迁移。
+- 本切片不改变 provider calls、R execution、UI state、compare 或 static-rule
+  governance。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_generation_quality_marks_only_mock_signals_as_not_real tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_execution_preserves_generation_quality_signal tests.test_graph_smoke.GraphSmokeTests.test_not_real_derivation_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_not_real_derivation_run_output_dependency_does_not_satisfy_downstream tests.test_graph_smoke.GraphSmokeTests.test_completed_stub_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+```

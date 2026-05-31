@@ -500,6 +500,18 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             )
         )
         package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
+        call_record = llm_response.call_record
+        llm_provider = _llm_call_field(call_record, "provider", provider_config.provider)
+        llm_model = _llm_call_field(call_record, "model", provider_config.model)
+        provider_alias = _llm_call_field(call_record, "provider_alias", None)
+        transport = _llm_call_field(call_record, "transport", None)
+        provider_base_url = _llm_call_field(call_record, "provider_base_url", None)
+        not_real_derivation = _not_real_generation(
+            provider_config,
+            provider=llm_provider,
+            provider_alias=provider_alias,
+            transport=transport,
+        )
         artifacts = write_generated_code_artifacts(
             study_id=state["study_id"],
             run_id=state["run_id"],
@@ -528,6 +540,12 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
         "llm_response_path": artifacts.response_artifact.path,
         "parsed_response_path": artifacts.package_artifact.path,
         "static_check_path": str(static_check_path.as_posix()),
+        "llm_provider": llm_provider,
+        "llm_model": llm_model,
+        "provider_alias": provider_alias,
+        "transport": transport,
+        "provider_base_url": provider_base_url,
+        "not_real_derivation": not_real_derivation,
         "code_assumptions": package.assumptions,
         "code_risk_points": package.risk_points,
         "code_used_inputs": package.used_inputs,
@@ -1240,6 +1258,24 @@ def _llm_request_for_code_generation(
         response_artifact_id=f"llm_response_{study_id.lower()}_{run_id}_{target.lower()}",
         redaction_policy="phase8_code_generation_review_policy",
     )
+
+
+def _llm_call_field(call_record: object, name: str, default: object | None) -> object | None:
+    return getattr(call_record, name, default)
+
+
+def _not_real_generation(
+    provider_config: LLMProviderConfig,
+    *,
+    provider: object | None,
+    provider_alias: object | None,
+    transport: object | None,
+) -> bool:
+    configured_provider = provider_config.provider.strip().lower()
+    provider_value = str(provider or "").strip().lower()
+    provider_alias_value = str(provider_alias or "").strip().lower()
+    transport_value = str(transport or "").strip().lower()
+    return configured_provider == "mock" or provider_value == "mock" or provider_alias_value == "mock" or transport_value == "mock"
 
 
 def _datasets_included(context: dict[str, object]) -> list[str]:

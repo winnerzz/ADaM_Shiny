@@ -1391,6 +1391,7 @@ class GraphGateway:
         spec_path: str | Path | None = None,
         spec_sha256: str | None = None,
         dependency_artifacts: list[dict[str, Any]] | None = None,
+        generation_quality: dict[str, Any] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
@@ -1448,6 +1449,7 @@ class GraphGateway:
                 "spec_path": str(Path(spec_path).as_posix()) if spec_path else None,
                 "spec_sha256": spec_sha256,
                 "dependency_artifacts": dependency_artifacts or [],
+                "generation_quality": dict(generation_quality or {}),
                 "input_fingerprint": fingerprint,
                 "terminal_failure_followup": terminal_followup,
             }
@@ -1554,6 +1556,7 @@ class GraphGateway:
             spec_path=Path(str(spec_path)) if spec_path else None,
             spec_sha256=spec_sha,
             dependency_artifacts=dependency_artifacts or [],
+            generation_quality=_generation_quality_from_dataset_result(result, llm_provider=llm_provider),
             input_fingerprint_payload=input_fingerprint(root),
             agent_decisions=list(result.get("agent_decisions", [])),
             risk_flags=list(result.get("risk_flags", [])),
@@ -1735,6 +1738,9 @@ class GraphGateway:
         output_path = str(result.get("output_path") or "") or None
         validation_report_path = str(result.get("validation_report_path") or "") or None
         diagnostics_path = str(result.get("diagnostics_path") or "") or None
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        dataset_state = graph_state.datasets.get(target)
+        generation_quality = dict(dataset_state.code_state.get("generation_quality") or {}) if dataset_state else {}
         gateway_result = self.record_execution(
             study_dir=root,
             study_id=study_id,
@@ -1748,6 +1754,8 @@ class GraphGateway:
                 "diagnostics_path": diagnostics_path,
                 "terminal_failure": terminal_failure,
                 "partial_output_usable": not terminal_failure,
+                "generation_quality": generation_quality,
+                "not_real_derivation": bool(generation_quality.get("not_real_derivation", False)),
             },
             validation_summary=validation_report,
             artifacts=list((result.get("real_run_artifacts") or {}).values()),
@@ -2696,6 +2704,25 @@ def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]
             }
         )
     return artifacts
+
+
+def _generation_quality_from_dataset_result(result: dict[str, Any], *, llm_provider: dict[str, Any] | None = None) -> dict[str, Any]:
+    provider_config = llm_provider or {}
+    provider = str(result.get("llm_provider") or provider_config.get("provider") or "").strip()
+    model = result.get("llm_model") if result.get("llm_model") is not None else provider_config.get("model")
+    provider_alias = str(result.get("provider_alias") or "").strip()
+    transport = str(result.get("transport") or "").strip()
+    not_real_derivation = bool(result.get("not_real_derivation"))
+    if provider.lower() == "mock" or provider_alias.lower() == "mock" or transport.lower() == "mock":
+        not_real_derivation = True
+    return {
+        "llm_provider": provider or None,
+        "llm_model": model,
+        "provider_alias": provider_alias or None,
+        "transport": transport or None,
+        "provider_base_url": result.get("provider_base_url"),
+        "not_real_derivation": not_real_derivation,
+    }
 
 
 def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: str) -> None:
