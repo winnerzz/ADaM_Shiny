@@ -4837,3 +4837,40 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('src/adam_agent/graph/state.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Draft Spec Agent IO Migration Slice
+
+Completed:
+
+- Migrated the existing DatasetGraph `draft_spec_agent` success path to emit
+  typed agent IO packages:
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+- The spec-agent input records the explicit task, current spec source, prepared
+  context keys, warning count, context artifact id, risk flags, evidence bundle
+  id, and reference query ids.
+- The spec-agent output wraps the existing `draft_spec_generated` decision and
+  exposes the draft-spec path, variable count, next action, risk flag, and
+  prompt/response/spec artifact ids.
+- Existing `agent_decisions` for this node now come from the typed
+  `AgentNodeOutput`, avoiding parallel hand-built audit records.
+- Added focused smoke assertions proving the no-input-spec path now carries the
+  `spec_agent` IO package through the DatasetGraph result and summary metadata.
+
+Current boundary:
+
+- This slice changes only the successful draft-spec generation audit packaging.
+- It does not change evidence preparation, dependency planning, input-spec
+  authority, code generation, R execution, compare, static rules, repair, UI, or
+  provider behavior.
+- The draft spec remains review-required and is not treated as approved until
+  the graph approval gate records it.
+- Reference ADaM remains compare/output-shape evidence only, not derivation
+  authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

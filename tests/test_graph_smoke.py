@@ -786,9 +786,19 @@ class GraphSmokeTests(unittest.TestCase):
             draft_spec["reference_adam_policy"],
             "Reference ADaM is compare/output-shape evidence only, not derivation authority.",
         )
+        spec_inputs = [item for item in result["agent_node_inputs"] if item["agent"] == "spec_agent"]
+        spec_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "spec_agent"]
+        self.assertEqual(len(spec_inputs), 1)
+        self.assertEqual(len(spec_outputs), 1)
+        self.assertEqual(spec_inputs[0]["node"], "draft_spec_agent")
+        self.assertEqual(spec_inputs[0]["dataset"], "ADAE")
+        self.assertEqual(spec_outputs[0]["decision"], "draft_spec_generated")
+        self.assertEqual(spec_outputs[0]["outputs"]["variable_count"], len(result["draft_spec_variables"]))
+        self.assertEqual(result["agent_decisions"][1], spec_outputs[0]["agent_decisions"][0])
         summary = result["summary"]
         self.assertEqual(summary.metadata["next_action"], "review_draft_spec")
         self.assertEqual(summary.metadata["spec_source"], "draft_spec")
+        self.assertEqual(summary.metadata["agent_node_outputs"][-1]["decision"], "draft_spec_generated")
 
     def test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_spec") / "PSY201"

@@ -4430,3 +4430,39 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/agents/co
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('src/adam_agent/graph/state.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Draft Spec Agent IO Migration 切片
+
+已完成：
+
+- 将现有 DatasetGraph `draft_spec_agent` 成功路径迁到 typed agent IO packages：
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+- spec-agent input 现在记录明确 task、当前 spec source、准备好的 context keys、
+  warning 数量、context artifact id、risk flags、evidence bundle id、reference
+  query ids。
+- spec-agent output 现在包住已有 `draft_spec_generated` decision，并暴露
+  draft-spec path、变量数量、next action、risk flag、prompt/response/spec
+  artifact ids。
+- 这个节点的 `agent_decisions` 现在来自 typed `AgentNodeOutput`，避免并行手写
+  两套 audit 记录。
+- 增加 focused smoke assertions，证明没有 input spec 时生成 draft spec 的路径
+  会把 `spec_agent` IO package 带到 DatasetGraph result 和 summary metadata。
+
+当前边界：
+
+- 本切片只改变成功生成 draft spec 后的 audit packaging。
+- 不改变 evidence preparation、dependency planning、input-spec 权威性、
+  code generation、R execution、compare、static rules、repair、UI 或 provider
+  行为。
+- draft spec 仍然必须人工审核；只有 graph approval gate 记录后才是 approved
+  draft spec。
+- Reference ADaM 仍然只是 compare/output-shape evidence，不能作为 derivation
+  authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

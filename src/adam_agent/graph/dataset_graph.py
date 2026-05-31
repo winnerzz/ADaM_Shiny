@@ -400,6 +400,7 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
 
     target = state["dataset"]
     context_dict = dict(state.get("product_context", {}))
+    spec_input = _spec_agent_input(state, context_dict)
     try:
         provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
         exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
@@ -439,6 +440,24 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     spec_artifact = draft_result.spec_artifact.model_copy(
         update={"sha256": f"sha256:{sha256_file(spec_path)}"}
     )
+    artifact_ids = [
+        draft_result.prompt_artifact.artifact_id,
+        draft_result.response_artifact.artifact_id,
+        spec_artifact.artifact_id,
+    ]
+    spec_output = _spec_agent_output(
+        state,
+        decision="draft_spec_generated",
+        status="needs_review",
+        reason="Generated a review-required draft spec from uploaded evidence.",
+        outputs={
+            "draft_spec_path": spec_artifact.path,
+            "variable_count": len(draft_result.spec.variables),
+            "next_action": "review_draft_spec",
+        },
+        risk_flags=["draft_spec_requires_human_review"],
+        artifact_ids=artifact_ids,
+    )
     return {
         "status": "needs_review",
         "route": "human_review",
@@ -456,29 +475,70 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             draft_result.response_artifact,
             spec_artifact,
         ],
-        "agent_decisions": [
-            record_agent_decision(
-                agent="spec_agent",
-                node="draft_spec_agent",
-                decision="draft_spec_generated",
-                dataset=target,
-                status="needs_review",
-                reason="Generated a review-required draft spec from uploaded evidence.",
-                outputs={
-                    "draft_spec_path": spec_artifact.path,
-                    "variable_count": len(draft_result.spec.variables),
-                    "next_action": "review_draft_spec",
-                },
-                risk_flags=["draft_spec_requires_human_review"],
-                artifact_ids=[
-                    draft_result.prompt_artifact.artifact_id,
-                    draft_result.response_artifact.artifact_id,
-                    spec_artifact.artifact_id,
-                ],
-            )
-        ],
+        "agent_node_inputs": [spec_input],
+        "agent_node_outputs": [spec_output],
+        "agent_decisions": list(spec_output["agent_decisions"]),
         "risk_flags": ["draft_spec_requires_human_review"],
     }
+
+
+def _spec_agent_input(state: DatasetGraphState, context_dict: dict[str, object]) -> dict[str, object]:
+    context_artifact = state.get("product_context_artifact")
+    artifact_ids = []
+    if context_artifact is not None:
+        artifact_id = (
+            context_artifact.get("artifact_id")
+            if isinstance(context_artifact, dict)
+            else getattr(context_artifact, "artifact_id", None)
+        )
+        if artifact_id:
+            artifact_ids.append(str(artifact_id))
+    return build_agent_node_input(
+        agent="spec_agent",
+        node="draft_spec_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        task="Draft a review-required ADaM specification from prepared evidence when no approved input spec exists.",
+        inputs={
+            "spec_source": state.get("spec_source"),
+            "context_keys": sorted(str(key) for key in context_dict.keys()),
+            "warning_count": len(state.get("product_context_warnings", [])),
+        },
+        artifact_ids=artifact_ids,
+        risk_flags=list(state.get("risk_flags", [])) + ["draft_spec_requires_human_review"],
+        evidence_bundle_id=state.get("evidence_bundle_id"),
+        reference_query_ids=[
+            str(item.get("query_id"))
+            for item in state.get("reference_queries", [])
+            if isinstance(item, dict) and item.get("query_id")
+        ],
+    )
+
+
+def _spec_agent_output(
+    state: DatasetGraphState,
+    *,
+    decision: str,
+    status: str,
+    reason: str,
+    outputs: dict[str, object],
+    artifact_ids: list[str],
+    risk_flags: list[str] | None = None,
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="spec_agent",
+        node="draft_spec_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        status=status,
+        decision=decision,
+        reason=reason,
+        outputs=outputs,
+        artifact_ids=artifact_ids,
+        risk_flags=risk_flags or [],
+    )
 
 
 def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
