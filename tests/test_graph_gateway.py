@@ -2506,6 +2506,13 @@ class GraphGatewayTests(unittest.TestCase):
             workflow_state["datasets"]["ADAE"]["agent_audit_summary"]["agent_counts"]["diagnosis_repair_agent"],
             1,
         )
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_review",
+        )
+        adae_progress = {item["dataset"]: item for item in progress["datasets"]}["ADAE"]
+        self.assertEqual(adae_progress["next_action"], "repair_generated_code")
+        self.assertEqual(adae_progress["available_actions"], [])
         persisted_state = json.loads(
             (study_dir / "runs" / "run_lg2_terminal_failure_review" / "graph_state.json").read_text(encoding="utf-8")
         )
@@ -2562,6 +2569,65 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.agent_node_outputs[-1]["agent"], "diagnosis_repair_agent")
         self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "retry_approved_execution")
         self.assertFalse(dataset_state.agent_node_outputs[-1]["outputs"]["interrupt_open"])
+
+    def test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_progress_actions") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_progress_actions",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_progress_actions",
+        ).model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_progress_actions")
+
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_progress_actions",
+        )
+
+        adae_progress = {item["dataset"]: item for item in progress["datasets"]}["ADAE"]
+        self.assertEqual(adae_progress["next_action"], "review_terminal_failure")
+        self.assertEqual(
+            [item["action"] for item in adae_progress["available_actions"]],
+            [
+                "retry_execution",
+                "repair_code",
+                "revise_spec",
+                "request_new_input",
+                "skip_dataset",
+                "continue_other_datasets",
+            ],
+        )
+
+        gateway.review_terminal_failure(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_progress_actions",
+            dataset="ADAE",
+            decision="continue_other_datasets",
+            reviewer="tester",
+        )
+        reviewed_progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_progress_actions",
+        )
+
+        reviewed_adae = {item["dataset"]: item for item in reviewed_progress["datasets"]}["ADAE"]
+        self.assertEqual(reviewed_adae["next_action"], "continue_other_datasets")
+        self.assertEqual(reviewed_adae["available_actions"], [])
 
     def test_gateway_review_terminal_failure_entrypoint_rejects_invalid_decision(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_invalid_decision") / "PSY201"

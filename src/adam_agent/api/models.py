@@ -89,6 +89,7 @@ class DatasetProgressItem(StrictBaseModel):
     compare_status: str = ""
     output_quality: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    available_actions: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RunProgressResponse(StrictBaseModel):

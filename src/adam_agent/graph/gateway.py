@@ -48,6 +48,14 @@ from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_
 
 
 LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM = "legacy_run_to_completion_compatibility_shim"
+TERMINAL_FAILURE_REVIEW_ACTIONS: tuple[dict[str, str], ...] = (
+    {"action": "retry_execution", "label": "Retry Execution"},
+    {"action": "repair_code", "label": "Repair Code"},
+    {"action": "revise_spec", "label": "Revise Spec"},
+    {"action": "request_new_input", "label": "Request New Input"},
+    {"action": "skip_dataset", "label": "Skip Dataset"},
+    {"action": "continue_other_datasets", "label": "Continue Other Datasets"},
+)
 
 
 @dataclass(frozen=True)
@@ -2092,14 +2100,7 @@ class GraphGateway:
             raise ValueError("Current dataset graph state is not waiting for terminal_failure review.")
         if command.interrupt != "terminal_failure" or command.dataset is None or command.dataset.strip().upper() != target:
             raise ValueError("Terminal failure review command must target the failed dataset.")
-        allowed_actions = {
-            "retry_execution",
-            "repair_code",
-            "revise_spec",
-            "request_new_input",
-            "skip_dataset",
-            "continue_other_datasets",
-        }
+        allowed_actions = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
         if command.action not in allowed_actions:
             raise ValueError("Terminal failure review action is not supported.")
         fingerprint = input_fingerprint_payload or input_fingerprint(root)
@@ -2250,14 +2251,7 @@ class GraphGateway:
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
         normalized_decision = decision.strip().lower()
-        allowed = {
-            "retry_execution",
-            "repair_code",
-            "revise_spec",
-            "request_new_input",
-            "skip_dataset",
-            "continue_other_datasets",
-        }
+        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
         if normalized_decision not in allowed:
             raise ValueError(
                 "Terminal failure decision must be retry_execution, repair_code, revise_spec, "
@@ -3197,6 +3191,7 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
             "compare_status": "",
             "output_quality": dataset_output_quality(status="pending"),
             "warnings": [],
+            "available_actions": [],
         }
     next_item = _dataset_next_action(dataset_state, blocked_reason=block)
     output_quality = dataset_output_quality(
@@ -3224,12 +3219,19 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
         "compare_status": str(dataset_state.compare_summary.get("status") or ""),
         "output_quality": output_quality,
         "warnings": _dataset_progress_warnings(dataset_state),
+        "available_actions": _available_dataset_actions(dataset_state),
     }
 
 
 def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str) -> dict[str, str]:
     interrupt = dataset_state.current_interrupt
-    if interrupt is not None and interrupt.status == "open":
+    terminal_review = dataset_state.execution_state.get("terminal_failure_review")
+    has_terminal_review = isinstance(terminal_review, dict)
+    if (
+        interrupt is not None
+        and interrupt.status == "open"
+        and not (interrupt.name == "terminal_failure" and has_terminal_review)
+    ):
         return {
             "next_action": _action_for_interrupt(interrupt.name),
             "action_label": _interrupt_label(interrupt.name),
@@ -3272,6 +3274,19 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
     if spec_status == "stale" or code_status == "stale" or execution_status == "stale":
         return {"next_action": "reconfirm_inputs", "action_label": "Study inputs changed. Reconfirm inputs before continuing."}
     return {"next_action": "finalize_inputs", "action_label": "Confirm uploaded evidence and prepare the spec gate."}
+
+
+def _available_dataset_actions(dataset_state: DatasetRunState) -> list[dict[str, str]]:
+    interrupt = dataset_state.current_interrupt
+    review = dataset_state.execution_state.get("terminal_failure_review")
+    if (
+        interrupt is not None
+        and interrupt.name == "terminal_failure"
+        and interrupt.status == "open"
+        and not isinstance(review, dict)
+    ):
+        return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
+    return []
 
 
 def _blocked_dataset_progress_reason(state: StudyRunState, dataset: str) -> str:

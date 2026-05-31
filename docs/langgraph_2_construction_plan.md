@@ -5733,3 +5733,41 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_te
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Graph-Owned Terminal-Failure Actions Slice
+
+Completed:
+
+- Moved the terminal-failure action list into the graph progress read model.
+  `GraphGateway` now exposes `available_actions` for each dataset when that
+  dataset has an open `terminal_failure` interrupt.
+- Kept the same six supported terminal-failure decisions:
+  `retry_execution`, `repair_code`, `revise_spec`, `request_new_input`,
+  `skip_dataset`, and `continue_other_datasets`.
+- Updated the browser triage panel to read actions from dataset progress first.
+  The local browser constant is now only a compatibility fallback for older
+  read models.
+- After a terminal-failure decision is recorded, graph progress no longer
+  exposes stale triage actions for that dataset, so the UI hides the old action
+  buttons and shows the graph-owned next action.
+- Added API/model and gateway tests proving terminal-failure actions are visible
+  only while the graph-owned interrupt is open.
+
+Current boundary:
+
+- This slice is a read-model ownership fix. It does not change R execution,
+  repair routing, static rules, compare behavior, dependency planning, provider
+  calls, or Reference ADaM authority.
+- UI still records a human decision through the existing
+  `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint; it does
+  not perform the follow-up action by itself.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+node --check .tmp_tests\ui_script_check.js
+```

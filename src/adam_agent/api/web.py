@@ -3486,22 +3486,31 @@ INDEX_HTML = r"""<!doctype html>
     function terminalFailurePanel(dataset) {
       const target = String(dataset || '').toUpperCase();
       const execution = executionFor(target);
-      if (!target || execution?.status !== 'terminal_failure') return '';
+      const datasetProgress = datasetProgressFor(target);
+      const review = terminalFailureReviewFor(target);
+      const graphActions = datasetProgress?.available_actions || [];
+      const hasGraphActionList = datasetProgress && Array.isArray(datasetProgress.available_actions);
+      const graphGateOpen = datasetProgress
+        ? datasetProgress.next_action === 'review_terminal_failure'
+        : (execution?.status === 'terminal_failure' && !review);
+      const progressTerminalFailure = datasetProgress?.status === 'terminal_failure' || datasetProgress?.execution_status === 'terminal_failure';
+      const executionTerminalFailure = execution?.status === 'terminal_failure';
+      if (!target || (!executionTerminalFailure && !progressTerminalFailure) || !graphGateOpen) return '';
       const diagnostics = execution.diagnostics_path
         ? ' Diagnostics were recorded in the run audit artifacts.'
         : ' Diagnostics were not linked in the current read model.';
-      const review = terminalFailureReviewFor(target);
       const reviewed = review?.action || review?.decision;
       const reviewedNote = reviewed
         ? `<p class="note strong">Last failure decision: ${escapeHtml(titleFromToken(reviewed))}. Continue with the matching next action from the graph.</p>`
         : '';
+      const actions = graphActions.length ? graphActions : (hasGraphActionList ? [] : TERMINAL_FAILURE_ACTIONS);
       return `
         <div class="card terminal-failure-panel">
           <h3>Terminal Failure Triage</h3>
           <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, spec revision, new input request, or batch continuation.</p>
           ${reviewedNote}
           <div class="button-row">
-            ${TERMINAL_FAILURE_ACTIONS.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label)}</button>`).join('')}
+            ${actions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label || titleFromToken(item.action))}</button>`).join('')}
           </div>
         </div>
       `;

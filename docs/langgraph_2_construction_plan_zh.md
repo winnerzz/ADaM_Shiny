@@ -5285,3 +5285,39 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_te
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Graph-Owned Terminal-Failure Actions 切片
+
+已完成：
+
+- 将 terminal-failure 可选动作列表上移到 graph progress read model。
+  当某个 dataset 有 open `terminal_failure` interrupt 时，`GraphGateway`
+  会在该 dataset 的 progress item 中暴露 `available_actions`。
+- 保留同一组 6 个受控处置动作：
+  `retry_execution`、`repair_code`、`revise_spec`、`request_new_input`、
+  `skip_dataset`、`continue_other_datasets`。
+- 浏览器 triage 面板现在优先读取 dataset progress 里的 actions。前端本地常量
+  只作为旧 read model 的兼容 fallback。
+- terminal-failure 决策被记录后，graph progress 不再暴露该 dataset 的过期
+  triage actions，因此 UI 会隐藏旧按钮，并显示 graph-owned next action。
+- 增加 API/model 和 gateway 测试，证明 terminal-failure actions 只在 graph-owned
+  interrupt 仍 open 时可见。
+
+当前边界：
+
+- 本切片是 read-model ownership 修正。不改变 R execution、repair routing、
+  static rules、compare behavior、dependency planning、provider calls 或
+  Reference ADaM authority。
+- UI 仍通过已有
+  `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint 记录人工
+  决策；它不会自己执行后续动作。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+node --check .tmp_tests\ui_script_check.js
+```
