@@ -4646,3 +4646,38 @@ Subagent review:
 - The review confirmed this slice only changes Advanced UI display, keeps
   technical paths out of the main product panes, and adds no backend state
   writes or workflow behavior.
+
+### 2026-05-31 - LG2.8 Target Planning vs Active Detail UI Slice
+
+Completed:
+
+- Added a browser UI summary that separates the ADaM datasets selected for
+  joint dependency planning from the single active dataset shown in the
+  review/code/result panels.
+- Added per-dataset card context labels so users can see whether a dataset is
+  planned in the current run or only visible as history/candidate context.
+- Updated UI contract tests to lock the distinction between planned targets and
+  active detail target.
+
+Current boundary:
+
+- This is a UI clarity slice only. It does not change canonical graph state,
+  dependency planning, dependency resolution, LLM generation, R execution,
+  compare, or static-rule behavior.
+- Code generation and R execution remain one active dataset at a time. The
+  multi-target selection only controls dependency planning and dashboard
+  context for now.
+- No new clinical or demo-specific static rule is introduced.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+Result: focused UI contract tests passed; broader graph-gateway/API suite
+passed with 155 tests; AST syntax check covered 80 Python files; `git diff
+--check` reported only CRLF line-ending warnings.

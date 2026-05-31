@@ -272,6 +272,12 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
     }
     .target-view.active { color: #fff; background: var(--accent); border-color: var(--accent-dark); }
+    .target-selection-summary {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
     .operation-banner {
       margin-bottom: 12px;
       padding: 12px;
@@ -519,6 +525,12 @@ INDEX_HTML = r"""<!doctype html>
       margin-bottom: 7px;
     }
     .dataset-name { font-size: 15px; font-weight: 800; }
+    .dataset-context {
+      margin: -2px 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
     .stage-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
     .stage {
       min-height: 26px;
@@ -923,6 +935,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="section-body">
           <p class="note">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panels below; generation and execution still happen one dataset at a time.</p>
           <div class="button-row" id="targetButtons"></div>
+          <div id="targetSelectionSummary" class="target-selection-summary">No planning target selected yet.</div>
           <div class="grid2" style="margin-top:12px;">
             <div class="field">
               <label for="manualTarget">Add another ADaM target</label>
@@ -1567,6 +1580,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="secondary target-view ${target === state.selectedTarget ? 'active' : ''}" data-target-view="${escapeHtml(target)}">${target === state.selectedTarget ? 'Viewing' : 'View'}</button>
         </span>
       `).join('');
+      renderTargetSelectionSummary();
       for (const checkbox of node.querySelectorAll('[data-target-toggle]')) {
         checkbox.addEventListener('change', () => {
           const target = checkbox.dataset.targetToggle;
@@ -1595,6 +1609,14 @@ INDEX_HTML = r"""<!doctype html>
       byId('finalizeInputsButton').disabled = !state.selectedTarget;
       renderDraftSpecPane();
       renderGraphAwareDashboard();
+    }
+
+    function renderTargetSelectionSummary() {
+      const planned = selectedTargets();
+      const active = state.selectedTarget || '';
+      byId('targetSelectionSummary').textContent = planned.length
+        ? `Planned together: ${planned.join(', ')}. Active detail view: ${active || 'none'}. Code generation and R execution still run only for the active detail target.`
+        : `No planning target selected. Active detail view: ${active || 'none'}.`;
     }
 
     function addManualTarget() {
@@ -2679,6 +2701,7 @@ INDEX_HTML = r"""<!doctype html>
         const progress = datasetProgressFor(target);
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
+        const isPlanned = selectedTargets().includes(target);
         const generated = generatedFor(target);
         const review = reviewFor(target);
         const execution = executionFor(target);
@@ -2693,6 +2716,7 @@ INDEX_HTML = r"""<!doctype html>
               <span class="dataset-name">${escapeHtml(target)}</span>
               <span class="pill ${statusClass}">${escapeHtml(status)}</span>
             </div>
+            <div class="dataset-context">${escapeHtml(datasetPlanningContext(target, isPlanned, isActive))}</div>
             <div class="stage-strip">
               <div class="stage done">inputs</div>
               <div class="stage ${state.plan ? (blockedNames.has(target) || progress?.blocked ? 'blocked' : 'done') : 'active'}">plan</div>
@@ -2710,6 +2734,13 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
+    }
+
+    function datasetPlanningContext(target, isPlanned, isActive) {
+      const parts = [];
+      parts.push(isPlanned ? 'planned in this run' : 'view-only history/candidate');
+      if (isActive) parts.push('active detail view');
+      return `${target}: ${parts.join(' | ')}`;
     }
 
     function renderAgentAuditPanel() {

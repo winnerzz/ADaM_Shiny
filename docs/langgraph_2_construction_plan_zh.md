@@ -4248,3 +4248,36 @@ git diff --check
 - GO。未发现 blocking findings。
 - 审核确认本切片只修改 Advanced UI 展示，技术路径没有进入主产品面板，也没有
   新增后端状态写入或 workflow 行为。
+
+### 2026-05-31 - LG2.8 Target Planning 与 Active Detail UI 区分切片
+
+已完成：
+
+- 在浏览器 UI 增加 target selection summary，明确区分两件事：
+  - 当前一起做 dependency planning 的 ADaM datasets。
+  - 当前 review/code/result 面板正在看的单个 active dataset。
+- 在 dataset execution cards 上增加 context label，说明每个 dataset 是
+  `planned in this run`，还是只是 `view-only history/candidate`。
+- 更新 UI contract tests，锁定 planned targets 与 active detail target 不能
+  被 UI 混成一件事。
+
+当前边界：
+
+- 这是 UI clarity 切片，不改变 canonical graph state、dependency planning、
+  dependency resolution、LLM generation、R execution、compare 或 static-rule 行为。
+- 代码生成和 R 执行现在仍然是一次处理一个 active dataset；多 target 选择
+  目前只影响 dependency planning 和 dashboard context。
+- 没有新增任何临床规则、demo-specific rule 或 blocking static rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+结果：focused UI contract tests 通过；更宽的 graph-gateway/API suite 通过
+155 个测试；AST syntax check 覆盖 80 个 Python 文件；`git diff --check` 只有
+CRLF line-ending warnings。
