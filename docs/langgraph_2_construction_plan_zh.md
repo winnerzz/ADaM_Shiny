@@ -4644,6 +4644,36 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Initial Compare Action UI 切片
+
+已完成：
+
+- 更新 result Compare tab：当 generated output preview 和 reference ADaM preview
+  都存在时，用户可以直接点击第一次 `Run Compare`。
+- 已有 compare summary 后，保留原来的 `Run Compare Again`。
+- 当 generated output 或 reference ADaM table 缺失时，明确显示 compare 目前不可用。
+- 在 empty state 中再次说明：reference ADaM 只是 comparison evidence，不是
+  derivation authority。
+- 增加 focused UI contract test，覆盖首次 compare 可用状态和 reference 缺失状态。
+
+当前边界：
+
+- 本切片只改变 browser result panel 的 action wiring 和文案。
+- 不改变 `/compare` API endpoint、GraphGateway compare persistence、
+  dependency planning、dependency resolution、provider calls、static rules、R
+  execution、repair 或 Reference ADaM authority。
+- 不自动运行 compare；仍然由用户点击 `Run Compare`。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_allows_initial_compare_when_reference_preview_exists tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Review-Only Output UI 文案切片
 
 已完成：

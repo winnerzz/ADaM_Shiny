@@ -5052,6 +5052,38 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Initial Compare Action UI Slice
+
+Completed:
+
+- Updated the result Compare tab so the user can run the first compare when
+  both generated output preview and reference ADaM preview are available.
+- Kept the existing `Run Compare Again` action after a compare summary exists.
+- Added explicit empty-state wording when compare cannot run because either the
+  generated output or reference ADaM table is missing.
+- Repeated the product rule in the empty state: reference ADaM is comparison
+  evidence only, not derivation authority.
+- Added a focused UI contract test for initial compare availability and the
+  unavailable-reference state.
+
+Current boundary:
+
+- This slice changes only the browser result-panel action wiring and wording.
+- It does not change the `/compare` API endpoint, GraphGateway compare
+  persistence, dependency planning, dependency resolution, provider calls,
+  static rules, R execution, repair, or Reference ADaM authority.
+- It does not auto-run compare; the human still clicks `Run Compare`.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_allows_initial_compare_when_reference_preview_exists tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Review-Only Output UI Wording Slice
 
 Completed:

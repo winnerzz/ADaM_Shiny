@@ -3529,7 +3529,15 @@ INDEX_HTML = r"""<!doctype html>
 
     function comparePane(review) {
       const compare = state.compareResults[review.dataset] || review.compare_summary;
-      if (!compare) return '<p class="note">Compare has not been run yet.</p>';
+      const canRunCompare = Boolean(review?.output_preview && review?.reference_preview);
+      const compareButtonLabel = compare ? 'Run Compare Again' : 'Run Compare';
+      if (!compare) {
+        if (!canRunCompare) return '<p class="note">Compare is not available yet. A generated table and a reference ADaM table are both required.</p>';
+        return `
+          <p class="note">Compare has not been run yet. Reference ADaM is used only as comparison evidence.</p>
+          <div class="button-row"><button class="secondary" id="refreshCompareButton">Run Compare</button></div>
+        `;
+      }
       const mismatchRows = (compare.mismatch_samples || []).map((item) => `
         <tr><td>${escapeHtml(item.key)}</td><td>${escapeHtml(item.column)}</td><td>${escapeHtml(item.generated)}</td><td>${escapeHtml(item.reference)}</td></tr>
       `).join('');
@@ -3551,7 +3559,7 @@ INDEX_HTML = r"""<!doctype html>
             <li>Reference only keys: ${escapeHtml((compare.reference_only_keys || []).slice(0, 8).join(', ') || 'none')}</li>
           </ul></div>
         </div>
-        <div class="button-row"><button class="secondary" id="refreshCompareButton">Run Compare Again</button></div>
+        <div class="button-row"><button class="secondary" id="refreshCompareButton">${escapeHtml(compareButtonLabel)}</button></div>
         <h3 style="margin-top:12px;">Mismatch Samples</h3>
         <div class="table-wrap"><table><thead><tr><th>Key</th><th>Column</th><th>Generated</th><th>Reference</th></tr></thead><tbody>${mismatchRows || '<tr><td class="muted" colspan="4">No mismatch samples.</td></tr>'}</tbody></table></div>
       `;

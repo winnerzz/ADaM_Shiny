@@ -716,6 +716,22 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn(".stage.review-only", html)
         self.assertIn("datasetOutputQualityStatus(target)", status_body)
 
+    def test_index_allows_initial_compare_when_reference_preview_exists(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        compare_body = html.split("function comparePane(review)", 1)[1].split("function downloadsPane(review)", 1)[0]
+        self.assertIn("const canRunCompare = Boolean(review?.output_preview && review?.reference_preview);", compare_body)
+        self.assertIn("const compareButtonLabel = compare ? 'Run Compare Again' : 'Run Compare';", compare_body)
+        self.assertIn("Compare is not available yet. A generated table and a reference ADaM table are both required.", compare_body)
+        self.assertIn("Compare has not been run yet. Reference ADaM is used only as comparison evidence.", compare_body)
+        self.assertIn('<button class="secondary" id="refreshCompareButton">Run Compare</button>', compare_body)
+        self.assertIn("${escapeHtml(compareButtonLabel)}", compare_body)
+        self.assertIn("const compareButton = byId('refreshCompareButton');", html)
+
     def test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency(self) -> None:
         client = TestClient(create_app())
 
