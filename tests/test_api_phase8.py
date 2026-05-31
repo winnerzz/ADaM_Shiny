@@ -463,6 +463,23 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("split(/[\\\\/]/)", summary_body)
         self.assertNotIn("`${item.path}: ${item.reason}`", summary_body)
 
+    def test_index_explains_sas7bdat_not_previewed_as_runtime_input(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        render_files_body = html.split("function renderFiles(containerId, files)", 1)[1].split("function fileStatusLabel(file)", 1)[0]
+        status_body = html.split("function fileStatusLabel(file)", 1)[1].split("function fileSummary(file)", 1)[0]
+        summary_body = html.split("function fileSummary(file)", 1)[1].split("function inferTargets(summary)", 1)[0]
+        self.assertIn("fileStatusPillClass(file)", render_files_body)
+        self.assertIn("fileStatusLabel(file)", render_files_body)
+        self.assertIn("file?.status === 'not_previewed' && file?.format === 'sas7bdat'", status_body)
+        self.assertIn("return 'runtime input';", status_body)
+        self.assertIn("file.status === 'not_previewed' && file.format === 'sas7bdat'", summary_body)
+        self.assertIn("SAS dataset recognized as a runtime input", summary_body)
+
     def test_index_exposes_agent_audit_from_graph_state(self) -> None:
         client = TestClient(create_app())
 

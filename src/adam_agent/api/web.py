@@ -1647,7 +1647,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="file-item">
           <div class="file-title">
             <span>${escapeHtml(file.dataset || file.file_name)}</span>
-            <span class="pill ${file.status === 'ok' ? '' : 'warn'}">${escapeHtml(file.status)}</span>
+            <span class="pill ${fileStatusPillClass(file)}">${escapeHtml(fileStatusLabel(file))}</span>
           </div>
           <div class="file-meta">${escapeHtml(file.file_name)} | ${escapeHtml(file.format)} | ${file.row_count ?? file.line_count ?? '-'} ${file.preview_type === 'code' || file.preview_type === 'text' ? 'lines' : 'rows'}</div>
           <div class="file-meta">${escapeHtml(fileSummary(file))}</div>
@@ -1656,11 +1656,25 @@ INDEX_HTML = r"""<!doctype html>
       `).join('');
     }
 
+    function fileStatusLabel(file) {
+      if (file?.status === 'not_previewed' && file?.format === 'sas7bdat') return 'runtime input';
+      return file?.status || 'unknown';
+    }
+
+    function fileStatusPillClass(file) {
+      if (file?.status === 'ok') return '';
+      if (file?.status === 'not_previewed' && file?.format === 'sas7bdat') return '';
+      return 'warn';
+    }
+
     function fileSummary(file) {
       if (file.preview_type === 'code' || file.preview_type === 'text') {
         const targets = (file.detected_targets || []).join(', ');
         const deps = (file.detected_dependencies || []).join(', ');
         return [targets ? `ADaM tokens: ${targets}` : '', deps ? `Dependency hints: ${deps}` : '', file.note || ''].filter(Boolean).join(' | ');
+      }
+      if (file.status === 'not_previewed' && file.format === 'sas7bdat') {
+        return file.note || 'SAS dataset recognized as a runtime input. Install R package haven to enable preview.';
       }
       const columns = (file.columns || []).slice(0, 10).join(', ');
       return columns || file.note || 'No preview details.';

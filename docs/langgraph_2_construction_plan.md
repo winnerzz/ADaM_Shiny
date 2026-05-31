@@ -5052,6 +5052,35 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 SAS7BDAT Preview Status UI Slice
+
+Completed:
+
+- Changed browser file-card status rendering for `.sas7bdat` files whose API
+  preview status is `not_previewed`.
+- The UI now labels those files as `runtime input` and explains that the SAS
+  dataset is recognized for R execution even when browser preview is unavailable.
+- Added a focused UI contract test for the status label and summary text.
+
+Current boundary:
+
+- This slice changes only browser file-card wording and pill styling.
+- It does not change `/study-inputs` API payloads, file scanning, upload
+  handling, sas7bdat runtime support, R package requirements, dependency
+  planning, GraphGateway state transitions, provider calls, static rules,
+  R execution, compare, repair, or Reference ADaM authority.
+- The message does not claim successful preview. It separates runtime input
+  support from browser preview availability.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_explains_sas7bdat_not_previewed_as_runtime_input tests.test_api_phase8.Phase8ApiTests.test_study_inputs_marks_sas7bdat_as_runtime_supported_when_preview_unavailable -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Input Warning Path Hiding UI Slice
 
 Completed:

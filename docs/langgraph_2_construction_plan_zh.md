@@ -4644,6 +4644,35 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 SAS7BDAT Preview Status UI 切片
+
+已完成：
+
+- 改造 browser file-card 对 `.sas7bdat` 文件且 API preview status 为
+  `not_previewed` 时的展示。
+- UI 现在把这些文件标成 `runtime input`，并说明 SAS dataset 已被识别为 R
+  execution 输入，即使当前 browser preview 不可用。
+- 增加 focused UI contract test，覆盖 status label 和 summary text。
+
+当前边界：
+
+- 本切片只改变 browser file-card 文案和 pill 样式。
+- 不改变 `/study-inputs` API payloads、file scanning、upload handling、
+  sas7bdat runtime support、R package requirements、dependency planning、
+  GraphGateway state transitions、provider calls、static rules、R execution、
+  compare、repair 或 Reference ADaM authority。
+- 文案不声称已经成功 preview，而是把 runtime input support 和 browser
+  preview availability 分开。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_explains_sas7bdat_not_previewed_as_runtime_input tests.test_api_phase8.Phase8ApiTests.test_study_inputs_marks_sas7bdat_as_runtime_supported_when_preview_unavailable -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Input Warning Path Hiding UI 切片
 
 已完成：
