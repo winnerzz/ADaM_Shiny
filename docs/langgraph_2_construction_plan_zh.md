@@ -3602,3 +3602,46 @@ API/graph/gateway/static-rule tests passed；diff check passed。
   仍然 fail-closed；显式 legacy `stub` compatibility 仍保留；显式 LLM
   `/runs` 请求仍会被 split-flow gate 拦截；CLI developer modes 仍可用；
   Product Graph / legacy stub 边界没有被削弱；static-rule governance 未被改动。
+
+### 2026-05-31 - LG2.8 Graph Execution-Mode 常量边界切片
+
+已完成：
+
+- 将 `src/adam_agent/graph/execution_modes.py` 从 API/CLI 入口 allowlist
+  扩展为 graph execution-mode 名称的共享来源。
+- DatasetGraph、routing helpers、StudyGraph dispatch、GraphGateway product
+  invocation、demo-study 默认 mode 中的 product/downstream/stub mode 分支判断，
+  改为引用共享常量。
+- 更新 non-legacy route guard 回归测试，让 downstream mode cases 来自共享 mode
+  set，而不是测试里自己复制一份字符串清单。
+
+当前边界：
+
+- 这是行为保持切片。不改变 product routing、dependency planning、LLM
+  generation、R execution、compare、UI state 或 static rule semantics。
+- 剩下的 `"stub"`、`"graph_product_execute"` 等字符串是审计 metadata key，
+  不是 execution-mode routing decision。
+- static-rule governance 不变。本切片不新增 clinical、dataset-specific、
+  study-specific、demo-specific 或 variable-specific rule。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_unknown_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_graph_product_execute_prepare_does_not_run_r_before_execute_node tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_demo_study_endpoint_prepares_shiny_demo_shape tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\dataset_graph.py src\adam_agent\graph\routing.py src\adam_agent\graph\study_graph.py src\adam_agent\graph\gateway.py src\adam_agent\api\service.py tests\test_graph_smoke.py
+```
+
+结果：focused graph/API checks passed；232 个相关
+API/graph/gateway/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：常量集合覆盖了之前的 mode 字符串；DatasetGraph 行为仍然等价且
+  fail-closed；Product Graph / legacy stub graph 分离没有被削弱；剩余 literal
+  是测试样例或 audit metadata label，不是 routing decision；static-rule
+  governance 未被触碰。

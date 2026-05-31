@@ -14,6 +14,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_state, record_agent_decision, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
+from adam_agent.graph.execution_modes import (
+    GRAPH_PRODUCT_EXECUTE_MODE,
+    GRAPH_PRODUCT_GENERATE_CODE_MODE,
+    GRAPH_PRODUCT_PREPARE_MODE,
+)
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -864,7 +869,7 @@ class GraphGateway:
                 "study_id": study_id,
                 "run_id": run_id,
                 "dataset": target,
-                "execution_mode": "graph_product_prepare",
+                "execution_mode": GRAPH_PRODUCT_PREPARE_MODE,
                 "study_dir": str(root),
                 "rscript_path": rscript_path or "",
                 "dependency_resolution": dependency_resolution,
@@ -1507,7 +1512,7 @@ class GraphGateway:
                 "study_id": study_id,
                 "run_id": run_id,
                 "dataset": target,
-                "execution_mode": "graph_product_generate_code",
+                "execution_mode": GRAPH_PRODUCT_GENERATE_CODE_MODE,
                 "study_dir": str(root),
                 "rscript_path": rscript_path or "",
                 "dependency_resolution": dependency_resolution,
@@ -1712,7 +1717,7 @@ class GraphGateway:
                 "study_id": study_id,
                 "run_id": run_id,
                 "dataset": target,
-                "execution_mode": "graph_product_execute",
+                "execution_mode": GRAPH_PRODUCT_EXECUTE_MODE,
                 "study_dir": str(root),
                 "rscript_path": rscript_path or "",
                 "audit_artifacts": [],

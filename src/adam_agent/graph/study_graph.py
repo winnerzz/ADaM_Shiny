@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph, compile_legacy_stub_dataset_graph
+from adam_agent.graph.execution_modes import LEGACY_STUB_MODE
 from adam_agent.graph.dependency_resolution import (
     approved_dependency_targets,
     available_dependency_targets,
@@ -718,7 +719,7 @@ def _run_dataset_tasks(tasks: list[DatasetTask]) -> list[DatasetGraphState]:
 
 
 def _invoke_dataset_task(task: DatasetTask) -> DatasetGraphState:
-    if task.get("execution_mode") == "stub":
+    if task.get("execution_mode") == LEGACY_STUB_MODE:
         dataset_graph = compile_legacy_stub_dataset_graph()
     else:
         dataset_graph = compile_dataset_graph()

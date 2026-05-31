@@ -22,6 +22,13 @@ try:
     from adam_agent.graph.dataset_graph import compile_legacy_stub_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.dataset_graph import route_after_product_context
+    from adam_agent.graph.execution_modes import (
+        GRAPH_PRODUCT_EXECUTE_MODE,
+        GRAPH_PRODUCT_GENERATE_CODE_MODE,
+        GRAPH_PRODUCT_PREPARE_MODE,
+        LLM_DOWNSTREAM_MODES,
+        RETIRED_ADSL_TEMPLATE_MODE,
+    )
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -37,6 +44,13 @@ except ModuleNotFoundError:
     from adam_agent.graph.dataset_graph import compile_legacy_stub_dataset_graph
     from adam_agent.graph.dataset_graph import prepare_dataset
     from adam_agent.graph.dataset_graph import route_after_product_context
+    from adam_agent.graph.execution_modes import (
+        GRAPH_PRODUCT_EXECUTE_MODE,
+        GRAPH_PRODUCT_GENERATE_CODE_MODE,
+        GRAPH_PRODUCT_PREPARE_MODE,
+        LLM_DOWNSTREAM_MODES,
+        RETIRED_ADSL_TEMPLATE_MODE,
+    )
     from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.routing import route_after_sandbox
     from adam_agent.graph.study_graph import compile_study_graph
@@ -525,14 +539,12 @@ class GraphSmokeTests(unittest.TestCase):
 
     def test_dataset_graph_non_legacy_modes_never_route_to_stub_chain(self) -> None:
         mode_cases = [
-            ("graph_product_prepare", {"spec_source": "input_spec"}, "summarize"),
-            ("graph_product_prepare", {"spec_source": "missing_input_spec"}, "draft_spec_agent"),
-            ("graph_product_generate_code", {}, "generate_r_code_agent"),
-            ("graph_product_execute", {}, "execute_approved_code"),
-            ("llm_downstream_stubbed", {}, "summarize"),
-            ("llm_downstream_provider", {}, "summarize"),
-            ("llm_downstream_r_sandbox", {}, "summarize"),
-            ("real_adsl_minimal", {}, "summarize"),
+            (GRAPH_PRODUCT_PREPARE_MODE, {"spec_source": "input_spec"}, "summarize"),
+            (GRAPH_PRODUCT_PREPARE_MODE, {"spec_source": "missing_input_spec"}, "draft_spec_agent"),
+            (GRAPH_PRODUCT_GENERATE_CODE_MODE, {}, "generate_r_code_agent"),
+            (GRAPH_PRODUCT_EXECUTE_MODE, {}, "execute_approved_code"),
+            *[(mode, {}, "summarize") for mode in sorted(LLM_DOWNSTREAM_MODES)],
+            (RETIRED_ADSL_TEMPLATE_MODE, {}, "summarize"),
         ]
 
         for execution_mode, extra, expected_route in mode_cases:

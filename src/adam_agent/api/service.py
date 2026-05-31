@@ -51,6 +51,7 @@ from adam_agent.graph.execution_modes import (
     LEGACY_RUN_BLOCKED_LLM_MODES,
     LEGACY_RUN_ENDPOINT_MODES,
     LLM_DOWNSTREAM_PROVIDER_MODE,
+    LLM_DOWNSTREAM_R_SANDBOX_MODE,
     format_execution_modes,
 )
 from adam_agent.graph.gateway import GraphGateway, LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM
@@ -243,7 +244,7 @@ def prepare_demo_study(
         run_id=f"run_ui_{stamp[:14]}",
         target_datasets=["ADAE"],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
-        execution_mode="llm_downstream_r_sandbox" if DEFAULT_LOCAL_RSCRIPT.exists() else "llm_downstream_provider",
+        execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if DEFAULT_LOCAL_RSCRIPT.exists() else LLM_DOWNSTREAM_PROVIDER_MODE,
         rscript_path=str(DEFAULT_LOCAL_RSCRIPT.as_posix()) if DEFAULT_LOCAL_RSCRIPT.exists() else None,
         created_files=created_files,
         notes=notes,

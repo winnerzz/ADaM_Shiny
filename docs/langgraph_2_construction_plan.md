@@ -3955,3 +3955,49 @@ Subagent review:
   by the split-flow gate, CLI developer modes still work, Product Graph /
   legacy stub boundaries were not weakened, and static-rule governance was
   untouched.
+
+### 2026-05-31 - LG2.8 Graph Execution-Mode Constant Boundary Slice
+
+Completed:
+
+- Extended `src/adam_agent/graph/execution_modes.py` from API/CLI entry
+  allowlists into the shared source of truth for graph execution-mode names.
+- Replaced graph-internal product/downstream/stub mode branch checks in
+  DatasetGraph, routing helpers, StudyGraph dispatch, GraphGateway product
+  invocations, and demo-study defaults with shared constants.
+- Updated the non-legacy route guard regression so its downstream-mode cases
+  come from the shared mode set instead of a copied test-only string list.
+
+Current boundary:
+
+- This slice is behavior-preserving. It does not change product routing,
+  dependency planning, LLM generation, R execution, compare, UI state, or static
+  rule semantics.
+- Remaining string keys such as metadata fields (`"stub"` or
+  `"graph_product_execute"`) are audit labels, not execution-mode routing
+  decisions.
+- Static-rule governance is unchanged. This slice adds no clinical,
+  dataset-specific, study-specific, demo-specific, or variable-specific rule.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_unknown_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_graph_product_execute_prepare_does_not_run_r_before_execute_node tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_demo_study_endpoint_prepares_shiny_demo_shape tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\dataset_graph.py src\adam_agent\graph\routing.py src\adam_agent\graph\study_graph.py src\adam_agent\graph\gateway.py src\adam_agent\api\service.py tests\test_graph_smoke.py
+```
+
+Result: focused graph/API checks passed; 232 related
+API/graph/gateway/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that the constant sets cover the previous mode strings,
+  DatasetGraph behavior remains equivalent and fail-closed, Product Graph /
+  legacy stub graph separation was not weakened, remaining literals are test
+  examples or audit metadata labels rather than routing decisions, and
+  static-rule governance was untouched.

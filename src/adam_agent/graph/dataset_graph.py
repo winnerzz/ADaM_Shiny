@@ -9,6 +9,19 @@ from langgraph.graph import END, START, StateGraph
 from adam_agent.agents import record_agent_decision
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
 from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
+from adam_agent.graph.execution_modes import (
+    GRAPH_PRODUCT_EXECUTE_MODE,
+    GRAPH_PRODUCT_GENERATE_CODE_MODE,
+    GRAPH_PRODUCT_MODES,
+    GRAPH_PRODUCT_PREPARE_MODE,
+    LEGACY_STUB_MODE,
+    LLM_DOWNSTREAM_MODES,
+    LLM_DOWNSTREAM_PROVIDER_MODE,
+    LLM_DOWNSTREAM_R_SANDBOX_MODE,
+    LLM_DOWNSTREAM_STUBBED_MODE,
+    RETIRED_ADSL_TEMPLATE_MODE,
+    format_execution_modes,
+)
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, utc_timestamp
@@ -52,31 +65,27 @@ from adam_agent.tools.static_rules import (
 
 
 def _is_llm_downstream_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") in {
-        "llm_downstream_stubbed",
-        "llm_downstream_provider",
-        "llm_downstream_r_sandbox",
-    }
+    return state.get("execution_mode") in LLM_DOWNSTREAM_MODES
 
 
 def _is_retired_adsl_template_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") == "real_adsl_minimal"
+    return state.get("execution_mode") == RETIRED_ADSL_TEMPLATE_MODE
 
 
 def _is_graph_product_prepare_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") == "graph_product_prepare"
+    return state.get("execution_mode") == GRAPH_PRODUCT_PREPARE_MODE
 
 
 def _is_graph_product_generate_code_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") == "graph_product_generate_code"
+    return state.get("execution_mode") == GRAPH_PRODUCT_GENERATE_CODE_MODE
 
 
 def _is_graph_product_execute_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") == "graph_product_execute"
+    return state.get("execution_mode") == GRAPH_PRODUCT_EXECUTE_MODE
 
 
 def _is_legacy_stub_mode(state: DatasetGraphState) -> bool:
-    return state.get("execution_mode") == "stub"
+    return state.get("execution_mode") == LEGACY_STUB_MODE
 
 
 def _is_legacy_stub_graph_enabled(state: DatasetGraphState) -> bool:
@@ -98,11 +107,11 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
 
     if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state):
         return prepare_product_context_node(state)
-    if state.get("execution_mode") == "llm_downstream_stubbed":
+    if state.get("execution_mode") == LLM_DOWNSTREAM_STUBBED_MODE:
         return run_llm_downstream_stubbed_node(state)
-    if state.get("execution_mode") == "llm_downstream_provider":
+    if state.get("execution_mode") == LLM_DOWNSTREAM_PROVIDER_MODE:
         return run_llm_downstream_provider_node(state)
-    if state.get("execution_mode") == "llm_downstream_r_sandbox":
+    if state.get("execution_mode") == LLM_DOWNSTREAM_R_SANDBOX_MODE:
         return run_llm_downstream_r_sandbox_node(state)
     if _is_retired_adsl_template_mode(state):
         return {
@@ -144,6 +153,8 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
 
     if not _is_legacy_stub_mode(state):
         mode = state.get("execution_mode") or "missing"
+        allowed_product_modes = format_execution_modes(GRAPH_PRODUCT_MODES)
+        allowed_downstream_modes = format_execution_modes(LLM_DOWNSTREAM_MODES)
         return {
             "status": "failed",
             "failure_type": "input_error",
@@ -151,9 +162,8 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
             "real_run_completed": False,
             "real_run_error": (
                 f"DatasetGraph requires an explicit execution_mode; got {mode}. "
-                "Use graph_product_prepare, graph_product_generate_code, graph_product_execute, "
-                "llm_downstream_provider, llm_downstream_r_sandbox, llm_downstream_stubbed, "
-                "or explicit legacy/test mode stub."
+                f"Use {allowed_product_modes}, {allowed_downstream_modes}, "
+                f"or explicit legacy/test mode {LEGACY_STUB_MODE}."
             ),
             "real_run_artifacts": {},
             "real_validation_status": "not_run",
@@ -192,7 +202,7 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "failure_type": "input_error",
             "route": "fail",
             "real_run_completed": False,
-            "real_run_error": "execution_mode=graph_product_prepare requires study_dir",
+            "real_run_error": f"execution_mode={GRAPH_PRODUCT_PREPARE_MODE} requires study_dir",
             "real_run_artifacts": {},
             "real_validation_status": "not_run",
             "sandbox_runs": 0,
@@ -644,7 +654,7 @@ def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphSta
             "failure_type": "input_error",
             "route": "fail",
             "real_run_completed": False,
-            "real_run_error": "execution_mode=llm_downstream_stubbed requires study_dir",
+            "real_run_error": f"execution_mode={LLM_DOWNSTREAM_STUBBED_MODE} requires study_dir",
             "real_run_artifacts": {},
             "real_validation_status": "not_run",
             "sandbox_runs": 0,
@@ -726,7 +736,7 @@ def _run_llm_downstream_provider_node(state: DatasetGraphState, *, use_local_r: 
 
     study_dir = state.get("study_dir")
     if not study_dir:
-        mode = state.get("execution_mode", "llm_downstream_provider")
+        mode = state.get("execution_mode", LLM_DOWNSTREAM_PROVIDER_MODE)
         return {
             "status": "failed",
             "failure_type": "input_error",

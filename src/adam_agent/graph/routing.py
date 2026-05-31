@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from adam_agent.graph.execution_modes import (
+    GRAPH_PRODUCT_MODES,
+    LLM_DOWNSTREAM_MODES,
+    RETIRED_ADSL_TEMPLATE_MODE,
+)
 from adam_agent.graph.state import DatasetGraphState, DatasetRoute
 
 
 def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
     """Route a dataset after stub risk assessment."""
 
-    if state.get("execution_mode") in {"graph_product_prepare", "graph_product_generate_code", "graph_product_execute"}:
+    if state.get("execution_mode") in GRAPH_PRODUCT_MODES:
         return "human_review"
     if state.get("human_review_required", False):
         return "human_review"
@@ -18,13 +23,9 @@ def route_after_risk(state: DatasetGraphState) -> DatasetRoute:
 def route_after_sandbox(state: DatasetGraphState) -> DatasetRoute:
     """Route a dataset after stub sandbox execution."""
 
-    if state.get("execution_mode") in {
-        "llm_downstream_stubbed",
-        "llm_downstream_provider",
-        "llm_downstream_r_sandbox",
-    }:
+    if state.get("execution_mode") in LLM_DOWNSTREAM_MODES:
         return "success" if state.get("real_run_completed") else "fail"
-    if state.get("execution_mode") == "real_adsl_minimal":
+    if state.get("execution_mode") == RETIRED_ADSL_TEMPLATE_MODE:
         return "fail"
 
     failure_type = state.get("failure_type")
