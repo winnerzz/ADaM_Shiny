@@ -4589,6 +4589,9 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/stu
 - 增加 focused Gateway regression，证明 input-spec finalize 和 code
   generation 会把 agent IO 同时写到 dataset state、study state 和
   `graph_state.json`。
+- 后续补充 focused coverage，证明 approved-code execution 也会把
+  `execution_agent` IO 同时写到 dataset state、study state 和
+  `graph_state.json`。
 
 当前边界：
 
@@ -4606,5 +4609,6 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/stu
 
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
 ```

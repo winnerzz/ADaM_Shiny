@@ -4999,6 +4999,8 @@ Completed:
 - Added focused Gateway regression coverage proving input-spec finalization and
   code generation persist agent IO at dataset level, study level, and in
   `graph_state.json`.
+- Follow-up coverage also proves approved-code execution persists
+  `execution_agent` IO at dataset level, study level, and in `graph_state.json`.
 
 Current boundary:
 
@@ -5016,5 +5018,6 @@ Verification:
 
 ```text
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
 ```

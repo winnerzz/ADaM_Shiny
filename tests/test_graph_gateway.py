@@ -1548,6 +1548,40 @@ class GraphGatewayTests(unittest.TestCase):
                 "real_run_artifacts": {},
                 "failure_records": [],
                 "agent_decisions": [],
+                "agent_node_inputs": [
+                    {
+                        "agent": "execution_agent",
+                        "node": "execute_approved_code",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_execute",
+                        "dataset": "ADAE",
+                        "task": "Execute approved generated R code in the configured R boundary and report validation status.",
+                        "inputs": {
+                            "code_path": str(code_path.as_posix()),
+                            "static_check_path": str(static_path.as_posix()),
+                            "rscript_path_provided": True,
+                        },
+                        "created_at": "2026-05-31T00:02:01Z",
+                    }
+                ],
+                "agent_node_outputs": [
+                    {
+                        "agent": "execution_agent",
+                        "node": "execute_approved_code",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_execute",
+                        "dataset": "ADAE",
+                        "status": "completed",
+                        "decision": "r_execution_completed",
+                        "reason": "Executed approved generated R code in the configured R boundary.",
+                        "outputs": {
+                            "output_path": "runs/run_lg2_gateway_execute/outputs/adae.csv",
+                            "validation_status": "pass",
+                            "terminal_failure": False,
+                        },
+                        "created_at": "2026-05-31T00:02:02Z",
+                    }
+                ],
                 "risk_flags": [],
                 "execution_errors": [],
                 "execution_warnings": [],
@@ -1580,8 +1614,17 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.execution_state["generation_quality"], {})
         self.assertFalse(dataset_state.execution_state["not_real_derivation"])
         self.assertIn("execution_agent", [item["agent"] for item in dataset_state.agent_decisions])
+        self.assertEqual(dataset_state.agent_node_inputs[-1]["agent"], "execution_agent")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["decision"], "r_execution_completed")
+        self.assertEqual(result.graph_state.agent_node_outputs[-1]["agent"], "execution_agent")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["status"], "completed")
+        persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted_state["datasets"]["ADAE"]["agent_node_outputs"][-1]["decision"],
+            "r_execution_completed",
+        )
+        self.assertEqual(persisted_state["agent_node_outputs"][-1]["decision"], "r_execution_completed")
 
     def test_gateway_execution_preserves_generation_quality_signal(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_generation_quality") / "PSY201"
