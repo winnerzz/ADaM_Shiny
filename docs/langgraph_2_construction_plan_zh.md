@@ -3685,3 +3685,46 @@ git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph
   retired ADSL template mode 重新放回合法入口；preflight 条件足够窄，保留
   plan-only、unsupported 和 dependency-blocked 结果；显式 unknown mode 不会
   dispatch dataset subgraphs；static-rule governance 未被触碰。
+
+### 2026-05-31 - LG2.8 StudyGraph Audit Node 命名清理切片
+
+已完成：
+
+- 将 StudyGraph 最终 audit 节点从 `write_audit_manifest_stub` 改名为
+  `write_audit_manifest`。
+- 保持 audit manifest 行为不变。这个节点已经会在有 study directory 时写真实
+  study-level audit manifest，并在 manifest metadata 中记录 `stub: false`。
+- 新增拓扑回归测试，证明产品 StudyGraph 不再暴露任何 `*_stub` node name，并且
+  `reduce_dataset_results` 仍然流向真实 audit manifest 节点。
+
+当前边界：
+
+- 这是 compatibility/deprecation cleanup，不改变 dependency planning、dataset
+  dispatch、LLM generation、R execution、compare、UI state 或 static-rule
+  governance。
+- 本切片有意重命名一个 StudyGraph node id。历史 checkpoint 如果正好停在旧的
+  final audit node，不属于这个 cleanup branch 的兼容承诺范围。
+- 历史文档仍可能提到 Phase 3 旧 stub node name；当前产品 StudyGraph topology
+  不能再暴露这些名字。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_uses_real_audit_manifest_node_name tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused StudyGraph topology 和 smoke tests passed；234 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。也尝试过 `python -m compileall -q
+src\adam_agent`，但当前 workspace 的既有 `__pycache__` 路径写入被
+`PermissionError` 阻止，因此使用不写 pyc 的 AST parsing 作为语法检查。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：本切片只是围绕同一套 audit-manifest 逻辑重命名 node/function；
+  产品 StudyGraph topology 不再暴露 `*_stub` node name；DatasetGraph legacy
+  stub 覆盖没有被影响；static-rule governance 未被触碰。

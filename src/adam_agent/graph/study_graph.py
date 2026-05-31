@@ -262,7 +262,7 @@ def reduce_dataset_results(state: StudyGraphState) -> StudyGraphState:
     return {"status": status}
 
 
-def write_audit_manifest_stub(state: StudyGraphState) -> StudyGraphState:
+def write_audit_manifest(state: StudyGraphState) -> StudyGraphState:
     """Represent a study-level audit manifest as an artifact reference."""
 
     planning_artifacts = _write_dependency_planning_artifacts(state)
@@ -783,7 +783,7 @@ def build_study_graph():
     graph.add_node("plan_datasets", plan_datasets)
     graph.add_node("run_dependency_batches", run_dependency_batches)
     graph.add_node("reduce_dataset_results", reduce_dataset_results)
-    graph.add_node("write_audit_manifest_stub", write_audit_manifest_stub)
+    graph.add_node("write_audit_manifest", write_audit_manifest)
 
     graph.add_edge(START, "initialize_study")
     graph.add_edge("initialize_study", "plan_datasets")
@@ -796,8 +796,8 @@ def build_study_graph():
         },
     )
     graph.add_edge("run_dependency_batches", "reduce_dataset_results")
-    graph.add_edge("reduce_dataset_results", "write_audit_manifest_stub")
-    graph.add_edge("write_audit_manifest_stub", END)
+    graph.add_edge("reduce_dataset_results", "write_audit_manifest")
+    graph.add_edge("write_audit_manifest", END)
     return graph
 
 

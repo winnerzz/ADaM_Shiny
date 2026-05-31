@@ -4043,3 +4043,51 @@ Subagent review:
   preflight condition is narrow enough to preserve plan-only, unsupported, and
   dependency-blocked outcomes, explicit unknown mode does not dispatch dataset
   subgraphs, and static-rule governance was untouched.
+
+### 2026-05-31 - LG2.8 StudyGraph Audit Node Naming Slice
+
+Completed:
+
+- Renamed the StudyGraph final audit node from `write_audit_manifest_stub` to
+  `write_audit_manifest`.
+- Kept audit manifest behavior unchanged. The node already writes a real
+  study-level audit manifest when a study directory is available and records
+  `stub: false` in manifest metadata.
+- Added a topology regression proving the product StudyGraph exposes no
+  `*_stub` node names and still routes `reduce_dataset_results` into the real
+  audit manifest node.
+
+Current boundary:
+
+- This is a compatibility/deprecation cleanup only. It does not change
+  dependency planning, dataset dispatch, LLM generation, R execution, compare,
+  UI state, or static-rule governance.
+- This slice intentionally renames a StudyGraph node id. Existing historical
+  checkpoints paused exactly at the old final audit node are not part of the
+  compatibility promise for this cleanup branch.
+- Historical docs may still mention old Phase 3 stub node names as history;
+  current product StudyGraph topology must not expose them.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_uses_real_audit_manifest_node_name tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused StudyGraph topology and smoke tests passed; 234 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed. `python -m compileall -q src\adam_agent` was also
+attempted, but this workspace currently blocks pyc writes in existing
+`__pycache__` paths with `PermissionError`, so AST parsing was used as the
+write-free syntax check.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that the change is a node/function rename around the
+  same audit-manifest logic, product StudyGraph topology no longer exposes
+  `*_stub` node names, DatasetGraph legacy stub coverage is not affected, and
+  static-rule governance was untouched.

@@ -537,6 +537,16 @@ class GraphSmokeTests(unittest.TestCase):
 
         self.assertIn(("prepare_dataset", "draft_lineage_stub", "stub_chain"), edges)
 
+    def test_study_graph_uses_real_audit_manifest_node_name(self) -> None:
+        graph = compile_study_graph().get_graph()
+        edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
+        node_names = {node.id for node in graph.nodes.values()}
+
+        self.assertIn("write_audit_manifest", node_names)
+        self.assertNotIn("write_audit_manifest_stub", node_names)
+        self.assertFalse(any(str(node_name).endswith("_stub") for node_name in node_names))
+        self.assertIn(("reduce_dataset_results", "write_audit_manifest", None), edges)
+
     def test_dataset_graph_non_legacy_modes_never_route_to_stub_chain(self) -> None:
         mode_cases = [
             (GRAPH_PRODUCT_PREPARE_MODE, {"spec_source": "input_spec"}, "summarize"),
