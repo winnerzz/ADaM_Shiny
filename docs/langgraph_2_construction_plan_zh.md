@@ -6159,6 +6159,70 @@ git diff --check
 Exited 0; CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip 切片
+
+已完成：
+
+- 新增内部 `GraphGateway.start_native_draft_spec_review()`：
+  - 使用 DatasetGraph 原生 `draft_spec_review` interrupt 真正暂停；
+  - 暂停后仍通过 shared
+    `_record_draft_spec_generation_from_dataset_result()` 进入现有
+    canonical `record_draft_spec_generation()` 状态和正式 draft-spec review
+    interrupt；
+  - 记录 `native_draft_spec_review_interrupt` metadata，并明确标记为
+    `draft_spec_review_pilot_only` 边界。
+- 新增内部 `GraphGateway.resume_native_draft_spec_review()`：
+  - 在 native resume 前先检查 canonical `graph_state.json`；
+  - 如果 study-level interrupt 仍然 open，会在消费 native DatasetGraph
+    checkpoint 前 fail closed；
+  - 只有 canonical dataset-level `draft_spec_review` interrupt 仍匹配时，
+    才恢复 DatasetGraph native interrupt；
+  - 将 DatasetGraph 返回的 human command 交给
+    `review_draft_spec_from_command()`；
+  - 因此正式 review artifact、draft-spec hash、approved-spec hash 和 input
+    fingerprint 校验仍全部复用现有 gateway 校验。
+- 新增 `GraphGateway.review_draft_spec_from_command()` 作为 draft-spec review
+  的 native command bridge。它读取 canonical graph state，拒绝未解决的
+  study-level gate，校验 dataset interrupt，然后委托现有
+  `review_draft_spec()` artifact flow。
+- 将 `finalize_inputs()` 的 DatasetGraph draft-spec 记录逻辑抽成 shared
+  helper，保证 public split-flow 和 native pilot 共用同一条 canonical
+  draft-spec generation 记录路径。
+- 增加回归测试：
+  - native approve roundtrip 会写正式
+    `review/{dataset}_draft_spec_review.json`，并关闭 `draft_spec_review`
+    interrupt；
+  - native reject roundtrip 会写正式 reject artifact，并保持 dataset 锁定在
+    draft-spec review；
+  - native resume 在恢复 DatasetGraph checkpoint 前会先检查 canonical dataset
+    open interrupt；
+  - native resume 遇到 open study-level interrupt 时，会在 native checkpoint
+    resume 前失败，不消费 checkpoint，也不写 review artifact。
+
+当前边界：
+
+- 本切片仍是内部 pilot，不改变公开 FastAPI/UI split-flow 默认路径。
+- 不实现 persistent LangGraph SQLite/Postgres checkpointer。
+- 不改变 LLM draft-spec 生成质量、R execution、compare、repair、static
+  rules 或 Reference ADaM authority。
+
+审查：
+
+- 子 agent 第一次审查 NO-GO：study-level interrupt 校验发生在 native
+  DatasetGraph resume 之后，可能先消费 in-memory native checkpoint，再由正式
+  artifact flow fail closed。
+- 已修复：在 `resume_native_draft_spec_review()` 中把 study-level interrupt
+  guard 前移到 native resume 之前，并增加 `compile_dataset_graph` patch 回归
+  测试，证明 study-level gate open 时不会调用 native resume。
+- 子 agent 复审返回 GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_resume_requires_canonical_draft_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_resume_rejects_study_interrupt_before_native_resume -v
+Ran 4 tests in 0.539s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Code Review Gateway Roundtrip 切片
 
 已完成：

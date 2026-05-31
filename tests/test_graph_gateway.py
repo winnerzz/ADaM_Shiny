@@ -1536,6 +1536,201 @@ class GraphGatewayTests(unittest.TestCase):
                     llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
                 )
 
+    def test_gateway_native_draft_spec_review_roundtrip_persists_formal_review_artifact(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_draft_spec_roundtrip") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+
+        started = gateway.start_native_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_draft_spec_roundtrip",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = started.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
+        self.assertIn("native_draft_spec_review_interrupt", started.graph_state.runtime_persistence)
+        self.assertEqual(
+            started.graph_state.runtime_persistence["native_draft_spec_review_interrupt"]["boundary"],
+            "draft_spec_review_pilot_only",
+        )
+
+        reviewed = gateway.resume_native_draft_spec_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_draft_spec_roundtrip",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="native_tester",
+            notes="Native draft-spec gateway roundtrip approved.",
+        )
+
+        review_path = Path(reviewed.review_path)
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        reviewed_dataset = reviewed.graph_state.datasets["ADAE"]
+        self.assertTrue(reviewed.approved)
+        self.assertEqual(review_payload["decision"], "approve")
+        self.assertEqual(review_payload["reviewer"], "native_tester")
+        self.assertTrue(Path(str(reviewed.approved_spec_path)).exists())
+        self.assertEqual(reviewed_dataset.spec_state["status"], "approved")
+        self.assertIsNone(reviewed_dataset.current_interrupt)
+        self.assertEqual(reviewed_dataset.human_commands[-1].interrupt, "draft_spec_review")
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["native_status"],
+            "approved",
+        )
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_draft_spec_roundtrip"
+                / "reviews"
+                / "adae_draft_spec_review.json"
+            ).exists()
+        )
+
+    def test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_draft_spec_reject_roundtrip") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_draft_spec_reject_roundtrip",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        reviewed = gateway.resume_native_draft_spec_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_draft_spec_reject_roundtrip",
+            dataset="ADAE",
+            decision="reject",
+            reviewer="native_tester",
+            notes="Draft spec needs revision.",
+        )
+
+        review_payload = json.loads(Path(reviewed.review_path).read_text(encoding="utf-8"))
+        dataset_state = reviewed.graph_state.datasets["ADAE"]
+        self.assertFalse(reviewed.approved)
+        self.assertEqual(review_payload["decision"], "reject")
+        self.assertEqual(dataset_state.spec_state["status"], "rejected")
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["native_status"],
+            "rejected",
+        )
+
+    def test_gateway_native_draft_spec_review_resume_requires_canonical_draft_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_draft_spec_resume_gate") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_draft_spec_resume_gate",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_draft_spec_resume_gate")
+        graph_state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADAE",
+            reason="Canonical state is no longer waiting for draft-spec review.",
+        )
+        gateway._persist_graph_state(study_dir, graph_state, node="test_native_draft_spec_resume_gate")
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            gateway.resume_native_draft_spec_review(
+                study_dir=study_dir,
+                run_id="run_lg2_native_draft_spec_resume_gate",
+                dataset="ADAE",
+                decision="approve",
+                reviewer="native_tester",
+            )
+
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_draft_spec_resume_gate"
+                / "reviews"
+                / "adae_draft_spec_review.json"
+            ).exists()
+        )
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_draft_spec_resume_gate")
+        self.assertEqual(reloaded.datasets["ADAE"].spec_state["status"], "draft_generated")
+
+    def test_gateway_native_draft_spec_review_resume_rejects_study_interrupt_before_native_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_draft_spec_study_gate") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_draft_spec_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_draft_spec_study_gate",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_draft_spec_study_gate")
+        graph_state.current_interrupt = InterruptState(
+            name="dependency_review",
+            reason="Study dependency review was reopened before dataset review resumed.",
+        )
+        graph_state.dependency_review_status = "review_required"
+        gateway._persist_graph_state(study_dir, graph_state, node="test_native_draft_spec_study_gate")
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            with self.assertRaisesRegex(ValueError, "Study-level interrupt dependency_review must be resolved"):
+                gateway.resume_native_draft_spec_review(
+                    study_dir=study_dir,
+                    run_id="run_lg2_native_draft_spec_study_gate",
+                    dataset="ADAE",
+                    decision="approve",
+                    reviewer="native_tester",
+                )
+
+        compile_graph.assert_not_called()
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_draft_spec_study_gate"
+                / "reviews"
+                / "adae_draft_spec_review.json"
+            ).exists()
+        )
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_draft_spec_study_gate")
+        self.assertEqual(reloaded.current_interrupt.name, "dependency_review")
+        self.assertEqual(reloaded.datasets["ADAE"].spec_state["status"], "draft_generated")
+
     def test_gateway_mark_inputs_changed_updates_canonical_state_and_projection(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_mark_inputs_changed") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

@@ -6677,6 +6677,73 @@ git diff --check
 Exited 0; CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip Slice
+
+Completed:
+
+- Added internal `GraphGateway.start_native_draft_spec_review()`:
+  - uses the DatasetGraph native `draft_spec_review` interrupt to actually
+    pause;
+  - after the pause, still records through shared
+    `_record_draft_spec_generation_from_dataset_result()` into existing
+    canonical `record_draft_spec_generation()` state and the formal
+    draft-spec review interrupt;
+  - records `native_draft_spec_review_interrupt` metadata with an explicit
+    `draft_spec_review_pilot_only` boundary.
+- Added internal `GraphGateway.resume_native_draft_spec_review()`:
+  - checks canonical `graph_state.json` before native resume;
+  - rejects an open study-level interrupt before consuming the native
+    DatasetGraph checkpoint;
+  - resumes the DatasetGraph native interrupt only after the canonical
+    dataset-level `draft_spec_review` interrupt still matches;
+  - passes the returned human command into `review_draft_spec_from_command()`;
+  - therefore formal review artifacts, draft-spec hash, approved-spec hash, and
+    input fingerprint validation continue to reuse the existing gateway checks.
+- Added `GraphGateway.review_draft_spec_from_command()` as the native command
+  bridge for draft-spec review. It loads canonical graph state, rejects
+  unresolved study-level gates, validates the dataset interrupt, and then
+  delegates to the existing `review_draft_spec()` artifact flow.
+- Extracted DatasetGraph draft-spec recording from `finalize_inputs()` into a
+  shared helper so the public split-flow and native pilot use the same
+  canonical draft-spec generation record path.
+- Added regressions proving:
+  - native approve roundtrip writes formal
+    `review/{dataset}_draft_spec_review.json` and closes the
+    `draft_spec_review` interrupt;
+  - native reject roundtrip writes a formal reject artifact while keeping the
+    dataset locked at draft-spec review;
+  - native resume checks the canonical dataset open interrupt before resuming
+    the DatasetGraph checkpoint;
+  - native resume also rejects an open study-level interrupt before native
+    checkpoint resume, so the checkpoint is not consumed and no review artifact
+    is written.
+
+Current boundary:
+
+- This remains an internal pilot and does not change the public FastAPI/UI
+  split-flow default path.
+- It does not implement a persistent LangGraph SQLite/Postgres checkpointer.
+- It does not change LLM draft-spec generation quality, R execution, compare,
+  repair, static rules, or Reference ADaM authority.
+
+Review:
+
+- First subagent review returned NO-GO: study-level interrupt validation happened
+  after native DatasetGraph resume, which could consume the in-memory native
+  checkpoint before formal artifact flow failed closed.
+- Fixed by moving the study-level interrupt guard ahead of native resume in
+  `resume_native_draft_spec_review()` and adding a regression that patches
+  `compile_dataset_graph` to prove it is not called while a study-level gate is
+  open.
+- Follow-up subagent review returned GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_resume_requires_canonical_draft_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_resume_rejects_study_interrupt_before_native_resume -v
+Ran 4 tests in 0.539s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Code Review Gateway Roundtrip Slice
 
 Completed:

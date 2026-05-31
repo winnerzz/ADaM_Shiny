@@ -1318,42 +1318,13 @@ class GraphGateway:
         draft_path = result.get("draft_spec_path")
         if not draft_path:
             raise ValueError(f"Draft spec generation did not produce a reviewable spec for {target}.")
-        draft_variables = list(result.get("draft_spec_variables", []))
-        prompt_path = result.get("draft_spec_prompt_path") or ""
-        response_path = result.get("draft_spec_response_path") or ""
-        gateway_result = self.record_draft_spec_generation(
-            study_dir=root,
+        return self._record_draft_spec_generation_from_dataset_result(
+            root=root,
             study_id=study_id,
             run_id=run_id,
-            dataset=target,
-            draft_spec_path=draft_path,
-            prompt_path=prompt_path,
-            response_path=response_path,
-            variables=draft_variables,
-            warnings=warnings,
-            input_fingerprint_payload=fingerprint,
-            agent_decisions=list(result.get("agent_decisions", [])),
-            agent_node_inputs=list(result.get("agent_node_inputs", [])),
-            agent_node_outputs=list(result.get("agent_node_outputs", [])),
-            risk_flags=list(result.get("risk_flags", [])),
-        )
-        projection = self._handoff_dependency_review_to_product_step(
-            root=root,
-            state=gateway_result.graph_state,
+            target=target,
+            result=result,
             gate=plan,
-            preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
-        )
-        return GraphGatewayFinalizeInputsResult(
-            graph_state=gateway_result.graph_state,
-            workflow_projection=projection,
-            spec_source=spec_source or "draft_spec",
-            warnings=warnings,
-            dependency_review_status=gateway_result.graph_state.dependency_review_status,
-            dependency_warnings=list(plan.dependency_warnings),
-            draft_spec_path=str(draft_path),
-            draft_spec_prompt_path=str(prompt_path),
-            draft_spec_response_path=str(response_path),
-            draft_spec_variables=draft_variables,
         )
 
     def generate_draft_spec(
@@ -1382,6 +1353,163 @@ class GraphGateway:
             target_context_builder=target_context_builder,
             rscript_path=rscript_path,
             force_new_draft_spec=True,
+        )
+
+    def start_native_draft_spec_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+        force_new_draft_spec: bool = False,
+    ) -> GraphGatewayFinalizeInputsResult:
+        """Start an internal DatasetGraph native draft-spec review interrupt pilot."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        plan = self.dependency_gate_for_product_step(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+        dependency_resolution = list(plan.dependency_resolution)
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        result = dataset_graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": GRAPH_PRODUCT_PREPARE_MODE,
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "dependency_resolution": dependency_resolution,
+                "llm_provider": llm_provider,
+                "llm_exposure": llm_exposure,
+                "llm_client_builder": llm_client_builder,
+                "target_context_builder": target_context_builder,
+                "force_new_draft_spec": force_new_draft_spec,
+                "native_draft_spec_review": True,
+                "audit_artifacts": [],
+            },
+            config=self._dataset_config(study_id, run_id, target),
+        )
+        if "__interrupt__" not in result:
+            raise ValueError(f"DatasetGraph did not stop at native draft_spec_review for {target}.")
+        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        gateway_result = self._record_draft_spec_generation_from_dataset_result(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            result=snapshot.values,
+            gate=plan,
+            runtime_persistence_extra={
+                "native_draft_spec_review_interrupt": _native_interrupt_payload(
+                    snapshot,
+                    boundary="draft_spec_review_pilot_only",
+                )
+            },
+        )
+        return gateway_result
+
+    def resume_native_draft_spec_review(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayDraftSpecReviewResult:
+        """Resume the native draft-spec pilot through the formal review artifact flow."""
+
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Draft spec review decision must be approve or reject.")
+        open_study_interrupt = _open_study_interrupt(graph_state)
+        if open_study_interrupt is not None:
+            raise ValueError(
+                f"Study-level interrupt {open_study_interrupt.name} must be resolved before dataset draft_spec_review."
+            )
+        _assert_resume_command_matches_open_interrupt(
+            graph_state,
+            HumanCommand(
+                interrupt="draft_spec_review",
+                action="approve" if normalized_decision == "approve" else "reject",
+                dataset=target,
+                reviewer=reviewer,
+                notes=notes,
+            ),
+        )
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": normalized_decision,
+                    "reviewer": reviewer,
+                    "notes": notes,
+                }
+            ),
+            config=self._dataset_config(graph_state.study_id, run_id, target),
+        )
+        expected_native_status = "approved" if normalized_decision == "approve" else "rejected"
+        if resumed.get("native_draft_spec_review_status") != expected_native_status:
+            raise ValueError(f"DatasetGraph did not resume native draft_spec_review for {target}.")
+        commands = resumed.get("human_commands") or []
+        if not commands:
+            raise ValueError(f"DatasetGraph native draft_spec_review resume did not produce a human command for {target}.")
+        command_payload = dict(commands[-1])
+        result = self.review_draft_spec_from_command(
+            study_dir=root,
+            run_id=run_id,
+            command=HumanCommand(
+                interrupt=command_payload.get("interrupt", "draft_spec_review"),
+                action=command_payload.get("action", normalized_decision),
+                dataset=command_payload.get("dataset", target),
+                reviewer=command_payload.get("reviewer", reviewer),
+                notes=command_payload.get("notes", notes),
+                payload=command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {},
+            ),
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+        self._persist_graph_state(
+            root,
+            result.graph_state,
+            node="native_draft_spec_review_resume",
+            runtime_persistence_extra={
+                "native_draft_spec_review_resume": {
+                    "resumed": True,
+                    "dataset": target,
+                    "action": normalized_decision,
+                    "native_status": resumed.get("native_draft_spec_review_status"),
+                }
+            },
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            result.graph_state,
+            node="graph_gateway_native_draft_spec_review_resume",
+        )
+        return GraphGatewayDraftSpecReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=projection,
+            decision=result.decision,
+            review_path=result.review_path,
+            approved=result.approved,
+            approved_spec_path=result.approved_spec_path,
         )
 
     def dependency_gate_for_product_step(
@@ -1415,6 +1543,111 @@ class GraphGateway:
         result = _dependency_gate_result(root, graph_state)
         _assert_dependency_gate_open(result, target)
         return result
+
+    def _record_draft_spec_generation_from_dataset_result(
+        self,
+        *,
+        root: Path,
+        study_id: str,
+        run_id: str,
+        target: str,
+        result: dict[str, Any],
+        gate: GraphGatewayDependencyGateResult,
+        runtime_persistence_extra: dict[str, Any] | None = None,
+    ) -> GraphGatewayFinalizeInputsResult:
+        """Persist a DatasetGraph draft-spec result through the canonical gateway path."""
+
+        if result.get("status") == "failed":
+            raise ValueError(str(result.get("real_run_error") or f"Could not generate draft spec for {target}."))
+        spec_source = str(result.get("spec_source") or "")
+        draft_path = result.get("draft_spec_path")
+        if not draft_path:
+            raise ValueError(f"Draft spec generation did not produce a reviewable spec for {target}.")
+        draft_variables = list(result.get("draft_spec_variables", []))
+        warnings = list(result.get("product_context_warnings", []))
+        prompt_path = result.get("draft_spec_prompt_path") or ""
+        response_path = result.get("draft_spec_response_path") or ""
+        gateway_result = self.record_draft_spec_generation(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_path,
+            prompt_path=prompt_path,
+            response_path=response_path,
+            variables=draft_variables,
+            warnings=warnings,
+            input_fingerprint_payload=input_fingerprint(root),
+            agent_decisions=list(result.get("agent_decisions", [])),
+            agent_node_inputs=list(result.get("agent_node_inputs", [])),
+            agent_node_outputs=list(result.get("agent_node_outputs", [])),
+            risk_flags=list(result.get("risk_flags", [])),
+        )
+        projection = self._handoff_dependency_review_to_product_step(
+            root=root,
+            state=gateway_result.graph_state,
+            gate=gate,
+            preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
+        )
+        if runtime_persistence_extra:
+            self._persist_graph_state(
+                root,
+                gateway_result.graph_state,
+                node="native_draft_spec_review_interrupt",
+                runtime_persistence_extra=runtime_persistence_extra,
+            )
+            projection = project_graph_state_to_workflow(
+                root,
+                gateway_result.graph_state,
+                node="graph_gateway_native_draft_spec_review_interrupt",
+            )
+        return GraphGatewayFinalizeInputsResult(
+            graph_state=gateway_result.graph_state,
+            workflow_projection=projection,
+            spec_source=spec_source or "draft_spec",
+            warnings=warnings,
+            dependency_review_status=gateway_result.graph_state.dependency_review_status,
+            dependency_warnings=list(gate.dependency_warnings),
+            draft_spec_path=str(draft_path),
+            draft_spec_prompt_path=str(prompt_path),
+            draft_spec_response_path=str(response_path),
+            draft_spec_variables=draft_variables,
+        )
+
+    def review_draft_spec_from_command(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        command: HumanCommand,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayDraftSpecReviewResult:
+        """Bridge a graph-native draft-spec command to the gateway artifact flow."""
+
+        root = Path(study_dir).expanduser()
+        if command.dataset is None:
+            raise ValueError("Draft spec review command must include a dataset.")
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        open_study_interrupt = _open_study_interrupt(graph_state)
+        if open_study_interrupt is not None:
+            raise ValueError(
+                f"Study-level interrupt {open_study_interrupt.name} must be resolved before dataset draft_spec_review."
+            )
+        _assert_resume_command_matches_open_interrupt(graph_state, command)
+        if command.interrupt != "draft_spec_review":
+            raise ValueError("Draft spec review command must target draft_spec_review.")
+        if command.action not in {"approve", "reject"}:
+            raise ValueError("Draft spec review command action must be approve or reject.")
+        return self.review_draft_spec(
+            study_dir=root,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=command.dataset,
+            decision=command.action,
+            reviewer=command.reviewer,
+            notes=command.notes,
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
 
     def record_draft_spec_review(
         self,
