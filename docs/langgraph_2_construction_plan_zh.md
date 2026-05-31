@@ -5062,3 +5062,33 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 ```
+
+### 2026-05-31 - LG2.4 Dependency Agent IO Planning 切片
+
+已完成：
+
+- 扩展 canonical dependency planning：study-level `dependency_agent` 现在会为
+  `dependency_plan` 写入 typed `AgentNodeInput` 和 `AgentNodeOutput`。
+- 保留原有 `dependency_plan_prepared` decision payload，并把它绑定到 typed
+  output package 中，所以 agent audit summary 仍然统计同一条 decision。
+- 更新 study-level agent IO 同步逻辑：先保留 study-scoped agent records，再
+  汇总各 dataset state 的 dataset-scoped records。这样后续 dataset 动作不会
+  抹掉 dependency-agent handoff。
+- 增加 gateway regression，证明 dependency-agent IO 会出现在 canonical graph
+  state 和持久化 `graph_state.json` 中，同时原有 dataset-level IO 仍然存在。
+
+当前边界：
+
+- 本切片只改变 dependency planning 的 canonical agent IO persistence。
+- 不改变 dependency planning logic、dependency review routing、provider
+  calls、draft spec generation、code generation、static rules、R execution、
+  compare、repair 或 UI 行为。
+- dependency agent 仍然只是受边界约束的 planning/audit 角色。它不发明临床
+  推导逻辑，也不会把 Reference ADaM 当作 derivation authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_agents_contract -v
+```

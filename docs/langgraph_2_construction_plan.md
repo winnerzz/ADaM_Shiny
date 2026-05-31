@@ -5487,3 +5487,38 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 ```
+
+### 2026-05-31 - LG2.4 Dependency Agent IO Planning Slice
+
+Completed:
+
+- Extended canonical dependency planning so the study-level
+  `dependency_agent` writes typed `AgentNodeInput` and `AgentNodeOutput`
+  records for `dependency_plan`.
+- Preserved the existing `dependency_plan_prepared` decision payload and bound
+  it to the typed output package, so agent audit summaries still count the
+  same decision.
+- Updated study-level agent IO synchronization to keep study-scoped agent
+  records, then append dataset-scoped records from each dataset state. This
+  prevents later dataset actions from erasing the dependency-agent handoff.
+- Added gateway regression coverage proving dependency-agent IO is present in
+  canonical graph state and persisted `graph_state.json`, while existing
+  dataset-level IO remains available.
+
+Current boundary:
+
+- This slice only changes canonical agent IO persistence for dependency
+  planning.
+- It does not change dependency planning logic, dependency review routing,
+  provider calls, draft spec generation, code generation, static rules, R
+  execution, compare, repair, or UI behavior.
+- The dependency agent remains a bounded planning/audit role. It does not
+  invent clinical derivation logic and does not use Reference ADaM as
+  derivation authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_agents_contract -v
+```

@@ -2526,6 +2526,60 @@ class GraphGateway:
             "dependency_planning_warnings": plan_state.get("dependency_planning_warnings", []),
         }
         status = "needs_review" if current_interrupt else "pending"
+        dependency_decision = record_agent_decision(
+            agent="dependency_agent",
+            node="dependency_plan",
+            decision="dependency_plan_prepared",
+            status=status,
+            reason=_dependency_review_reason(dependency_review_status)
+            if dependency_review_status != "accepted"
+            else "Dependency plan was accepted without blocking review.",
+            inputs={"requested_datasets": plan_state.get("requested_datasets", [])},
+            outputs={
+                "target_datasets": plan_state.get("target_datasets", []),
+                "runnable_datasets": plan_state.get("runnable_datasets", []),
+                "blocked_datasets": plan_state.get("blocked_datasets", []),
+                "dependency_review_status": dependency_review_status,
+            },
+            risk_flags=[f"dependency_review_{dependency_review_status}"]
+            if dependency_review_status != "accepted"
+            else [],
+        )
+        dependency_agent_input = build_agent_node_input(
+            agent="dependency_agent",
+            node="dependency_plan",
+            study_id=plan_state["study_id"],
+            run_id=plan_state["run_id"],
+            task="Prepare the study dependency plan and decide whether dependency review is needed.",
+            inputs={
+                "requested_datasets": plan_state.get("requested_datasets", []),
+                "approved_dependency_datasets": plan_state.get("approved_dependency_datasets", []),
+                "input_fingerprint_digest": fingerprint.get("digest"),
+            },
+            risk_flags=[f"dependency_review_{dependency_review_status}"]
+            if dependency_review_status != "accepted"
+            else [],
+        )
+        dependency_agent_output = build_agent_node_output(
+            agent="dependency_agent",
+            node="dependency_plan",
+            study_id=plan_state["study_id"],
+            run_id=plan_state["run_id"],
+            status=status,
+            decision="dependency_plan_prepared",
+            reason=dependency_decision["reason"],
+            outputs={
+                "target_datasets": plan_state.get("target_datasets", []),
+                "runnable_datasets": plan_state.get("runnable_datasets", []),
+                "blocked_datasets": plan_state.get("blocked_datasets", []),
+                "dependency_review_status": dependency_review_status,
+                "execution_batches": plan_state.get("execution_batches", []),
+            },
+            risk_flags=[f"dependency_review_{dependency_review_status}"]
+            if dependency_review_status != "accepted"
+            else [],
+            agent_decisions=[dependency_decision],
+        )
         return StudyRunState(
             study_id=plan_state["study_id"],
             run_id=plan_state["run_id"],
@@ -2541,27 +2595,9 @@ class GraphGateway:
             dependency_resolution=plan_state.get("dependency_resolution", []),
             dependency_review_status=dependency_review_status,
             datasets=datasets,
-            agent_decisions=[
-                record_agent_decision(
-                    agent="dependency_agent",
-                    node="dependency_plan",
-                    decision="dependency_plan_prepared",
-                    status=status,
-                    reason=_dependency_review_reason(dependency_review_status)
-                    if dependency_review_status != "accepted"
-                    else "Dependency plan was accepted without blocking review.",
-                    inputs={"requested_datasets": plan_state.get("requested_datasets", [])},
-                    outputs={
-                        "target_datasets": plan_state.get("target_datasets", []),
-                        "runnable_datasets": plan_state.get("runnable_datasets", []),
-                        "blocked_datasets": plan_state.get("blocked_datasets", []),
-                        "dependency_review_status": dependency_review_status,
-                    },
-                    risk_flags=[f"dependency_review_{dependency_review_status}"]
-                    if dependency_review_status != "accepted"
-                    else [],
-                )
-            ],
+            agent_decisions=[dependency_decision],
+            agent_node_inputs=[dependency_agent_input],
+            agent_node_outputs=[dependency_agent_output],
             risk_flags=[f"dependency_review_{dependency_review_status}"]
             if dependency_review_status != "accepted"
             else [],
@@ -3566,8 +3602,20 @@ def _sync_study_agent_decisions(state: StudyRunState) -> None:
 
 
 def _sync_study_agent_node_io(state: StudyRunState) -> None:
+    study_inputs = [
+        item
+        for item in state.agent_node_inputs
+        if isinstance(item, dict) and item.get("dataset") is None
+    ]
+    study_outputs = [
+        item
+        for item in state.agent_node_outputs
+        if isinstance(item, dict) and item.get("dataset") is None
+    ]
     state.agent_node_inputs = []
     state.agent_node_outputs = []
+    _append_unique_agent_io_records(state.agent_node_inputs, study_inputs, model=AgentNodeInput)
+    _append_unique_agent_io_records(state.agent_node_outputs, study_outputs, model=AgentNodeOutput)
     for dataset in sorted(state.datasets):
         dataset_state = state.datasets[dataset]
         _append_unique_agent_io_records(state.agent_node_inputs, dataset_state.agent_node_inputs, model=AgentNodeInput)

@@ -254,9 +254,28 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.agent_decisions[0]["agent"], "dependency_agent")
         self.assertEqual(result.graph_state.agent_decisions[0]["decision"], "dependency_plan_prepared")
         self.assertEqual(result.graph_state.agent_decisions[0]["outputs"]["dependency_review_status"], "review_required")
+        self.assertEqual(result.graph_state.agent_node_inputs[0]["agent"], "dependency_agent")
+        self.assertEqual(result.graph_state.agent_node_inputs[0]["node"], "dependency_plan")
+        self.assertIsNone(result.graph_state.agent_node_inputs[0]["dataset"])
+        self.assertEqual(
+            result.graph_state.agent_node_inputs[0]["task"],
+            "Prepare the study dependency plan and decide whether dependency review is needed.",
+        )
+        self.assertEqual(result.graph_state.agent_node_outputs[0]["agent"], "dependency_agent")
+        self.assertEqual(result.graph_state.agent_node_outputs[0]["decision"], "dependency_plan_prepared")
+        self.assertIsNone(result.graph_state.agent_node_outputs[0]["dataset"])
+        self.assertEqual(
+            result.graph_state.agent_node_outputs[0]["agent_decisions"][0],
+            result.graph_state.agent_decisions[0],
+        )
         self.assertEqual(result.graph_state.agent_audit_summary["summary_writer"]["agent"], "audit_agent")
         self.assertEqual(result.graph_state.agent_audit_summary["agent_counts"]["dependency_agent"], 1)
         self.assertTrue((study_dir / "runs" / "run_lg2_gateway_plan" / "audit" / "agent_summary.json").exists())
+        persisted_state = json.loads(
+            (study_dir / "runs" / "run_lg2_gateway_plan" / "graph_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(persisted_state["agent_node_inputs"][0]["agent"], "dependency_agent")
+        self.assertEqual(persisted_state["agent_node_outputs"][0]["decision"], "dependency_plan_prepared")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
         self.assertEqual(workflow_state["agent_decisions"][0]["agent"], "dependency_agent")
@@ -885,13 +904,13 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "input_spec_ready")
         self.assertEqual(dataset_state.agent_node_inputs[0]["agent"], "evidence_agent")
         self.assertEqual(dataset_state.agent_node_outputs[0]["decision"], "input_spec_ready")
-        self.assertEqual(result.graph_state.agent_node_inputs[0]["agent"], "evidence_agent")
-        self.assertEqual(result.graph_state.agent_node_outputs[0]["decision"], "input_spec_ready")
+        self.assertIn("evidence_agent", [item["agent"] for item in result.graph_state.agent_node_inputs])
+        self.assertIn("input_spec_ready", [item["decision"] for item in result.graph_state.agent_node_outputs])
         persisted_state = json.loads(
             (study_dir / "runs" / "run_lg2_gateway_finalize_input_spec" / "graph_state.json").read_text(encoding="utf-8")
         )
         self.assertEqual(persisted_state["datasets"]["ADAE"]["agent_node_outputs"][0]["decision"], "input_spec_ready")
-        self.assertEqual(persisted_state["agent_node_outputs"][0]["decision"], "input_spec_ready")
+        self.assertIn("input_spec_ready", [item["decision"] for item in persisted_state["agent_node_outputs"]])
 
     def test_gateway_finalize_inputs_records_review_required_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_finalize_draft_spec") / "PSY201"
@@ -1372,7 +1391,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["generation_quality"]["llm_provider"], "mock")
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_inputs], ["code_agent", "static_review_agent"])
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_outputs], ["code_agent", "static_review_agent"])
-        self.assertEqual([item["agent"] for item in result.graph_state.agent_node_outputs], ["code_agent", "static_review_agent"])
+        self.assertEqual(
+            [item["agent"] for item in result.graph_state.agent_node_outputs],
+            ["dependency_agent", "code_agent", "static_review_agent"],
+        )
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
         persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
@@ -1382,7 +1404,7 @@ class GraphGatewayTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["decision"] for item in persisted_state["agent_node_outputs"]],
-            ["r_code_generated", "static_check_recorded"],
+            ["dependency_plan_prepared", "r_code_generated", "static_check_recorded"],
         )
 
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
