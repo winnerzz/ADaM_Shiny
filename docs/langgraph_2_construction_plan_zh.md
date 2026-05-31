@@ -5772,3 +5772,57 @@ git diff --check -- docs/phase8_1_api_contract.md docs/langgraph_2_construction_
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
 git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
 ```
+
+### 2026-06-01 - LG2.8 Closeout Verification 切片
+
+已完成：
+
+- 对当前 LangGraph-v2 split-flow 架构做收尾级回归检查。
+- 覆盖范围包括：
+  - FastAPI split-flow API 与 `GraphGateway` 状态委托；
+  - graph progress、dependency review、draft-spec/code review、approved execution、
+    terminal-failure review、compare 和 upload invalidation；
+  - DatasetGraph/StudyGraph product-mode guards；
+  - bounded agent IO/audit contract；
+  - generic static-rule policy 和 rule-pack admission；
+  - local Rscript sandbox boundary。
+- 验证结果支持当前阶段结论：已覆盖的 product split-flow 状态变更已经收敛到
+  `GraphGateway` 和
+  canonical `graph_state.json`；`workflow_state.json` 仍是 compatibility
+  projection；UI/API 仍通过 split-flow endpoints 逐步驱动，不是完整 native
+  LangGraph interrupt/checkpointer run。
+
+当前边界：
+
+- 本切片是 closeout evidence 记录，不改变代码或产品行为。
+- 仍不宣称已经完成：
+  - native LangGraph full-loop interrupt/resume；
+  - checkpointer-backed process restart 后的完整人工审核恢复；
+  - 多 dataset 自动批量生成/审核/执行；
+  - automatic repair/spec-revision closed loop；
+  - production-grade CDISC/P21/company standards 检查；
+  - container/OS-level hardened R sandbox；
+  - legacy stub/test-mode path 的最终删除。
+- 当前 local Rscript runner 仍只是开发级执行边界，虽然已有 forbidden-call、
+  path、argument 和 environment guards。
+- 当前 static rules 仍是 generic contract/policy gate，不是完整临床合规证明。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 closeout 记录没有夸大 native LangGraph/checkpointer 成熟度，也没有遗漏
+  multi-dataset 批量执行、repair/spec-revision、CDISC/P21、强化 sandbox 和
+  legacy stub 删除这些未完成边界。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 179 tests in 19.112s - OK
+
+python -B -m unittest tests.test_graph_smoke tests.test_agents_contract tests.test_static_rules tests.test_sandbox -v
+Ran 126 tests in 8.109s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```

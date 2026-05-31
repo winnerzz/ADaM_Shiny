@@ -6248,3 +6248,62 @@ Verification:
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
 git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
 ```
+
+### 2026-06-01 - LG2.8 Closeout Verification Slice
+
+Completed:
+
+- Ran a closeout-level regression check for the current LangGraph-v2 split-flow
+  architecture.
+- The verification covered:
+  - FastAPI split-flow API and `GraphGateway` state delegation;
+  - graph progress, dependency review, draft-spec/code review, approved
+    execution, terminal-failure review, compare, and upload invalidation;
+  - DatasetGraph/StudyGraph product-mode guards;
+  - bounded agent IO/audit contracts;
+  - generic static-rule policy and rule-pack admission;
+  - local Rscript sandbox boundaries.
+- The evidence supports the current phase conclusion: covered product
+  split-flow state transitions are now owned by `GraphGateway` and canonical
+  `graph_state.json`;
+  `workflow_state.json` remains a compatibility projection; UI/API still drives
+  the product through split-flow endpoints rather than one complete native
+  LangGraph interrupt/checkpointer run.
+
+Current boundary:
+
+- This slice records closeout evidence only. It does not change code or product
+  behavior.
+- The following remain explicitly unfinished:
+  - native LangGraph full-loop interrupt/resume;
+  - full human-review recovery after process restart through a checkpointer;
+  - automatic multi-dataset generation/review/execution;
+  - automatic repair/spec-revision closed loop;
+  - production-grade CDISC/P21/company standards checks;
+  - container/OS-level hardened R sandboxing;
+  - final removal of legacy stub/test-mode paths.
+- The current local Rscript runner is still a development execution boundary,
+  although it has forbidden-call, path, argument, and environment guards.
+- The current static-rule layer is still a generic contract/policy gate, not a
+  full clinical compliance proof.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the closeout record does not overstate native
+  LangGraph/checkpointer maturity and does not omit the unfinished boundaries
+  around multi-dataset batch execution, repair/spec-revision, CDISC/P21,
+  hardened sandboxing, and legacy stub removal.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 179 tests in 19.112s - OK
+
+python -B -m unittest tests.test_graph_smoke tests.test_agents_contract tests.test_static_rules tests.test_sandbox -v
+Ran 126 tests in 8.109s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
