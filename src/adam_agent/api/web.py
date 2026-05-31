@@ -1635,11 +1635,12 @@ INDEX_HTML = r"""<!doctype html>
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
       state.runReview = null;
+      state.selectedTargetsForPlan = [];
       state.tablePages = {};
       state.compareResults = {};
       setPill('planStatus', 'stale');
       setPill('codeStatus', 'stale');
-      byId('planView').innerHTML = '<p class="note warn">Inputs changed. Dependency plan, draft specs, generated code, and reviews must be refreshed before generation continues.</p>';
+      byId('planView').innerHTML = '<p class="note warn">Inputs changed. Re-check the output selection, then refresh the dependency plan before generation continues.</p>';
       byId('draftSpecPane').innerHTML = '<p class="note warn">Inputs changed. Finalize inputs again before approving or generating code.</p>';
       byId('reviewPane').innerHTML = '<p class="note warn">Inputs changed. Previous generated-code state was cleared from the UI.</p>';
     }

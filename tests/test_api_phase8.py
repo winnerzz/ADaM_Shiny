@@ -587,6 +587,20 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("const targetIsPlanned = Boolean(target && selectedTargets().includes(target));", action_body)
         self.assertIn("is currently reference-only evidence. Select its checkbox to request generation before finalizing inputs.", action_body)
 
+    def test_index_input_change_clears_stale_planned_targets(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        invalidation_body = html.split("function invalidateUiStateAfterInputChange(payload)", 1)[1].split("function uploadDiffMessage(payload)", 1)[0]
+        self.assertIn("state.selectedTargetsForPlan = [];", invalidation_body)
+        self.assertIn("Re-check the output selection, then refresh the dependency plan", invalidation_body)
+        self.assertIn("state.plan = null;", invalidation_body)
+        self.assertIn("state.graphState = null;", invalidation_body)
+        self.assertIn("state.generatedByDataset = {};", invalidation_body)
+
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())
 

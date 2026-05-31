@@ -5052,6 +5052,34 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Input-Change Target Selection Reset UI Slice
+
+Completed:
+
+- Cleared browser `selectedTargetsForPlan` when uploaded inputs change and the
+  previous plan/code/review state is invalidated.
+- Updated the stale-plan message to tell the user to re-check output selection
+  before refreshing dependency planning.
+- Added a focused UI contract test that proves input-change invalidation clears
+  stale planned targets alongside plan/generated/review state.
+
+Current boundary:
+
+- This slice changes only browser invalidation state and explanatory text.
+- It does not change upload/scanning behavior, `/study-inputs`, dependency
+  planning semantics, GraphGateway invalidation, provider calls, static rules,
+  R execution, compare, repair, or Reference ADaM authority.
+- The target candidates are still recomputed from the latest input summary by
+  the existing render path; only the old planned selection is cleared.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_input_change_clears_stale_planned_targets tests.test_api_phase8.Phase8ApiTests.test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 Reference-Only Target Selection UI Slice
 
 Completed:

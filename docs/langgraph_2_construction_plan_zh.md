@@ -4644,6 +4644,34 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Input-Change Target Selection Reset UI 切片
+
+已完成：
+
+- 当上传输入发生变化、旧 plan/code/review 状态被 invalidated 时，清空
+  browser 里的 `selectedTargetsForPlan`。
+- 更新 stale-plan 文案，提醒用户先重新检查 output selection，再刷新
+  dependency planning。
+- 增加 focused UI contract test，证明 input-change invalidation 会和
+  plan/generated/review state 一起清理 stale planned targets。
+
+当前边界：
+
+- 本切片只改变 browser invalidation state 和解释文案。
+- 不改变 upload/scanning behavior、`/study-inputs`、dependency planning
+  semantics、GraphGateway invalidation、provider calls、static rules、
+  R execution、compare、repair 或 Reference ADaM authority。
+- target candidates 仍然由现有 render path 根据最新 input summary 重新计算；
+  本切片只清理旧 planned selection。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_input_change_clears_stale_planned_targets tests.test_api_phase8.Phase8ApiTests.test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 Reference-Only Target Selection UI 切片
 
 已完成：
