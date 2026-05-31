@@ -6725,6 +6725,51 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_re
 Ran 7 tests in 0.313s - OK
 ```
 
+### 2026-06-01 - LG2.1 Optional Checkpointer Backend Guard Slice
+
+Completed:
+
+- Extended the explicit checkpointer backend names to `memory`, `sqlite`, and
+  `postgres`.
+- Preserved the default `memory` backend:
+  - `build_checkpointer()` still returns `InMemorySaver`;
+  - `describe_checkpointer()` still reports
+    `langgraph_checkpointer_persistent=false`,
+    `native_interrupt_resume=false`, and
+    `restart_recovery_source=graph_state_json`.
+- Added fail-closed optional backend guards:
+  - `sqlite` now requires the optional `langgraph-checkpoint-sqlite` package;
+  - `postgres` now requires the optional `langgraph-checkpoint-postgres`
+    package;
+  - even when an optional package is present, this build still rejects it until
+    database lifecycle management is wired.
+- Accepted the subagent's low-severity wording suggestion: optional package
+  detection now uses `importlib.util.find_spec()` before import, so missing
+  transitive dependencies are not mislabeled as a missing LangGraph package.
+- Added regressions for default memory, unavailable SQLite, unavailable
+  Postgres, custom checkpointer metadata, and runtime persistence projection.
+
+Current boundary:
+
+- This slice does not enable persistent LangGraph checkpointing.
+- It does not change public FastAPI/UI behavior, graph invocation semantics, or
+  native interrupt behavior.
+- It is a safer configuration boundary for the later SQLite/Postgres
+  checkpointer implementation.
+
+Review:
+
+- Subagent review returned GO.
+- The review confirmed SQLite/Postgres fail closed, do not fall back to memory,
+  and do not claim persistence. The default product path remains memory-backed.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_sqlite_backend tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_postgres_backend tests.test_graph_gateway.GraphGatewayTests.test_custom_checkpointer_is_reported_without_persistence_claim tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 5 tests in 0.039s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip Slice
 
 Completed:

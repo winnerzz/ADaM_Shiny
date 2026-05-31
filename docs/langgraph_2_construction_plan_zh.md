@@ -6205,6 +6205,47 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_re
 Ran 7 tests in 0.313s - OK
 ```
 
+### 2026-06-01 - LG2.1 Optional Checkpointer Backend Guard 切片
+
+已完成：
+
+- 将显式 checkpointer backend 名称扩展为 `memory`、`sqlite`、`postgres`。
+- 保持默认 `memory` backend 不变：
+  - `build_checkpointer()` 仍返回 `InMemorySaver`；
+  - `describe_checkpointer()` 仍报告
+    `langgraph_checkpointer_persistent=false`、
+    `native_interrupt_resume=false` 和
+    `restart_recovery_source=graph_state_json`。
+- 增加 optional backend fail-closed guard：
+  - `sqlite` 需要可选 `langgraph-checkpoint-sqlite` 包；
+  - `postgres` 需要可选 `langgraph-checkpoint-postgres` 包；
+  - 即使可选包存在，本版本也会继续拒绝启用，直到 database lifecycle
+    management 被接入。
+- 接受子 agent 的低风险措辞建议：可选包检测先使用
+  `importlib.util.find_spec()`，再 import，避免把传递依赖缺失误说成
+  LangGraph checkpointer 包未安装。
+- 增加回归测试，覆盖默认 memory、不可用 SQLite、不可用 Postgres、custom
+  checkpointer metadata，以及 runtime persistence projection。
+
+当前边界：
+
+- 本切片不启用 persistent LangGraph checkpointing。
+- 不改变公开 FastAPI/UI 行为、graph invocation 语义或 native interrupt 行为。
+- 这是给后续 SQLite/Postgres checkpointer 实现准备的更安全配置边界。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 SQLite/Postgres fail closed，不会回退到 memory，也不会宣称
+  persistence；默认产品路径仍是 memory-backed。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_sqlite_backend tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_postgres_backend tests.test_graph_gateway.GraphGatewayTests.test_custom_checkpointer_is_reported_without_persistence_claim tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 5 tests in 0.039s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip 切片
 
 已完成：

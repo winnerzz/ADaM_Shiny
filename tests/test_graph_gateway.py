@@ -367,9 +367,13 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(payload["restart_recovery_source"], "graph_state_json")
         self.assertIn("in-memory only", " ".join(payload["notes"]))
 
-    def test_checkpointing_boundary_rejects_unavailable_backend(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Only the in-memory LangGraph checkpointer is available"):
+    def test_checkpointing_boundary_rejects_unavailable_sqlite_backend(self) -> None:
+        with self.assertRaisesRegex(ValueError, "SQLite LangGraph checkpointer is not installed|not wired database lifecycle"):
             build_checkpointer("sqlite")  # type: ignore[arg-type]
+
+    def test_checkpointing_boundary_rejects_unavailable_postgres_backend(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Postgres LangGraph checkpointer is not installed|not wired database lifecycle"):
+            build_checkpointer("postgres")  # type: ignore[arg-type]
 
     def test_custom_checkpointer_is_reported_without_persistence_claim(self) -> None:
         class CustomCheckpointer:

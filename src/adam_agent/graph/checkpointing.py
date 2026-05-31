@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
+import importlib.util
 from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.checkpoint.memory import InMemorySaver
 
 
-CheckpointerBackend = Literal["memory"]
+CheckpointerBackend = Literal["memory", "sqlite", "postgres"]
 
 
 @dataclass(frozen=True)
@@ -26,8 +28,12 @@ class CheckpointerBundle:
 def build_checkpointer(backend: CheckpointerBackend = "memory") -> CheckpointerBundle:
     """Create the configured checkpointer without overstating persistence."""
 
+    if backend == "sqlite":
+        return _build_sqlite_checkpointer()
+    if backend == "postgres":
+        return _build_postgres_checkpointer()
     if backend != "memory":
-        raise ValueError("Only the in-memory LangGraph checkpointer is available in this build.")
+        raise ValueError(f"Unknown LangGraph checkpointer backend: {backend}")
     return CheckpointerBundle(
         checkpointer=InMemorySaver(),
         backend="memory",
@@ -38,6 +44,36 @@ def build_checkpointer(backend: CheckpointerBackend = "memory") -> CheckpointerB
             "graph_checkpoints.sqlite is a local product audit ledger, not a LangGraph SQLite checkpointer.",
             "Full native LangGraph interrupt/checkpointer resume remains future work.",
         ),
+    )
+
+
+def _build_sqlite_checkpointer() -> CheckpointerBundle:
+    """Build the optional SQLite checkpointer only when the package is installed."""
+
+    if importlib.util.find_spec("langgraph.checkpoint.sqlite") is None:
+        raise ValueError(
+            "SQLite LangGraph checkpointer is not installed. Install the optional "
+            "`langgraph-checkpoint-sqlite` package before enabling backend='sqlite'."
+        )
+    importlib.import_module("langgraph.checkpoint.sqlite")
+    raise ValueError(
+        "SQLite LangGraph checkpointer package is present but the local product has not "
+        "wired database lifecycle management yet."
+    )
+
+
+def _build_postgres_checkpointer() -> CheckpointerBundle:
+    """Build the optional Postgres checkpointer only when the package is installed."""
+
+    if importlib.util.find_spec("langgraph.checkpoint.postgres") is None:
+        raise ValueError(
+            "Postgres LangGraph checkpointer is not installed. Install the optional "
+            "`langgraph-checkpoint-postgres` package before enabling backend='postgres'."
+        )
+    importlib.import_module("langgraph.checkpoint.postgres")
+    raise ValueError(
+        "Postgres LangGraph checkpointer package is present but the local product has not "
+        "wired database lifecycle management yet."
     )
 
 
