@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from adam_agent.agents.contracts import AgentDecision
+from adam_agent.agents.contracts import AgentDecision, AgentNodeInput, AgentNodeOutput
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
@@ -21,6 +21,8 @@ def build_agent_audit_summary(
     target_datasets: list[str] | None = None,
     datasets: dict[str, Any] | None = None,
     agent_decisions: list[dict[str, Any]] | None = None,
+    agent_node_inputs: list[dict[str, Any]] | None = None,
+    agent_node_outputs: list[dict[str, Any]] | None = None,
     risk_flags: list[str] | None = None,
     current_interrupt: Any = None,
     summary_artifact_id: str | None = None,
@@ -34,6 +36,8 @@ def build_agent_audit_summary(
     """
 
     normalized_decisions, invalid_decision_count = _normalize_agent_decisions(agent_decisions or [])
+    normalized_node_inputs, invalid_node_input_count = _normalize_agent_node_inputs(agent_node_inputs or [])
+    normalized_node_outputs, invalid_node_output_count = _normalize_agent_node_outputs(agent_node_outputs or [])
     normalized_datasets = _normalize_datasets(datasets or {})
     normalized_targets = _normalize_dataset_names(
         target_datasets or list(normalized_datasets) or _datasets_from_decisions(normalized_decisions)
@@ -44,10 +48,14 @@ def build_agent_audit_summary(
             dataset=dataset,
             dataset_state=normalized_datasets.get(dataset, {}),
             decisions=[item for item in normalized_decisions if item.get("dataset") == dataset],
+            node_inputs=[item for item in normalized_node_inputs if item.get("dataset") == dataset],
+            node_outputs=[item for item in normalized_node_outputs if item.get("dataset") == dataset],
         )
         for dataset in normalized_targets
     }
     study_decisions = [item for item in normalized_decisions if not item.get("dataset")]
+    study_node_inputs = [item for item in normalized_node_inputs if not item.get("dataset")]
+    study_node_outputs = [item for item in normalized_node_outputs if not item.get("dataset")]
     generated = generated_at or utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
 
     return {
@@ -71,14 +79,23 @@ def build_agent_audit_summary(
         "target_datasets": normalized_targets,
         "decision_count": len(normalized_decisions),
         "invalid_decision_count": invalid_decision_count,
+        "agent_node_input_count": len(normalized_node_inputs),
+        "agent_node_output_count": len(normalized_node_outputs),
+        "invalid_agent_node_input_count": invalid_node_input_count,
+        "invalid_agent_node_output_count": invalid_node_output_count,
         "agent_counts": _counts_by(normalized_decisions, "agent"),
+        "agent_node_counts": _counts_by(normalized_node_outputs, "agent"),
         "status_counts": _counts_by(normalized_decisions, "status"),
         "risk_flags": summary_flags,
         "study_decisions": [_decision_view(item) for item in study_decisions],
+        "study_node_outputs": [_node_output_view(item) for item in _latest_node_outputs(study_node_outputs)],
+        "study_node_input_count": len(study_node_inputs),
+        "study_node_output_count": len(study_node_outputs),
         "datasets": dataset_summaries,
         "limitations": [
             "This is a derived read model. Canonical truth remains graph_state.json.",
             "Agent decisions are append-only audit history, not a current-only rollback view.",
+            "Agent node inputs and outputs summarize bounded handoffs; full payloads remain in graph_state.json.",
             "Static review entries are limited-scope checks unless a stronger policy label is present.",
         ],
     }
@@ -101,6 +118,8 @@ def build_agent_audit_summary_from_state(
         target_datasets=list(payload.get("target_datasets") or []),
         datasets=payload.get("datasets") or {},
         agent_decisions=list(payload.get("agent_decisions") or []),
+        agent_node_inputs=list(payload.get("agent_node_inputs") or []),
+        agent_node_outputs=list(payload.get("agent_node_outputs") or []),
         risk_flags=list(payload.get("risk_flags") or []),
         current_interrupt=payload.get("current_interrupt"),
         summary_artifact_id=summary_artifact_id,
@@ -146,6 +165,28 @@ def _normalize_agent_decisions(records: list[dict[str, Any]]) -> tuple[list[dict
     return decisions, invalid_count
 
 
+def _normalize_agent_node_inputs(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    inputs = []
+    invalid_count = 0
+    for record in records:
+        try:
+            inputs.append(AgentNodeInput.model_validate(record).model_dump(mode="json"))
+        except ValueError:
+            invalid_count += 1
+    return inputs, invalid_count
+
+
+def _normalize_agent_node_outputs(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    outputs = []
+    invalid_count = 0
+    for record in records:
+        try:
+            outputs.append(AgentNodeOutput.model_validate(record).model_dump(mode="json"))
+        except ValueError:
+            invalid_count += 1
+    return outputs, invalid_count
+
+
 def _normalize_datasets(datasets: dict[str, Any]) -> dict[str, dict[str, Any]]:
     normalized = {}
     for key, value in datasets.items():
@@ -173,15 +214,29 @@ def _dataset_summary(
     dataset: str,
     dataset_state: dict[str, Any],
     decisions: list[dict[str, Any]],
+    node_inputs: list[dict[str, Any]],
+    node_outputs: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    invalid_node_input_count = 0
+    invalid_node_output_count = 0
+    if not node_inputs:
+        node_inputs, invalid_node_input_count = _normalize_agent_node_inputs(list(dataset_state.get("agent_node_inputs") or []))
+    if not node_outputs:
+        node_outputs, invalid_node_output_count = _normalize_agent_node_outputs(list(dataset_state.get("agent_node_outputs") or []))
     return {
         "dataset": dataset,
         "status": dataset_state.get("status"),
         "current_interrupt": _interrupt_name(dataset_state.get("current_interrupt")),
         "human_review_required": _interrupt_name(dataset_state.get("current_interrupt")) is not None,
         "decision_count": len(decisions),
+        "agent_node_input_count": len(node_inputs),
+        "agent_node_output_count": len(node_outputs),
+        "invalid_agent_node_input_count": invalid_node_input_count,
+        "invalid_agent_node_output_count": invalid_node_output_count,
         "agent_counts": _counts_by(decisions, "agent"),
+        "agent_node_counts": _counts_by(node_outputs, "agent"),
         "latest_decisions": [_decision_view(item) for item in _latest_by_agent(decisions)],
+        "latest_node_outputs": [_node_output_view(item) for item in _latest_node_outputs(node_outputs)],
         "risk_flags": sorted({str(flag) for flag in dataset_state.get("risk_flags", []) if str(flag).strip()}),
         "artifact_ids": [
             str(artifact.get("artifact_id"))
@@ -203,6 +258,24 @@ def _latest_by_agent(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [latest[agent] for agent in sorted(latest)]
 
 
+def _latest_node_outputs(outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for output in outputs:
+        key = "|".join(
+            [
+                str(output.get("agent") or ""),
+                str(output.get("node") or ""),
+                str(output.get("dataset") or ""),
+            ]
+        )
+        if not key.strip("|"):
+            continue
+        previous = latest.get(key)
+        if previous is None or str(output.get("created_at") or "") >= str(previous.get("created_at") or ""):
+            latest[key] = output
+    return [latest[key] for key in sorted(latest)]
+
+
 def _decision_view(decision: dict[str, Any]) -> dict[str, Any]:
     return {
         "agent": decision.get("agent"),
@@ -214,6 +287,20 @@ def _decision_view(decision: dict[str, Any]) -> dict[str, Any]:
         "risk_flags": list(decision.get("risk_flags") or []),
         "artifact_ids": list(decision.get("artifact_ids") or []),
         "created_at": decision.get("created_at"),
+    }
+
+
+def _node_output_view(output: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "agent": output.get("agent"),
+        "node": output.get("node"),
+        "decision": output.get("decision"),
+        "dataset": output.get("dataset"),
+        "status": output.get("status"),
+        "reason": output.get("reason", ""),
+        "risk_flags": list(output.get("risk_flags") or []),
+        "artifact_ids": list(output.get("artifact_ids") or []),
+        "created_at": output.get("created_at"),
     }
 
 

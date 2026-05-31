@@ -448,6 +448,8 @@ def _write_agent_audit_summary(state: StudyGraphState) -> tuple[dict[str, Any], 
             for result in state.get("dataset_results", [])
         },
         agent_decisions=state.get("agent_decisions", []),
+        agent_node_inputs=state.get("agent_node_inputs", []),
+        agent_node_outputs=state.get("agent_node_outputs", []),
         risk_flags=state.get("risk_flags", []),
         current_interrupt=state.get("current_interrupt"),
         summary_artifact_id=artifact_id,

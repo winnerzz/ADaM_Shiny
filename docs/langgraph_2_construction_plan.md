@@ -5555,3 +5555,33 @@ Verification:
 python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_agents_contract -v
 ```
+
+### 2026-05-31 - LG2.4 Agent Audit Node IO Summary Slice
+
+Completed:
+
+- Extended the derived `agent_audit_summary` read model so it summarizes typed
+  `AgentNodeInput` / `AgentNodeOutput` handoffs in addition to agent decisions.
+- Added study-level node IO counts, invalid node IO counts, per-agent node
+  counts, and latest node-output summaries.
+- Added dataset-level node IO counts and latest node-output summaries so audit
+  review can show which bounded agent nodes actually handled a dataset.
+- Passed StudyGraph-collected node IO into the audit summary writer, matching
+  the canonical GraphGateway path.
+
+Current boundary:
+
+- This slice only enriches the derived audit read model.
+- It does not change graph routing, dependency planning, provider calls,
+  static rules, R execution, compare, repair, UI behavior, or Reference ADaM
+  authority.
+- Canonical truth remains `graph_state.json`; the summary is still a derived
+  human review artifact.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_agents_contract -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+```

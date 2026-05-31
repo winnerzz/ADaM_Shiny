@@ -5125,3 +5125,32 @@ python -B -m unittest tests.test_agents_contract -v
 python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_agents_contract -v
 ```
+
+### 2026-05-31 - LG2.4 Agent Audit Node IO Summary 切片
+
+已完成：
+
+- 扩展 derived `agent_audit_summary` read model：除了 agent decisions，现在也会汇总
+  typed `AgentNodeInput` / `AgentNodeOutput` handoff。
+- 增加 study 级 node IO 计数、无效 node IO 计数、按 agent 统计的 node output
+  计数，以及最新 node-output 摘要。
+- 增加 dataset 级 node IO 计数和最新 node-output 摘要，让审计时能看到具体是
+  哪些 bounded agent node 处理过某个 dataset。
+- StudyGraph 直接写 audit summary 的路径也传入收集到的 node IO，与 canonical
+  GraphGateway 路径保持一致。
+
+当前边界：
+
+- 本切片只增强 derived audit read model。
+- 不改变 graph routing、dependency planning、provider calls、static rules、
+  R execution、compare、repair、UI 行为或 Reference ADaM authority。
+- canonical truth 仍然是 `graph_state.json`；summary 仍只是给人看的派生审计
+  artifact。
+
+验证：
+
+```text
+python -B -m unittest tests.test_agents_contract -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+```

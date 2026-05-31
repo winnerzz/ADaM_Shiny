@@ -278,6 +278,31 @@ class AgentContractTests(unittest.TestCase):
                 }
             },
             agent_decisions=decisions,
+            agent_node_inputs=[
+                build_agent_node_input(
+                    agent="code_agent",
+                    node="code_generation",
+                    study_id="PSY201",
+                    run_id="run_agent_summary",
+                    dataset="ADAE",
+                    task="Generate review-required R code from the approved ADaM spec.",
+                    artifact_ids=["input_spec_adae"],
+                )
+            ],
+            agent_node_outputs=[
+                build_agent_node_output(
+                    agent="code_agent",
+                    node="code_generation",
+                    study_id="PSY201",
+                    run_id="run_agent_summary",
+                    dataset="ADAE",
+                    status="needs_review",
+                    decision="r_code_generated",
+                    reason="Generated code requires review.",
+                    artifact_ids=["generated_code_adae"],
+                    risk_flags=["static_check_limited_scope"],
+                )
+            ],
             risk_flags=[
                 "static_check_limited_scope",
                 "reference_compare_limited_scope",
@@ -288,15 +313,64 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(summary["summary_type"], "agent_audit_summary")
         self.assertEqual(summary["summary_writer"]["agent"], "audit_agent")
         self.assertEqual(summary["decision_count"], 4)
+        self.assertEqual(summary["agent_node_input_count"], 1)
+        self.assertEqual(summary["agent_node_output_count"], 1)
+        self.assertEqual(summary["agent_node_counts"]["code_agent"], 1)
         self.assertEqual(summary["agent_counts"]["code_agent"], 1)
         self.assertEqual(summary["agent_counts"]["validation_agent"], 1)
         self.assertEqual(summary["agent_counts"]["diagnosis_repair_agent"], 1)
         self.assertEqual(summary["datasets"]["ADAE"]["decision_count"], 4)
+        self.assertEqual(summary["datasets"]["ADAE"]["agent_node_input_count"], 1)
+        self.assertEqual(summary["datasets"]["ADAE"]["agent_node_output_count"], 1)
+        self.assertEqual(summary["datasets"]["ADAE"]["agent_node_counts"]["code_agent"], 1)
+        self.assertEqual(summary["datasets"]["ADAE"]["latest_node_outputs"][0]["decision"], "r_code_generated")
         self.assertEqual(summary["datasets"]["ADAE"]["status"], "completed")
         self.assertIn("static_check_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
         self.assertIn("reference_compare_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
         self.assertIn("terminal_failure_triage_limited_scope", summary["datasets"]["ADAE"]["risk_flags"])
         self.assertIn("graph_state.json", summary["limitations"][0])
+
+    def test_agent_audit_summary_counts_invalid_dataset_node_io(self) -> None:
+        summary = build_agent_audit_summary(
+            study_id="PSY201",
+            run_id="run_agent_summary_invalid_io",
+            status="needs_review",
+            target_datasets=["ADAE"],
+            datasets={
+                "ADAE": {
+                    "status": "needs_review",
+                    "agent_node_inputs": [
+                        {
+                            "agent": "code_agent",
+                            "node": "code_generation",
+                            "study_id": "PSY201",
+                            "run_id": "run_agent_summary_invalid_io",
+                            "dataset": "ADAE",
+                            "task": "Generate review-required R code.",
+                        },
+                        {"agent": "free_form_agent", "node": "mutate_anything"},
+                    ],
+                    "agent_node_outputs": [
+                        {
+                            "agent": "code_agent",
+                            "node": "code_generation",
+                            "study_id": "PSY201",
+                            "run_id": "run_agent_summary_invalid_io",
+                            "dataset": "ADAE",
+                            "status": "needs_review",
+                            "decision": "r_code_generated",
+                        },
+                        {"agent": "code_agent", "node": "code_generation", "status": "needs_review"},
+                    ],
+                }
+            },
+        )
+
+        dataset_summary = summary["datasets"]["ADAE"]
+        self.assertEqual(dataset_summary["agent_node_input_count"], 1)
+        self.assertEqual(dataset_summary["agent_node_output_count"], 1)
+        self.assertEqual(dataset_summary["invalid_agent_node_input_count"], 1)
+        self.assertEqual(dataset_summary["invalid_agent_node_output_count"], 1)
 
 
 if __name__ == "__main__":
