@@ -668,6 +668,11 @@ class GraphGateway:
         if command.dataset is None:
             raise ValueError("Code review command must include a dataset.")
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        open_study_interrupt = _open_study_interrupt(graph_state)
+        if open_study_interrupt is not None:
+            raise ValueError(
+                f"Study-level interrupt {open_study_interrupt.name} must be resolved before dataset code_review."
+            )
         _assert_resume_command_matches_open_interrupt(graph_state, command)
         if command.interrupt != "code_review":
             raise ValueError("Code review command must target code_review.")

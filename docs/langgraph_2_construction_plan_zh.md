@@ -6112,3 +6112,49 @@ Ran 273 tests in 29.084s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Command Guard 切片
+
+已完成：
+
+- 收紧 `GraphGateway.review_code_from_command()`：
+  - 如果 study-level interrupt 仍然 open，例如 `dependency_review`，dataset-level
+    `code_review` command 会先 fail closed；
+  - 保留原有 dataset-level open interrupt 匹配检查。
+- 增加 reject bridge 测试，确认 native `reject` command 会进入正式
+  code-review artifact/state flow，但不会解锁 execution。
+- 增加 study-level gate 测试，确认 study-level interrupt 未解决时不会写
+  code-review artifact，也不会把 generated code 状态误改为 approved/rejected。
+- 增加 dataset-level rollup 测试，确认顶层 `current_interrupt` 若是带 dataset 的
+  `code_review` interrupt，不会被误判成 study-level gate。
+
+当前边界：
+
+- 本切片只补强 native command bridge 的安全语义和测试覆盖。
+- 不改变公开 UI/API 默认路径，不自动接入 DatasetGraph native interrupt。
+- 不改变 `GraphGateway.review_code()` 的 artifact/hash/fingerprint 校验，不改变 R
+  execution、LLM generation、compare、static rules、repair 或 UI 行为。
+- 不实现 persistent LangGraph SQLite/Postgres checkpointer。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 native command bridge 仍先读取 canonical graph state，study-level
+  gate 会在 artifact 写入前 fail closed；dataset-level interrupt 不会被误判成
+  study-level gate；reject bridge 继续复用 `review_code()`，没有分叉
+  artifact/hash/fingerprint/approval 语义；公开 FastAPI/UI split-flow 默认路径不变。
+- 接受一个非阻断建议并补充 dataset-level rollup 回归测试。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_native_interrupt_to_artifact_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_reject_without_execution_unlock tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_dataset_command_behind_study_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_allows_dataset_interrupt_as_current_rollup -v
+Ran 5 tests in 0.258s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 276 tests in 28.657s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+Exited 0; CRLF warnings only.
+```

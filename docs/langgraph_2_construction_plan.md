@@ -6623,3 +6623,56 @@ Ran 273 tests in 29.084s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Command Guard Slice
+
+Completed:
+
+- Tightened `GraphGateway.review_code_from_command()`:
+  - if a study-level interrupt is still open, such as `dependency_review`, a
+    dataset-level `code_review` command fails closed first;
+  - the existing dataset-level open interrupt matching remains in place.
+- Added a reject bridge test proving a native `reject` command enters the formal
+  code-review artifact/state flow without unlocking execution.
+- Added a study-level gate test proving a code-review artifact is not written
+  while a study-level interrupt is unresolved, and generated code is not
+  accidentally marked approved/rejected.
+- Added a dataset-level rollup test proving a top-level `current_interrupt` with
+  a dataset-bound `code_review` interrupt is not mistaken for a study-level gate.
+
+Current boundary:
+
+- This slice only tightens native command bridge safety semantics and test
+  coverage.
+- It does not change the public UI/API default path and does not automatically
+  connect DatasetGraph native interrupts.
+- It does not change `GraphGateway.review_code()` artifact/hash/fingerprint
+  checks and does not change R execution, LLM generation, compare, static rules,
+  repair, or UI behavior.
+- It does not implement a persistent LangGraph SQLite/Postgres checkpointer.
+
+Review:
+
+- Subagent review returned GO.
+- The review confirmed the native command bridge still loads canonical graph
+  state first, the study-level gate fails closed before artifact writes,
+  dataset-level interrupts are not mistaken for study-level gates, the reject
+  bridge continues to reuse `review_code()` without forking
+  artifact/hash/fingerprint/approval semantics, and the public FastAPI/UI
+  split-flow default path is unchanged.
+- Accepted one non-blocking suggestion and added the dataset-level rollup
+  regression test.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_native_interrupt_to_artifact_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_reject_without_execution_unlock tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_dataset_command_behind_study_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_allows_dataset_interrupt_as_current_rollup -v
+Ran 5 tests in 0.258s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 276 tests in 28.657s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+Exited 0; CRLF warnings only.
+```
