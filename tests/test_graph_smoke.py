@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP_ROOT = ROOT / ".tmp_tests"
@@ -2744,6 +2745,80 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertTrue(any(snapshot.values.get("status") == "completed" for snapshot in history))
         final_snapshot = graph.get_state(config)
         self.assertEqual(final_snapshot.values["status"], result["status"])
+
+    def test_study_graph_native_dependency_review_interrupt_can_resume(self) -> None:
+        checkpointer = InMemorySaver()
+        graph = compile_study_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_dependency_review"}}
+
+        interrupted = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_native_dependency_review",
+                "target_datasets": ["ADAE"],
+                "graph_gateway_mode": "native_dependency_review",
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        snapshot = graph.get_state(config)
+
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(snapshot.next, ("wait_for_dependency_review",))
+        self.assertEqual(snapshot.values["current_interrupt"], "dependency_review")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["interrupt"], "dependency_review")
+
+        resumed = graph.invoke(
+            Command(
+                resume={
+                    "action": "approve",
+                    "reviewer": "tester",
+                    "notes": "Native dependency-review pilot approved.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertNotIn("__interrupt__", resumed)
+        self.assertEqual(resumed["dependency_review_status"], "approved")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["human_commands"][0]["interrupt"], "dependency_review")
+        self.assertEqual(graph.get_state(config).next, ())
+
+    def test_study_graph_native_dependency_review_reject_closes_interrupt_as_failed(self) -> None:
+        checkpointer = InMemorySaver()
+        graph = compile_study_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_dependency_review_reject"}}
+
+        graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_native_dependency_review_reject",
+                "target_datasets": ["ADAE"],
+                "graph_gateway_mode": "native_dependency_review",
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        resumed = graph.invoke(
+            Command(
+                resume={
+                    "action": "reject",
+                    "reviewer": "tester",
+                    "notes": "Dependency plan rejected.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertEqual(resumed["status"], "failed")
+        self.assertEqual(resumed["dependency_review_status"], "rejected")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(graph.get_state(config).next, ())
 
     def test_dataset_result_reducer_keeps_more_than_two_results(self) -> None:
         graph = compile_study_graph()

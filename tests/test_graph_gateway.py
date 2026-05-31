@@ -508,6 +508,81 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(workflow_state["current_interrupt"])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
 
+    def test_gateway_native_dependency_review_interrupt_roundtrip_persists_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dependency_review") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+
+        interrupted = gateway.start_native_dependency_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_dependency_review",
+            target_datasets=["ADAE"],
+        )
+
+        self.assertEqual(interrupted.graph_state.current_interrupt.name, "dependency_review")
+        native_boundary = interrupted.graph_state.runtime_persistence["native_dependency_review_interrupt"]
+        self.assertEqual(native_boundary["boundary"], "dependency_review_pilot_only")
+        self.assertEqual(native_boundary["open_interrupt_count"], 1)
+        self.assertEqual(native_boundary["next_nodes"], ["wait_for_dependency_review"])
+
+        reviewed = gateway.resume_native_dependency_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_dependency_review",
+            decision="approve",
+            reviewer="tester",
+            notes="Native interrupt pilot approved.",
+        )
+
+        self.assertTrue(reviewed.approved)
+        self.assertIsNone(reviewed.current_interrupt)
+        self.assertIsNone(reviewed.graph_state.current_interrupt)
+        self.assertEqual(reviewed.graph_state.dependency_review_status, "approved")
+        self.assertEqual(reviewed.graph_state.human_commands[0].interrupt, "dependency_review")
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_dependency_review_interrupt"]["open_interrupt_count"],
+            0,
+        )
+        graph_state = json.loads(
+            (study_dir / "runs" / "run_lg2_native_dependency_review" / "graph_state.json").read_text(encoding="utf-8")
+        )
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_native_dependency_review" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(graph_state["dependency_review_status"], "approved")
+        self.assertIsNone(workflow_state["current_interrupt"])
+        self.assertEqual(workflow_state["dependency_review_status"], "approved")
+        self.assertEqual(workflow_state["projection_source"], "langgraph")
+
+    def test_gateway_native_dependency_review_reject_persists_closed_failed_state(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dependency_review_reject") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_native_dependency_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_dependency_review_reject",
+            target_datasets=["ADAE"],
+        )
+
+        reviewed = gateway.resume_native_dependency_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_dependency_review_reject",
+            decision="reject",
+            reviewer="tester",
+            notes="Rejected native dependency-review pilot.",
+        )
+
+        self.assertFalse(reviewed.approved)
+        self.assertIsNone(reviewed.current_interrupt)
+        self.assertIsNone(reviewed.graph_state.current_interrupt)
+        self.assertEqual(reviewed.graph_state.status, "failed")
+        self.assertEqual(reviewed.graph_state.dependency_review_status, "rejected")
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_dependency_review_interrupt"]["open_interrupt_count"],
+            0,
+        )
+
     def test_gateway_resume_preserves_other_dataset_interrupt(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_resume_preserve_interrupt") / "PSY201"
         study_dir.mkdir(parents=True)

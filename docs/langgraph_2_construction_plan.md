@@ -6131,6 +6131,52 @@ python -B -m compileall -q src tests
 git diff --check
 ```
 
+### 2026-06-01 - LG2.1 Native Dependency-Review Interrupt Pilot Slice
+
+Completed:
+
+- Added a narrow internal `StudyGraph` mode, `native_dependency_review`, that
+  uses LangGraph `interrupt()` at the study-level dependency-review gate.
+- Added `GraphGateway.start_native_dependency_review()` and
+  `GraphGateway.resume_native_dependency_review()` as pilot-only entry points.
+- The pilot writes native interrupt metadata into `runtime_persistence` while
+  preserving `graph_state.json` as the product source of truth.
+- Added regression tests proving the StudyGraph can pause at
+  `wait_for_dependency_review`, resume with `Command(resume=...)`, and persist
+  the reviewed state through GraphGateway.
+
+Current boundary:
+
+- This is not wired into the public UI/API default path yet.
+- It only covers the study-level `dependency_review` gate, not draft-spec,
+  code-review, terminal-failure, or multi-dataset product execution gates.
+- It still uses the existing default `InMemorySaver`, so process-restart
+  recovery remains based on canonical `graph_state.json` until a persistent
+  LangGraph checkpointer is introduced.
+- Existing split-flow endpoints remain unchanged.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the pilot uses real LangGraph `interrupt()` and
+  `Command(resume=...)`, remains isolated from public/default split-flow
+  endpoints, keeps persistence wording conservative, and does not introduce a
+  reducer/schema issue likely to corrupt existing behavior.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_native_dependency_review_interrupt_can_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dependency_review_interrupt_roundtrip_persists_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke -v
+Ran 155 tests in 12.515s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 109 tests in 18.032s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
+
 ### 2026-06-01 - LG2.8 Legacy Run Projection Metadata Slice
 
 Completed:

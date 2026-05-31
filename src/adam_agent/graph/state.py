@@ -157,6 +157,8 @@ class StudyGraphState(TypedDict, total=False):
     dependency_review_status: str
     dependency_plan_artifact: ArtifactRef
     dependency_review_artifact: ArtifactRef
+    human_commands: Annotated[list[dict[str, object]], operator.add]
+    native_dependency_review_resume: dict[str, object]
     execution_batches: list[list[str]]
     foundation_datasets: list[str]
     downstream_datasets: list[str]

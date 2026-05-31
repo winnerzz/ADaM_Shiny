@@ -10,6 +10,7 @@ import sqlite3
 from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from adam_agent.agents import (
     AgentDecision,
@@ -245,6 +246,121 @@ class GraphGateway:
         self._persist_graph_state(root, graph_state, node="dependency_plan")
         projection = project_graph_state_to_workflow(root, graph_state, node="graph_gateway_plan")
         return GraphGatewayResult(graph_state=graph_state, workflow_projection=projection)
+
+    def start_native_dependency_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        target_datasets: list[str],
+        approved_dependency_datasets: list[str] | None = None,
+    ) -> GraphGatewayResult:
+        """Start a narrow native LangGraph interrupt pilot for dependency review."""
+
+        root = Path(study_dir).expanduser()
+        if not root.exists() or not root.is_dir():
+            raise ValueError(f"study_dir does not exist or is not a directory: {root}")
+        normalized_targets = _normalize_dataset_list(target_datasets)
+        if not normalized_targets:
+            raise ValueError("target_datasets must not be empty")
+        result = self._graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "target_datasets": normalized_targets,
+                "approved_dependency_datasets": _normalize_dataset_list(approved_dependency_datasets or []),
+                "study_dir": str(root),
+                "graph_gateway_mode": "native_dependency_review",
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            },
+            config=self._config(study_id, run_id),
+        )
+        plan_values = self.get_state(study_id=study_id, run_id=run_id)
+        graph_state = self._canonical_state_from_plan(plan_values or result, study_dir=root)
+        native_interrupt = _native_interrupt_payload(self._graph.get_state(self._config(study_id, run_id)))
+        _sync_study_agent_decisions(graph_state)
+        self._persist_graph_state(
+            root,
+            graph_state,
+            node="native_dependency_review_interrupt",
+            runtime_persistence_extra={"native_dependency_review_interrupt": native_interrupt},
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            graph_state,
+            node="graph_gateway_native_dependency_review_interrupt",
+        )
+        return GraphGatewayResult(graph_state=graph_state, workflow_projection=projection)
+
+    def resume_native_dependency_review(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        approved_dependency_datasets: list[str] | None = None,
+    ) -> GraphGatewayDependencyReviewResult:
+        """Resume the native dependency-review interrupt pilot and persist canonical state."""
+
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        if graph_state.current_interrupt is None or graph_state.current_interrupt.name != "dependency_review":
+            raise ValueError("Current graph state is not waiting for dependency_review.")
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Dependency review decision must be approve or reject.")
+        command = HumanCommand(
+            interrupt="dependency_review",
+            action="approve" if normalized_decision == "approve" else "reject",
+            reviewer=reviewer,
+            notes=notes,
+            payload={"approved_dependency_datasets": _normalize_dataset_list(approved_dependency_datasets or [])},
+        )
+        _assert_resume_command_matches_open_interrupt(graph_state, command)
+        resumed = self._graph.invoke(
+            Command(
+                resume={
+                    "action": command.action,
+                    "reviewer": command.reviewer,
+                    "notes": command.notes,
+                    "payload": command.payload,
+                }
+            ),
+            config=self._config(graph_state.study_id, run_id),
+        )
+        next_state = self._canonical_state_from_plan(resumed, study_dir=root)
+        next_state.human_commands.append(command)
+        next_state.dependency_review_status = "approved" if command.action == "approve" else "rejected"
+        next_state.current_interrupt = None
+        next_state.status = "pending" if command.action == "approve" else "failed"
+        native_interrupt = _native_interrupt_payload(self._graph.get_state(self._config(graph_state.study_id, run_id)))
+        _sync_study_agent_decisions(next_state)
+        self._persist_graph_state(
+            root,
+            next_state,
+            node="native_dependency_review_resume",
+            runtime_persistence_extra={"native_dependency_review_interrupt": native_interrupt},
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            next_state,
+            node="graph_gateway_native_dependency_review_resume",
+        )
+        current_interrupt = None
+        if next_state.current_interrupt is not None and next_state.current_interrupt.status == "open":
+            current_interrupt = next_state.current_interrupt.name
+        return GraphGatewayDependencyReviewResult(
+            graph_state=next_state,
+            workflow_projection=projection,
+            decision=normalized_decision,
+            approved=normalized_decision == "approve",
+            current_interrupt=current_interrupt,
+        )
 
     def block_legacy_run_to_completion(
         self,
@@ -2644,9 +2760,18 @@ class GraphGateway:
             else [],
         )
 
-    def _persist_graph_state(self, study_dir: str | Path, state: StudyRunState, *, node: str) -> None:
+    def _persist_graph_state(
+        self,
+        study_dir: str | Path,
+        state: StudyRunState,
+        *,
+        node: str,
+        runtime_persistence_extra: dict[str, Any] | None = None,
+    ) -> None:
         root = Path(study_dir)
         state.runtime_persistence = _runtime_persistence_payload(root, state.run_id, self._checkpointer)
+        if runtime_persistence_extra:
+            state.runtime_persistence.update(runtime_persistence_extra)
         _sync_study_agent_decisions(state)
         _sync_study_agent_node_io(state)
         _update_agent_audit_summary(root, state)
@@ -2762,6 +2887,9 @@ def _normalize_dataset_list(values: list[str]) -> list[str]:
 
 
 def _dependency_review_status(plan_state: dict[str, Any]) -> str:
+    explicit_status = plan_state.get("dependency_review_status")
+    if explicit_status in {"approved", "rejected"}:
+        return str(explicit_status)
     if plan_state.get("unsupported_datasets") or plan_state.get("dependency_action_required"):
         return "blocked"
     if plan_state.get("dependency_planning_warnings"):
@@ -3685,6 +3813,28 @@ def _runtime_persistence_payload(study_dir: str | Path, run_id: str, checkpointe
             "graph_checkpoints.sqlite is a local product audit ledger, not a LangGraph SQLite checkpointer.",
             "Full native LangGraph interrupt/checkpointer resume remains future work.",
         ],
+    }
+
+
+def _native_interrupt_payload(snapshot: Any) -> dict[str, Any]:
+    """Summarize native LangGraph interrupt state without exposing internals as product truth."""
+
+    tasks = list(getattr(snapshot, "tasks", ()) or ())
+    interrupts = []
+    for task in tasks:
+        for item in getattr(task, "interrupts", ()) or ():
+            interrupts.append(
+                {
+                    "id": getattr(item, "id", None),
+                    "value": getattr(item, "value", None),
+                }
+            )
+    return {
+        "enabled": True,
+        "open_interrupt_count": len(interrupts),
+        "next_nodes": list(getattr(snapshot, "next", ()) or ()),
+        "interrupts": interrupts,
+        "boundary": "dependency_review_pilot_only",
     }
 
 

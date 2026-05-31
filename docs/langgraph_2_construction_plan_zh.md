@@ -5661,6 +5661,50 @@ python -B -m compileall -q src tests
 git diff --check
 ```
 
+### 2026-06-01 - LG2.1 Native Dependency-Review Interrupt 试点切片
+
+已完成：
+
+- 新增一个很窄的内部 `StudyGraph` mode：`native_dependency_review`，在 study-level
+  dependency-review gate 使用 LangGraph 原生 `interrupt()` 暂停。
+- 新增 `GraphGateway.start_native_dependency_review()` 和
+  `GraphGateway.resume_native_dependency_review()` 两个试点入口。
+- 试点会把 native interrupt metadata 写入 `runtime_persistence`，但仍保持
+  `graph_state.json` 是产品事实来源。
+- 增加回归测试，证明 StudyGraph 可以停在 `wait_for_dependency_review`，再用
+  `Command(resume=...)` 恢复，并通过 GraphGateway 持久化审核后的状态。
+
+当前边界：
+
+- 这个试点还没有接入公开 UI/API 默认路径。
+- 它只覆盖 study-level `dependency_review` gate，不覆盖 draft-spec、code-review、
+  terminal-failure 或 multi-dataset product execution gates。
+- 当前仍使用默认 `InMemorySaver`，所以进程重启后的恢复仍依赖 canonical
+  `graph_state.json`；只有后续接入 persistent LangGraph checkpointer 后，才能宣称
+  checkpointer-backed recovery。
+- 现有 split-flow endpoints 不变。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认该试点真实使用 LangGraph `interrupt()` 和 `Command(resume=...)`，
+  与公开/default split-flow endpoints 隔离，persistence 说明保持保守，并且没有引入
+  可能破坏现有行为的 reducer/schema 问题。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_native_dependency_review_interrupt_can_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dependency_review_interrupt_roundtrip_persists_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke -v
+Ran 155 tests in 12.515s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 109 tests in 18.032s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
+
 ### 2026-06-01 - LG2.8 Legacy Run Projection Metadata 切片
 
 已完成：

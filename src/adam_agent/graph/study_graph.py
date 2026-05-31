@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from adam_agent.agents import (
     build_agent_audit_summary,
@@ -156,7 +157,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         "dataset_results": unsupported_results + dependency_blocked_results,
         "blocked_datasets": unsupported_blocked + dependency_blocks,
     }
-    if state.get("graph_gateway_mode") == "plan_only":
+    if state.get("graph_gateway_mode") in {"plan_only", "native_dependency_review"}:
         planned_state["status"] = "needs_review" if _needs_dependency_review(planned_state) else "planned"
         planned_state["current_interrupt"] = (
             "dependency_review" if _needs_dependency_review(planned_state) else None
@@ -189,6 +190,63 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             }
         )
     return planned_state
+
+
+def wait_for_dependency_review(state: StudyGraphState) -> StudyGraphState:
+    """Pause at the dependency-review gate using a native LangGraph interrupt."""
+
+    review_status = _dependency_review_status(state)
+    command = interrupt(
+        {
+            "interrupt": "dependency_review",
+            "scope": "study",
+            "study_id": state["study_id"],
+            "run_id": state["run_id"],
+            "dependency_review_status": review_status,
+            "target_datasets": state.get("target_datasets", []),
+            "blocked_datasets": state.get("blocked_datasets", []),
+            "dependency_warnings": state.get("dependency_planning_warnings", []),
+            "message": _dependency_review_status_reason(state, review_status),
+        }
+    )
+    command_payload = command if isinstance(command, dict) else {"action": str(command)}
+    action = str(command_payload.get("action") or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        action = "reject"
+    reviewer = str(command_payload.get("reviewer") or "local_user")
+    notes = str(command_payload.get("notes") or "")
+    payload = command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {}
+    human_command = {
+        "interrupt": "dependency_review",
+        "action": action,
+        "reviewer": reviewer,
+        "notes": notes,
+        "payload": payload,
+    }
+    if action == "approve":
+        return {
+            "status": "planned",
+            "current_interrupt": None,
+            "dependency_review_status": "approved",
+            "human_commands": [human_command],
+            "native_dependency_review_resume": {
+                "resumed": True,
+                "action": action,
+                "reviewer": reviewer,
+            },
+        }
+    return {
+        "status": "failed",
+        "current_interrupt": None,
+        "dependency_review_status": "rejected",
+        "human_commands": [human_command],
+        "native_dependency_review_resume": {
+            "resumed": True,
+            "action": action,
+            "reviewer": reviewer,
+            "notes": notes,
+        },
+    }
 
 
 def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
@@ -692,6 +750,9 @@ def _dependency_review_markdown(state: StudyGraphState, review_status: str) -> s
 
 
 def _dependency_review_status(state: StudyGraphState) -> str:
+    explicit_status = state.get("dependency_review_status")
+    if explicit_status in {"approved", "rejected"}:
+        return explicit_status
     if state.get("unsupported_datasets"):
         return "blocked"
     if state.get("dependency_action_required"):
@@ -704,12 +765,14 @@ def _dependency_review_status(state: StudyGraphState) -> str:
 
 
 def _needs_dependency_review(state: StudyGraphState) -> bool:
-    return _dependency_review_status(state) in {"blocked", "warning", "review_required"}
+    return _dependency_review_status(state) in {"blocked", "warning", "review_required", "rejected"}
 
 
 def route_after_plan(state: StudyGraphState) -> str:
     """Allow graph-native gateway calls to stop after planning."""
 
+    if state.get("graph_gateway_mode") == "native_dependency_review":
+        return "dependency_review" if _needs_dependency_review(state) else "stop_after_plan"
     if state.get("graph_gateway_mode") == "plan_only":
         return "stop_after_plan"
     return "run_batches"
@@ -722,6 +785,10 @@ def _dependency_review_status_reason(state: StudyGraphState, review_status: str)
         return "The plan can run, but dependency evidence has warnings that should be reviewed before trusting the study-level plan."
     if review_status == "review_required":
         return "At least one dependency decision uses MVP fallback or file-derived evidence that should be checked by a human reviewer."
+    if review_status == "approved":
+        return "A human reviewer approved the dependency plan through the native LangGraph dependency-review interrupt."
+    if review_status == "rejected":
+        return "A human reviewer rejected the dependency plan through the native LangGraph dependency-review interrupt."
     return "No dependency warning or unsupported dataset was found in this MVP planning pass."
 
 
@@ -892,6 +959,7 @@ def build_study_graph():
     graph = StateGraph(StudyGraphState)
     graph.add_node("initialize_study", initialize_study)
     graph.add_node("plan_datasets", plan_datasets)
+    graph.add_node("wait_for_dependency_review", wait_for_dependency_review)
     graph.add_node("run_dependency_batches", run_dependency_batches)
     graph.add_node("reduce_dataset_results", reduce_dataset_results)
     graph.add_node("write_audit_manifest", write_audit_manifest)
@@ -903,9 +971,11 @@ def build_study_graph():
         route_after_plan,
         {
             "stop_after_plan": END,
+            "dependency_review": "wait_for_dependency_review",
             "run_batches": "run_dependency_batches",
         },
     )
+    graph.add_edge("wait_for_dependency_review", END)
     graph.add_edge("run_dependency_batches", "reduce_dataset_results")
     graph.add_edge("reduce_dataset_results", "write_audit_manifest")
     graph.add_edge("write_audit_manifest", END)
