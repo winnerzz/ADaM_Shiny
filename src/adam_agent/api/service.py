@@ -54,7 +54,7 @@ from adam_agent.graph.execution_modes import (
     LLM_DOWNSTREAM_R_SANDBOX_MODE,
     format_execution_modes,
 )
-from adam_agent.graph.gateway import GraphGateway, LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM
+from adam_agent.graph.gateway import GraphGateway
 from adam_agent.graph.output_quality import dataset_output_quality
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -140,6 +140,24 @@ def _gateway_projection_paths(result: Any) -> dict[str, str]:
     return {
         "graph_state_path": metadata["graph_state_path"],
         "workflow_state_path": metadata["workflow_state_path"],
+    }
+
+
+def _gateway_legacy_metadata(result: Any) -> dict[str, str | None]:
+    """Copy legacy `/runs` metadata from the gateway-owned workflow projection."""
+
+    projection = getattr(result, "workflow_projection", None)
+    if not isinstance(projection, dict):
+        raise ApiServiceError("GraphGateway did not return a legacy workflow projection.")
+    workflow_control = projection.get("workflow_control")
+    workflow_state_path = projection.get("workflow_state_path")
+    if not workflow_control or not workflow_state_path:
+        raise ApiServiceError("GraphGateway legacy workflow projection is missing compatibility metadata.")
+    graph_state_path = projection.get("graph_state_path")
+    return {
+        "workflow_control": str(workflow_control),
+        "graph_state_path": str(graph_state_path) if graph_state_path else None,
+        "workflow_state_path": str(workflow_state_path),
     }
 
 
@@ -324,7 +342,7 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             if value is not None
         },
     )
-    return _response_from_graph_result(legacy_result.graph_result, execution_mode=execution_mode, study_dir=study_dir)
+    return _response_from_legacy_graph_result(legacy_result, execution_mode=execution_mode, study_dir=study_dir)
 
 
 def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
@@ -1000,12 +1018,15 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
     )
 
 
-def _response_from_graph_result(
-    result: dict[str, Any],
+def _response_from_legacy_graph_result(
+    legacy_result: Any,
     *,
     execution_mode: str,
     study_dir: Path,
 ) -> RunStudyResponse:
+    result = getattr(legacy_result, "graph_result", None)
+    if not isinstance(result, dict):
+        raise ApiServiceError("GraphGateway did not return a legacy graph result.")
     audit_manifest = result.get("audit_manifest")
     run_dir = study_dir / "runs" / result["run_id"]
     return RunStudyResponse(
@@ -1013,9 +1034,7 @@ def _response_from_graph_result(
         run_id=result["run_id"],
         status=result["status"],
         execution_mode=execution_mode,
-        workflow_control=LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM,
-        graph_state_path=None,
-        workflow_state_path=str((run_dir / "workflow_state.json").as_posix()),
+        **_gateway_legacy_metadata(legacy_result),
         requested_datasets=result.get("requested_datasets", []),
         target_datasets=result.get("target_datasets", []),
         runnable_datasets=result.get("runnable_datasets", []),

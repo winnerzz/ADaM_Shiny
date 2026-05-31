@@ -6110,3 +6110,41 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.8 Legacy Run Projection Metadata Slice
+
+Completed:
+
+- Tightened the legacy successful `POST /runs` response path so it no longer
+  reconstructs compatibility metadata in the FastAPI service layer.
+- `run_study_from_request()` now passes the full `GraphGatewayLegacyRunResult`
+  to response construction.
+- `_response_from_legacy_graph_result()` copies `workflow_control`,
+  `graph_state_path`, and `workflow_state_path` from the gateway-owned legacy
+  `workflow_projection`.
+- Removed the now-unused legacy compatibility constant import from the service
+  layer.
+- Added a sentinel API regression test proving the legacy response forwards the
+  gateway projection path instead of rebuilding a local path.
+
+Current boundary:
+
+- This only changes legacy `/runs` response metadata ownership.
+- It does not change the legacy stub run behavior, blocked LLM `/runs` split-flow
+  guard, graph state, dependency planning, product split-flow endpoints, review
+  summary read models, or UI behavior.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed blocked LLM `/runs` does not enter the new response
+  constructor and `RunStudyResponse` accepts the copied fields.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m compileall -q src tests
+git diff --check
+```

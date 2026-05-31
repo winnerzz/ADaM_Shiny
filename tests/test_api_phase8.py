@@ -306,6 +306,46 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("block_legacy_run_to_completion", called_names)
         self.assertIn("run_legacy_to_completion", called_names)
 
+    def test_legacy_run_response_uses_gateway_projection_metadata(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_legacy_projection_metadata") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        legacy_result = SimpleNamespace(
+            graph_result={
+                "study_id": "MY_STUDY",
+                "run_id": "run_legacy_projection_metadata",
+                "status": "completed",
+                "requested_datasets": ["ADAE"],
+                "target_datasets": ["ADAE"],
+                "runnable_datasets": ["ADAE"],
+                "blocked_datasets": [],
+                "dependency_review_status": "accepted",
+                "dataset_results": [],
+                "audit_manifest": None,
+            },
+            workflow_projection={
+                "workflow_control": "legacy_run_to_completion_compatibility_shim",
+                "graph_state_path": None,
+                "workflow_state_path": "sentinel/legacy_workflow_state.json",
+            },
+        )
+
+        with patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway_cls.return_value.run_legacy_to_completion.return_value = legacy_result
+            response = service.run_study_from_request(
+                service.RunStudyRequest(
+                    study_dir=str(study_dir),
+                    run_id="run_legacy_projection_metadata",
+                    target_datasets=["ADAE"],
+                    execution_mode="stub",
+                )
+            )
+
+        self.assertEqual(response.workflow_control, "legacy_run_to_completion_compatibility_shim")
+        self.assertIsNone(response.graph_state_path)
+        self.assertEqual(response.workflow_state_path, "sentinel/legacy_workflow_state.json")
+
     def test_legacy_run_workflow_helpers_are_removed_from_service_layer(self) -> None:
         from adam_agent.api import service
 

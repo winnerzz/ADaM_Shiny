@@ -5642,3 +5642,40 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.8 Legacy Run Projection Metadata 切片
+
+已完成：
+
+- 收紧 legacy successful `POST /runs` response path：FastAPI service 层不再
+  自己重建 compatibility metadata。
+- `run_study_from_request()` 现在把完整 `GraphGatewayLegacyRunResult` 交给
+  response construction。
+- `_response_from_legacy_graph_result()` 从 gateway-owned legacy
+  `workflow_projection` 复制 `workflow_control`、`graph_state_path`、
+  `workflow_state_path`。
+- 删除 service 层不再使用的 legacy compatibility constant import。
+- 增加 sentinel API 回归测试，证明 legacy response 转发 gateway projection
+  path，而不是本地重新拼路径。
+
+当前边界：
+
+- 本切片只改变 legacy `/runs` response metadata ownership。
+- 不改变 legacy stub run behavior、blocked LLM `/runs` split-flow guard、
+  graph state、dependency planning、product split-flow endpoints、review
+  summary read models 或 UI behavior。
+
+审查：
+
+- 子 agent 审查 GO。
+- 审查确认 blocked LLM `/runs` 不会进入新的 response constructor，
+  `RunStudyResponse` 也接受这些从 projection 复制出来的字段。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m compileall -q src tests
+git diff --check
+```
