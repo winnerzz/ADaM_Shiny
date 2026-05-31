@@ -763,6 +763,12 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
+    .field-help {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
     .mini-pre {
       margin-top: 7px;
       max-height: 120px;
@@ -1091,19 +1097,23 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div id="reviewPane"><p class="note">No code generated yet.</p></div>
           <details>
-            <summary>Advanced settings and audit files</summary>
+            <summary>Advanced setup and audit files (usually not needed)</summary>
+            <p class="note">Use this panel only when changing the LLM provider, troubleshooting local R, or inspecting audit file locations. The normal flow above does not require editing these technical fields.</p>
             <div class="grid3" style="margin-top:12px;">
               <div class="field">
                 <label for="studyDir">Study folder</label>
                 <input id="studyDir">
+                <div class="field-help">Backend workspace. The app creates this automatically.</div>
               </div>
               <div class="field">
-                <label for="runId">Run id</label>
+                <label for="runId">Technical run id</label>
                 <input id="runId">
+                <div class="field-help">Audit identifier for this attempt. Usually leave unchanged.</div>
               </div>
               <div class="field">
-                <label for="configPath">LLM config</label>
+                <label for="configPath">Pipeline config file</label>
                 <input id="configPath" value="studies\\_template\\configs\\mock_downstream.json">
+                <div class="field-help">Developer fallback config. Browser provider settings below override model calls.</div>
               </div>
               <div class="field">
                 <label for="modelMode">Model mode</label>
@@ -1111,6 +1121,7 @@ INDEX_HTML = r"""<!doctype html>
                   <option value="mock">Mock / offline</option>
                   <option value="real">Real LLM API</option>
                 </select>
+                <div class="field-help">Mock is for UI/pipeline checks; Real calls your selected API.</div>
               </div>
               <div class="field">
                 <label for="llmProvider">Provider</label>
@@ -1121,35 +1132,43 @@ INDEX_HTML = r"""<!doctype html>
                   <option value="deepseek">DeepSeek</option>
                   <option value="qwen">Qwen</option>
                 </select>
+                <div class="field-help">Choose OpenAI-compatible for local relays or API gateways.</div>
               </div>
               <div class="field">
                 <label for="llmModel">Model</label>
                 <input id="llmModel" value="gpt-5.5">
+                <div class="field-help">Model name sent to the selected provider.</div>
               </div>
               <div class="field">
                 <label for="llmBaseUrl">Base URL</label>
                 <input id="llmBaseUrl" placeholder="Optional, for a relay or compatible endpoint">
+                <div class="field-help">Only needed for a relay, local server, or non-default endpoint.</div>
               </div>
               <div class="field">
                 <label for="llmApiKey">API key</label>
                 <input id="llmApiKey" type="password" placeholder="Used for this browser request only">
+                <div class="field-help">Kept in this browser form; not saved as a study artifact.</div>
               </div>
               <div class="field">
                 <label>&nbsp;</label>
                 <label><input id="llmAllowExternal" type="checkbox"> allow external API for demo data</label>
                 <button class="secondary" id="testLlmButton" type="button">Test Connection</button>
+                <div class="field-help">Required before sending demo-data context to an external API.</div>
               </div>
               <div class="field">
-                <label for="rscriptPath">Rscript path</label>
+                <label for="rscriptPath">Local Rscript executable</label>
                 <input id="rscriptPath" value="C:\\Dev\\R-4.5.2\\bin\\Rscript.exe">
+                <div class="field-help">Used only when running approved R locally.</div>
               </div>
               <div class="field">
                 <label for="reviewer">Reviewer</label>
                 <input id="reviewer" value="local_user">
+                <div class="field-help">Name recorded on approvals.</div>
               </div>
               <div class="field">
                 <label for="reviewNotes">Review notes</label>
                 <input id="reviewNotes" value="Approved for local sandbox execution.">
+                <div class="field-help">Short approval note saved to the audit trail.</div>
               </div>
             </div>
             <div id="llmStatus" class="note">Mock mode is active. No external LLM call will be made unless Real LLM API is selected.</div>
@@ -2406,7 +2425,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function artifactRecordedNote(label) {
-      return `${label || 'Artifact'} recorded. Technical path is available under Advanced settings and audit files.`;
+      return `${label || 'Artifact'} recorded. Technical path is available under Advanced setup and audit files.`;
     }
 
     function renderGraphAwareDashboard() {

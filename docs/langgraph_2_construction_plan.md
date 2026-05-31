@@ -5052,6 +5052,38 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Advanced Setup Wording UI Slice
+
+Completed:
+
+- Renamed the advanced collapsible panel to `Advanced setup and audit files
+  (usually not needed)`.
+- Added plain-language guidance that the normal flow does not require editing
+  technical fields.
+- Reworded visible labels/help text for run id, config file, provider/model,
+  API key, and local Rscript so they read as troubleshooting/audit settings
+  rather than required product inputs.
+- Kept the same field ids and request payload behavior.
+- Added focused UI contract checks for the new wording.
+
+Current boundary:
+
+- This slice changes only static HTML/CSS text in the browser UI and the
+  matching UI contract tests.
+- It does not change provider resolution, API key handling, run id generation,
+  config loading, Rscript invocation, GraphGateway state, dependency planning,
+  static rules, R execution, compare, or repair.
+- It does not remove real LLM provider controls; it only makes clear that they
+  are advanced setup controls.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 Reference-Only Dataset Card UI Slice
 
 Completed:

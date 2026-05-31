@@ -1709,7 +1709,7 @@ python -m compileall -q src\adam_agent
 - 从主流程里的 draft-spec 和 code-review pane 中移除直接 spec/draft-spec artifact
   path 展示。
 - 改成面向用户的 artifact-recorded 文案。
-- 技术路径继续保留在已有的 Advanced settings and audit files 表格中。
+- 技术路径继续保留在已有的 Advanced setup and audit files 表格中。
 - 增加 UI contract 测试，防止普通 review pane 重新展示 `input_spec_path`、
   `approved_spec_path`、`draft.spec_path` 或 `generated.draft_spec_path`。
 
@@ -4642,6 +4642,36 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_ag
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
 python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
 node --check .tmp_tests/ui_script_check.js
+```
+
+### 2026-05-31 - LG2.7 Advanced Setup Wording UI 切片
+
+已完成：
+
+- 将高级折叠面板重命名为 `Advanced setup and audit files (usually not
+  needed)`。
+- 增加人话说明：正常流程不需要修改这些技术字段。
+- 重写 run id、config file、provider/model、API key、local Rscript 的可见
+  label/help text，让它们表现为排障/审计设置，而不是普通用户必须理解的产品
+  输入。
+- 保留原 field ids 和 request payload 行为。
+- 增加 focused UI contract checks，覆盖新文案。
+
+当前边界：
+
+- 本切片只改变 browser UI 的静态 HTML/CSS 文案和对应 UI contract tests。
+- 不改变 provider resolution、API key handling、run id generation、
+  config loading、Rscript invocation、GraphGateway state、dependency
+  planning、static rules、R execution、compare 或 repair。
+- 不移除 real LLM provider controls，只是明确它们属于 advanced setup
+  controls。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
 ```
 
 ### 2026-05-31 - LG2.7 Reference-Only Dataset Card UI 切片
