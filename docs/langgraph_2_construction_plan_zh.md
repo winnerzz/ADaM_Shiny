@@ -4031,3 +4031,48 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ge
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
 python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
 ```
+
+### 2026-05-31 - LG2.8 Output Quality Read Model 切片
+
+已完成：
+
+- 新增共享的 output-quality read model，供 UI/API 展示使用。它把生成输出标记
+  为 `real_runtime_output`、`not_real_derivation`、`structural_stub`、
+  `terminal_failure` 或 `not_completed`。
+- 将这份质量信号接入 GraphGateway progress items 和 review-summary dataset
+  reviews。
+- 增加用户可读 warning：mock/offline 和 structural demo 输出仍可见、可审查，
+  但会明确说明不能作为下游 runtime evidence。
+- 更新浏览器 UI：结果审核区显示质量提示横幅；dataset card 在对应情况下显示
+  `review only` 或 `demo output`。
+
+当前边界：
+
+- 这是 read-model 和 UI clarity 切片，不改变 LLM 调用、R execution、
+  dependency resolution、compare 或 static-rule 行为。
+- review-summary 从已有 `workflow_state.json` compatibility projection 读取质
+  量细节，不直接读取或修改 canonical graph state。
+- 这不是临床正确性评分，只说明这个输出是否适合作为下游 runtime evidence。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_output_quality_classification_matrix tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_output_is_not_previewed_or_downloadable tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway tests.test_graph_smoke tests.test_static_rules -v
+git diff --check
+```
+
+结果：focused progress/review-summary 和 quality-matrix tests passed；247 个
+相关 API/gateway/graph/static-rule tests passed；AST syntax check 覆盖 80 个
+Python 文件；diff check passed。
+
+子 agent review：
+
+- GO。未发现 blocking findings。
+- 审核确认本切片停留在 read-model/UI 展示层，没有修改 dependency resolution、
+  R execution、compare 或 canonical graph state。
+- 已按最小建议修正：`dataset_output_quality()` 也读取 validation report 中的
+  terminal-failure 和 partial-output-usability 标记，并用分类矩阵测试和
+  terminal-failure review-summary 回归覆盖该路径。

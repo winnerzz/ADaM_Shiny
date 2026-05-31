@@ -4416,3 +4416,52 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_ge
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
 python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
 ```
+
+### 2026-05-31 - LG2.8 Output Quality Read Model Slice
+
+Completed:
+
+- Added a shared output-quality read model for UI/API display. It classifies
+  generated outputs as `real_runtime_output`, `not_real_derivation`,
+  `structural_stub`, `terminal_failure`, or `not_completed`.
+- Exposed that signal through GraphGateway progress items and review-summary
+  dataset reviews.
+- Added user-facing warnings so mock/offline and structural demo outputs remain
+  visible for review, but are clearly marked as not downstream runtime evidence.
+- Updated the browser UI to show a warning banner on result review and to label
+  dataset cards as `review only` or `demo output` when graph state says so.
+
+Current boundary:
+
+- This is a read-model and UI clarity slice. It does not change LLM calls,
+  R execution, dependency resolution, compare, or static-rule behavior.
+- The review-summary path reads quality details from the existing
+  `workflow_state.json` compatibility projection. It does not load or mutate
+  canonical graph state.
+- The quality signal is not a clinical correctness score. It only explains
+  whether an output is fit to be treated as downstream runtime evidence.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare -v
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_output_quality_classification_matrix tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_marks_not_real_outputs_as_review_only tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_output_is_not_previewed_or_downloadable tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway tests.test_graph_smoke tests.test_static_rules -v
+git diff --check
+```
+
+Result: focused progress/review-summary and quality-matrix tests passed; 247
+related API/gateway/graph/static-rule tests passed; AST syntax check covered 80
+Python files; diff check passed.
+
+Subagent review:
+
+- GO. No blocking findings.
+- The review confirmed this slice stays in read-model/UI display code and does
+  not mutate dependency resolution, R execution, compare, or canonical graph
+  state.
+- The suggested minimal fix was applied: `dataset_output_quality()` now also
+  reads terminal-failure and partial-output-usability flags from validation
+  reports, and the classification matrix plus terminal-failure review-summary
+  regression cover that path.

@@ -19,6 +19,7 @@ from adam_agent.graph.execution_modes import (
     GRAPH_PRODUCT_GENERATE_CODE_MODE,
     GRAPH_PRODUCT_PREPARE_MODE,
 )
+from adam_agent.graph.output_quality import dataset_output_quality
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -2980,9 +2981,16 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
             "execution_status": "",
             "validation_status": "",
             "compare_status": "",
+            "output_quality": dataset_output_quality(status="pending"),
             "warnings": [],
         }
     next_item = _dataset_next_action(dataset_state, blocked_reason=block)
+    output_quality = dataset_output_quality(
+        status=dataset_state.status,
+        code_state=dataset_state.code_state,
+        execution_state=dataset_state.execution_state,
+        validation_summary=dataset_state.validation_summary,
+    )
     return {
         "dataset": target,
         "status": dataset_state.status,
@@ -3000,6 +3008,7 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
             or ""
         ),
         "compare_status": str(dataset_state.compare_summary.get("status") or ""),
+        "output_quality": output_quality,
         "warnings": _dataset_progress_warnings(dataset_state),
     }
 
@@ -3114,6 +3123,16 @@ def _next_action_label(action: str) -> str:
 
 def _dataset_progress_warnings(dataset_state: DatasetRunState) -> list[str]:
     warnings: list[str] = []
+    output_quality = dataset_output_quality(
+        status=dataset_state.status,
+        code_state=dataset_state.code_state,
+        execution_state=dataset_state.execution_state,
+        validation_summary=dataset_state.validation_summary,
+    )
+    for item in output_quality.get("warnings", []):
+        warning = str(item).strip()
+        if warning and warning not in warnings:
+            warnings.append(warning)
     for state_map in [dataset_state.spec_state, dataset_state.code_state, dataset_state.execution_state]:
         raw_warnings = state_map.get("warnings")
         if isinstance(raw_warnings, list):

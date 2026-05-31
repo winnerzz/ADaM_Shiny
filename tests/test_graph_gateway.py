@@ -18,6 +18,7 @@ try:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
+    from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -31,6 +32,7 @@ except ModuleNotFoundError:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
+    from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
@@ -61,6 +63,54 @@ def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, cod
 
 
 class GraphGatewayTests(unittest.TestCase):
+    def test_output_quality_classification_matrix(self) -> None:
+        cases = [
+            (
+                "real_runtime_output",
+                dataset_output_quality(
+                    status="completed",
+                    execution_state={"status": "completed", "partial_output_usable": True},
+                    validation_summary={"status": "pass"},
+                ),
+                True,
+            ),
+            (
+                "structural_stub",
+                dataset_output_quality(
+                    status="completed_stub",
+                    execution_state={"status": "completed", "partial_output_usable": True},
+                    validation_summary={"status": "structural_stub_pass"},
+                ),
+                False,
+            ),
+            (
+                "not_real_derivation",
+                dataset_output_quality(
+                    status="completed",
+                    execution_state={
+                        "status": "completed",
+                        "partial_output_usable": True,
+                        "generation_quality": {"not_real_derivation": True},
+                    },
+                    validation_summary={"status": "pass"},
+                ),
+                False,
+            ),
+            (
+                "terminal_failure",
+                dataset_output_quality(
+                    status="completed",
+                    execution_state={"status": "completed"},
+                    validation_summary={"status": "fail", "terminal_failure": True, "partial_output_usable": False},
+                ),
+                False,
+            ),
+        ]
+        for expected_status, quality, expected_eligible in cases:
+            with self.subTest(expected_status=expected_status):
+                self.assertEqual(quality["quality_status"], expected_status)
+                self.assertEqual(quality["runtime_dependency_eligible"], expected_eligible)
+
     def test_generation_quality_marks_only_mock_signals_as_not_real(self) -> None:
         cases = [
             (
@@ -2485,6 +2535,52 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(by_dataset["ADCM"]["next_action"], "blocked")
         self.assertIn("Study-level dependency review", by_dataset["ADCM"]["blocked_reason"])
         self.assertTrue(Path(progress["graph_state_path"]).exists())
+
+    def test_gateway_progress_summary_marks_not_real_outputs_as_review_only(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_not_real_output") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_not_real_output",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_not_real_output",
+        ).model_copy(deep=True)
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].code_state = {
+            "status": "approved",
+            "generation_quality": {
+                "llm_provider": "mock",
+                "llm_model": "mock-model",
+                "not_real_derivation": True,
+            },
+        }
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "generation_quality": {
+                "llm_provider": "mock",
+                "llm_model": "mock-model",
+                "not_real_derivation": True,
+            },
+            "not_real_derivation": True,
+        }
+        state.datasets["ADSL"].validation_summary = {"status": "pass"}
+        gateway._persist_graph_state(study_dir, state, node="test_seed_not_real_progress")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_not_real_output")
+
+        by_dataset = {item["dataset"]: item for item in progress["datasets"]}
+        quality = by_dataset["ADSL"]["output_quality"]
+        self.assertEqual(quality["quality_status"], "not_real_derivation")
+        self.assertFalse(quality["runtime_dependency_eligible"])
+        self.assertTrue(quality["not_real_derivation"])
+        self.assertIn("not_real_derivation", " ".join(by_dataset["ADSL"]["warnings"]))
 
     def test_gateway_progress_summary_prioritizes_stale_plan_replan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_progress_stale") / "PSY201"

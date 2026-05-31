@@ -87,6 +87,7 @@ class DatasetProgressItem(StrictBaseModel):
     execution_status: str = ""
     validation_status: str = ""
     compare_status: str = ""
+    output_quality: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -471,6 +472,7 @@ class DatasetReview(StrictBaseModel):
     validation_status: str | None = None
     compare_status: str | None = None
     output_path: str | None = None
+    output_quality: dict[str, Any] = Field(default_factory=dict)
     output_preview: FilePreview | None = None
     reference_preview: FilePreview | None = None
     compare_summary: "DatasetCompareResponse | None" = None

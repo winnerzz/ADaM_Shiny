@@ -55,6 +55,7 @@ from adam_agent.graph.execution_modes import (
     format_execution_modes,
 )
 from adam_agent.graph.gateway import GraphGateway, LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM
+from adam_agent.graph.output_quality import dataset_output_quality
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
@@ -945,7 +946,8 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         if str(result.get("dataset", "")).strip()
     ]
     datasets = _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
-    dataset_reviews = [_dataset_review(root, run_id, dataset, manifest) for dataset in datasets]
+    workflow_state = _read_json_if_exists(run_dir / "workflow_state.json")
+    dataset_reviews = [_dataset_review(root, run_id, dataset, manifest, workflow_state) for dataset in datasets]
     status = str(manifest.get("status") or _status_from_reviews(dataset_reviews))
 
     return RunReviewSummary(
@@ -1538,10 +1540,11 @@ def _string_cell(value: Any) -> str:
     return str(value)
 
 
-def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, Any]) -> DatasetReview:
+def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, Any], workflow_state: dict[str, Any] | None = None) -> DatasetReview:
     dataset_lower = dataset.lower()
     run_dir = root / "runs" / run_id
     result = _dataset_result_from_manifest(manifest, dataset)
+    projected_dataset = _projected_dataset_state(workflow_state or {}, dataset)
     validation_report = _read_json_if_exists(run_dir / "validation" / f"{dataset_lower}_validation_report.json")
     diagnostics = _read_json_if_exists(run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json")
     parsed_response = _read_json_if_exists(run_dir / "llm" / f"{dataset_lower}_parsed_response.json")
@@ -1551,13 +1554,25 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
     reader = SDTMReader()
     compare_summary = DatasetCompareResponse(**compare_dataset_files(dataset, output_path, reference_path))
     compare_status = compare_summary.status if compare_summary.status != "missing_generated" else result.get("compare_status")
+    status = str(result.get("status") or _dataset_status_from_report(validation_report, output_path) or projected_dataset.get("status") or "unknown")
+    output_quality = dataset_output_quality(
+        status=status,
+        code_state=_state_map(projected_dataset.get("code_state")),
+        execution_state=_state_map(projected_dataset.get("execution_state")),
+        validation_summary=validation_report or _state_map(projected_dataset.get("validation_summary")),
+    )
+    warnings = _unique_strings(
+        _string_list(validation_report.get("warnings"))
+        + _string_list(output_quality.get("warnings"))
+    )
 
     return DatasetReview(
         dataset=dataset,
-        status=str(result.get("status") or _dataset_status_from_report(validation_report, output_path)),
+        status=status,
         validation_status=result.get("validation_status") or validation_report.get("status"),
         compare_status=compare_status,
         output_path=str(output_path.as_posix()) if output_path else None,
+        output_quality=output_quality,
         output_preview=_preview_table_file(output_path, role="Generated ADaM", dataset=dataset, reader=reader, sample_rows=5)
         if output_path
         else None,
@@ -1570,7 +1585,7 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
         generated_code=_read_text_if_exists(code_path, limit_chars=40000),
         assumptions=_string_list(parsed_response.get("assumptions")),
         risk_points=_string_list(parsed_response.get("risk_points")),
-        warnings=_string_list(validation_report.get("warnings")),
+        warnings=warnings,
         errors=_string_list(validation_report.get("errors")),
         validation_report=validation_report,
         diagnostics=diagnostics,
@@ -1583,6 +1598,18 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
         if str(result.get("dataset", "")).strip().upper() == target:
             return result
     return {}
+
+
+def _projected_dataset_state(workflow_state: dict[str, Any], dataset: str) -> dict[str, Any]:
+    datasets = workflow_state.get("datasets")
+    if not isinstance(datasets, dict):
+        return {}
+    projected = datasets.get(dataset.strip().upper())
+    return projected if isinstance(projected, dict) else {}
+
+
+def _state_map(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _dataset_status_from_report(report: dict[str, Any], output_path: Path | None) -> str:
@@ -1651,6 +1678,15 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
 
 
 def _unique_non_empty(values: list[str]) -> list[str]:

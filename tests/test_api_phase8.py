@@ -2155,8 +2155,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(table.json()["status"], "missing")
         self.assertEqual(download.status_code, 404)
         self.assertEqual(review.status_code, 200, review.text)
-        self.assertIsNone(review.json()["dataset_reviews"][0]["output_preview"])
-        self.assertIsNone(review.json()["dataset_reviews"][0]["output_path"])
+        dataset_review = review.json()["dataset_reviews"][0]
+        self.assertIsNone(dataset_review["output_preview"])
+        self.assertIsNone(dataset_review["output_path"])
+        self.assertEqual(dataset_review["output_quality"]["quality_status"], "terminal_failure")
+        self.assertFalse(dataset_review["output_quality"]["runtime_dependency_eligible"])
 
     def test_code_approval_is_invalidated_when_code_or_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_stale_code_approval")
@@ -2715,6 +2718,67 @@ class Phase8ApiTests(unittest.TestCase):
             self.assertEqual(item["status"], "completed")
             self.assertTrue(item["output_preview"])
             self.assertTrue(item["output_path"].endswith(f"{item['dataset'].lower()}.csv"))
+
+    def test_review_summary_surfaces_not_real_quality_from_workflow_projection(self) -> None:
+        study_dir = _workspace_dir("phase8_review_not_real_quality") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_not_real_quality"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        (run_dir / "workflow_state.json").write_text(
+            json.dumps(
+                {
+                    "study_id": "MY_STUDY",
+                    "run_id": "run_not_real_quality",
+                    "status": "completed",
+                    "datasets": {
+                        "ADSL": {
+                            "dataset": "ADSL",
+                            "status": "completed",
+                            "code_state": {
+                                "generation_quality": {
+                                    "llm_provider": "mock",
+                                    "llm_model": "mock-model",
+                                    "not_real_derivation": True,
+                                }
+                            },
+                            "execution_state": {
+                                "status": "completed",
+                                "terminal_failure": False,
+                                "partial_output_usable": True,
+                                "not_real_derivation": True,
+                                "generation_quality": {
+                                    "llm_provider": "mock",
+                                    "llm_model": "mock-model",
+                                    "not_real_derivation": True,
+                                },
+                            },
+                            "validation_summary": {"status": "pass"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_not_real_quality/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        review = response.json()["dataset_reviews"][0]
+        self.assertEqual(review["status"], "completed")
+        self.assertEqual(review["output_quality"]["quality_status"], "not_real_derivation")
+        self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
+        self.assertIn("mock", " ".join(review["warnings"]).lower())
 
     def test_llm_connection_test_rejects_mock_provider(self) -> None:
         client = TestClient(create_app())

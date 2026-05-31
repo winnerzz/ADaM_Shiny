@@ -2829,6 +2829,8 @@ INDEX_HTML = r"""<!doctype html>
     function datasetStatus(target, runnable, blocked) {
       const progress = datasetProgressFor(target);
       if (progress?.blocked) return 'blocked';
+      if (progress?.output_quality?.quality_status === 'structural_stub') return 'demo output';
+      if (progress?.output_quality?.quality_status === 'not_real_derivation') return 'review only';
       if (progress?.status) return progress.status;
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
       const execution = executionFor(target);
@@ -3034,6 +3036,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!review) return '<p class="note">No generated ADaM output found yet.</p>';
       return `
         <p class="note strong">Result review for ${escapeHtml(review.dataset)}. Use the tabs below to inspect the generated table, compare it with reference ADaM, and download artifacts.</p>
+        ${outputQualityNotice(review.output_quality)}
         <div class="result-tabs">
           <button class="result-tab ${state.selectedResultView === 'generated' ? 'active' : ''}" data-result-view="generated">Generated Table</button>
           <button class="result-tab ${state.selectedResultView === 'reference' ? 'active' : ''}" data-result-view="reference">Reference Table</button>
@@ -3048,6 +3051,24 @@ INDEX_HTML = r"""<!doctype html>
       if (state.selectedResultView === 'compare') return comparePane(review);
       if (state.selectedResultView === 'downloads') return downloadsPane(review);
       return outputPreview(review, state.selectedResultView === 'reference' ? 'reference' : 'generated');
+    }
+
+    function outputQualityNotice(quality) {
+      if (!quality) return '';
+      const status = quality.quality_status || 'unknown';
+      if (status === 'real_runtime_output' || status === 'not_completed') return '';
+      const warnings = quality.warnings || [];
+      const label = {
+        structural_stub: 'Structural demo output',
+        not_real_derivation: 'Mock/offline generation',
+        terminal_failure: 'Terminal failure output'
+      }[status] || titleFromToken(status);
+      return `
+        <div class="note warn">
+          <strong>${escapeHtml(label)}.</strong>
+          <ul class="clean">${listItems(warnings, 'This output is not runtime dependency evidence.')}</ul>
+        </div>
+      `;
     }
 
     function outputPreview(review, kind) {
