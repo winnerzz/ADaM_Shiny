@@ -5322,6 +5322,58 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Graph-Owned 主动作门控切片
+
+已完成：
+
+- 新增浏览器 `graphActionGate()` helper，让四个主要 dataset 动作优先由
+  `GET /runs/{run_id}/progress` 中每个 dataset 的 `next_action` 驱动。
+- 将 graph-owned next action 映射到 UI 动作：
+  - `finalize_inputs` / `reconfirm_inputs` -> finalize inputs
+  - `review_draft_spec` -> approve draft spec
+  - `generate_code` / `repair_generated_code` -> generate R code
+  - `revise_approved_spec` -> 通过 `/draft-spec` 生成修订版 draft spec，
+    不走普通 finalize
+  - `review_code` / `execute_approved_code` / `retry_approved_execution` ->
+    code approval 或 local execution
+- 当 graph progress 已经说明代码可执行或可重试执行时，UI 不再重复写入
+  code-review 决策。
+- 修正 revised-spec 路径：terminal-failure 后选择 `revise_spec` 时，不能静默
+  复用上传的 input spec 或旧 approved draft。`DatasetGraph` 现在会先判断
+  `force_new_draft_spec`，再决定是否接受 input-spec shortcut；UI 在
+  `revise_approved_spec` 时调用 `/draft-spec`。
+- 修正 draft-review UI gate：当 graph progress 是 `review_draft_spec` 时，
+  graph 审核门优先于浏览器本地“已有 input spec / old approved draft”的快捷判断。
+- 增加 Node 执行的 UI 行为测试，覆盖 next-action/button matrix；同时补充
+  terminal-failure revise-spec API 回归测试。
+
+当前边界：
+
+- 本切片只改变 UI 动作门控和一个 DatasetGraph 控制流 guard。
+- 不改变 dependency planning、provider calls、static rules、R execution、
+  compare、repair implementation、terminal-failure triage semantics 或
+  Reference ADaM authority。
+- 浏览器仍然调用现有 split-flow endpoints；它不是 workflow controller。
+  GraphGateway progress 仍是 UI 下一步动作的事实来源。
+
+审查：
+
+- 子 agent 第一次审查 NO-GO：`revise_approved_spec` 可能通过普通 finalize
+  复用旧 spec 证据。已修复。
+- 子 agent 第二次审查 NO-GO：`review_draft_spec` 仍可能被浏览器本地 input-spec
+  shortcut 阻挡。已修复。
+- 最终子 agent 审查 GO。提交前顺手修正了一个非阻塞提示文案。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_graph_smoke -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Graph-Owned Human Review Queue 切片
 
 已完成：

@@ -5772,6 +5772,61 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Graph-Owned Primary Action Gates Slice
+
+Completed:
+
+- Added a browser `graphActionGate()` helper so the four primary dataset
+  actions are driven first by `GET /runs/{run_id}/progress` dataset
+  `next_action` values.
+- Mapped graph-owned next actions to UI actions:
+  - `finalize_inputs` / `reconfirm_inputs` -> finalize inputs
+  - `review_draft_spec` -> approve draft spec
+  - `generate_code` / `repair_generated_code` -> generate R code
+  - `revise_approved_spec` -> generate a revised draft spec through
+    `/draft-spec`, not through normal finalize
+  - `review_code` / `execute_approved_code` / `retry_approved_execution` ->
+    code approval or local execution
+- Prevented duplicate code-review writes when graph progress already says the
+  approved code should execute or retry execution.
+- Fixed the revised-spec path so a terminal-failure `revise_spec` decision
+  cannot silently reuse an uploaded input spec or old approved draft:
+  `DatasetGraph` now evaluates `force_new_draft_spec` before the input-spec
+  shortcut, and the UI calls `/draft-spec` for `revise_approved_spec`.
+- Fixed the draft-review UI gate so graph progress `review_draft_spec` wins
+  over local browser shortcuts that see uploaded input specs or old approved
+  drafts.
+- Added Node-executed UI behavior coverage for the next-action/button matrix,
+  plus API regression coverage for terminal-failure revise-spec flow.
+
+Current boundary:
+
+- This slice changes UI action gating and one DatasetGraph control-flow guard.
+- It does not change dependency planning, provider calls, static rules, R
+  execution, compare, repair implementation, terminal-failure triage semantics,
+  or Reference ADaM authority.
+- The browser still sends existing split-flow endpoint requests; it does not
+  become the workflow controller. GraphGateway progress remains the UI action
+  source of truth.
+
+Review:
+
+- Subagent review first returned NO-GO because `revise_approved_spec` could
+  route through normal finalize and reuse stale spec evidence. Fixed.
+- Subagent re-review returned NO-GO because `review_draft_spec` could still be
+  blocked by local input-spec shortcuts. Fixed.
+- Final subagent review returned GO. A minor copy issue was fixed before commit.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_graph_smoke -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Graph-Owned Human Review Queue Slice
 
 Completed:

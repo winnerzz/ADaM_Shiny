@@ -233,7 +233,11 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "sandbox_runs": 0,
         }
 
-    if context.target_spec is not None:
+    force_new_draft_spec = bool(state.get("force_new_draft_spec")) or _terminal_failure_requires_new_draft_spec(
+        Path(study_dir), state["run_id"], state["dataset"]
+    )
+
+    if context.target_spec is not None and not force_new_draft_spec:
         evidence_output = _evidence_agent_output(
             state,
             decision="input_spec_ready",
@@ -260,9 +264,6 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "sandbox_runs": 0,
         }
 
-    force_new_draft_spec = bool(state.get("force_new_draft_spec")) or _terminal_failure_requires_new_draft_spec(
-        Path(study_dir), state["run_id"], state["dataset"]
-    )
     approved_payload = None
     if not force_new_draft_spec:
         try:

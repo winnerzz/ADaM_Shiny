@@ -2106,6 +2106,45 @@ INDEX_HTML = r"""<!doctype html>
       return (state.plan?.blocked_datasets || []).find((item) => item.dataset === state.selectedTarget) || null;
     }
 
+    function graphActionGate(progress, actionGroup) {
+      if (!progress || !progress.next_action) return null;
+      const next = String(progress.next_action || '');
+      const labels = {
+        finalize: 'Finalize Inputs / Draft Spec',
+        approveDraft: 'Approve Draft Spec',
+        generate: 'Generate R Code',
+        approveRun: 'Approve And Run Locally'
+      };
+      const allowed = {
+        finalize: ['finalize_inputs', 'reconfirm_inputs'],
+        approveDraft: ['review_draft_spec'],
+        generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec'],
+        approveRun: ['review_code', 'execute_approved_code', 'retry_approved_execution']
+      }[actionGroup] || [];
+      const graphLabel = progress.action_label || titleFromToken(next);
+      if (progress.blocked) {
+        return {
+          ready: false,
+          reason: progress.blocked_reason || graphLabel || 'The graph has blocked this dataset.',
+          pill: 'blocked'
+        };
+      }
+      if (allowed.includes(next)) {
+        return {
+          ready: true,
+          reason: `Graph next action: ${graphLabel}`,
+          pill: titleFromToken(next),
+          nextAction: next
+        };
+      }
+      return {
+        ready: false,
+        reason: `Graph next action is ${graphLabel}; ${labels[actionGroup] || 'this action'} is not the current graph step.`,
+        pill: titleFromToken(next),
+        nextAction: next
+      };
+    }
+
     function actionAvailability() {
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
@@ -2124,10 +2163,25 @@ INDEX_HTML = r"""<!doctype html>
         : target && !targetIsPlanned
           ? `${target} is only being viewed. Select its checkbox to include it in this generation plan.`
           : '';
-      const finalizeReady = Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
-      const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
-      const generateReady = Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
-      const approveReady = Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
+      const finalizeGate = graphActionGate(progress, 'finalize');
+      const draftGate = graphActionGate(progress, 'approveDraft');
+      const generateGate = graphActionGate(progress, 'generate');
+      const approveRunGate = graphActionGate(progress, 'approveRun');
+      const finalizeReady = finalizeGate
+        ? Boolean(target && targetIsPlanned && !blocked && finalizeGate.ready)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
+      const draftApprovalReady = draftGate
+        ? Boolean(target && draftGate.ready && draft && !draftReview?.approved)
+        : Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
+      const generateReady = generateGate
+        ? Boolean(target && targetIsPlanned && !blocked && generateGate.ready && hasSpecGate)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
+      const codeApprovalReady = approveRunGate?.nextAction === 'review_code'
+        ? canApproveGeneratedCode(target)
+        : Boolean(generated);
+      const approveReady = approveRunGate
+        ? Boolean(target && !blocked && approveRunGate.ready && codeApprovalReady)
+        : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2140,6 +2194,8 @@ INDEX_HTML = r"""<!doctype html>
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
               : progressBlocked
                 ? progressBlockReason
+                : finalizeGate
+                ? finalizeGate.reason
                 : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}. Resolve or approve the dependency plan first.`
                 : hasSpecGate
@@ -2151,17 +2207,23 @@ INDEX_HTML = r"""<!doctype html>
           label: 'Approve Draft Spec',
           reason: !target
             ? 'Choose an ADaM output first.'
+            : draftGate?.ready
+              ? `Graph requires draft-spec review for ${target}. Review and approve the draft before code generation.`
             : finalized?.input_spec_available || targetHasInputSpec(target)
               ? `${target} has an uploaded input spec, so no draft-spec approval is needed.`
-              : draftReview?.approved || finalized?.approved_draft_spec_available
+            : draftReview?.approved || finalized?.approved_draft_spec_available
                 ? `${target} draft spec is already approved for this run.`
+                : draftGate && !draftGate.ready
+                  ? draftGate.reason
+                : draftGate && !draft
+                  ? 'Graph is waiting for draft-spec review, but the draft spec is not loaded in this browser. Refresh the run state or finalize inputs again.'
                 : draft
                   ? `Review the generated draft spec for ${target}; approve it before code generation.`
                   : 'Finalize inputs first. If no uploaded spec exists, the app will create a draft spec for review.'
         },
         generate: {
           ready: generateReady,
-          label: 'Generate R Code',
+          label: generateGate?.nextAction === 'revise_approved_spec' ? 'Generate Revised Draft Spec' : 'Generate R Code',
           reason: !target
             ? 'Choose an ADaM output first.'
             : !targetIsPlanned
@@ -2170,8 +2232,12 @@ INDEX_HTML = r"""<!doctype html>
               ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
               : progressBlocked
                 ? progressBlockReason
+                : generateGate
+                ? generateGate.reason
                 : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
+                : generateGate?.nextAction === 'revise_approved_spec'
+                  ? 'Graph requires a revised draft spec before new R code can be generated.'
                 : !hasSpecGate
                   ? 'Confirm the uploaded input spec or review/approve the generated draft spec first.'
                   : generated?.status === 'stale'
@@ -2188,14 +2254,18 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : progressBlocked
               ? progressBlockReason
+            : approveRunGate
+              ? approveRunGate.reason
             : blocked
               ? `${target} is blocked by ${blocked.blocked_by}; local execution is paused until dependency review is resolved.`
             : execution?.status === 'completed'
               ? `${target} already completed local execution. Approval remains available only if you intentionally rerun the same generated code.`
-              : execution?.status === 'terminal_failure' || execution?.status === 'failed'
-                ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
+            : execution?.status === 'terminal_failure' || execution?.status === 'failed'
+              ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
                 : !generated
                   ? 'Generate R code first.'
+                  : approveRunGate?.nextAction !== 'review_code'
+                    ? approveRunGate?.reason || `Ready to execute the graph-approved code artifact for ${target}.`
                   : generated.status === 'stale'
                     ? 'Generated code is stale because inputs changed; regenerate before approval.'
                     : !generated.generated_code
@@ -2473,6 +2543,14 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const finalized = finalizedInputsFor(state.selectedTarget);
+      const progress = datasetProgressFor(state.selectedTarget);
+      const graphRequiresDraftReview = progress?.next_action === 'review_draft_spec';
+      const draft = draftSpecFor(state.selectedTarget);
+      const review = draftSpecReviewFor(state.selectedTarget);
+      if (graphRequiresDraftReview && draft) {
+        renderDraftSpecReviewTable(node, draft, review);
+        return;
+      }
       if (finalized?.input_spec_available || targetHasInputSpec(state.selectedTarget)) {
         node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly. ${artifactRecordedNote('Input spec artifact')}</p>`;
         byId('approveDraftSpecButton').disabled = true;
@@ -2483,13 +2561,15 @@ INDEX_HTML = r"""<!doctype html>
         byId('approveDraftSpecButton').disabled = true;
         return;
       }
-      const draft = draftSpecFor(state.selectedTarget);
-      const review = draftSpecReviewFor(state.selectedTarget);
       if (!draft) {
         node.innerHTML = `<p class="note warn">No input spec found for ${escapeHtml(state.selectedTarget)}. Generate a draft spec from uploaded SDTM/reference/define/legacy evidence, review it, then approve it before generating R code.</p>`;
         byId('approveDraftSpecButton').disabled = true;
         return;
       }
+      renderDraftSpecReviewTable(node, draft, review);
+    }
+
+    function renderDraftSpecReviewTable(node, draft, review) {
       const rows = (draft.variables || []).slice(0, 20).map((item) => `
         <tr>
           <td>${escapeHtml(item.variable || '')}</td>
@@ -3312,16 +3392,25 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
         return;
       }
-      if (!targetSpecGateSatisfied(state.selectedTarget)) {
+      const activeProgress = datasetProgressFor(state.selectedTarget);
+      const nextAction = String(activeProgress?.next_action || '');
+      const revisingSpec = nextAction === 'revise_approved_spec';
+      if (!revisingSpec && !targetSpecGateSatisfied(state.selectedTarget)) {
         byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Click Finalize Inputs / Draft Spec, review the draft spec, then approve it before generating R code.</p>';
         byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
       }
-      beginOperation('Generating R code', `Calling the selected LLM/code generator for ${state.selectedTarget}. This may take a few minutes.`);
+      beginOperation(
+        revisingSpec ? 'Generating revised draft spec' : 'Generating R code',
+        revisingSpec
+          ? `Calling the selected LLM/spec drafter for ${state.selectedTarget}. Review and approve the revised draft before generating R code.`
+          : `Calling the selected LLM/code generator for ${state.selectedTarget}. This may take a few minutes.`
+      );
       setPill('codeStatus', 'running');
       try {
         const overrides = llmOverridePayload();
-        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/generate-code`, {
+        const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/${endpoint}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -3332,6 +3421,18 @@ INDEX_HTML = r"""<!doctype html>
             ...overrides
           })
         });
+        if (revisingSpec) {
+          state.draftSpecByDataset[payload.dataset] = payload;
+          delete state.draftSpecReviewByDataset[payload.dataset];
+          await refreshGraphReadModels();
+          setPill('codeStatus', 'draft review');
+          addEvent('Revised draft spec generated', `${payload.dataset} draft spec requires review before new R code can be generated.`);
+          completeOperation('Revised draft spec ready', `${payload.dataset} draft spec is ready for human review.`);
+          renderDraftSpecPane();
+          renderGraphAwareDashboard();
+          setStep(4);
+          return;
+        }
         state.generated = payload;
         state.generatedByDataset[payload.dataset] = payload;
         state.review = reviewFor(payload.dataset);
@@ -3363,21 +3464,30 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       state.generated = generated;
-      beginOperation('Running approved R code', `Approving ${generated.dataset} code, then executing it with local Rscript.`);
+      const nextAction = String(datasetProgressFor(generated.dataset)?.next_action || '');
+      const alreadyApproved = nextAction === 'execute_approved_code' || nextAction === 'retry_approved_execution';
+      beginOperation(
+        'Running approved R code',
+        alreadyApproved
+          ? `Executing the graph-approved ${generated.dataset} R code with local Rscript.`
+          : `Approving ${generated.dataset} code, then executing it with local Rscript.`
+      );
       setPill('codeStatus', 'running');
       try {
-        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            study_dir: studyDir(),
-            reviewer: byId('reviewer').value.trim() || 'local_user',
-            decision: 'approve',
-            notes: byId('reviewNotes').value.trim()
-          })
-        });
-        state.reviewByDataset[generated.dataset] = state.review;
-        await refreshGraphReadModels();
+        if (!alreadyApproved) {
+          state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              study_dir: studyDir(),
+              reviewer: byId('reviewer').value.trim() || 'local_user',
+              decision: 'approve',
+              notes: byId('reviewNotes').value.trim()
+            })
+          });
+          state.reviewByDataset[generated.dataset] = state.review;
+          await refreshGraphReadModels();
+        }
         state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/execute-approved-code`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},

@@ -6,6 +6,7 @@ import ast
 import csv
 import inspect
 import json
+import subprocess
 import sys
 import textwrap
 import unittest
@@ -646,7 +647,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("generatedFor(target)", action_body)
         self.assertIn("executionFor(target)", action_body)
         self.assertIn("canApproveGeneratedCode(target)", action_body)
-        self.assertIn("const approveReady = Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);", action_body)
+        self.assertIn("graphActionGate(progress, 'finalize')", action_body)
+        self.assertIn("graphActionGate(progress, 'approveDraft')", action_body)
+        self.assertIn("graphActionGate(progress, 'generate')", action_body)
+        self.assertIn("graphActionGate(progress, 'approveRun')", action_body)
+        self.assertIn("Boolean(target && !blocked && approveRunGate.ready && codeApprovalReady)", action_body)
         self.assertIn("local execution is paused until dependency review is resolved", action_body)
         self.assertIn("Clicking will prepare the dependency plan first", action_body)
         self.assertIn("Generated-code metadata exists", action_body)
@@ -659,6 +664,121 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("const availability = actionAvailability().approveRun;", html)
         dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
         self.assertIn("renderActionAvailability()", dashboard_body)
+
+    def test_index_primary_actions_follow_graph_progress_next_action(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        gate_body = html.split("function graphActionGate(progress, actionGroup)", 1)[1].split("function actionAvailability()", 1)[0]
+        approve_body = html.split("async function approveAndRun()", 1)[1].split("async function loadReviewSummary", 1)[0]
+        self.assertIn("finalize: ['finalize_inputs', 'reconfirm_inputs']", gate_body)
+        self.assertIn("approveDraft: ['review_draft_spec']", gate_body)
+        self.assertIn("generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec']", gate_body)
+        self.assertIn("approveRun: ['review_code', 'execute_approved_code', 'retry_approved_execution']", gate_body)
+        self.assertIn("Graph next action:", gate_body)
+        self.assertIn("Graph next action is", gate_body)
+        self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';", html)
+        self.assertIn("const nextAction = String(datasetProgressFor(generated.dataset)?.next_action || '');", approve_body)
+        self.assertIn("const alreadyApproved = nextAction === 'execute_approved_code' || nextAction === 'retry_approved_execution';", approve_body)
+        self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", approve_body)
+        self.assertIn("if (!alreadyApproved)", approve_body)
+        self.assertLess(approve_body.index("if (!alreadyApproved)"), approve_body.index("/execute-approved-code"))
+
+    def test_index_action_availability_next_action_matrix(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_matrix' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+function check(nextAction) {
+  state.selectedTarget = 'ADAE';
+  state.selectedTargetsForPlan = ['ADAE'];
+  state.plan = {requested_datasets: ['ADAE'], blocked_datasets: []};
+  state.finalizedInputsByDataset = nextAction === 'finalize_inputs' ? {} : {ADAE: {input_spec_available: true}};
+  state.draftSpecByDataset = nextAction === 'review_draft_spec'
+    ? {ADAE: {dataset: 'ADAE', variables: [{variable: 'AETERM'}]}}
+    : {};
+  state.draftSpecReviewByDataset = {};
+  state.generatedByDataset = {ADAE: {dataset: 'ADAE', run_id: 'run_ui_matrix', status: 'generated', generated_code: 'x <- 1'}};
+  state.runProgress = {datasets: [{dataset: 'ADAE', next_action: nextAction, action_label: nextAction.replaceAll('_', ' '), blocked: false}]};
+  const availability = actionAvailability();
+  return {
+    nextAction,
+    finalize: availability.finalize.ready,
+    approveDraft: availability.approveDraft.ready,
+    generate: availability.generate.ready,
+    generateLabel: availability.generate.label,
+    approveRun: availability.approveRun.ready,
+  };
+}
+const results = ['finalize_inputs', 'review_draft_spec', 'generate_code', 'revise_approved_spec', 'review_code', 'execute_approved_code'].map(check);
+console.log(JSON.stringify(results));
+"""
+        script_path = TMP_ROOT / "ui_action_matrix.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        results = {item["nextAction"]: item for item in json.loads(completed.stdout.strip())}
+        self.assertTrue(results["finalize_inputs"]["finalize"])
+        self.assertFalse(results["finalize_inputs"]["generate"])
+        self.assertTrue(results["review_draft_spec"]["approveDraft"])
+        self.assertFalse(results["review_draft_spec"]["generate"])
+        self.assertTrue(results["generate_code"]["generate"])
+        self.assertFalse(results["generate_code"]["approveRun"])
+        self.assertTrue(results["revise_approved_spec"]["generate"])
+        self.assertEqual(results["revise_approved_spec"]["generateLabel"], "Generate Revised Draft Spec")
+        self.assertFalse(results["revise_approved_spec"]["finalize"])
+        self.assertTrue(results["review_code"]["approveRun"])
+        self.assertTrue(results["execute_approved_code"]["approveRun"])
+
+    def test_index_draft_review_gate_overrides_local_input_spec_shortcuts(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        draft_body = html.split("function renderDraftSpecPane()", 1)[1].split("function renderDraftSpecReviewTable", 1)[0]
+        action_body = html.split("function actionAvailability()", 1)[1].split("function renderActionAvailability", 1)[0]
+        self.assertIn("const graphRequiresDraftReview = progress?.next_action === 'review_draft_spec';", draft_body)
+        self.assertIn("if (graphRequiresDraftReview && draft)", draft_body)
+        self.assertLess(draft_body.index("if (graphRequiresDraftReview && draft)"), draft_body.index("if (finalized?.input_spec_available || targetHasInputSpec"))
+        self.assertIn("Boolean(target && draftGate.ready && draft && !draftReview?.approved)", action_body)
+        self.assertNotIn("draftGate.ready && draft && !draftReview?.approved && !finalized?.input_spec_available", action_body)
 
     def test_index_recovers_dependency_plan_projection_from_graph_state(self) -> None:
         client = TestClient(create_app())
@@ -2269,16 +2389,21 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 400, blocked.text)
         self.assertIn("generate_code requires repair_code", blocked.json()["detail"])
 
-        finalized = client.post(
-            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/finalize-inputs",
+        revised_draft = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/draft-spec",
             json={
                 "study_dir": str(study_dir),
                 "llm_provider_override": {"provider": "mock", "model": "mock-model"},
                 "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
             },
         )
-        self.assertEqual(finalized.status_code, 200, finalized.text)
-        self.assertEqual(finalized.json()["status"], "input_spec_ready")
+        self.assertEqual(revised_draft.status_code, 200, revised_draft.text)
+        self.assertEqual(revised_draft.json()["status"], "draft_spec_generated")
+        draft_review = client.post(
+            "/runs/run_terminal_revise_spec_gate/datasets/ADAE/draft-spec-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(draft_review.status_code, 200, draft_review.text)
         repaired = client.post(
             "/runs/run_terminal_revise_spec_gate/datasets/ADAE/generate-code",
             json={
@@ -2295,7 +2420,7 @@ class Phase8ApiTests(unittest.TestCase):
         adae_state = graph_state["datasets"]["ADAE"]
         self.assertEqual(adae_state["current_interrupt"]["name"], "code_review")
         self.assertEqual(adae_state["spec_state"]["terminal_failure_followup"]["action"], "revise_spec")
-        self.assertEqual(adae_state["execution_state"]["terminal_failure_followup_consumed_by"], "finalize_inputs")
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_followup_consumed_by"], "draft_spec")
 
     def test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review(self) -> None:
         study_dir = _workspace_dir("phase8_terminal_revise_approved_draft") / "MY_STUDY"
