@@ -5695,3 +5695,39 @@ python -B -m unittest tests.test_agents_contract -v
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state -v
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 ```
+
+### 2026-05-31 - LG2.7 Terminal-Failure Triage UI Slice
+
+Completed:
+
+- Added a browser terminal-failure triage panel for the active dataset when
+  graph state reports `execution.status == "terminal_failure"`.
+- Exposed the controlled human actions already supported by GraphGateway:
+  - `retry_execution`
+  - `repair_code`
+  - `revise_spec`
+  - `skip_dataset`
+- Wired those actions to the existing
+  `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint.
+- After recording the decision, the UI refreshes canonical graph read models
+  and shows the graph-owned next action instead of inventing a browser-side
+  workflow path.
+- Added UI contract coverage proving the panel, action buttons, endpoint call,
+  and graph-state refresh hook are present.
+
+Current boundary:
+
+- This slice changes only the browser UI. It does not change GraphGateway
+  terminal-failure semantics, repair behavior, R execution, static rules,
+  compare, dependency planning, or Reference ADaM authority.
+- The action remains a human-controlled graph gate. The UI records the choice;
+  it does not automatically retry, repair, revise specs, or skip downstream
+  datasets on its own.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```

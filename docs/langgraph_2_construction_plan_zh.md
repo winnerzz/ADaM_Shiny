@@ -5249,3 +5249,37 @@ python -B -m unittest tests.test_agents_contract -v
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state -v
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 ```
+
+### 2026-05-31 - LG2.7 Terminal-Failure Triage UI 切片
+
+已完成：
+
+- 当 graph state 显示当前 dataset 的 `execution.status == "terminal_failure"` 时，
+  浏览器 UI 会显示 terminal-failure triage 面板。
+- 面板暴露 GraphGateway 已支持的受控人工动作：
+  - `retry_execution`
+  - `repair_code`
+  - `revise_spec`
+  - `skip_dataset`
+- 这些动作会调用已有
+  `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint。
+- 决策记录后，UI 会刷新 canonical graph read models，并显示 graph-owned next
+  action，而不是在浏览器端自己发明新的 workflow path。
+- 增加 UI contract 测试，确认面板、动作按钮、endpoint 调用和 graph-state refresh
+  hook 都存在。
+
+当前边界：
+
+- 本切片只改变浏览器 UI。不改变 GraphGateway terminal-failure 语义、repair
+  behavior、R execution、static rules、compare、dependency planning 或 Reference
+  ADaM authority。
+- 该动作仍是 human-controlled graph gate。UI 只记录选择，不会自动 retry、repair、
+  revise spec，也不会自行跳过下游 datasets。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```

@@ -433,6 +433,24 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
         self.assertNotIn("JSON.stringify", queue_body)
 
+    def test_index_exposes_terminal_failure_triage_actions(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        self.assertIn("terminalFailureReviewByDataset", html)
+        self.assertIn("function terminalFailurePanel(dataset)", html)
+        self.assertIn("data-terminal-action=\"retry_execution\"", html)
+        self.assertIn("data-terminal-action=\"repair_code\"", html)
+        self.assertIn("data-terminal-action=\"revise_spec\"", html)
+        self.assertIn("data-terminal-action=\"skip_dataset\"", html)
+        self.assertIn("function submitTerminalFailureReview(dataset, action)", html)
+        self.assertIn("/terminal-failure-review", html)
+        self.assertIn("await refreshGraphReadModels()", html)
+        self.assertIn("Choose one controlled next step; the graph will record the decision", html)
+
     def test_index_hides_technical_paths_outside_advanced_artifact_view(self) -> None:
         client = TestClient(create_app())
 

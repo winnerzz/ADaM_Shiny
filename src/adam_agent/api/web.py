@@ -1193,6 +1193,7 @@ INDEX_HTML = r"""<!doctype html>
       generatedByDataset: {},
       reviewByDataset: {},
       executionByDataset: {},
+      terminalFailureReviewByDataset: {},
       draftSpecByDataset: {},
       draftSpecReviewByDataset: {},
       finalizedInputsByDataset: {},
@@ -1632,6 +1633,7 @@ INDEX_HTML = r"""<!doctype html>
       state.generatedByDataset = {};
       state.reviewByDataset = {};
       state.executionByDataset = {};
+      state.terminalFailureReviewByDataset = {};
       state.draftSpecByDataset = {};
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
@@ -2057,6 +2059,9 @@ INDEX_HTML = r"""<!doctype html>
             terminal_failure: Boolean(execution.terminal_failure)
           };
         }
+        if (execution.terminal_failure_review) {
+          state.terminalFailureReviewByDataset[target] = execution.terminal_failure_review;
+        }
         if (datasetState.compare_summary?.status) {
           state.compareResults[target] = datasetState.compare_summary;
         }
@@ -2240,6 +2245,10 @@ INDEX_HTML = r"""<!doctype html>
 
     function executionFor(dataset) {
       return dataset ? state.executionByDataset[dataset] || null : null;
+    }
+
+    function terminalFailureReviewFor(dataset) {
+      return dataset ? state.terminalFailureReviewByDataset[dataset] || null : null;
     }
 
     function draftSpecFor(dataset) {
@@ -3413,11 +3422,14 @@ INDEX_HTML = r"""<!doctype html>
       const generated = generatedFor(state.selectedTarget);
       const datasetReview = selectedDatasetReview();
       if (state.selectedView === 'summary') {
+        const failurePanel = terminalFailurePanel(generated?.dataset || state.selectedTarget);
         if (!generated) {
-          pane.innerHTML = '<p class="note">Generate code after choosing a target. Nothing has been sent to R yet.</p>';
+          pane.innerHTML = `${failurePanel}<p class="note">Generate code after choosing a target. Nothing has been sent to R yet.</p>`;
+          attachTerminalFailureHandlers();
           return;
         }
         pane.innerHTML = `
+          ${failurePanel}
           <p class="note strong">R code is ready for ${escapeHtml(generated.dataset)}. Review the assumptions, then approve to run locally.</p>
           ${draftSpecNotice(generated)}
           <div class="grid2">
@@ -3425,6 +3437,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="card"><h3>Inputs used</h3><ul class="clean">${listItems(generated.used_inputs, 'No inputs declared.')}</ul></div>
           </div>
         `;
+        attachTerminalFailureHandlers();
         return;
       }
       if (state.selectedView === 'code') {
@@ -3458,6 +3471,33 @@ INDEX_HTML = r"""<!doctype html>
           This draft is evidence for review, not an approved production rule.
           ${artifactRecordedNote('Draft-spec artifact')}
         </p>
+      `;
+    }
+
+    function terminalFailurePanel(dataset) {
+      const target = String(dataset || '').toUpperCase();
+      const execution = executionFor(target);
+      if (!target || execution?.status !== 'terminal_failure') return '';
+      const diagnostics = execution.diagnostics_path
+        ? ' Diagnostics were recorded in the run audit artifacts.'
+        : ' Diagnostics were not linked in the current read model.';
+      const review = terminalFailureReviewFor(target);
+      const reviewed = review?.action || review?.decision;
+      const reviewedNote = reviewed
+        ? `<p class="note strong">Last failure decision: ${escapeHtml(titleFromToken(reviewed))}. Continue with the matching next action from the graph.</p>`
+        : '';
+      return `
+        <div class="card terminal-failure-panel">
+          <h3>Terminal Failure Triage</h3>
+          <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, or spec revision.</p>
+          ${reviewedNote}
+          <div class="button-row">
+            <button class="secondary" data-terminal-action="retry_execution" data-terminal-dataset="${escapeHtml(target)}">Retry Execution</button>
+            <button class="secondary" data-terminal-action="repair_code" data-terminal-dataset="${escapeHtml(target)}">Repair Code</button>
+            <button class="secondary" data-terminal-action="revise_spec" data-terminal-dataset="${escapeHtml(target)}">Revise Spec</button>
+            <button class="secondary" data-terminal-action="skip_dataset" data-terminal-dataset="${escapeHtml(target)}">Skip Dataset</button>
+          </div>
+        </div>
       `;
     }
 
@@ -3595,6 +3635,43 @@ INDEX_HTML = r"""<!doctype html>
       }
       const compareButton = byId('refreshCompareButton');
       if (compareButton) compareButton.addEventListener('click', () => refreshCompare(review));
+      attachTerminalFailureHandlers();
+    }
+
+    function attachTerminalFailureHandlers() {
+      for (const button of document.querySelectorAll('[data-terminal-action]')) {
+        button.addEventListener('click', () => submitTerminalFailureReview(button.dataset.terminalDataset, button.dataset.terminalAction));
+      }
+    }
+
+    async function submitTerminalFailureReview(dataset, action) {
+      const target = String(dataset || state.selectedTarget || '').toUpperCase();
+      if (!target || !action) return;
+      beginOperation('Recording failure decision', `Recording ${titleFromToken(action)} for ${target}.`);
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/terminal-failure-review`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            reviewer: byId('reviewer').value.trim() || 'local_user',
+            decision: action,
+            notes: byId('reviewNotes').value.trim() || `Selected ${action} from the local UI terminal-failure triage.`
+          })
+        });
+        state.terminalFailureReviewByDataset[target] = {
+          action: payload.decision,
+          next_action: payload.next_action,
+          current_interrupt: payload.current_interrupt
+        };
+        await refreshGraphReadModels();
+        addEvent('Failure decision recorded', `${target}: ${titleFromToken(payload.decision)} -> ${titleFromToken(payload.next_action)}.`);
+        completeOperation('Failure decision recorded', `${target} next action: ${titleFromToken(payload.next_action)}.`);
+        renderPane();
+        renderActionAvailability();
+      } catch (error) {
+        failOperation('Failure decision failed', error);
+      }
     }
 
     async function handleTableAction(review, kind, action) {
