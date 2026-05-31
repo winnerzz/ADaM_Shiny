@@ -4280,3 +4280,48 @@ Subagent review:
   available through `stub_scenarios`, the new tests cover both paths, and no
   dependency-planning, product-routing, or static-rule governance drift was
   introduced.
+
+### 2026-05-31 - LG2.8 StudyGraph Non-Execution Compare Status Slice
+
+Completed:
+
+- Changed StudyGraph-level non-execution failures from `compare_status:
+  not_run_stub` to `compare_status: not_run`.
+- Covered unsupported targets, unresolved/blocked dependency results, downstream
+  blocked-by-dependency summaries, and StudyGraph execution-mode preflight
+  failures.
+- Added regression assertions proving those StudyGraph paths no longer report a
+  stub compare status.
+
+Current boundary:
+
+- This is a status-label cleanup only. It does not change dependency planning,
+  dataset dispatch, DatasetGraph product routing, legacy stub graph behavior,
+  LLM generation, R execution, compare implementation, UI state, or static-rule
+  governance.
+- DatasetGraph legacy stub summaries still use `not_run_stub` and `passed_stub`
+  inside the explicit legacy/test compiler path.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_state_isolation_across_stub_runs tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_sandbox_failure_scenario_is_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_reference_sas7bdat_dependency_artifact_does_not_satisfy_runtime_dependency tests.test_graph_smoke.GraphSmokeTests.test_non_ad_target_is_blocked_as_unsupported_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_study_graph_unknown_execution_mode_fails_before_dataset_dispatch tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "compare_status=\"not_run_stub\"|not_run_stub" src\adam_agent\graph tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused StudyGraph non-execution compare-status regressions passed,
+including direct dependency-preflight blocking and the explicit legacy stub
+boundary; 240 related graph/gateway/API/static-rule tests passed; AST syntax
+check covered 79 Python files; diff check passed. Source scan found
+`not_run_stub` remaining only in DatasetGraph legacy stub runtime code, legacy
+test fixtures, and this documentation note.
+
+Subagent review:
+
+- GO. No major business or architecture regression found. The review confirmed
+  DatasetGraph legacy stub behavior is unchanged, StudyGraph changes are
+  label-only for non-execution/no-output cases, and real execution/compare
+  failures remain owned by DatasetGraph/Product/Gateway paths.

@@ -3905,3 +3905,44 @@ Python 文件；diff check passed。Source scan 未发现 graph runtime 代码�
   stub scenario；显式 repair simulation 仍可通过 `stub_scenarios` 使用；新增测试
   覆盖了默认路径和显式 repair 路径；没有引入 dependency-planning、
   product-routing 或 static-rule governance drift。
+
+### 2026-05-31 - LG2.8 StudyGraph Non-Execution Compare Status 切片
+
+已完成：
+
+- 将 StudyGraph 级别的 non-execution failures 从 `compare_status:
+  not_run_stub` 改为 `compare_status: not_run`。
+- 覆盖 unsupported targets、unresolved/blocked dependency results、
+  downstream blocked-by-dependency summaries，以及 StudyGraph execution-mode
+  preflight failures。
+- 新增回归断言，证明这些 StudyGraph 路径不再报告 stub compare status。
+
+当前边界：
+
+- 这是 status-label cleanup，不改变 dependency planning、dataset dispatch、
+  DatasetGraph product routing、legacy stub graph behavior、LLM generation、R
+  execution、compare implementation、UI state 或 static-rule governance。
+- DatasetGraph legacy stub summaries 仍在显式 legacy/test compiler path 内使用
+  `not_run_stub` 和 `passed_stub`。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_state_isolation_across_stub_runs tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_sandbox_failure_scenario_is_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_reference_sas7bdat_dependency_artifact_does_not_satisfy_runtime_dependency tests.test_graph_smoke.GraphSmokeTests.test_non_ad_target_is_blocked_as_unsupported_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_study_graph_unknown_execution_mode_fails_before_dataset_dispatch tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "compare_status=\"not_run_stub\"|not_run_stub" src\adam_agent\graph tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused StudyGraph non-execution compare-status 回归通过，包括 direct
+dependency-preflight blocking 和显式 legacy stub 边界；240 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。Source scan 显示 `not_run_stub` 只剩在
+DatasetGraph legacy stub runtime code、legacy test fixtures 和本文档说明中。
+
+子 agent review：
+
+- GO。未发现重大业务或架构回归。review 确认 DatasetGraph legacy stub 行为未
+  改变，StudyGraph 改动只是 non-execution/no-output 情况的状态标签清理，真实
+  execution/compare failure 仍由 DatasetGraph/Product/Gateway 路径负责。

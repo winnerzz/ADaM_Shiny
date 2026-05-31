@@ -91,7 +91,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             dataset=dataset,
             status="failed",
             validation_status="unsupported_dataset",
-            compare_status="not_run_stub",
+            compare_status="not_run",
             failure_ids=["unsupported_dataset"],
         )
         for dataset in plan.unsupported_datasets
@@ -121,7 +121,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
             dataset=block["dataset"],
             status="failed",
             validation_status=block["reason"],
-            compare_status="not_run_stub",
+            compare_status="not_run",
             failure_ids=[block["reason"]],
         )
         for block in dependency_blocks
@@ -221,7 +221,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
                         dataset=dataset,
                         status="failed",
                         validation_status=blocked_record["reason"],
-                        compare_status="not_run_stub",
+                        compare_status="not_run",
                         failure_ids=[blocked_record["reason"]],
                     )
                 )
@@ -722,7 +722,7 @@ def _study_execution_mode_failure_result(requested_datasets: list[str], error: s
         dataset=dataset_label,
         status="failed",
         validation_status="invalid_execution_mode",
-        compare_status="not_run_stub",
+        compare_status="not_run",
         failure_ids=["invalid_execution_mode"],
         metadata={"error": error},
     )

@@ -521,6 +521,10 @@ class GraphSmokeTests(unittest.TestCase):
 
         self.assertEqual(adsl["summary"].status, "completed")
         self.assertEqual(adae["summary"].status, "completed")
+        self.assertEqual(adsl["summary"].validation_status, "passed_stub")
+        self.assertEqual(adsl["summary"].compare_status, "not_run_stub")
+        self.assertEqual(adae["summary"].validation_status, "passed_stub")
+        self.assertEqual(adae["summary"].compare_status, "not_run_stub")
         self.assertEqual(adsl["repair_attempts"], 0)
         self.assertEqual(adae["repair_attempts"], 1)
         self.assertEqual(adsl["summary"].dataset, "ADSL")
@@ -546,6 +550,8 @@ class GraphSmokeTests(unittest.TestCase):
                 self.assertEqual(result["failure_type"], "sandbox_error")
                 self.assertEqual(result["summary"].dataset, dataset)
                 self.assertEqual(result["summary"].status, "failed")
+                self.assertEqual(result["summary"].validation_status, "not_run_stub")
+                self.assertEqual(result["summary"].compare_status, "not_run_stub")
 
     def test_legacy_fail_adsl_stub_scenario_remains_alias(self) -> None:
         dataset_graph = compile_legacy_stub_dataset_graph()
@@ -1136,6 +1142,7 @@ class GraphSmokeTests(unittest.TestCase):
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(summaries["LB"].status, "failed")
         self.assertEqual(summaries["LB"].validation_status, "unsupported_dataset")
+        self.assertEqual(summaries["LB"].compare_status, "not_run")
         self.assertEqual(result["blocked_datasets"], [{"dataset": "LB", "reason": "unsupported_dataset", "blocked_by": "study_planner"}])
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["audit_manifest"].metadata["unsupported_datasets"], ["LB"])
@@ -1267,6 +1274,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["execution_batches"], [])
         self.assertEqual(result["blocked_datasets"][0]["reason"], "invalid_execution_mode")
         self.assertEqual(result["dataset_results"][0].validation_status, "invalid_execution_mode")
+        self.assertEqual(result["dataset_results"][0].compare_status, "not_run")
         self.assertIn("legacy_auto_magic", result["dataset_results"][0].metadata["error"])
 
     def test_downstream_request_uses_available_dependency_artifact_without_running_it(self) -> None:
@@ -1800,6 +1808,9 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(resolution["artifact_source"], "reference_adam")
         self.assertEqual(result["blocked_datasets"][0]["dataset"], "ADAE")
         self.assertEqual(result["blocked_datasets"][0]["blocked_by"], "ADSL")
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADAE"].validation_status, "dependency_user_action_required")
+        self.assertEqual(summaries["ADAE"].compare_status, "not_run")
         self.assertEqual(result["status"], "failed")
 
     def test_run_output_dependency_artifact_wins_over_reference_adam(self) -> None:
@@ -2066,6 +2077,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summaries["ADLB"].status, "failed")
         self.assertEqual(summaries["ADTTE"].status, "failed")
         self.assertEqual(summaries["ADTTE"].validation_status, "blocked_by_dependency")
+        self.assertEqual(summaries["ADTTE"].compare_status, "not_run")
         self.assertIn({"dataset": "ADTTE", "reason": "blocked_by_dependency", "blocked_by": "ADLB"}, result["blocked_datasets"])
         self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
