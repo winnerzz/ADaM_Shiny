@@ -11,12 +11,28 @@ from pydantic import ValidationError
 ROOT = Path(__file__).resolve().parents[1]
 
 try:
-    from adam_agent.agents import AgentDecision, build_agent_audit_summary, record_agent_decision
+    from adam_agent.agents import (
+        AgentDecision,
+        AgentNodeInput,
+        AgentNodeOutput,
+        build_agent_audit_summary,
+        build_agent_node_input,
+        build_agent_node_output,
+        record_agent_decision,
+    )
 except ModuleNotFoundError:
     SRC = ROOT / "src"
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
-    from adam_agent.agents import AgentDecision, build_agent_audit_summary, record_agent_decision
+    from adam_agent.agents import (
+        AgentDecision,
+        AgentNodeInput,
+        AgentNodeOutput,
+        build_agent_audit_summary,
+        build_agent_node_input,
+        build_agent_node_output,
+        record_agent_decision,
+    )
 
 
 class AgentContractTests(unittest.TestCase):
@@ -39,6 +55,161 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(record["risk_flags"], ["static_check_limited_scope"])
         self.assertTrue(record["created_at"].endswith("Z"))
         AgentDecision.model_validate(record)
+
+    def test_agent_decision_normalizes_dataset_and_requires_utc_timestamp(self) -> None:
+        record = AgentDecision.model_validate(
+            {
+                "agent": "code_agent",
+                "node": "generate_r_code_agent",
+                "decision": "r_code_generated",
+                "dataset": "adae",
+                "status": "needs_review",
+                "created_at": "2026-05-30T00:00:00Z",
+            }
+        )
+
+        self.assertEqual(record.dataset, "ADAE")
+        with self.assertRaises(ValidationError):
+            AgentDecision.model_validate(
+                {
+                    "agent": "code_agent",
+                    "node": "generate_r_code_agent",
+                    "decision": "r_code_generated",
+                    "status": "needs_review",
+                    "created_at": "2026-05-30T00:00:00+08:00",
+                }
+            )
+
+    def test_agent_node_input_packages_explicit_context(self) -> None:
+        package = build_agent_node_input(
+            agent="spec_agent",
+            node="draft_spec_agent",
+            study_id="PSY201",
+            run_id="run_agent_io",
+            dataset="adae",
+            task="Draft a review-required spec from approved evidence when no input spec exists.",
+            inputs={"spec_source": "missing_input_spec"},
+            artifact_ids=["evidence_bundle_adae"],
+            risk_flags=["missing_input_spec"],
+            evidence_bundle_id="bundle_adae",
+            reference_query_ids=["query_cdisc_001"],
+        )
+
+        self.assertEqual(package["agent"], "spec_agent")
+        self.assertEqual(package["dataset"], "ADAE")
+        self.assertEqual(package["inputs"]["spec_source"], "missing_input_spec")
+        self.assertEqual(package["artifact_ids"], ["evidence_bundle_adae"])
+        self.assertEqual(package["reference_query_ids"], ["query_cdisc_001"])
+        AgentNodeInput.model_validate(package)
+
+    def test_agent_node_output_creates_matching_audit_decision(self) -> None:
+        package = build_agent_node_output(
+            agent="code_agent",
+            node="generate_r_code_agent",
+            study_id="PSY201",
+            run_id="run_agent_io",
+            dataset="adae",
+            status="needs_review",
+            decision="r_code_generated",
+            reason="Generated code is waiting for human review.",
+            outputs={"code_path": "runs/run_agent_io/code/build_adae.R"},
+            artifact_ids=["generated_code_adae"],
+            risk_flags=["static_check_limited_scope"],
+        )
+
+        self.assertEqual(package["agent"], "code_agent")
+        self.assertEqual(package["dataset"], "ADAE")
+        self.assertEqual(package["decision"], "r_code_generated")
+        self.assertEqual(len(package["agent_decisions"]), 1)
+        decision = package["agent_decisions"][0]
+        self.assertEqual(decision["agent"], "code_agent")
+        self.assertEqual(decision["node"], "generate_r_code_agent")
+        self.assertEqual(decision["dataset"], "ADAE")
+        self.assertEqual(decision["artifact_ids"], ["generated_code_adae"])
+        AgentNodeOutput.model_validate(package)
+
+    def test_agent_node_output_rejects_cross_agent_decisions(self) -> None:
+        wrong_decision = record_agent_decision(
+            agent="execution_agent",
+            node="generate_r_code_agent",
+            decision="r_execution_completed",
+            dataset="ADAE",
+            status="completed",
+        )
+
+        with self.assertRaises(ValidationError):
+            build_agent_node_output(
+                agent="code_agent",
+                node="generate_r_code_agent",
+                study_id="PSY201",
+                run_id="run_agent_io",
+                dataset="ADAE",
+                status="needs_review",
+                decision="r_code_generated",
+                agent_decisions=[wrong_decision],
+            )
+
+    def test_agent_node_output_rejects_cross_node_decisions(self) -> None:
+        wrong_decision = record_agent_decision(
+            agent="code_agent",
+            node="execute_approved_code",
+            decision="r_code_generated",
+            dataset="ADAE",
+            status="needs_review",
+        )
+
+        with self.assertRaises(ValidationError):
+            build_agent_node_output(
+                agent="code_agent",
+                node="generate_r_code_agent",
+                study_id="PSY201",
+                run_id="run_agent_io",
+                dataset="ADAE",
+                status="needs_review",
+                decision="r_code_generated",
+                agent_decisions=[wrong_decision],
+            )
+
+    def test_agent_node_output_rejects_cross_dataset_decisions(self) -> None:
+        wrong_decision = record_agent_decision(
+            agent="code_agent",
+            node="generate_r_code_agent",
+            decision="r_code_generated",
+            dataset="ADSL",
+            status="needs_review",
+        )
+
+        with self.assertRaises(ValidationError):
+            build_agent_node_output(
+                agent="code_agent",
+                node="generate_r_code_agent",
+                study_id="PSY201",
+                run_id="run_agent_io",
+                dataset="ADAE",
+                status="needs_review",
+                decision="r_code_generated",
+                agent_decisions=[wrong_decision],
+            )
+
+    def test_study_level_agent_node_output_rejects_dataset_decisions(self) -> None:
+        dataset_decision = record_agent_decision(
+            agent="dependency_agent",
+            node="plan_dependencies",
+            decision="dependency_plan_prepared",
+            dataset="ADAE",
+            status="needs_review",
+        )
+
+        with self.assertRaises(ValidationError):
+            build_agent_node_output(
+                agent="dependency_agent",
+                node="plan_dependencies",
+                study_id="PSY201",
+                run_id="run_agent_io",
+                status="needs_review",
+                decision="dependency_plan_prepared",
+                agent_decisions=[dataset_decision],
+            )
 
     def test_agent_decision_rejects_unknown_agent_role(self) -> None:
         with self.assertRaises(ValidationError):

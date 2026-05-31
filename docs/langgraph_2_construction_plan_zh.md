@@ -4349,3 +4349,45 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 git diff --check -- docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md src\adam_agent\api\web.py tests\test_api_phase8.py
 ```
+
+### 2026-05-31 - LG2.4 Agent Node IO Contract 切片
+
+已完成：
+
+- 扩展 bounded agent contract 层，新增明确的节点输入/输出包：
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+  - `build_agent_node_input()`
+  - `build_agent_node_output()`
+- 输入包明确一个 agent 节点能看到什么：agent role、graph node、study/run id、
+  可选 dataset、task、声明过的 inputs、artifact ids、risk flags、
+  evidence bundle id、reference query ids。
+- 输出包明确一个 agent 节点能返回什么：agent role、graph node、study/run id、
+  可选 dataset、status、decision、reason、声明过的 outputs、artifact ids、
+  risk flags，以及匹配的 audit decisions。
+- 增加校验：一个 output 不能悄悄夹带来自其他 agent、其他 node、或其他 dataset
+  的 audit decision。
+- 收紧 audit-decision 时间戳契约：必须是 UTC `Z` 格式；decision dataset 会统一
+  归一化成大写。
+- 从 `adam_agent.agents` 导出新 contract。
+- 增加 focused tests，覆盖 JSON-safe input package、output package、自动生成
+  匹配 audit decision、时间戳校验、dataset 归一化，以及跨 agent / 跨 node /
+  跨 dataset decision 拒绝。
+
+当前边界：
+
+- 这是给未来 multi-agent graph nodes 准备的 contract 切片。
+- 不新增自主行为、临床规则、依赖推断、LLM prompt、R execution 行为、compare
+  行为或 static-rule 行为。
+- 现有 graph/product 路径仍继续使用已有 `AgentDecision` 记录。后续切片可以按
+  agent role 逐步把具体节点迁到这些 IO packages。
+- Reference ADaM 仍然只是 compare/output-shape evidence；这里没有增加
+  derivation authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_agents_contract -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/agents/contracts.py'), pathlib.Path('src/adam_agent/agents/__init__.py'), pathlib.Path('tests/test_agents_contract.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

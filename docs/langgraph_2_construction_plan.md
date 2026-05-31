@@ -4752,3 +4752,48 @@ python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 git diff --check -- docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md src\adam_agent\api\web.py tests\test_api_phase8.py
 ```
+
+### 2026-05-31 - LG2.4 Agent Node IO Contract Slice
+
+Completed:
+
+- Extended the bounded agent contract layer with explicit node input/output
+  packages:
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+  - `build_agent_node_input()`
+  - `build_agent_node_output()`
+- The input package makes the agent boundary explicit: agent role, graph node,
+  study/run id, optional dataset, task text, declared inputs, artifact ids,
+  risk flags, evidence bundle id, and reference query ids.
+- The output package makes the returned boundary explicit: agent role, graph
+  node, study/run id, optional dataset, status, decision, reason, declared
+  outputs, artifact ids, risk flags, and matching audit decisions.
+- Added validation so an output cannot quietly include audit decisions from a
+  different agent, node, or dataset.
+- Tightened the audit-decision timestamp contract to UTC `Z` timestamps and
+  normalized decision datasets to uppercase.
+- Exported the new contracts from `adam_agent.agents`.
+- Added focused tests for JSON-safe input packages, output packages, automatic
+  matching audit-decision creation, timestamp validation, dataset
+  normalization, and cross-agent/cross-node/cross-dataset rejection.
+
+Current boundary:
+
+- This is a contract slice for future multi-agent graph nodes.
+- It does not add new autonomous behavior, clinical rules, dependency
+  inference, LLM prompts, R execution behavior, compare behavior, or static
+  rule behavior.
+- Existing graph/product paths continue to use the prior `AgentDecision`
+  records. Future slices can migrate concrete nodes to these IO packages one
+  role at a time.
+- Reference ADaM remains compare/output-shape evidence only. No derivation
+  authority is added here.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_agents_contract -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/agents/contracts.py'), pathlib.Path('src/adam_agent/agents/__init__.py'), pathlib.Path('tests/test_agents_contract.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
