@@ -107,6 +107,10 @@ class DatasetGraphState(TypedDict, total=False):
     llm_client_builder: object
     target_context_builder: object
     force_new_draft_spec: bool
+    native_draft_spec_review: bool
+    native_draft_spec_review_status: str
+    native_draft_spec_review_resume: dict[str, object]
+    human_commands: Annotated[list[dict[str, object]], operator.add]
     legacy_stub_graph_enabled: bool
     evidence_bundle_id: str
     reference_queries: list[dict[str, object]]

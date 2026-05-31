@@ -633,8 +633,12 @@ class GraphSmokeTests(unittest.TestCase):
         edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
         node_names = {node.id for node in graph.nodes.values()}
 
-        for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
+        self.assertIn(("draft_spec_agent", "summarize_dataset", "summarize"), edges)
+        self.assertIn(("draft_spec_agent", "wait_for_draft_spec_review", None), edges)
+        self.assertIn(("wait_for_draft_spec_review", "summarize_dataset", None), edges)
+        for product_node in {"generate_r_code_agent", "execute_approved_code"}:
             self.assertIn((product_node, "summarize_dataset", None), edges)
+        for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
             self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
 
         for legacy_node in {
@@ -801,6 +805,101 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summary.metadata["next_action"], "review_draft_spec")
         self.assertEqual(summary.metadata["spec_source"], "draft_spec")
         self.assertEqual(summary.metadata["agent_node_outputs"][-1]["decision"], "draft_spec_generated")
+
+    def test_dataset_graph_native_draft_spec_review_interrupt_can_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_native_draft_review") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        checkpointer = InMemorySaver()
+        dataset_graph = compile_dataset_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_draft_spec_review:ADAE"}}
+
+        interrupted = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_native_draft_spec_review",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_prepare",
+                "study_dir": str(study_dir),
+                "native_draft_spec_review": True,
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        snapshot = dataset_graph.get_state(config)
+
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(snapshot.next, ("wait_for_draft_spec_review",))
+        self.assertEqual(snapshot.values["current_interrupt"], "draft_spec_review")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["interrupt"], "draft_spec_review")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["scope"], "dataset")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["dataset"], "ADAE")
+
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": "approve",
+                    "reviewer": "tester",
+                    "notes": "Native draft-spec review pilot approved.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertNotIn("__interrupt__", resumed)
+        self.assertEqual(resumed["native_draft_spec_review_status"], "approved")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["human_commands"][0]["interrupt"], "draft_spec_review")
+        self.assertEqual(resumed["human_commands"][0]["dataset"], "ADAE")
+        self.assertEqual(resumed["summary"].status, "needs_review")
+        self.assertEqual(resumed["summary"].metadata["next_action"], "persist_draft_spec_review")
+        self.assertEqual(dataset_graph.get_state(config).next, ())
+
+    def test_dataset_graph_native_draft_spec_review_reject_closes_interrupt_as_failed(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_native_draft_review_reject") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        checkpointer = InMemorySaver()
+        dataset_graph = compile_dataset_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_draft_spec_review_reject:ADAE"}}
+
+        dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_native_draft_spec_review_reject",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_prepare",
+                "study_dir": str(study_dir),
+                "native_draft_spec_review": True,
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": "reject",
+                    "reviewer": "tester",
+                    "notes": "Draft spec is not acceptable.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertEqual(resumed["status"], "failed")
+        self.assertEqual(resumed["failure_type"], "human_rejected_draft_spec")
+        self.assertEqual(resumed["native_draft_spec_review_status"], "rejected")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["summary"].status, "failed")
+        self.assertEqual(dataset_graph.get_state(config).next, ())
 
     def test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_generate_code_spec") / "PSY201"

@@ -3948,7 +3948,9 @@ compatibility/product tests passed.
 Completed:
 
 - `compile_dataset_graph()` now compiles the product dataset graph without the
-  old synthetic `*_stub` nodes.
+  old synthetic `*_stub` nodes. By default it does not use its own persistent
+  checkpointer; later native interrupt pilots may pass an explicit checkpointer
+  for internal tests.
 - Added `compile_legacy_stub_dataset_graph()` as the only compiler that includes
   the legacy/test stub chain.
 - `execution_mode="stub"` is rejected by the product graph even if caller input
@@ -6216,6 +6218,40 @@ Ran 109 tests in 18.032s - OK
 
 python -B -m compileall -q src tests
 git diff --check
+```
+
+### 2026-06-01 - LG2.1 Dataset Draft-Spec Native Interrupt Pilot Slice
+
+Completed:
+
+- Added an internal `DatasetGraph` pilot node, `wait_for_draft_spec_review`.
+- When dataset state explicitly sets `native_draft_spec_review=True` and
+  `draft_spec_agent` has generated a review-required draft spec, DatasetGraph
+  now pauses at a dataset-level `draft_spec_review` using LangGraph
+  `interrupt()`.
+- Resuming with `Command(resume=...)` now:
+  - closes the native interrupt and marks the next action as
+    `persist_draft_spec_review` on `approve`;
+  - closes the native interrupt and marks the dataset failed with
+    `human_rejected_draft_spec` on `reject`.
+- `compile_dataset_graph()` now accepts an optional checkpointer for internal
+  native interrupt tests while preserving the default call shape.
+
+Current boundary:
+
+- This is a dataset-level native interrupt pilot only. It is not wired into the
+  public UI/API default path.
+- The public product flow still records draft-spec review artifacts, hash and
+  fingerprint checks, and `workflow_state.json` projections through the
+  `GraphGateway` split-flow endpoint.
+- This slice does not implement a persistent LangGraph SQLite/Postgres
+  checkpointer and does not change LLM generation, R execution, compare, static
+  rules, repair, or UI behavior.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_draft_spec_review_interrupt_can_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_draft_spec_review_reject_closes_interrupt_as_failed tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
 ```
 
 ### 2026-06-01 - LG2.8 Legacy Run Projection Metadata Slice

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from adam_agent.agents import build_agent_node_input, build_agent_node_output, record_agent_decision
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
@@ -480,6 +481,77 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
         "agent_node_outputs": [spec_output],
         "agent_decisions": list(spec_output["agent_decisions"]),
         "risk_flags": ["draft_spec_requires_human_review"],
+    }
+
+
+def wait_for_draft_spec_review_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Pause at the draft-spec review gate using a native LangGraph interrupt.
+
+    This is an internal pilot. It proves the DatasetGraph can own a real
+    interrupt at the draft-spec review boundary without changing the public
+    FastAPI/UI split flow yet.
+    """
+
+    if not state.get("native_draft_spec_review"):
+        return {}
+    target = state["dataset"]
+    command = interrupt(
+        {
+            "interrupt": "draft_spec_review",
+            "scope": "dataset",
+            "study_id": state["study_id"],
+            "run_id": state["run_id"],
+            "dataset": target,
+            "draft_spec_path": state.get("draft_spec_path"),
+            "draft_spec_prompt_path": state.get("draft_spec_prompt_path"),
+            "draft_spec_response_path": state.get("draft_spec_response_path"),
+            "variable_count": len(state.get("draft_spec_variables", [])),
+            "warnings": state.get("product_context_warnings", []),
+            "message": f"Review generated draft spec for {target} before code generation.",
+        }
+    )
+    command_payload = command if isinstance(command, dict) else {"action": str(command)}
+    action = str(command_payload.get("action") or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        action = "reject"
+    reviewer = str(command_payload.get("reviewer") or "local_user")
+    notes = str(command_payload.get("notes") or "")
+    payload = command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {}
+    human_command = {
+        "interrupt": "draft_spec_review",
+        "dataset": target,
+        "action": action,
+        "reviewer": reviewer,
+        "notes": notes,
+        "payload": payload,
+    }
+    if action == "approve":
+        return {
+            "status": "needs_review",
+            "current_interrupt": None,
+            "native_draft_spec_review_status": "approved",
+            "native_draft_spec_review_resume": {
+                "resumed": True,
+                "action": action,
+                "reviewer": reviewer,
+            },
+            "next_action": "persist_draft_spec_review",
+            "human_commands": [human_command],
+        }
+    return {
+        "status": "failed",
+        "failure_type": "human_rejected_draft_spec",
+        "route": "fail",
+        "current_interrupt": None,
+        "native_draft_spec_review_status": "rejected",
+        "native_draft_spec_review_resume": {
+            "resumed": True,
+            "action": action,
+            "reviewer": reviewer,
+            "notes": notes,
+        },
+        "next_action": "revise_draft_spec",
+        "human_commands": [human_command],
     }
 
 
@@ -1397,6 +1469,7 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
         prepare_legacy_stub_dataset if include_legacy_stub_chain else prepare_dataset,
     )
     graph.add_node("draft_spec_agent", draft_spec_agent_node)
+    graph.add_node("wait_for_draft_spec_review", wait_for_draft_spec_review_node)
     graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
     graph.add_node("execute_approved_code", execute_approved_code_node)
     graph.add_node("summarize_dataset", summarize_dataset)
@@ -1421,7 +1494,15 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
     if include_legacy_stub_chain:
         route_map["stub_chain"] = "draft_lineage_stub"
     graph.add_conditional_edges("prepare_dataset", route_after_product_context, route_map)
-    graph.add_edge("draft_spec_agent", "summarize_dataset")
+    graph.add_conditional_edges(
+        "draft_spec_agent",
+        route_after_draft_spec_agent,
+        {
+            "wait_for_draft_spec_review": "wait_for_draft_spec_review",
+            "summarize": "summarize_dataset",
+        },
+    )
+    graph.add_edge("wait_for_draft_spec_review", "summarize_dataset")
     graph.add_edge("generate_r_code_agent", "summarize_dataset")
     graph.add_edge("execute_approved_code", "summarize_dataset")
     if include_legacy_stub_chain:
@@ -1467,6 +1548,18 @@ def route_after_product_prepare_review(state: DatasetGraphState) -> str:
     if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_execute_mode(state):
         return "summarize"
     return "continue"
+
+
+def route_after_draft_spec_agent(state: DatasetGraphState) -> str:
+    """Route the internal native draft-spec review pilot when explicitly enabled."""
+
+    if (
+        state.get("native_draft_spec_review")
+        and state.get("current_interrupt") == "draft_spec_review"
+        and state.get("status") == "needs_review"
+    ):
+        return "wait_for_draft_spec_review"
+    return "summarize"
 
 
 def route_after_product_context(state: DatasetGraphState) -> str:
@@ -1819,10 +1912,10 @@ def _merge_json_artifact(path: str | Path, payload: dict[str, object]) -> None:
     _write_json(path, current)
 
 
-def compile_dataset_graph():
-    """Compile the product dataset graph without its own checkpointer."""
+def compile_dataset_graph(checkpointer=None):
+    """Compile the product dataset graph with an optional parent checkpointer."""
 
-    return build_dataset_graph().compile(name="dataset_graph")
+    return build_dataset_graph().compile(checkpointer=checkpointer, name="dataset_graph")
 
 
 def compile_legacy_stub_dataset_graph():

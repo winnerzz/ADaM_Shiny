@@ -3586,7 +3586,8 @@ compatibility/product tests passed。
 已完成：
 
 - `compile_dataset_graph()` 现在只编译产品 DatasetGraph，不再包含旧的 synthetic
-  `*_stub` nodes。
+  `*_stub` nodes。默认不使用自己的持久 checkpointer；后续 native interrupt
+  试点可以为内部测试显式传入 checkpointer。
 - 新增 `compile_legacy_stub_dataset_graph()`，只有这个 legacy/test compiler 会包含
   stub chain。
 - `execution_mode="stub"` 在产品图里会 fail closed；即使调用方试图传入内部
@@ -5740,6 +5741,36 @@ Ran 109 tests in 18.032s - OK
 
 python -B -m compileall -q src tests
 git diff --check
+```
+
+### 2026-06-01 - LG2.1 Dataset Draft-Spec Native Interrupt 试点切片
+
+已完成：
+
+- 在 `DatasetGraph` 中新增内部试点节点 `wait_for_draft_spec_review`。
+- 当 dataset state 显式设置 `native_draft_spec_review=True`，且
+  `draft_spec_agent` 已生成需要审核的 draft spec 时，DatasetGraph 会使用
+  LangGraph 原生 `interrupt()` 暂停在 dataset-level `draft_spec_review`。
+- 使用 `Command(resume=...)` 恢复后：
+  - `approve` 会关闭 native interrupt，并把下一步标记为
+    `persist_draft_spec_review`；
+  - `reject` 会关闭 native interrupt，并把 dataset 标为 failed，失败类型为
+    `human_rejected_draft_spec`。
+- `compile_dataset_graph()` 现在接受可选 checkpointer，用于内部 native
+  interrupt 测试；默认调用方式保持兼容。
+
+当前边界：
+
+- 这是 dataset-level native interrupt 的内部试点，不接入公开 UI/API 默认路径。
+- 当前公开产品流仍通过 `GraphGateway` split-flow endpoint 记录 draft-spec review
+  artifact、校验 hash/fingerprint，并投影到 `workflow_state.json`。
+- 本切片不实现 persistent LangGraph SQLite/Postgres checkpointer，不改变 LLM
+  生成、R execution、compare、static rules、repair 或 UI 行为。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_draft_spec_review_interrupt_can_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_draft_spec_review_reject_closes_interrupt_as_failed tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
 ```
 
 ### 2026-06-01 - LG2.8 Legacy Run Projection Metadata 切片
