@@ -6677,6 +6677,54 @@ git diff --check
 Exited 0; CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Terminal-Failure Command Bridge Slice
+
+Completed:
+
+- Added `GraphGateway.review_terminal_failure_from_command()` as a graph-native
+  command bridge for terminal-failure triage.
+- The bridge:
+  - loads canonical `graph_state.json`;
+  - rejects any open study-level interrupt before accepting a dataset-level
+    terminal-failure command;
+  - uses `_assert_resume_command_matches_open_interrupt()` to prove the command
+    matches the current dataset `terminal_failure` interrupt;
+  - validates the action against `TERMINAL_FAILURE_REVIEW_ACTIONS`;
+  - delegates to existing `review_terminal_failure()` and therefore keeps
+    terminal-failure triage rules, next-action mapping, agent audit writes, and
+    input fingerprint handling centralized in `record_terminal_failure_review()`.
+- Added regressions proving:
+  - a matching `terminal_failure` command enters the formal triage flow and
+    records diagnosis/repair agent audit output;
+  - a mismatched dataset interrupt fails closed without writing
+    `terminal_failure_review`;
+  - an unsupported command action fails closed without triage mutation;
+  - a dataset terminal-failure command behind an open study-level interrupt
+    fails closed before mutating dataset triage state.
+
+Current boundary:
+
+- This is a command bridge only. It does not add a native DatasetGraph
+  `terminal_failure` interrupt roundtrip yet.
+- It does not change the public FastAPI/UI split-flow default path.
+- It does not implement automatic repair, spec revision, retry execution, or a
+  persistent LangGraph SQLite/Postgres checkpointer.
+
+Review:
+
+- Subagent review returned GO.
+- The review confirmed the bridge loads canonical graph state, blocks
+  study-level gates first, validates the current dataset interrupt, and then
+  delegates to the existing terminal-failure triage flow without duplicating or
+  bypassing its rules.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_bridges_to_triage_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_mismatched_interrupt_without_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_invalid_action_without_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_dataset_command_behind_study_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed -v
+Ran 7 tests in 0.313s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip Slice
 
 Completed:

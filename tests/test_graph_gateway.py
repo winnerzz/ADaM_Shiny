@@ -3417,6 +3417,177 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "retry_approved_execution")
         self.assertFalse(dataset_state.agent_node_outputs[-1]["outputs"]["interrupt_open"])
 
+    def test_gateway_review_terminal_failure_from_command_bridges_to_triage_flow(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_command_bridge") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_command_bridge",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_command_bridge",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.dependency_review_status = "accepted"
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_command_bridge")
+
+        result = gateway.review_terminal_failure_from_command(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_command_bridge",
+            command=HumanCommand(
+                interrupt="terminal_failure",
+                action="repair_code",
+                dataset="ADAE",
+                reviewer="native_tester",
+                notes="Repair generated code through native command bridge.",
+            ),
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(result.decision, "repair_code")
+        self.assertEqual(result.current_interrupt, "terminal_failure")
+        self.assertEqual(result.next_action, "repair_generated_code")
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "terminal_failure")
+        self.assertEqual(dataset_state.human_commands[-1].interrupt, "terminal_failure")
+        self.assertEqual(dataset_state.human_commands[-1].reviewer, "native_tester")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_review"]["action"], "repair_code")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["decision"], "terminal_failure_triage_recorded")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "repair_generated_code")
+
+    def test_gateway_review_terminal_failure_from_command_rejects_mismatched_interrupt_without_triage(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_command_mismatch") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_command_mismatch",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_command_mismatch",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.dependency_review_status = "accepted"
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADAE",
+            reason="Canonical state is not waiting for terminal-failure review.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_command_mismatch")
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            gateway.review_terminal_failure_from_command(
+                study_dir=study_dir,
+                run_id="run_lg2_terminal_failure_command_mismatch",
+                command=HumanCommand(
+                    interrupt="terminal_failure",
+                    action="retry_execution",
+                    dataset="ADAE",
+                    reviewer="native_tester",
+                ),
+            )
+
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_terminal_failure_command_mismatch")
+        self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
+        self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "code_review")
+
+    def test_gateway_review_terminal_failure_from_command_rejects_invalid_action_without_triage(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_command_invalid_action") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_command_invalid_action",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_command_invalid_action",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.dependency_review_status = "accepted"
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_command_invalid_action")
+
+        with self.assertRaisesRegex(ValueError, "Terminal failure review command action is not supported"):
+            gateway.review_terminal_failure_from_command(
+                study_dir=study_dir,
+                run_id="run_lg2_terminal_failure_command_invalid_action",
+                command=HumanCommand.model_construct(
+                    interrupt="terminal_failure",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="native_tester",
+                ),
+            )
+
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_terminal_failure_command_invalid_action")
+        self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
+        self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "terminal_failure")
+
+    def test_gateway_review_terminal_failure_from_command_rejects_dataset_command_behind_study_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_terminal_failure_command_study_gate") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_terminal_failure_command_study_gate",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_terminal_failure_command_study_gate",
+        ).model_copy(deep=True)
+        state.current_interrupt = InterruptState(
+            name="dependency_review",
+            reason="Study dependency review must be resolved first.",
+        )
+        state.dependency_review_status = "review_required"
+        state.datasets["ADAE"].status = "terminal_failure"
+        state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset="ADAE",
+            reason="R execution failed or produced an unusable output.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_terminal_failure_command_study_gate")
+
+        with self.assertRaisesRegex(ValueError, "Study-level interrupt dependency_review must be resolved"):
+            gateway.review_terminal_failure_from_command(
+                study_dir=study_dir,
+                run_id="run_lg2_terminal_failure_command_study_gate",
+                command=HumanCommand(
+                    interrupt="terminal_failure",
+                    action="retry_execution",
+                    dataset="ADAE",
+                    reviewer="native_tester",
+                ),
+            )
+
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_terminal_failure_command_study_gate")
+        self.assertEqual(reloaded.current_interrupt.name, "dependency_review")
+        self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
+
     def test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_progress_actions") / "PSY201"
         study_dir.mkdir(parents=True)

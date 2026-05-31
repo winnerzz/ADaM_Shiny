@@ -2877,6 +2877,41 @@ class GraphGateway:
             next_action=str(reviewed_dataset.execution_state.get("next_action") or ""),
         )
 
+    def review_terminal_failure_from_command(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        command: HumanCommand,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayTerminalFailureReviewResult:
+        """Bridge a graph-native terminal-failure command to the gateway triage flow."""
+
+        root = Path(study_dir).expanduser()
+        if command.dataset is None:
+            raise ValueError("Terminal failure review command must include a dataset.")
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        open_study_interrupt = _open_study_interrupt(graph_state)
+        if open_study_interrupt is not None:
+            raise ValueError(
+                f"Study-level interrupt {open_study_interrupt.name} must be resolved before dataset terminal_failure."
+            )
+        _assert_resume_command_matches_open_interrupt(graph_state, command)
+        if command.interrupt != "terminal_failure":
+            raise ValueError("Terminal failure review command must target terminal_failure.")
+        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
+        if command.action not in allowed:
+            raise ValueError("Terminal failure review command action is not supported.")
+        return self.review_terminal_failure(
+            study_dir=root,
+            run_id=run_id,
+            dataset=command.dataset,
+            decision=command.action,
+            reviewer=command.reviewer,
+            notes=command.notes,
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+
     def validate_product_step_start(
         self,
         *,

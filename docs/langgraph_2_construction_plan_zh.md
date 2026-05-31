@@ -6159,6 +6159,52 @@ git diff --check
 Exited 0; CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Terminal-Failure Command Bridge 切片
+
+已完成：
+
+- 新增 `GraphGateway.review_terminal_failure_from_command()`，作为
+  terminal-failure triage 的 graph-native command bridge。
+- 这个 bridge 会：
+  - 读取 canonical `graph_state.json`；
+  - 在接受 dataset-level terminal-failure command 前，先拒绝任何 open
+    study-level interrupt；
+  - 使用 `_assert_resume_command_matches_open_interrupt()` 证明 command 匹配当前
+    dataset 的 `terminal_failure` interrupt；
+  - 用 `TERMINAL_FAILURE_REVIEW_ACTIONS` 校验 action；
+  - 委托现有 `review_terminal_failure()`，因此 terminal-failure triage 规则、
+    next-action 映射、agent audit 写入和 input fingerprint 处理仍集中在
+    `record_terminal_failure_review()`。
+- 增加回归测试：
+  - 匹配的 `terminal_failure` command 会进入正式 triage flow，并写入
+    diagnosis/repair agent audit output；
+  - dataset interrupt 不匹配时 fail closed，不写 `terminal_failure_review`；
+  - 不支持的 command action fail closed，不改 triage state；
+  - open study-level interrupt 后面的 dataset terminal-failure command 会先
+    fail closed，不改 dataset triage state。
+
+当前边界：
+
+- 本切片只是 command bridge，还没有新增 DatasetGraph 原生 `terminal_failure`
+  interrupt roundtrip。
+- 不改变公开 FastAPI/UI split-flow 默认路径。
+- 不实现 automatic repair、spec revision、retry execution 或 persistent
+  LangGraph SQLite/Postgres checkpointer。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 bridge 会读取 canonical graph state，先阻断 study-level gate，校验当前
+  dataset interrupt，然后委托现有 terminal-failure triage flow，没有复制或绕过
+  规则。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_bridges_to_triage_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_mismatched_interrupt_without_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_invalid_action_without_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_from_command_rejects_dataset_command_behind_study_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed -v
+Ran 7 tests in 0.313s - OK
+```
+
 ### 2026-06-01 - LG2.1 Native Draft-Spec Gateway Roundtrip 切片
 
 已完成：
