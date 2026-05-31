@@ -2353,6 +2353,126 @@ class GraphGatewayTests(unittest.TestCase):
         reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_code_review_resume_gate")
         self.assertEqual(reloaded.datasets["ADSL"].code_state["status"], "generated")
 
+    def test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_product_loop") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,AGE\n01,50\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        output_artifact = ArtifactRef(
+            artifact_id="output_adam_psy201_run_lg2_native_loop_adsl",
+            kind="output_adam",
+            path="runs/run_lg2_native_loop/outputs/adsl.csv",
+            sha256=f"sha256:{'8' * 64}",
+            dataset="ADSL",
+            format="csv",
+            role="output",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg2_native_loop_adsl",
+            kind="validation_report",
+            path="runs/run_lg2_native_loop/validation/adsl_validation_report.json",
+            sha256=f"sha256:{'9' * 64}",
+            dataset="ADSL",
+            format="json",
+            role="output",
+        )
+        fake_execution = SimpleNamespace(
+            terminal_failure=False,
+            response_status="completed",
+            validation_status="pass",
+            output_path="runs/run_lg2_native_loop/outputs/adsl.csv",
+            validation_report_path="runs/run_lg2_native_loop/validation/adsl_validation_report.json",
+            diagnostics_path=None,
+            errors=[],
+            warnings=[],
+            validation_report={"status": "pass", "errors": [], "warnings": []},
+            failure_records=[],
+            artifacts={"output_adam": output_artifact, "validation_report": validation_artifact},
+        )
+        gateway = GraphGateway()
+
+        started = gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(started.graph_state.datasets["ADSL"].current_interrupt.name, "code_review")
+        self.assertIn("native_dataset_product_loop_interrupt", started.graph_state.runtime_persistence)
+        self.assertEqual(
+            started.graph_state.runtime_persistence["native_dataset_product_loop_interrupt"]["boundary"],
+            "dataset_product_loop_pilot_only",
+        )
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_execution):
+            completed = gateway.resume_native_dataset_product_loop(
+                study_dir=study_dir,
+                run_id="run_lg2_native_loop",
+                dataset="ADSL",
+                decision="approve",
+                reviewer="tester",
+                notes="Approve generated R and execute the native loop pilot.",
+            )
+
+        dataset_state = completed.graph_state.datasets["ADSL"]
+        self.assertTrue(completed.approved)
+        self.assertIsNotNone(completed.execution)
+        self.assertEqual(completed.execution.status, "completed")
+        self.assertEqual(dataset_state.status, "completed")
+        self.assertEqual(dataset_state.execution_state["status"], "completed")
+        self.assertEqual(dataset_state.human_commands[-1].interrupt, "code_review")
+        self.assertIn("native_dataset_product_loop_resume", completed.graph_state.runtime_persistence)
+        self.assertTrue((study_dir / "runs" / "run_lg2_native_loop" / "review" / "adsl_code_review.json").exists())
+
+    def test_gateway_native_dataset_product_loop_reject_does_not_execute(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_product_loop_reject") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,AGE\n01,50\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_reject",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch("adam_agent.graph.gateway.GraphGateway.execute_approved_code") as execute_approved:
+            rejected = gateway.resume_native_dataset_product_loop(
+                study_dir=study_dir,
+                run_id="run_lg2_native_loop_reject",
+                dataset="ADSL",
+                decision="reject",
+                reviewer="tester",
+                notes="Generated R is not acceptable.",
+            )
+
+        execute_approved.assert_not_called()
+        dataset_state = rejected.graph_state.datasets["ADSL"]
+        self.assertFalse(rejected.approved)
+        self.assertIsNone(rejected.execution)
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.code_state["status"], "rejected")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertNotIn("native_dataset_product_loop_resume", rejected.graph_state.runtime_persistence)
+
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"
         run_id = "run_lg2_gateway_owned_dependency_plan"

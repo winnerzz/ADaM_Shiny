@@ -113,6 +113,7 @@ class DatasetGraphState(TypedDict, total=False):
     native_code_review: bool
     native_code_review_status: str
     native_code_review_resume: dict[str, object]
+    native_full_loop: bool
     native_terminal_failure_review: bool
     native_terminal_failure_review_status: str
     native_terminal_failure_review_resume: dict[str, object]

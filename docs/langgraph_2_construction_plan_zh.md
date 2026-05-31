@@ -6535,3 +6535,44 @@ Ran 297 tests in 28.550s - OK (skipped=2)
 git diff --check
 Exited 0; CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.2 Native Dataset Product Loop 试点切片
+
+已完成：
+
+- 新增内部执行模式 `graph_product_full_loop`。
+- 新增 `GraphGateway.start_native_dataset_product_loop()`，覆盖最短的安全 dataset
+  native 产品路径：
+  - 准备 product context；
+  - 使用已批准的 `input_spec` 或已批准的 draft spec；
+  - 生成需要审核的 R code；
+  - 停在 DatasetGraph 原生 `code_review` interrupt。
+- 新增 `GraphGateway.resume_native_dataset_product_loop()`：
+  - 恢复 native code-review checkpoint；
+  - 将 native human command 桥回现有正式 `review_code_from_command()` 路径，
+    因此 code-review JSON、hash、canonical state 校验仍然会执行；
+  - approve 后可选调用现有 `execute_approved_code()`。
+- 增加回归测试：
+  - approve path：native loop 写正式 code review，然后通过现有 Gateway execution
+    path 记录执行；
+  - reject path：拒绝 code review 不会执行，并让 dataset 留在 code-review gate。
+
+当前边界：
+
+- 这是 internal pilot，不是公开 UI/API 默认路径。
+- 当前只覆盖 input-spec-ready 路径。缺 spec 的 draft-spec review、approved-draft-spec
+  continuation、repair、revise-spec、多 dataset StudyGraph 编排仍是后续切片。
+- DatasetGraph 仍不直接写产品状态。review artifact 和 execution 的正式状态转换仍由
+  GraphGateway 拥有。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_reject_roundtrip_keeps_execution_locked -v
+Ran 4 tests in 0.794s - OK
+
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_interrupt_can_resume -v
+Ran 3 tests in 0.141s - OK
+
+python -B -m compileall -q src tests
+```

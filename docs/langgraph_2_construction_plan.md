@@ -7085,3 +7085,47 @@ Ran 297 tests in 28.550s - OK (skipped=2)
 git diff --check
 Exited 0; CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.2 Native Dataset Product Loop Pilot Slice
+
+Completed:
+
+- Added internal execution mode `graph_product_full_loop`.
+- Added `GraphGateway.start_native_dataset_product_loop()` for the shortest
+  safe native dataset path:
+  - prepare product context;
+  - use an approved `input_spec` or already approved draft spec;
+  - generate review-required R code;
+  - stop at a native DatasetGraph `code_review` interrupt.
+- Added `GraphGateway.resume_native_dataset_product_loop()`:
+  - resumes the native code-review checkpoint;
+  - bridges the native human command through the existing formal
+    `review_code_from_command()` path so code-review JSON/hash/canonical state
+    checks still run;
+  - optionally calls the existing `execute_approved_code()` after approval.
+- Added regressions for:
+  - approve path: native loop writes formal code review and then records
+    execution through the existing Gateway execution path;
+  - reject path: rejected code review does not execute and leaves the dataset at
+    the code-review gate.
+
+Current boundary:
+
+- This is an internal pilot, not a public UI/API default.
+- It covers the input-spec-ready path only. Missing-spec draft-spec review,
+  approved-draft-spec continuation, repair, revise-spec, and multi-dataset
+  StudyGraph orchestration still remain future slices.
+- DatasetGraph still does not write product state directly. GraphGateway remains
+  the formal state transition boundary for review artifacts and execution.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_reject_roundtrip_keeps_execution_locked -v
+Ran 4 tests in 0.794s - OK
+
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_interrupt_can_resume -v
+Ran 3 tests in 0.141s - OK
+
+python -B -m compileall -q src tests
+```

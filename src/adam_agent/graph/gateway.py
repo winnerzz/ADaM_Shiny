@@ -26,6 +26,7 @@ from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
 from adam_agent.graph.execution_modes import (
     GRAPH_PRODUCT_EXECUTE_MODE,
+    GRAPH_PRODUCT_FULL_LOOP_MODE,
     GRAPH_PRODUCT_GENERATE_CODE_MODE,
     GRAPH_PRODUCT_PREPARE_MODE,
 )
@@ -105,6 +106,16 @@ class GraphGatewayCodeReviewResult(GraphGatewayResult):
     review_path: str
     approved: bool
     static_check_path: str | None
+
+
+@dataclass(frozen=True)
+class GraphGatewayNativeDatasetLoopResult(GraphGatewayResult):
+    """Internal native dataset-loop pilot result."""
+
+    decision: str
+    approved: bool
+    review_path: str | None
+    execution: GraphGatewayExecutionResult | None = None
 
 
 @dataclass(frozen=True)
@@ -776,6 +787,77 @@ class GraphGateway:
         )
         return gateway_result
 
+    def start_native_dataset_product_loop(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayCodeGenerationResult:
+        """Start the internal native dataset product-loop pilot.
+
+        The first slice supports the shortest safe product path:
+        approved input spec or approved draft spec -> code agent -> native
+        code-review interrupt. Formal review and execution remain Gateway-owned.
+        """
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        plan = self.dependency_gate_for_product_step(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+        dependency_resolution = list(plan.dependency_resolution)
+        dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        result = dataset_graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": GRAPH_PRODUCT_FULL_LOOP_MODE,
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "dependency_resolution": dependency_resolution,
+                "llm_provider": llm_provider,
+                "llm_exposure": llm_exposure,
+                "llm_client_builder": llm_client_builder,
+                "target_context_builder": target_context_builder,
+                "native_code_review": True,
+                "native_full_loop": True,
+                "audit_artifacts": [],
+            },
+            config=self._dataset_config(study_id, run_id, target),
+        )
+        if "__interrupt__" not in result:
+            raise ValueError(f"DatasetGraph did not stop at native code_review for {target}.")
+        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        return self._record_code_generation_from_dataset_result(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            result=snapshot.values,
+            dependency_artifacts=dependency_artifacts,
+            llm_provider=llm_provider,
+            gate=plan,
+            runtime_persistence_extra={
+                "native_dataset_product_loop_interrupt": _native_interrupt_payload(
+                    snapshot,
+                    boundary="dataset_product_loop_pilot_only",
+                )
+            },
+        )
+
     def resume_native_code_review(
         self,
         *,
@@ -861,6 +943,71 @@ class GraphGateway:
             review_path=result.review_path,
             approved=result.approved,
             static_check_path=result.static_check_path,
+        )
+
+    def resume_native_dataset_product_loop(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        execute_after_approval: bool = True,
+        rscript_path: str | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayNativeDatasetLoopResult:
+        """Resume the internal native dataset-loop pilot through Gateway-owned gates."""
+
+        root = Path(study_dir).expanduser()
+        review = self.resume_native_code_review(
+            study_dir=root,
+            run_id=run_id,
+            dataset=dataset,
+            decision=decision,
+            reviewer=reviewer,
+            notes=notes,
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+        execution: GraphGatewayExecutionResult | None = None
+        final_graph_state = review.graph_state
+        final_projection = review.workflow_projection
+        if review.approved and execute_after_approval:
+            execution = self.execute_approved_code(
+                study_dir=root,
+                study_id=review.graph_state.study_id,
+                run_id=run_id,
+                dataset=dataset,
+                rscript_path=rscript_path,
+            )
+            final_graph_state = execution.graph_state
+            final_projection = execution.workflow_projection
+            self._persist_graph_state(
+                root,
+                final_graph_state,
+                node="native_dataset_product_loop_execute",
+                runtime_persistence_extra={
+                    "native_dataset_product_loop_resume": {
+                        "resumed": True,
+                        "dataset": dataset.strip().upper(),
+                        "action": decision.strip().lower(),
+                        "executed_after_approval": True,
+                    }
+                },
+            )
+            final_projection = project_graph_state_to_workflow(
+                root,
+                final_graph_state,
+                node="graph_gateway_native_dataset_product_loop_execute",
+            )
+        return GraphGatewayNativeDatasetLoopResult(
+            graph_state=final_graph_state,
+            workflow_projection=final_projection,
+            decision=review.decision,
+            approved=review.approved,
+            review_path=review.review_path,
+            execution=execution,
         )
 
     def record_code_review(

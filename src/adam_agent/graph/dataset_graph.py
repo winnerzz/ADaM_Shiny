@@ -12,6 +12,7 @@ from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_ada
 from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
 from adam_agent.graph.execution_modes import (
     GRAPH_PRODUCT_EXECUTE_MODE,
+    GRAPH_PRODUCT_FULL_LOOP_MODE,
     GRAPH_PRODUCT_GENERATE_CODE_MODE,
     GRAPH_PRODUCT_MODES,
     GRAPH_PRODUCT_PREPARE_MODE,
@@ -89,6 +90,10 @@ def _is_graph_product_execute_mode(state: DatasetGraphState) -> bool:
     return state.get("execution_mode") == GRAPH_PRODUCT_EXECUTE_MODE
 
 
+def _is_graph_product_full_loop_mode(state: DatasetGraphState) -> bool:
+    return state.get("execution_mode") == GRAPH_PRODUCT_FULL_LOOP_MODE
+
+
 def _is_legacy_stub_mode(state: DatasetGraphState) -> bool:
     return state.get("execution_mode") == LEGACY_STUB_MODE
 
@@ -104,13 +109,14 @@ def _skips_stub_nodes(state: DatasetGraphState) -> bool:
         or _is_graph_product_prepare_mode(state)
         or _is_graph_product_generate_code_mode(state)
         or _is_graph_product_execute_mode(state)
+        or _is_graph_product_full_loop_mode(state)
     )
 
 
 def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     """Initialize one dataset run."""
 
-    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state):
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state):
         return prepare_product_context_node(state)
     if state.get("execution_mode") == LLM_DOWNSTREAM_STUBBED_MODE:
         return run_llm_downstream_stubbed_node(state)
@@ -621,7 +627,7 @@ def _spec_agent_output(
 def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     """Generate R code and stop at graph-native code review."""
 
-    if not _is_graph_product_generate_code_mode(state):
+    if not (_is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state)):
         return {}
     study_dir = state.get("study_dir")
     if not study_dir:
@@ -1697,6 +1703,10 @@ def route_after_product_prepare_review(state: DatasetGraphState) -> str:
 
     if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_execute_mode(state):
         return "summarize"
+    if _is_graph_product_full_loop_mode(state):
+        if state.get("spec_source") in {"input_spec", "approved_draft_spec"} and state.get("product_context_ready"):
+            return "continue"
+        return "summarize"
     return "continue"
 
 
@@ -1745,11 +1755,11 @@ def route_after_product_context(state: DatasetGraphState) -> str:
         return "summarize"
     if _is_graph_product_execute_mode(state):
         return "execute_approved_code"
-    if _is_graph_product_generate_code_mode(state):
+    if _is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state):
         return "generate_r_code_agent"
-    if _is_graph_product_prepare_mode(state) and state.get("spec_source") == "missing_input_spec":
+    if (_is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state)) and state.get("spec_source") == "missing_input_spec":
         return "draft_spec_agent"
-    if _is_graph_product_prepare_mode(state):
+    if _is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state):
         return "summarize"
     if _is_legacy_stub_mode(state) and _is_legacy_stub_graph_enabled(state):
         return "stub_chain"
