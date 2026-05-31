@@ -1319,6 +1319,32 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse(by_dataset["ADAE"]["blocked"])
         self.assertEqual(by_dataset["ADAE"]["code_status"], "generated")
 
+    def test_progress_endpoint_reports_missing_workflow_projection_as_null(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_progress_graph_state_only")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_progress_graph_state_only/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        workflow_path = study_dir / "runs" / "run_progress_graph_state_only" / "workflow_state.json"
+        self.assertTrue(workflow_path.exists())
+        workflow_path.unlink()
+
+        progress = client.get(
+            "/runs/run_progress_graph_state_only/progress",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(progress.status_code, 200, progress.text)
+        payload = progress.json()
+        self.assertTrue(payload["graph_state_path"].endswith("graph_state.json"))
+        self.assertIsNone(payload["workflow_state_path"])
+
     def test_upload_invalidates_graph_run_even_when_workflow_projection_is_missing(self) -> None:
         study_dir = _workspace_dir("phase8_upload_graph_state_only") / "MY_STUDY"
         client = TestClient(create_app())

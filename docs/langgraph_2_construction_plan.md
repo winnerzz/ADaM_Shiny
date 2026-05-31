@@ -5772,6 +5772,44 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.8 Progress Compatibility Projection Path Slice
+
+Completed:
+
+- Tightened `GraphGateway.progress_summary()` metadata so
+  `workflow_state_path` is reported only when the compatibility projection file
+  actually exists.
+- Made `RunProgressResponse.workflow_state_path` optional.
+- Preserved graph-owned progress behavior: `graph_state.json` remains the
+  source of truth and `/progress` still works when `workflow_state.json` is
+  absent.
+- Added gateway-level and FastAPI endpoint tests proving missing
+  `workflow_state.json` is reported as `None` / `null`, not as a path to a file
+  that does not exist.
+
+Current boundary:
+
+- This is read-model metadata truthfulness only.
+- It does not remove `workflow_state.json`, change projection writes, alter
+  product transitions, or change UI behavior beyond exposing a truthful null
+  metadata value.
+
+Review:
+
+- Subagent review returned GO.
+- The review noted that other response models still require
+  `workflow_state_path`, but those responses correspond to operations that
+  create or depend on the compatibility projection; this slice is scoped only to
+  the progress read model.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_missing_workflow_projection_as_none -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_missing_workflow_projection_as_null tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_api_phase8.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dependency Next-Action Text Slice
 
 Completed:

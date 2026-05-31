@@ -2424,6 +2424,7 @@ class GraphGateway:
         )
         next_item = _study_next_action(graph_state, datasets, output_quality_rollup=output_quality_rollup)
         run_dir = root / "runs" / run_id
+        workflow_state_path = run_dir / "workflow_state.json"
         return {
             "study_id": graph_state.study_id,
             "run_id": graph_state.run_id,
@@ -2440,7 +2441,7 @@ class GraphGateway:
             "review_queue": _human_review_queue_items(graph_state, datasets),
             "datasets": datasets,
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
-            "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+            "workflow_state_path": str(workflow_state_path.as_posix()) if workflow_state_path.exists() else None,
         }
 
     def _generated_code_state(self, study_dir: Path, *, run_id: str, dataset: str) -> dict[str, Any]:

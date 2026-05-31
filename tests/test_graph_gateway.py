@@ -2909,6 +2909,31 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn(("dataset", "ADAE", "code_review", "interrupt"), review_items)
         self.assertIn("Review dependency plan.", {item["action_label"] for item in progress["review_queue"]})
         self.assertTrue(Path(progress["graph_state_path"]).exists())
+        self.assertTrue(Path(progress["workflow_state_path"]).exists())
+
+    def test_gateway_progress_summary_reports_missing_workflow_projection_as_none(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_no_workflow_projection") / "PSY201"
+        input_spec = study_dir / "input_spec"
+        input_spec.mkdir(parents=True)
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_no_workflow_projection",
+            target_datasets=["ADAE"],
+        )
+        workflow_path = study_dir / "runs" / "run_lg2_progress_no_workflow_projection" / "workflow_state.json"
+        self.assertTrue(workflow_path.exists())
+        workflow_path.unlink()
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_no_workflow_projection")
+
+        self.assertTrue(Path(progress["graph_state_path"]).exists())
+        self.assertIsNone(progress["workflow_state_path"])
 
     def test_gateway_progress_summary_marks_not_real_outputs_as_review_only(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_progress_not_real_output") / "PSY201"

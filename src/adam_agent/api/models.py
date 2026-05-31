@@ -110,7 +110,7 @@ class RunProgressResponse(StrictBaseModel):
     review_queue: list[dict[str, Any]] = Field(default_factory=list)
     datasets: list[DatasetProgressItem] = Field(default_factory=list)
     graph_state_path: str
-    workflow_state_path: str
+    workflow_state_path: str | None = None
 
 
 class DependencyReviewRequest(StrictBaseModel):

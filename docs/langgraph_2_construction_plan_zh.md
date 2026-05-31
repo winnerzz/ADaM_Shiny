@@ -5322,6 +5322,38 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.8 Progress Compatibility Projection Path 切片
+
+已完成：
+
+- 收紧 `GraphGateway.progress_summary()` 元数据：只有当 compatibility projection
+  文件真实存在时，才返回 `workflow_state_path`。
+- 将 `RunProgressResponse.workflow_state_path` 改为可空。
+- 保持 graph-owned progress 行为不变：`graph_state.json` 仍是事实来源；
+  即使 `workflow_state.json` 缺失，`/progress` 仍可用。
+- 增加 gateway 层和 FastAPI endpoint 测试，证明缺失 `workflow_state.json` 时返回
+  `None` / `null`，而不是返回一个不存在的路径。
+
+当前边界：
+
+- 这是 read-model metadata 真实性修正。
+- 不删除 `workflow_state.json`，不改变 projection 写入，不改变 product transition，
+  也不改变 UI 行为，只是暴露更真实的 null metadata。
+
+审查：
+
+- 子 agent 审查 GO。
+- 审查指出其他 response model 仍要求 `workflow_state_path`，但那些 response 对应会
+  创建或依赖 compatibility projection 的操作；本切片只针对 progress read model。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_missing_workflow_projection_as_none -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_missing_workflow_projection_as_null tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_api_phase8.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dependency Next-Action Text 切片
 
 已完成：
