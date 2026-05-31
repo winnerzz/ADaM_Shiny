@@ -3645,3 +3645,43 @@ Python 文件；diff check passed。
   fail-closed；Product Graph / legacy stub graph 分离没有被削弱；剩余 literal
   是测试样例或 audit metadata label，不是 routing decision；static-rule
   governance 未被触碰。
+
+### 2026-05-31 - LG2.8 StudyGraph Execution-Mode 预检切片
+
+已完成：
+
+- 在 StudyGraph 层增加显式 unsupported execution mode 预检，在 runnable
+  dataset tasks 下发之前拦截。
+- 保持 dependency planning 和 plan-only gateway 行为不变。缺失 execution mode
+  仍由已有 lower-level fail-closed 路径处理，或用于只规划不执行的测试路径。
+- 新增 smoke regression，证明显式 unknown StudyGraph mode 不会调用 dataset
+  subgraph。
+
+当前边界：
+
+- 本切片不改变 API entry validation、dependency semantics、product split-flow
+  endpoints、LLM generation、R execution、compare、UI state 或 static-rule
+  governance。
+- Unsupported datasets 和 unresolved dependencies 保留原有业务失败原因，不会被
+  execution-mode preflight 覆盖。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_unknown_execution_mode_fails_before_dataset_dispatch tests.test_graph_smoke.GraphSmokeTests.test_study_graph_missing_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_non_ad_target_is_blocked_as_unsupported_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_reference_sas7bdat_dependency_artifact_does_not_satisfy_runtime_dependency tests.test_graph_smoke.GraphSmokeTests.test_run_output_dependency_artifact_wins_over_reference_adam tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions tests.test_graph_smoke.GraphSmokeTests.test_study_graph_writes_dependency_plan_review_artifacts tests.test_graph_smoke.GraphSmokeTests.test_dependency_review_artifacts_include_conflict_warning tests.test_graph_smoke.GraphSmokeTests.test_terminal_failure_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py
+```
+
+结果：focused StudyGraph preflight 和 dependency-regression tests passed；
+233 个相关 API/graph/gateway/static-rule tests passed；AST syntax check 覆盖
+79 个 Python 文件；diff check passed。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：StudyGraph mode set 覆盖当前允许的 study/product entries，但没有把
+  retired ADSL template mode 重新放回合法入口；preflight 条件足够窄，保留
+  plan-only、unsupported 和 dependency-blocked 结果；显式 unknown mode 不会
+  dispatch dataset subgraphs；static-rule governance 未被触碰。

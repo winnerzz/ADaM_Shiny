@@ -1126,6 +1126,30 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertNotEqual(summaries["ADAE"].validation_status, "passed_stub")
 
+    def test_study_graph_unknown_execution_mode_fails_before_dataset_dispatch(self) -> None:
+        graph = compile_study_graph()
+
+        with patch("adam_agent.graph.study_graph._invoke_dataset_task") as invoke_dataset:
+            result = graph.invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_study_unknown_execution_mode",
+                    "target_datasets": ["ADAE"],
+                    "execution_mode": "legacy_auto_magic",
+                    "dataset_results": [],
+                    "blocked_datasets": [],
+                    "audit_artifacts": [],
+                }
+            )
+
+        invoke_dataset.assert_not_called()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["runnable_datasets"], [])
+        self.assertEqual(result["execution_batches"], [])
+        self.assertEqual(result["blocked_datasets"][0]["reason"], "invalid_execution_mode")
+        self.assertEqual(result["dataset_results"][0].validation_status, "invalid_execution_mode")
+        self.assertIn("legacy_auto_magic", result["dataset_results"][0].metadata["error"])
+
     def test_downstream_request_uses_available_dependency_artifact_without_running_it(self) -> None:
         study_dir = _workspace_dir("phase74_available_dependency") / "PSY201"
         reference_dir = study_dir / "reference_adam"

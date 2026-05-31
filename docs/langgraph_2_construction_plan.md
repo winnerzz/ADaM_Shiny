@@ -4001,3 +4001,45 @@ Subagent review:
   legacy stub graph separation was not weakened, remaining literals are test
   examples or audit metadata labels rather than routing decisions, and
   static-rule governance was untouched.
+
+### 2026-05-31 - LG2.8 StudyGraph Execution-Mode Preflight Slice
+
+Completed:
+
+- Added a StudyGraph-level execution-mode preflight for explicit unsupported
+  modes before runnable dataset tasks are dispatched.
+- Kept dependency planning and plan-only gateway behavior unchanged. Missing
+  execution mode is still handled by existing lower-level fail-closed paths or
+  by planning-only tests that intentionally do not execute dataset tasks.
+- Added a smoke regression proving an explicit unknown StudyGraph mode does not
+  invoke dataset subgraphs.
+
+Current boundary:
+
+- This slice does not change API entry validation, dependency semantics,
+  product split-flow endpoints, LLM generation, R execution, compare, UI state,
+  or static-rule governance.
+- Unsupported datasets and unresolved dependencies keep their original business
+  failure reasons; they are not overwritten by the execution-mode preflight.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_unknown_execution_mode_fails_before_dataset_dispatch tests.test_graph_smoke.GraphSmokeTests.test_study_graph_missing_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_non_ad_target_is_blocked_as_unsupported_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_reference_sas7bdat_dependency_artifact_does_not_satisfy_runtime_dependency tests.test_graph_smoke.GraphSmokeTests.test_run_output_dependency_artifact_wins_over_reference_adam tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions tests.test_graph_smoke.GraphSmokeTests.test_study_graph_writes_dependency_plan_review_artifacts tests.test_graph_smoke.GraphSmokeTests.test_dependency_review_artifacts_include_conflict_warning tests.test_graph_smoke.GraphSmokeTests.test_terminal_failure_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py
+```
+
+Result: focused StudyGraph preflight and dependency-regression tests passed;
+233 related API/graph/gateway/static-rule tests passed; AST syntax check
+covered 79 Python files; diff check passed.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that the StudyGraph mode set covers current allowed
+  study/product entries without reviving retired ADSL template mode, the
+  preflight condition is narrow enough to preserve plan-only, unsupported, and
+  dependency-blocked outcomes, explicit unknown mode does not dispatch dataset
+  subgraphs, and static-rule governance was untouched.

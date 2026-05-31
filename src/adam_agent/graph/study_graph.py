@@ -11,7 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph, compile_legacy_stub_dataset_graph
-from adam_agent.graph.execution_modes import LEGACY_STUB_MODE
+from adam_agent.graph.execution_modes import LEGACY_STUB_MODE, STUDY_GRAPH_EXECUTION_MODES, format_execution_modes
 from adam_agent.graph.dependency_resolution import (
     approved_dependency_targets,
     available_dependency_targets,
@@ -154,6 +154,33 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         planned_state["status"] = "needs_review" if _needs_dependency_review(planned_state) else "planned"
         planned_state["current_interrupt"] = (
             "dependency_review" if _needs_dependency_review(planned_state) else None
+        )
+    execution_mode_error = None
+    if (
+        state.get("graph_gateway_mode") != "plan_only"
+        and runnable_datasets
+        and not unsupported_results
+        and not dependency_blocked_results
+    ):
+        execution_mode_error = _study_execution_mode_error(state)
+    if execution_mode_error:
+        blocked_result = _study_execution_mode_failure_result(plan.requested_datasets, execution_mode_error)
+        planned_state.update(
+            {
+                "status": "failed",
+                "runnable_datasets": [],
+                "execution_batches": [],
+                "dataset_tasks": [],
+                "downstream_tasks": [],
+                "dataset_results": [blocked_result],
+                "blocked_datasets": [
+                    {
+                        "dataset": "STUDY",
+                        "reason": "invalid_execution_mode",
+                        "blocked_by": "study_execution_mode_preflight",
+                    }
+                ],
+            }
         )
     return planned_state
 
@@ -676,6 +703,28 @@ def _filter_execution_batches(execution_batches: list[list[str]], runnable_datas
         if runnable_batch:
             filtered.append(runnable_batch)
     return filtered
+
+
+def _study_execution_mode_error(state: StudyGraphState) -> str | None:
+    mode = state.get("execution_mode")
+    if not mode:
+        return None
+    if mode in STUDY_GRAPH_EXECUTION_MODES:
+        return None
+    allowed = format_execution_modes(STUDY_GRAPH_EXECUTION_MODES)
+    return f"StudyGraph does not support execution_mode={mode}. Allowed modes: {allowed}."
+
+
+def _study_execution_mode_failure_result(requested_datasets: list[str], error: str) -> DatasetResultSummary:
+    dataset_label = ",".join(requested_datasets) if requested_datasets else "STUDY"
+    return DatasetResultSummary(
+        dataset=dataset_label,
+        status="failed",
+        validation_status="invalid_execution_mode",
+        compare_status="not_run_stub",
+        failure_ids=["invalid_execution_mode"],
+        metadata={"error": error},
+    )
 
 
 def _make_dataset_task(
