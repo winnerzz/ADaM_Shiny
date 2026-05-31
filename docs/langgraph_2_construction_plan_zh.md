@@ -4506,3 +4506,36 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dat
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Execution Agent IO Migration 切片
+
+已完成：
+
+- 将 DatasetGraph `execute_approved_code` 结果包装迁到 `execution_agent` 的
+  typed IO packages。
+- execution-agent input 现在记录明确 execution task、code path、static-check
+  path、是否提供 Rscript path，以及可用上游 artifact ids。
+- execution-agent output 现在包住已有 execution audit decision：
+  - `r_execution_completed`
+  - `r_execution_terminal_failure`
+- output 记录 validation status、terminal-failure status、output path、risk
+  flags，以及 execution/validation/failure artifact ids。
+- 增加 focused smoke tests，用 patched execution boundary 覆盖成功执行和
+  terminal-failure 执行，因此测试验证 graph state packaging，而不依赖本机 R
+  是否可用。
+
+当前边界：
+
+- 本切片只改变现有 execution boundary 返回后的 result audit packaging。
+- 不改变 code-review validation、stale-input checks、static-rule validation、
+  R sandbox behavior、output validation、terminal-failure routing、repair
+  policy、compare、dependency planning、provider calls 或 UI 行为。
+- 这不是 sandbox hardening 切片。更强的 OS/container 隔离仍然是独立的生产化
+  工作。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_execution_agent_io tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_terminal_failure_agent_io -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

@@ -814,6 +814,7 @@ def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
     if not study_dir:
         return _product_failure("input_error", "execute_approved_code requires study_dir")
     target = state["dataset"]
+    execution_input = _execution_agent_input(state)
     try:
         result = execute_approved_r_code(
             study_dir=study_dir,
@@ -830,6 +831,20 @@ def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
             next_action="review_code",
         )
 
+    artifact_ids = [artifact.artifact_id for artifact in result.artifacts.values()]
+    execution_output = _execution_agent_output(
+        state,
+        decision="r_execution_completed" if not result.terminal_failure else "r_execution_terminal_failure",
+        status="completed" if not result.terminal_failure else "terminal_failure",
+        reason="Executed approved generated R code in the configured R boundary.",
+        outputs={
+            "output_path": result.output_path or "",
+            "validation_status": result.validation_status,
+            "terminal_failure": result.terminal_failure,
+        },
+        risk_flags=["terminal_failure"] if result.terminal_failure else [],
+        artifact_ids=artifact_ids,
+    )
     return {
         "status": "completed" if not result.terminal_failure else "failed",
         "route": "success" if not result.terminal_failure else "fail",
@@ -850,26 +865,64 @@ def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
         "current_interrupt": "terminal_failure" if result.terminal_failure else None,
         "next_action": "review_diagnostics" if result.terminal_failure else "review_output",
         "audit_artifacts": list(result.artifacts.values()),
-        "agent_decisions": [
-            record_agent_decision(
-                agent="execution_agent",
-                node="execute_approved_code",
-                decision="r_execution_completed" if not result.terminal_failure else "r_execution_terminal_failure",
-                dataset=target,
-                status="completed" if not result.terminal_failure else "terminal_failure",
-                reason="Executed approved generated R code in the configured R boundary.",
-                outputs={
-                    "output_path": result.output_path or "",
-                    "validation_status": result.validation_status,
-                    "terminal_failure": result.terminal_failure,
-                },
-                risk_flags=["terminal_failure"] if result.terminal_failure else [],
-                artifact_ids=[artifact.artifact_id for artifact in result.artifacts.values()],
-            )
-        ],
+        "agent_node_inputs": [execution_input],
+        "agent_node_outputs": [execution_output],
+        "agent_decisions": list(execution_output["agent_decisions"]),
         "risk_flags": ["terminal_failure"] if result.terminal_failure else [],
         "sandbox_runs": 1,
     }
+
+
+def _execution_agent_input(state: DatasetGraphState) -> dict[str, object]:
+    artifact_ids = [
+        item
+        for item in [
+            _artifact_id(state.get("product_context_artifact")),
+            _artifact_id(state.get("generated_code_artifact")),
+            _artifact_id(state.get("approved_code_artifact")),
+        ]
+        if item
+    ]
+    return build_agent_node_input(
+        agent="execution_agent",
+        node="execute_approved_code",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        task="Execute approved generated R code in the configured R boundary and report validation status.",
+        inputs={
+            "code_path": state.get("code_path"),
+            "static_check_path": state.get("static_check_path"),
+            "rscript_path_provided": bool(state.get("rscript_path")),
+        },
+        artifact_ids=artifact_ids,
+        risk_flags=list(state.get("risk_flags", [])),
+    )
+
+
+def _execution_agent_output(
+    state: DatasetGraphState,
+    *,
+    decision: str,
+    status: str,
+    reason: str,
+    outputs: dict[str, object],
+    artifact_ids: list[str],
+    risk_flags: list[str] | None = None,
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="execution_agent",
+        node="execute_approved_code",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        status=status,
+        decision=decision,
+        reason=reason,
+        outputs=outputs,
+        artifact_ids=artifact_ids,
+        risk_flags=risk_flags or [],
+    )
 
 
 def run_llm_downstream_stubbed_node(state: DatasetGraphState) -> DatasetGraphState:

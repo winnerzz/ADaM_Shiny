@@ -8,6 +8,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -852,6 +853,121 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summary.metadata["spec_source"], "input_spec")
         self.assertTrue(summary.metadata["code_path"].endswith("code/build_adae.R"))
         self.assertEqual(summary.validation_status, "not_run")
+
+    def test_dataset_graph_product_execute_records_execution_agent_io(self) -> None:
+        output_artifact = ArtifactRef(
+            artifact_id="output_adam_psy201_run_lg2_execute_agent_io_adae",
+            kind="output_adam",
+            path="runs/run_lg2_execute_agent_io/outputs/adae.csv",
+            sha256=f"sha256:{'1' * 64}",
+            dataset="ADAE",
+            format="csv",
+            role="output",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg2_execute_agent_io_adae",
+            kind="validation_report",
+            path="runs/run_lg2_execute_agent_io/validation/adae_validation_report.json",
+            sha256=f"sha256:{'2' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        fake_result = SimpleNamespace(
+            terminal_failure=False,
+            response_status="completed",
+            validation_status="pass",
+            output_path="runs/run_lg2_execute_agent_io/outputs/adae.csv",
+            validation_report_path="runs/run_lg2_execute_agent_io/validation/adae_validation_report.json",
+            diagnostics_path=None,
+            errors=[],
+            warnings=[],
+            validation_report={"status": "pass", "errors": [], "warnings": []},
+            failure_records=[],
+            artifacts={"output_adam": output_artifact, "validation_report": validation_artifact},
+        )
+        dataset_graph = compile_dataset_graph()
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            result = dataset_graph.invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_execute_agent_io",
+                    "dataset": "ADAE",
+                    "execution_mode": "graph_product_execute",
+                    "study_dir": str(_workspace_dir("lg2_execute_agent_io") / "PSY201"),
+                    "code_path": "runs/run_lg2_execute_agent_io/code/build_adae.R",
+                    "static_check_path": "runs/run_lg2_execute_agent_io/static_checks/adae_static_check.json",
+                    "audit_artifacts": [],
+                }
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["next_action"], "review_output")
+        execution_inputs = [item for item in result["agent_node_inputs"] if item["agent"] == "execution_agent"]
+        execution_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "execution_agent"]
+        self.assertEqual(len(execution_inputs), 1)
+        self.assertEqual(len(execution_outputs), 1)
+        self.assertEqual(execution_inputs[0]["node"], "execute_approved_code")
+        self.assertEqual(execution_outputs[0]["decision"], "r_execution_completed")
+        self.assertEqual(execution_outputs[0]["outputs"]["validation_status"], "pass")
+        self.assertEqual(result["agent_decisions"][0], execution_outputs[0]["agent_decisions"][0])
+        summary = result["summary"]
+        self.assertEqual(summary.status, "completed")
+        self.assertEqual(summary.metadata["agent_node_outputs"][0]["decision"], "r_execution_completed")
+        self.assertFalse(summary.metadata["terminal_failure"])
+
+    def test_dataset_graph_product_execute_records_terminal_failure_agent_io(self) -> None:
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg2_execute_agent_io_fail_adae",
+            kind="validation_report",
+            path="runs/run_lg2_execute_agent_io_fail/validation/adae_validation_report.json",
+            sha256=f"sha256:{'3' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        fake_result = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg2_execute_agent_io_fail/validation/adae_validation_report.json",
+            diagnostics_path="runs/run_lg2_execute_agent_io_fail/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": []},
+            failure_records=[],
+            artifacts={"validation_report": validation_artifact},
+        )
+        dataset_graph = compile_dataset_graph()
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            result = dataset_graph.invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_execute_agent_io_fail",
+                    "dataset": "ADAE",
+                    "execution_mode": "graph_product_execute",
+                    "study_dir": str(_workspace_dir("lg2_execute_agent_io_fail") / "PSY201"),
+                    "code_path": "runs/run_lg2_execute_agent_io_fail/code/build_adae.R",
+                    "static_check_path": "runs/run_lg2_execute_agent_io_fail/static_checks/adae_static_check.json",
+                    "audit_artifacts": [],
+                }
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["route"], "fail")
+        self.assertFalse(result["real_run_completed"])
+        self.assertEqual(result["current_interrupt"], "terminal_failure")
+        self.assertEqual(result["next_action"], "review_diagnostics")
+        execution_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "execution_agent"]
+        self.assertEqual(len(execution_outputs), 1)
+        self.assertEqual(execution_outputs[0]["decision"], "r_execution_terminal_failure")
+        self.assertTrue(execution_outputs[0]["outputs"]["terminal_failure"])
+        self.assertIn("terminal_failure", execution_outputs[0]["risk_flags"])
+        self.assertEqual(result["agent_decisions"][0], execution_outputs[0]["agent_decisions"][0])
+        summary = result["summary"]
+        self.assertEqual(summary.status, "failed")
+        self.assertTrue(summary.metadata["terminal_failure"])
 
     def test_study_graph_batch_path_preserves_agent_decisions(self) -> None:
         study_dir = _workspace_dir("lg2_study_graph_agent_decisions") / "PSY201"

@@ -4914,3 +4914,38 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Execution Agent IO Migration Slice
+
+Completed:
+
+- Migrated the DatasetGraph `execute_approved_code` result packaging to emit
+  typed IO packages for `execution_agent`.
+- The execution-agent input records the explicit execution task, code path,
+  static-check path, whether an Rscript path was provided, and available
+  upstream artifact ids.
+- The execution-agent output wraps the existing execution audit decision:
+  - `r_execution_completed`
+  - `r_execution_terminal_failure`
+- The output records validation status, terminal-failure status, output path,
+  risk flags, and execution/validation/failure artifact ids.
+- Added focused smoke tests for both successful execution and terminal-failure
+  execution using a patched execution boundary, so the tests validate graph
+  state packaging without depending on local R availability.
+
+Current boundary:
+
+- This slice changes only result audit packaging after the existing execution
+  boundary returns.
+- It does not change code-review validation, stale-input checks, static-rule
+  validation, R sandbox behavior, output validation, terminal-failure routing,
+  repair policy, compare, dependency planning, provider calls, or UI behavior.
+- This is not a sandbox-hardening slice. Stronger OS/container isolation remains
+  separate production work.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_execution_agent_io tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_terminal_failure_agent_io -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
