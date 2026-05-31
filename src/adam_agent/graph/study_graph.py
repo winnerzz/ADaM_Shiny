@@ -753,9 +753,7 @@ def _make_dataset_task(
 def _dependency_status(dependencies: list[str]) -> str:
     if not dependencies:
         return "foundation"
-    if dependencies == ["ADSL"]:
-        return "depends_on_adsl"
-    return "depends_on_adam"
+    return "depends_on_upstream_adam"
 
 
 def _run_dataset_tasks(tasks: list[DatasetTask]) -> list[DatasetGraphState]:

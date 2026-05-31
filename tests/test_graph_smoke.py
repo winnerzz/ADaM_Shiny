@@ -34,6 +34,7 @@ try:
     from adam_agent.graph.study_graph import compile_study_graph
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import HumanCommand
+    from adam_agent.schemas.states import DatasetResultSummary
     from adam_agent.tools.artifacts import sha256_file
 except ModuleNotFoundError:
     SRC = ROOT / "src"
@@ -56,6 +57,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.study_graph import compile_study_graph
     from adam_agent.schemas.artifacts import ArtifactRef
     from adam_agent.schemas.graph_state import HumanCommand
+    from adam_agent.schemas.states import DatasetResultSummary
     from adam_agent.tools.artifacts import sha256_file
 
 
@@ -1960,6 +1962,55 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn({"dataset": "ADTTE", "reason": "blocked_by_dependency", "blocked_by": "ADLB"}, result["blocked_datasets"])
         self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
+
+    def test_study_graph_dependency_status_is_generic_for_upstream_adam(self) -> None:
+        study_dir = _workspace_dir("lg2_generic_dependency_status") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ADAE.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        (spec_dir / "ADTTE.json").write_text(
+            json.dumps({"dataset": "ADTTE", "variables": [{"variable": "CNSR", "source_domains": ["ADLB"]}]}),
+            encoding="utf-8",
+        )
+        graph = compile_study_graph()
+        captured_tasks = []
+
+        def fake_invoke(task):
+            captured_tasks.append(dict(task))
+            return {
+                "summary": DatasetResultSummary(
+                    dataset=task["dataset"],
+                    status="completed",
+                    validation_status="passed_stub",
+                    compare_status="not_run_stub",
+                ),
+                "audit_artifacts": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+
+        with patch("adam_agent.graph.study_graph._invoke_dataset_task", side_effect=fake_invoke):
+            graph.invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_generic_dependency_status",
+                    "target_datasets": ["ADAE", "ADTTE"],
+                    "execution_mode": "stub",
+                    "study_dir": str(study_dir),
+                    "approved_dependency_datasets": ["ADSL", "ADLB"],
+                    "dataset_results": [],
+                    "blocked_datasets": [],
+                    "audit_artifacts": [],
+                }
+            )
+
+        statuses = {task["dataset"]: task["dependency_status"] for task in captured_tasks}
+        self.assertEqual(statuses["ADAE"], "depends_on_upstream_adam")
+        self.assertEqual(statuses["ADTTE"], "depends_on_upstream_adam")
+        self.assertNotIn("depends_on_adsl", statuses.values())
 
     def test_study_graph_writes_dependency_plan_review_artifacts(self) -> None:
         study_dir = _workspace_dir("phase73_dependency_review") / "PSY201"

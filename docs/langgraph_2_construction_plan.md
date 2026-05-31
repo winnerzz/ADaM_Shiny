@@ -4091,3 +4091,46 @@ Subagent review:
   same audit-manifest logic, product StudyGraph topology no longer exposes
   `*_stub` node names, DatasetGraph legacy stub coverage is not affected, and
   static-rule governance was untouched.
+
+### 2026-05-31 - LG2.8 Generic Dependency Status Label Slice
+
+Completed:
+
+- Replaced the StudyGraph task label `depends_on_adsl` with the generic
+  `depends_on_upstream_adam`.
+- Removed the ADSL-specific branch from `_dependency_status()`. Any dataset
+  with upstream ADaM dependencies now receives the same generic status label.
+- Added a smoke regression proving both an ADSL dependency and an ADLB
+  dependency produce `depends_on_upstream_adam`, not an ADSL-special case.
+
+Current boundary:
+
+- This is a task-label cleanup only. It does not change dependency planning,
+  execution batches, dependency approval semantics, DatasetGraph routing, LLM
+  generation, R execution, compare, UI state, or static-rule governance.
+- `ADSL` remains a normal ADaM dataset when evidence says a target depends on
+  it; it is not treated as a product template path.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_dependency_status_is_generic_for_upstream_adam tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "depends_on_adsl|depends_on_adam" src\adam_agent tests --glob "*.py"
+```
+
+Result: focused dependency-status regression passed; 235 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed. Source scan found no runtime use of the retired
+`depends_on_adsl` / `depends_on_adam` labels; the only remaining Python hit is
+the regression assertion that the old ADSL-specific label is absent.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that dependency scheduling is still controlled by
+  `dataset_dependencies` and `execution_batches`, not by the task label; the new
+  test is not order-sensitive under ThreadPool execution; DatasetGraph legacy
+  stub behavior and static-rule governance were untouched.

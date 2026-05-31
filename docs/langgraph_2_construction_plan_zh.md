@@ -3728,3 +3728,46 @@ src\adam_agent`，但当前 workspace 的既有 `__pycache__` 路径写入被
 - 审核确认：本切片只是围绕同一套 audit-manifest 逻辑重命名 node/function；
   产品 StudyGraph topology 不再暴露 `*_stub` node name；DatasetGraph legacy
   stub 覆盖没有被影响；static-rule governance 未被触碰。
+
+### 2026-05-31 - LG2.8 通用 Dependency Status Label 切片
+
+已完成：
+
+- 将 StudyGraph task label `depends_on_adsl` 替换为通用
+  `depends_on_upstream_adam`。
+- 从 `_dependency_status()` 移除 ADSL-specific 分支。任何带上游 ADaM 依赖的
+  dataset 现在都会得到同一个通用状态标签。
+- 新增 smoke regression，证明 ADSL dependency 和 ADLB dependency 都会产生
+  `depends_on_upstream_adam`，不会再产生 ADSL special case。
+
+当前边界：
+
+- 这是 task-label cleanup，不改变 dependency planning、execution batches、
+  dependency approval semantics、DatasetGraph routing、LLM generation、R
+  execution、compare、UI state 或 static-rule governance。
+- 当 evidence 显示目标依赖 ADSL 时，`ADSL` 仍是一个普通 ADaM dataset；系统不会
+  把它当作 product template path。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_dependency_status_is_generic_for_upstream_adam tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "depends_on_adsl|depends_on_adam" src\adam_agent tests --glob "*.py"
+```
+
+结果：focused dependency-status regression passed；235 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。Source scan 未发现 retired
+`depends_on_adsl` / `depends_on_adam` label 的运行时代码使用；唯一剩余 Python
+命中是回归断言，确认旧的 ADSL-specific label 不存在。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：dependency scheduling 仍由 `dataset_dependencies` 和
+  `execution_batches` 控制，而不是由 task label 控制；新测试在 ThreadPool
+  execution 下不依赖完成顺序；DatasetGraph legacy stub behavior 和 static-rule
+  governance 未被触碰。
