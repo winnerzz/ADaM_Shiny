@@ -99,6 +99,7 @@ class RunProgressResponse(StrictBaseModel):
     status: str
     next_action: str
     action_label: str
+    output_quality_rollup: dict[str, Any] = Field(default_factory=dict)
     current_interrupt: dict[str, Any] | None = None
     dependency_review_status: str | None = None
     plan_stale: bool = False

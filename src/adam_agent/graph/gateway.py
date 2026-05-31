@@ -19,7 +19,7 @@ from adam_agent.graph.execution_modes import (
     GRAPH_PRODUCT_GENERATE_CODE_MODE,
     GRAPH_PRODUCT_PREPARE_MODE,
 )
-from adam_agent.graph.output_quality import dataset_output_quality
+from adam_agent.graph.output_quality import dataset_output_quality, study_output_quality_rollup
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
@@ -2269,7 +2269,11 @@ class GraphGateway:
         root = Path(study_dir).expanduser()
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
         datasets = [_dataset_progress_item(graph_state, dataset) for dataset in _progress_dataset_order(graph_state)]
-        next_item = _study_next_action(graph_state, datasets)
+        output_quality_rollup = study_output_quality_rollup(
+            datasets,
+            target_datasets=graph_state.target_datasets,
+        )
+        next_item = _study_next_action(graph_state, datasets, output_quality_rollup=output_quality_rollup)
         run_dir = root / "runs" / run_id
         return {
             "study_id": graph_state.study_id,
@@ -2277,6 +2281,7 @@ class GraphGateway:
             "status": graph_state.status,
             "next_action": next_item["next_action"],
             "action_label": next_item["action_label"],
+            "output_quality_rollup": output_quality_rollup,
             "current_interrupt": _interrupt_payload(graph_state.current_interrupt),
             "dependency_review_status": graph_state.dependency_review_status,
             "plan_stale": bool(graph_state.dependency_plan.get("plan_stale")),
@@ -2929,7 +2934,12 @@ def _progress_dataset_order(state: StudyRunState) -> list[str]:
     return datasets
 
 
-def _study_next_action(state: StudyRunState, datasets: list[dict[str, Any]]) -> dict[str, str]:
+def _study_next_action(
+    state: StudyRunState,
+    datasets: list[dict[str, Any]],
+    *,
+    output_quality_rollup: dict[str, Any] | None = None,
+) -> dict[str, str]:
     if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
         return {
             "next_action": "replan_dependencies",
@@ -2959,7 +2969,19 @@ def _study_next_action(state: StudyRunState, datasets: list[dict[str, Any]]) -> 
                 "action_label": f"{item['dataset']}: {item.get('action_label') or 'Continue workflow'}",
             }
     if state.status == "completed":
-        return {"next_action": "complete", "action_label": "All planned datasets are complete."}
+        quality = output_quality_rollup or study_output_quality_rollup(datasets, target_datasets=state.target_datasets)
+        completion_quality = str(quality.get("completion_quality") or "")
+        if completion_quality == "review_only_complete":
+            return {
+                "next_action": "review_outputs",
+                "action_label": "All planned datasets have review-only/demo outputs. They are not runtime dependency evidence.",
+            }
+        if completion_quality == "mixed_output_quality_complete":
+            return {
+                "next_action": "review_outputs",
+                "action_label": "Planned datasets are complete, but some outputs are review-only/demo outputs.",
+            }
+        return {"next_action": "complete", "action_label": "All planned datasets have real runtime outputs."}
     return {"next_action": "prepare_dependency_plan", "action_label": "Prepare or refresh the dependency plan."}
 
 
@@ -3031,7 +3053,19 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
             "action_label": "Review execution diagnostics and choose a controlled follow-up.",
         }
     if dataset_state.status in {"completed", "completed_stub"}:
-        return {"next_action": "complete", "action_label": "Generated output is available for review and compare."}
+        output_quality = dataset_output_quality(
+            status=dataset_state.status,
+            code_state=dataset_state.code_state,
+            execution_state=dataset_state.execution_state,
+            validation_summary=dataset_state.validation_summary,
+        )
+        quality_status = str(output_quality.get("quality_status") or "")
+        if quality_status in {"structural_stub", "not_real_derivation"}:
+            return {
+                "next_action": "complete",
+                "action_label": "Review-only/demo output is available. It cannot satisfy downstream runtime dependencies.",
+            }
+        return {"next_action": "complete", "action_label": "Real runtime output is available for review and compare."}
     spec_status = str(dataset_state.spec_state.get("status") or "").strip()
     code_status = str(dataset_state.code_state.get("status") or "").strip()
     execution_status = str(dataset_state.execution_state.get("status") or "").strip()

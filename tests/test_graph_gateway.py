@@ -111,6 +111,37 @@ class GraphGatewayTests(unittest.TestCase):
                 self.assertEqual(quality["quality_status"], expected_status)
                 self.assertEqual(quality["runtime_dependency_eligible"], expected_eligible)
 
+    def test_study_output_quality_rollup_distinguishes_review_only_completion(self) -> None:
+        from adam_agent.graph.output_quality import study_output_quality_rollup
+
+        rollup = study_output_quality_rollup(
+            [
+                {
+                    "dataset": "ADSL",
+                    "output_quality": dataset_output_quality(
+                        status="completed",
+                        execution_state={
+                            "status": "completed",
+                            "generation_quality": {"not_real_derivation": True},
+                        },
+                    ),
+                },
+                {
+                    "dataset": "ADAE",
+                    "output_quality": dataset_output_quality(
+                        status="completed_stub",
+                        validation_summary={"status": "structural_stub_pass"},
+                    ),
+                },
+            ],
+            target_datasets=["ADSL", "ADAE"],
+        )
+
+        self.assertEqual(rollup["completion_quality"], "review_only_complete")
+        self.assertEqual(rollup["review_only_outputs"], 2)
+        self.assertEqual(rollup["real_runtime_outputs"], 0)
+        self.assertEqual(rollup["runtime_dependency_eligible_outputs"], 0)
+
     def test_generation_quality_marks_only_mock_signals_as_not_real(self) -> None:
         cases = [
             (
@@ -2550,6 +2581,9 @@ class GraphGatewayTests(unittest.TestCase):
             study_dir=study_dir,
             run_id="run_lg2_progress_not_real_output",
         ).model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
         state.datasets["ADSL"].status = "completed"
         state.datasets["ADSL"].code_state = {
             "status": "approved",
@@ -2581,6 +2615,54 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(quality["runtime_dependency_eligible"])
         self.assertTrue(quality["not_real_derivation"])
         self.assertIn("not_real_derivation", " ".join(by_dataset["ADSL"]["warnings"]))
+        self.assertEqual(progress["output_quality_rollup"]["completion_quality"], "review_only_complete")
+        self.assertEqual(progress["output_quality_rollup"]["review_only_outputs"], 1)
+        self.assertEqual(progress["output_quality_rollup"]["real_runtime_outputs"], 0)
+        self.assertEqual(progress["next_action"], "review_outputs")
+        self.assertIn("review-only/demo outputs", progress["action_label"])
+        self.assertEqual(by_dataset["ADSL"]["next_action"], "complete")
+        self.assertIn("Review-only/demo output", by_dataset["ADSL"]["action_label"])
+
+    def test_gateway_progress_summary_marks_mixed_completion_quality(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_mixed_output_quality") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_mixed_output_quality",
+            target_datasets=["ADSL", "ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_mixed_output_quality",
+        ).model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+        }
+        state.datasets["ADSL"].validation_summary = {"status": "pass"}
+        state.datasets["ADAE"].status = "completed_stub"
+        state.datasets["ADAE"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "stubbed_r_execution": True,
+        }
+        state.datasets["ADAE"].validation_summary = {"status": "structural_stub_pass"}
+        gateway._persist_graph_state(study_dir, state, node="test_seed_mixed_quality_progress")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_mixed_output_quality")
+
+        self.assertEqual(progress["output_quality_rollup"]["completion_quality"], "mixed_output_quality_complete")
+        self.assertEqual(progress["output_quality_rollup"]["real_runtime_outputs"], 1)
+        self.assertEqual(progress["output_quality_rollup"]["review_only_outputs"], 1)
+        self.assertEqual(progress["next_action"], "review_outputs")
+        self.assertIn("some outputs are review-only/demo", progress["action_label"])
 
     def test_gateway_progress_summary_prioritizes_stale_plan_replan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_progress_stale") / "PSY201"

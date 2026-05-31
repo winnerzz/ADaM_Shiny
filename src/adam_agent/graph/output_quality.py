@@ -6,7 +6,7 @@ not decide clinical correctness and they do not mutate run state.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 
@@ -90,5 +90,97 @@ def dataset_output_quality(
     }
 
 
+def study_output_quality_rollup(
+    dataset_progress: Iterable[Mapping[str, Any]],
+    *,
+    target_datasets: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Summarize target output quality without changing graph state."""
+
+    by_dataset: dict[str, Mapping[str, Any]] = {}
+    ordered_datasets: list[str] = []
+    for item in dataset_progress:
+        dataset = str(item.get("dataset") or "").strip().upper()
+        if not dataset:
+            continue
+        by_dataset[dataset] = item
+        if dataset not in ordered_datasets:
+            ordered_datasets.append(dataset)
+
+    target_names = _normalized_names(target_datasets)
+    if not target_names:
+        target_names = ordered_datasets
+
+    status_counts: dict[str, int] = {}
+    real_runtime_outputs = 0
+    review_only_outputs = 0
+    terminal_failure_outputs = 0
+    not_completed_outputs = 0
+    runtime_dependency_eligible_outputs = 0
+
+    for dataset in target_names:
+        item = by_dataset.get(dataset, {})
+        quality = _mapping(item.get("output_quality"))
+        quality_status = str(quality.get("quality_status") or "not_completed").strip() or "not_completed"
+        status_counts[quality_status] = status_counts.get(quality_status, 0) + 1
+        if quality_status == "real_runtime_output":
+            real_runtime_outputs += 1
+        elif quality_status in {"structural_stub", "not_real_derivation"}:
+            review_only_outputs += 1
+        elif quality_status == "terminal_failure":
+            terminal_failure_outputs += 1
+        else:
+            not_completed_outputs += 1
+        if quality.get("runtime_dependency_eligible") is True:
+            runtime_dependency_eligible_outputs += 1
+
+    total_targets = len(target_names)
+    if total_targets == 0:
+        completion_quality = "no_targets"
+    elif terminal_failure_outputs:
+        completion_quality = "terminal_failure_present"
+    elif not_completed_outputs:
+        completion_quality = "in_progress"
+    elif real_runtime_outputs == total_targets:
+        completion_quality = "real_runtime_complete"
+    elif review_only_outputs == total_targets:
+        completion_quality = "review_only_complete"
+    elif real_runtime_outputs and review_only_outputs:
+        completion_quality = "mixed_output_quality_complete"
+    else:
+        completion_quality = "unknown"
+
+    warnings: list[str] = []
+    if review_only_outputs:
+        warnings.append(
+            "One or more planned outputs are review-only/demo outputs and cannot satisfy downstream runtime dependencies."
+        )
+    if terminal_failure_outputs:
+        warnings.append("One or more planned outputs ended in terminal failure.")
+    if not_completed_outputs:
+        warnings.append("One or more planned outputs are not complete yet.")
+
+    return {
+        "completion_quality": completion_quality,
+        "total_targets": total_targets,
+        "real_runtime_outputs": real_runtime_outputs,
+        "review_only_outputs": review_only_outputs,
+        "terminal_failure_outputs": terminal_failure_outputs,
+        "not_completed_outputs": not_completed_outputs,
+        "runtime_dependency_eligible_outputs": runtime_dependency_eligible_outputs,
+        "quality_status_counts": status_counts,
+        "warnings": warnings,
+    }
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _normalized_names(values: Iterable[str] | None) -> list[str]:
+    names: list[str] = []
+    for value in values or []:
+        name = str(value or "").strip().upper()
+        if name and name not in names:
+            names.append(name)
+    return names

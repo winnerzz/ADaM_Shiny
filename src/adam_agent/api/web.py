@@ -2239,7 +2239,7 @@ INDEX_HTML = r"""<!doctype html>
       byId('metricTargets').textContent = String(targets.length);
       byId('metricRunnable').textContent = String(runnable.length);
       byId('metricBlocked').textContent = String(blocked.length);
-      setPill('graphStatus', progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting'));
+      setPill('graphStatus', studyStatusPill(progress, blocked, targets));
       renderStudyProgress(targets, runnable, blocked);
       renderHumanReviewQueue();
       renderDependencyGraph(targets, runnable, blocked);
@@ -2292,6 +2292,7 @@ INDEX_HTML = r"""<!doctype html>
             : 'No study loaded',
         detail: [
           progress?.status ? `Graph status: ${progress.status}.` : state.graphState?.status ? `Graph status: ${state.graphState.status}.` : '',
+          progress?.output_quality_rollup ? studyQualityText(progress.output_quality_rollup) : '',
           progress?.plan_stale ? 'Dependency plan is stale after input changes.' : '',
           progress?.current_interrupt ? `Open gate: ${readableInterruptName(progress.current_interrupt.name)}.` : interrupt ? `Open gate: ${interrupt}.` : '',
           activeNext
@@ -2299,6 +2300,29 @@ INDEX_HTML = r"""<!doctype html>
         action: progress?.next_action || studyNextActionPill(active, activeStatus, blocked, inputCount),
         steps
       };
+    }
+
+    function studyStatusPill(progress, blocked, targets) {
+      if (progress?.output_quality_rollup?.completion_quality === 'review_only_complete') return 'review only';
+      if (progress?.output_quality_rollup?.completion_quality === 'mixed_output_quality_complete') return 'mixed output';
+      return progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+    }
+
+    function studyQualityText(rollup) {
+      const quality = rollup?.completion_quality || '';
+      if (quality === 'review_only_complete') {
+        return `Output quality: ${rollup.review_only_outputs || 0} review-only/demo output(s); none can satisfy downstream runtime dependencies.`;
+      }
+      if (quality === 'mixed_output_quality_complete') {
+        return `Output quality: ${rollup.real_runtime_outputs || 0} real runtime output(s), ${rollup.review_only_outputs || 0} review-only/demo output(s).`;
+      }
+      if (quality === 'real_runtime_complete') {
+        return `Output quality: ${rollup.real_runtime_outputs || 0} real runtime output(s).`;
+      }
+      if (quality === 'terminal_failure_present') {
+        return 'Output quality: at least one target ended in terminal failure.';
+      }
+      return '';
     }
 
     function datasetProgressFor(target) {
