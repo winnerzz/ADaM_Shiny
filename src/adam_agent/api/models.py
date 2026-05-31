@@ -495,6 +495,9 @@ class RunReviewSummary(StrictBaseModel):
     run_id: str
     run_dir: str
     status: str
+    read_model_source: str = "unknown"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
     plain_summary: str
     input_summary: StudyInputSummary
     dataset_reviews: list[DatasetReview] = Field(default_factory=list)

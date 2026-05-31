@@ -2729,6 +2729,9 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["read_model_source"], "artifact_fallback")
+        self.assertIsNone(response.json()["graph_state_path"])
+        self.assertIsNone(response.json()["workflow_state_path"])
         reviews = response.json()["dataset_reviews"]
         self.assertIn("2 dataset(s) have real runtime output", response.json()["plain_summary"])
         self.assertEqual({item["dataset"] for item in reviews}, {"ADSL", "ADAE"})
@@ -2792,6 +2795,9 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["read_model_source"], "workflow_state_fallback")
+        self.assertIsNone(response.json()["graph_state_path"])
+        self.assertTrue(response.json()["workflow_state_path"].endswith("runs/run_not_real_quality/workflow_state.json"))
         review = response.json()["dataset_reviews"][0]
         self.assertIn("0 dataset(s) have real runtime output", response.json()["plain_summary"])
         self.assertIn("1 review-only/demo output(s)", response.json()["plain_summary"])
@@ -2859,6 +2865,11 @@ class Phase8ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["study_id"], "MY_STUDY")
+        self.assertEqual(response.json()["status"], "completed")
+        self.assertEqual(response.json()["read_model_source"], "graph_state")
+        self.assertTrue(response.json()["graph_state_path"].endswith("runs/run_graph_review_authority/graph_state.json"))
+        self.assertIsNone(response.json()["workflow_state_path"])
         review = response.json()["dataset_reviews"][0]
         self.assertIn("0 dataset(s) have real runtime output", response.json()["plain_summary"])
         self.assertIn("1 review-only/demo output(s)", response.json()["plain_summary"])

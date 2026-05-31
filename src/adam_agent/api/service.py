@@ -955,13 +955,30 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         _dataset_review(root, run_id, dataset, manifest, workflow_state, graph_state)
         for dataset in datasets
     ]
-    status = str(manifest.get("status") or _status_from_reviews(dataset_reviews))
+    status = str(
+        (graph_state.status if graph_state is not None else "")
+        or manifest.get("status")
+        or workflow_state.get("status")
+        or _status_from_reviews(dataset_reviews)
+    )
+    read_model_source = (
+        "graph_state"
+        if graph_state is not None
+        else "workflow_state_fallback"
+        if workflow_state
+        else "artifact_fallback"
+    )
+    graph_state_path = run_dir / "graph_state.json"
+    workflow_state_path = run_dir / "workflow_state.json"
 
     return RunReviewSummary(
-        study_id=study_id,
+        study_id=graph_state.study_id if graph_state is not None else study_id,
         run_id=run_id,
         run_dir=str(run_dir.as_posix()),
         status=status,
+        read_model_source=read_model_source,
+        graph_state_path=str(graph_state_path.as_posix()) if graph_state is not None else None,
+        workflow_state_path=str(workflow_state_path.as_posix()) if graph_state is None and workflow_state_path.exists() else None,
         plain_summary=_plain_run_summary(status, dataset_reviews),
         input_summary=input_summary,
         dataset_reviews=dataset_reviews,
