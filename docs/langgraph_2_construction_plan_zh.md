@@ -4391,3 +4391,42 @@ python -B -m unittest tests.test_agents_contract -v
 python -B -m unittest tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/agents/contracts.py'), pathlib.Path('src/adam_agent/agents/__init__.py'), pathlib.Path('tests/test_agents_contract.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Evidence Agent IO Migration 切片
+
+已完成：
+
+- 将现有 DatasetGraph `prepare_product_context` evidence-agent 节点迁到新的
+  typed agent IO packages：
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+- evidence-agent input 现在记录明确的 task、execution mode、
+  dependency-resolution 数量、是否强制重新生成 draft spec、risk flags、
+  evidence bundle id、reference query ids。
+- evidence-agent output 现在包住这个节点已有的 evidence decisions：
+  - `input_spec_ready`
+  - `approved_draft_spec_ready`
+  - `draft_spec_required`
+- 这个节点的现有 `agent_decisions` 现在来自 typed evidence-agent output，
+  不再单独手写一份。
+- Dataset summary metadata 暴露 `agent_node_inputs` 和 `agent_node_outputs`；
+  StudyGraph batch execution 会把这些 packages 带到 study audit manifest
+  metadata。
+- 增加 focused smoke tests，证明直接 DatasetGraph path 和 StudyGraph batch
+  path 都能保留 evidence-agent IO package。
+
+当前边界：
+
+- 本切片只迁移 evidence/product-context 节点。
+- 不改变 dependency planning、spec generation、code generation、code review、
+  R execution、compare、static rules 或 repair routing。
+- IO packages 是 audit/read-model 数据；不解锁 workflow gate，也不成为第二套
+  state machine。
+- 后续可以按角色逐步迁移 spec/code/static/execution/validation/repair 节点。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('src/adam_agent/graph/state.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

@@ -736,10 +736,17 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertFalse(result["draft_spec_required"])
         self.assertNotIn("generated_code", result)
         self.assertTrue((study_dir / "runs" / "run_lg2_product_prepare_spec" / "llm" / "adae_context.json").exists())
+        self.assertEqual(result["agent_node_inputs"][0]["agent"], "evidence_agent")
+        self.assertEqual(result["agent_node_inputs"][0]["node"], "prepare_product_context")
+        self.assertEqual(result["agent_node_inputs"][0]["dataset"], "ADAE")
+        self.assertEqual(result["agent_node_outputs"][0]["agent"], "evidence_agent")
+        self.assertEqual(result["agent_node_outputs"][0]["decision"], "input_spec_ready")
+        self.assertEqual(result["agent_decisions"][0], result["agent_node_outputs"][0]["agent_decisions"][0])
         summary = result["summary"]
         self.assertEqual(summary.status, "needs_review")
         self.assertEqual(summary.metadata["next_action"], "generate_code")
         self.assertEqual(summary.metadata["spec_source"], "input_spec")
+        self.assertEqual(summary.metadata["agent_node_outputs"][0]["decision"], "input_spec_ready")
 
     def test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review(self) -> None:
         study_dir = _workspace_dir("lg2_dataset_product_prepare_missing_spec") / "PSY201"
@@ -860,8 +867,15 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("evidence_agent", agents)
         self.assertIn("code_agent", agents)
         self.assertIn("static_review_agent", agents)
+        evidence_inputs = [item for item in result["agent_node_inputs"] if item["agent"] == "evidence_agent"]
+        evidence_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "evidence_agent"]
+        self.assertTrue(evidence_inputs)
+        self.assertTrue(evidence_outputs)
+        self.assertEqual(evidence_inputs[0]["node"], "prepare_product_context")
+        self.assertEqual(evidence_outputs[0]["decision"], "input_spec_ready")
         self.assertIn("static_check_limited_scope", result["risk_flags"])
         self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
+        self.assertEqual(result["audit_manifest"].metadata["agent_node_outputs"][0]["agent"], "evidence_agent")
         self.assertEqual(result["agent_audit_summary"]["summary_writer"]["agent"], "audit_agent")
         self.assertIn("ADAE", result["agent_audit_summary"]["datasets"])
         self.assertIn(

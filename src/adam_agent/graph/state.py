@@ -108,6 +108,10 @@ class DatasetGraphState(TypedDict, total=False):
     target_context_builder: object
     force_new_draft_spec: bool
     legacy_stub_graph_enabled: bool
+    evidence_bundle_id: str
+    reference_queries: list[dict[str, object]]
+    agent_node_inputs: Annotated[list[dict[str, object]], operator.add]
+    agent_node_outputs: Annotated[list[dict[str, object]], operator.add]
     real_run_completed: bool
     real_run_error: str
     real_run_artifacts: dict[str, ArtifactRef]
@@ -162,6 +166,8 @@ class StudyGraphState(TypedDict, total=False):
     blocked_datasets: Annotated[list[BlockedDataset], operator.add]
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
     agent_decisions: Annotated[list[dict[str, object]], operator.add]
+    agent_node_inputs: Annotated[list[dict[str, object]], operator.add]
+    agent_node_outputs: Annotated[list[dict[str, object]], operator.add]
     risk_flags: Annotated[list[str], operator.add]
     agent_audit_summary: dict[str, object]
     audit_manifest: ArtifactRef

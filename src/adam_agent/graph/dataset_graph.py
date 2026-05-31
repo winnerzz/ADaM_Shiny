@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from langgraph.graph import END, START, StateGraph
 
-from adam_agent.agents import record_agent_decision
+from adam_agent.agents import build_agent_node_input, build_agent_node_output, record_agent_decision
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
 from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
 from adam_agent.graph.execution_modes import (
@@ -196,6 +196,7 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
     """Prepare real product context and stop at the first spec gate."""
 
     study_dir = state.get("study_dir")
+    evidence_input = _evidence_agent_input(state)
     if not study_dir:
         return {
             "status": "failed",
@@ -233,6 +234,14 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
         }
 
     if context.target_spec is not None:
+        evidence_output = _evidence_agent_output(
+            state,
+            decision="input_spec_ready",
+            status="needs_review",
+            reason="A user-supplied input_spec was found; draft spec generation is not needed.",
+            outputs={"spec_source": "input_spec", "next_action": "generate_code"},
+            artifact_ids=[context_artifact.artifact_id],
+        )
         return {
             "status": "needs_review",
             "route": "human_review",
@@ -245,18 +254,9 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "input_spec_path": context.target_spec.get("path"),
             "draft_spec_required": False,
             "next_action": "generate_code",
-            "agent_decisions": [
-                record_agent_decision(
-                    agent="evidence_agent",
-                    node="prepare_product_context",
-                    decision="input_spec_ready",
-                    dataset=state["dataset"],
-                    status="needs_review",
-                    reason="A user-supplied input_spec was found; draft spec generation is not needed.",
-                    outputs={"spec_source": "input_spec", "next_action": "generate_code"},
-                    artifact_ids=[context_artifact.artifact_id],
-                )
-            ],
+            "agent_node_inputs": [evidence_input],
+            "agent_node_outputs": [evidence_output],
+            "agent_decisions": list(evidence_output["agent_decisions"]),
             "sandbox_runs": 0,
         }
 
@@ -280,6 +280,14 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "Generated code can use a user-approved draft spec because no approved input_spec was supplied."
         )
         context_artifact = write_llm_context_package(context, study_dir)
+        evidence_output = _evidence_agent_output(
+            state,
+            decision="approved_draft_spec_ready",
+            status="needs_review",
+            reason="A graph-approved draft spec was found for code generation.",
+            outputs={"spec_source": "approved_draft_spec", "next_action": "generate_code"},
+            artifact_ids=[context_artifact.artifact_id],
+        )
         return {
             "status": "needs_review",
             "route": "human_review",
@@ -292,21 +300,21 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
             "draft_spec_required": True,
             "approved_spec_path": approved_payload.get("path"),
             "next_action": "generate_code",
-            "agent_decisions": [
-                record_agent_decision(
-                    agent="evidence_agent",
-                    node="prepare_product_context",
-                    decision="approved_draft_spec_ready",
-                    dataset=state["dataset"],
-                    status="needs_review",
-                    reason="A graph-approved draft spec was found for code generation.",
-                    outputs={"spec_source": "approved_draft_spec", "next_action": "generate_code"},
-                    artifact_ids=[context_artifact.artifact_id],
-                )
-            ],
+            "agent_node_inputs": [evidence_input],
+            "agent_node_outputs": [evidence_output],
+            "agent_decisions": list(evidence_output["agent_decisions"]),
             "sandbox_runs": 0,
         }
 
+    evidence_output = _evidence_agent_output(
+        state,
+        decision="draft_spec_required",
+        status="needs_review",
+        reason="No approved input_spec or current approved draft spec was found.",
+        outputs={"spec_source": "missing_input_spec", "next_action": "draft_spec"},
+        risk_flags=["missing_input_spec"],
+        artifact_ids=[context_artifact.artifact_id],
+    )
     return {
         "status": "needs_review",
         "route": "human_review",
@@ -318,22 +326,60 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
         "spec_source": "missing_input_spec",
         "draft_spec_required": True,
         "next_action": "draft_spec",
-        "agent_decisions": [
-            record_agent_decision(
-                agent="evidence_agent",
-                node="prepare_product_context",
-                decision="draft_spec_required",
-                dataset=state["dataset"],
-                status="needs_review",
-                reason="No approved input_spec or current approved draft spec was found.",
-                outputs={"spec_source": "missing_input_spec", "next_action": "draft_spec"},
-                risk_flags=["missing_input_spec"],
-                artifact_ids=[context_artifact.artifact_id],
-            )
-        ],
+        "agent_node_inputs": [evidence_input],
+        "agent_node_outputs": [evidence_output],
+        "agent_decisions": list(evidence_output["agent_decisions"]),
         "risk_flags": ["missing_input_spec"],
         "sandbox_runs": 0,
     }
+
+
+def _evidence_agent_input(state: DatasetGraphState) -> dict[str, object]:
+    return build_agent_node_input(
+        agent="evidence_agent",
+        node="prepare_product_context",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        task="Prepare the explicit evidence context and decide which spec gate should run next.",
+        inputs={
+            "execution_mode": state.get("execution_mode"),
+            "dependency_resolution_count": len(state.get("dependency_resolution", [])),
+            "force_new_draft_spec": bool(state.get("force_new_draft_spec")),
+        },
+        risk_flags=list(state.get("risk_flags", [])),
+        evidence_bundle_id=state.get("evidence_bundle_id"),
+        reference_query_ids=[
+            str(item.get("query_id"))
+            for item in state.get("reference_queries", [])
+            if isinstance(item, dict) and item.get("query_id")
+        ],
+    )
+
+
+def _evidence_agent_output(
+    state: DatasetGraphState,
+    *,
+    decision: str,
+    status: str,
+    reason: str,
+    outputs: dict[str, object],
+    artifact_ids: list[str],
+    risk_flags: list[str] | None = None,
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="evidence_agent",
+        node="prepare_product_context",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        status=status,
+        decision=decision,
+        reason=reason,
+        outputs=outputs,
+        artifact_ids=artifact_ids,
+        risk_flags=risk_flags or [],
+    )
 
 
 def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
@@ -1059,6 +1105,8 @@ def summarize_product_prepare(state: DatasetGraphState) -> DatasetGraphState:
             "code_expected_outputs": state.get("code_expected_outputs", []),
             "warnings": state.get("product_context_warnings", []),
             "agent_decisions": state.get("agent_decisions", []),
+            "agent_node_inputs": state.get("agent_node_inputs", []),
+            "agent_node_outputs": state.get("agent_node_outputs", []),
             "risk_flags": state.get("risk_flags", []),
         },
     )

@@ -4797,3 +4797,43 @@ python -B -m unittest tests.test_agents_contract -v
 python -B -m unittest tests.test_graph_gateway -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/agents/contracts.py'), pathlib.Path('src/adam_agent/agents/__init__.py'), pathlib.Path('tests/test_agents_contract.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Evidence Agent IO Migration Slice
+
+Completed:
+
+- Migrated the existing DatasetGraph `prepare_product_context` evidence-agent
+  node to emit the new typed agent IO packages:
+  - `AgentNodeInput`
+  - `AgentNodeOutput`
+- The evidence-agent input records the explicit task, execution mode,
+  dependency-resolution count, forced draft-spec flag, risk flags, evidence
+  bundle id, and reference query ids.
+- The evidence-agent output now wraps the existing evidence decisions:
+  - `input_spec_ready`
+  - `approved_draft_spec_ready`
+  - `draft_spec_required`
+- Existing `agent_decisions` are now derived from the typed evidence-agent
+  output for this node, instead of being hand-built separately.
+- Dataset summaries expose `agent_node_inputs` and `agent_node_outputs` in
+  metadata, and StudyGraph batch execution carries these packages into the
+  study audit manifest metadata.
+- Added focused smoke tests proving both the direct DatasetGraph path and the
+  StudyGraph batch path preserve the evidence-agent IO package.
+
+Current boundary:
+
+- This slice migrates only the evidence/product-context node.
+- It does not change dependency planning, spec generation, code generation,
+  code review, R execution, compare, static rules, or repair routing.
+- The IO packages are audit/read-model data. They do not unlock workflow gates
+  and do not become a second state machine.
+- Later slices can migrate spec/code/static/execution/validation/repair nodes
+  one at a time.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_uses_input_spec_without_stub_code tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('src/adam_agent/graph/state.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

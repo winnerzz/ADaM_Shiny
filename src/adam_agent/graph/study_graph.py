@@ -194,6 +194,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
     dataset_results: list[DatasetResultSummary] = []
     audit_artifacts: list[ArtifactRef] = []
     agent_decisions: list[dict[str, object]] = []
+    agent_node_inputs: list[dict[str, object]] = []
+    agent_node_outputs: list[dict[str, object]] = []
     risk_flags: list[str] = []
     blocked_datasets = []
     completed: set[str] = set()
@@ -252,6 +254,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             dataset_results.append(summary)
             audit_artifacts.extend(result.get("audit_artifacts", []))
             agent_decisions.extend(result.get("agent_decisions", []))
+            agent_node_inputs.extend(result.get("agent_node_inputs", []))
+            agent_node_outputs.extend(result.get("agent_node_outputs", []))
             risk_flags.extend(result.get("risk_flags", []))
             if _summary_runtime_dependency_eligible(summary):
                 completed.add(summary.dataset)
@@ -265,6 +269,8 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
         "dataset_results": dataset_results,
         "audit_artifacts": audit_artifacts,
         "agent_decisions": agent_decisions,
+        "agent_node_inputs": agent_node_inputs,
+        "agent_node_outputs": agent_node_outputs,
         "risk_flags": risk_flags,
         "blocked_datasets": blocked_datasets,
     }
@@ -361,6 +367,8 @@ def _write_study_audit_manifest(
         "dependency_plan_artifact_id": planning_artifacts["plan_artifact"].artifact_id,
         "dependency_review_artifact_id": planning_artifacts["review_artifact"].artifact_id,
         "agent_decisions": state.get("agent_decisions", []),
+        "agent_node_inputs": state.get("agent_node_inputs", []),
+        "agent_node_outputs": state.get("agent_node_outputs", []),
         "risk_flags": state.get("risk_flags", []),
         "agent_audit_summary": agent_audit_summary,
     }
