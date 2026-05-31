@@ -439,6 +439,34 @@ Exit criteria:
 - Uploading new files invalidates stale dependency decisions when the input
   fingerprint changes.
 
+Current implementation status:
+
+- Done in `LangGraph-v2`:
+  - Dependency plans are stored in canonical `StudyRunState` and are bound to
+    the requested target set and current input fingerprint.
+  - The gateway rolls study status and `current_interrupt` up from durable
+    per-dataset state instead of letting each API path write its own version of
+    study progress.
+  - Multi-target planning is supported: `/runs/prepare` accepts multiple ADaM
+    targets, persists all requested dataset states, and keeps previous dataset
+    progress when a later plan/view action touches another target.
+  - Dependency decisions fail closed for missing or uncertain upstream ADaM
+    evidence. Reference ADaM is recognized as evidence for availability or
+    comparison, but not as a runtime dependency artifact or derivation
+    authority.
+  - Upload invalidation now marks affected canonical graph runs stale and
+    forces re-planning when the input fingerprint changes.
+  - UI target selection is split into planning targets and one active detail
+    target, so switching the active view does not erase other dataset state.
+- Boundary:
+  - This phase has graph-owned multi-target planning, state preservation,
+    dependency gating, and status rollup.
+  - Full automatic batch generation/review/execution for every checked target
+    is not complete. Draft-spec review, code review, and local execution still
+    operate on one active dataset at a time through graph-gateway gates.
+  - The current design intentionally does not silently auto-run upstream ADaM
+    dependencies; user dependency decisions remain explicit.
+
 ## 8. Phase LG2.4 - Multi-Agent Node Model
 
 Goal:
@@ -939,6 +967,32 @@ Exit criteria:
 - UI clearly distinguishes input spec, approved draft spec, reference ADaM, and
   generated output roles.
 
+Current implementation status:
+
+- Done in `LangGraph-v2`:
+  - The UI now reads graph-owned progress through `GET /runs/{run_id}/progress`
+    and refreshes graph read models after state-changing actions.
+  - The top status area shows the active operation, loaded study, active detail
+    target, graph-owned next action, and visible operation progress.
+  - Dataset cards persist and show per-dataset graph state, including
+    spec/code/execution/validation/compare status and agent-node trace context.
+  - Planning targets are visually separated from the active detail target.
+  - The dependency map now uses plain-language per-target cards that explain
+    evidence, graph decision, runtime meaning, and next action.
+  - Main workflow panes hide technical paths by default; path and source
+    metadata are kept in Advanced/audit surfaces.
+  - Reference ADaM is labeled as comparison/output-shape/dependency-availability
+    evidence only, not derivation authority.
+  - Button availability and disabled reasons are driven by graph progress, so
+    obvious blocked states are not left to backend errors alone.
+- Boundary:
+  - The UI is now much closer to a graph-state viewer, but it is still a local
+    browser UI over compatibility endpoints and read models.
+  - It does not yet drive a single native LangGraph run with interrupt resume
+    for all user actions.
+  - Code generation, review, and execution are still active-dataset actions,
+    while multi-target selection controls planning and dashboard context.
+
 ## 12. Phase LG2.8 - Compatibility And Deprecation
 
 Goal:
@@ -967,6 +1021,35 @@ Exit criteria:
 - No user-facing workflow regresses during migration.
 - New graph-native flow and old endpoint sequence converge to the same audit
   artifacts and UI state.
+
+Current implementation status:
+
+- Done in `LangGraph-v2`:
+  - The split-flow product endpoints delegate state transitions to
+    `GraphGateway` for dependency review, input finalization, draft-spec review,
+    code generation, code review, approved-code execution, terminal-failure
+    review, compare recording, upload invalidation, and read-model projection.
+  - `workflow_state.json` is treated as a compatibility projection/read model;
+    canonical product truth is `graph_state.json`.
+  - Compatibility responses include explicit `workflow_control` metadata so old
+    routes can be distinguished from graph-native product state.
+  - Legacy `/runs` LLM run-to-completion is blocked and routed toward the
+    split-flow review gates. Explicit `execution_mode="stub"` remains available
+    only for legacy compatibility and tests.
+  - Product DatasetGraph topology no longer includes legacy stub nodes; the old
+    stub chain is available only through the explicit legacy stub graph.
+  - ADSL remains on the unified ADaM LLM flow and is not wired back to the old
+    deterministic R-template product path.
+  - API/CLI paths now require explicit execution mode instead of silently
+    choosing stub behavior for mock-provider requests.
+- Boundary:
+  - This phase has largely cleaned up compatibility ownership and made legacy
+    behavior explicit.
+  - Native LangGraph interrupt/checkpointer resume for the entire product flow
+    is still not fully replacing the compatibility endpoint sequence.
+  - `workflow_state.json` remains for UI/API compatibility, but new workflow
+    logic should continue to enter through GraphGateway and canonical graph
+    state.
 
 ## 13. Recommended Execution Order
 

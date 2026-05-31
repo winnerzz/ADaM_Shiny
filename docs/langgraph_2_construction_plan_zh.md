@@ -374,6 +374,30 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
 - 如果用户拒绝系统生成依赖，下游 datasets 保持 blocked，并显示明确 action message。
 - 上传新文件导致 input fingerprint 变化时，旧 dependency decisions 会失效。
 
+当前实现状态：
+
+- 已在 `LangGraph-v2` 完成：
+  - Dependency plan 已写入 canonical `StudyRunState`，并绑定 requested targets
+    和当前 input fingerprint。
+  - Gateway 会从持久化的 per-dataset state 汇总 study status 和
+    `current_interrupt`，不再让每个 API 路径各自写一套 study progress。
+  - 支持 multi-target planning：`/runs/prepare` 可以一次接收多个 ADaM target，
+    持久化所有 requested dataset state，并在后续 plan/view 其他 target 时保留
+    已有 dataset progress。
+  - 缺失或不确定的上游 ADaM evidence 会 fail closed。Reference ADaM 可以作为
+    availability 或 comparison evidence，但不能作为 runtime dependency artifact
+    或 derivation authority。
+  - 上传文件变更后会标记受影响的 canonical graph runs 为 stale，并在 input
+    fingerprint 变化时强制重新规划。
+  - UI target 选择已拆成 planning targets 和单个 active detail target，所以切换
+    当前查看对象不会抹掉其他 dataset state。
+- 边界：
+  - 当前已完成 graph-owned multi-target planning、状态保留、依赖闸门和状态汇总。
+  - 还没有完成“对所有勾选 target 自动批量生成/审核/执行”。Draft-spec review、
+    code review 和 local execution 仍是一次处理一个 active dataset，通过
+    graph-gateway gate 控制。
+  - 当前设计仍然不会静默自动运行上游 ADaM 依赖；用户依赖决策必须显式记录。
+
 ## 8. Phase LG2.4 - 多智能体节点模型
 
 目标：
@@ -808,6 +832,30 @@ LG2.6 当前 slice 验证：
 - UI 从 graph state 显示下一步需要的人类动作。
 - UI 清楚区分 input spec、approved draft spec、reference ADaM、generated output 的角色。
 
+当前实现状态：
+
+- 已在 `LangGraph-v2` 完成：
+  - UI 通过 `GET /runs/{run_id}/progress` 读取 graph-owned progress，并在
+    state-changing actions 后刷新 graph read models。
+  - 顶部状态区显示当前操作、已加载 study、active detail target、graph-owned
+    next action，以及可见的操作进度。
+  - Dataset cards 会保留并展示 per-dataset graph state，包括 spec/code/
+    execution/validation/compare 状态和 agent-node trace context。
+  - Planning targets 与 active detail target 在界面上分开显示。
+  - Dependency map 改成面向用户的逐 target 说明卡，解释 evidence、graph
+    decision、runtime meaning 和 next action。
+  - 主流程默认隐藏技术路径；path 和 source metadata 放在 Advanced/audit 表面。
+  - Reference ADaM 被明确标注为 comparison/output-shape/dependency-availability
+    evidence，不是 derivation authority。
+  - 按钮可用性和 disabled reason 由 graph progress 驱动，明显 blocked 的状态不会只等
+    后端报错。
+- 边界：
+  - UI 已经更接近 graph-state viewer，但仍是运行在 compatibility endpoints 和
+    read models 之上的本地浏览器 UI。
+  - 它还没有变成一个完全 native LangGraph run + interrupt resume 的前端。
+  - Code generation、review、execution 仍是 active-dataset 动作；multi-target
+    selection 目前控制 planning 和 dashboard context。
+
 ## 12. Phase LG2.8 - 兼容与废弃
 
 目标：
@@ -833,6 +881,29 @@ LG2.6 当前 slice 验证：
 
 - 用户可见 workflow 不回退。
 - 新 graph-native flow 和旧 endpoint sequence 收敛到相同 audit artifacts 和 UI state。
+
+当前实现状态：
+
+- 已在 `LangGraph-v2` 完成：
+  - split-flow 产品 endpoints 已把状态跳转委托给 `GraphGateway`，覆盖 dependency
+    review、input finalization、draft-spec review、code generation、code review、
+    approved-code execution、terminal-failure review、compare recording、upload
+    invalidation 和 read-model projection。
+  - `workflow_state.json` 被作为 compatibility projection/read model；canonical
+    product truth 是 `graph_state.json`。
+  - compatibility responses 会携带显式 `workflow_control` metadata，方便区分旧路由
+    与 graph-native product state。
+  - legacy `/runs` LLM run-to-completion 已被拦截，并指向 split-flow review gates。
+    只有显式 `execution_mode="stub"` 才保留 legacy compatibility/test 路径。
+  - Product DatasetGraph topology 已不包含 legacy stub nodes；旧 stub chain 只存在于
+    显式 legacy stub graph。
+  - ADSL 保持在统一 ADaM LLM flow 中，没有重新接回旧 deterministic R-template 产品路径。
+  - API/CLI 现在要求显式 execution mode，不再因为 mock provider 请求自动选择 stub 行为。
+- 边界：
+  - 当前已经基本完成 compatibility ownership 清理，并把 legacy behavior 显式化。
+  - 但完整产品流程仍没有完全替换为 native LangGraph interrupt/checkpointer resume。
+  - `workflow_state.json` 仍为 UI/API 兼容保留；新的 workflow logic 仍应继续通过
+    GraphGateway 和 canonical graph state 进入。
 
 ## 13. 推荐施工顺序
 
