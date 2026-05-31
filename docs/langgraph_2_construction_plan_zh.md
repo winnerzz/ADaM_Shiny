@@ -4123,3 +4123,50 @@ git diff --check
 - 审核确认 output-quality rollup 是纯 read-model 逻辑；stale plan、
   dependency review、interrupt 的优先级仍高于 completed-quality 文案；API/UI
   改动降低了用户误解风险，没有扩大业务语义。
+
+### 2026-05-31 - LG2.8 Review Summary 优先读取 Graph State 切片
+
+已完成：
+
+- 将 `/review-summary` 改为优先读取 canonical
+  `runs/{run_id}/graph_state.json`，用于 dataset status、code state、
+  execution state、validation summary、compare status、output quality 和
+  warnings。
+- `workflow_state.json` 只保留为兼容 fallback：只有 canonical graph state
+  无法加载时才使用。
+- 增加 graph-state dataset discovery：即使 manifest/workflow projection 不完整，
+  review summary 也能展示 graph state 已知的 datasets。
+- 收紧 graph state 中记录的 output artifact path：只允许解析到当前
+  `run_dir` 内；绝对路径或 `..` 跳出当前 run 的路径会被忽略。
+- 保持 reference ADaM 的边界：它仍只用于 preview/compare evidence，不决定
+  derivation logic，也不决定 output-quality eligibility。
+
+当前边界：
+
+- 这是 read-model 对齐切片，不修改 canonical graph state、workflow
+  projection、dependency plan、dependency resolution、LLM generation、
+  R execution、compare report 或 static-rule 行为。
+- 磁盘 validation report 仍可服务于 legacy/fallback 读取；但只要 canonical
+  graph state 可用，graph validation 必须优先于可能过期的磁盘文件。
+- 本切片没有删除 compatibility projection，只是停止让 `/review-summary` 把它
+  当作首要来源。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+结果：更宽的 graph-gateway/API suite 通过 155 个测试；AST syntax check 覆盖
+80 个 Python 文件；`git diff --check` 只有 CRLF line-ending warnings。
+
+子 agent review：
+
+- 第一次 review：NO-GO。它发现旧磁盘 validation report 仍可能在
+  output-quality 分类中覆盖 canonical graph validation。
+- 已修复：review summary 现在构造 `review_validation` 时 graph validation
+  优先，并一致用于 output quality、validation status/report、warnings 和
+  errors。
+- 最终 review：GO。未发现 blocking findings。

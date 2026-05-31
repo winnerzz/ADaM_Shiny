@@ -4515,3 +4515,50 @@ Subagent review:
   that stale-plan/dependency-review/interrupt priority remains ahead of
   completed-quality wording, and that API/UI changes reduce rather than create
   user-facing ambiguity.
+
+### 2026-05-31 - LG2.8 Review Summary Graph-State-First Slice
+
+Completed:
+
+- Changed `/review-summary` to prefer canonical `runs/{run_id}/graph_state.json`
+  for dataset status, code state, execution state, validation summary, compare
+  status, output quality, and warnings.
+- Kept `workflow_state.json` as a compatibility fallback only when canonical
+  graph state cannot be loaded.
+- Added graph-state dataset discovery so review summaries include datasets
+  known to the graph even when manifest/workflow projections are missing.
+- Restricted graph-recorded output artifact paths to the current `run_dir`;
+  absolute paths and `..` escapes outside the run are ignored.
+- Preserved reference ADaM as preview/compare evidence only. It still does not
+  decide derivation logic or output-quality eligibility.
+
+Current boundary:
+
+- This is a read-model alignment slice. It does not mutate canonical graph
+  state, workflow projections, dependency plans, dependency resolution, LLM
+  generation, R execution, compare reports, or static-rule behavior.
+- Disk validation reports remain usable for legacy/fallback reads, but when
+  canonical graph state is available, graph validation wins over stale files.
+- This does not remove the compatibility projection yet; it only stops
+  `/review-summary` from treating that projection as the primary source.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+Result: the broader graph-gateway/API suite passed with 155 tests; AST syntax
+check covered 80 Python files; `git diff --check` reported only CRLF
+line-ending warnings.
+
+Subagent review:
+
+- First review: NO-GO. It found that stale disk validation reports could still
+  override canonical graph validation in output-quality classification.
+- Fix applied: review summary now builds `review_validation` with graph
+  validation first, and uses it consistently for output quality, validation
+  status/report, warnings, and errors.
+- Final review: GO. No blocking findings.
