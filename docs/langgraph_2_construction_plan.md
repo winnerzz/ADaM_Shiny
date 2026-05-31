@@ -4982,3 +4982,39 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Gateway Agent IO Persistence Slice
+
+Completed:
+
+- Extended canonical `DatasetRunState` and `StudyRunState` with
+  `agent_node_inputs` and `agent_node_outputs`.
+- `GraphGateway.finalize_inputs()`, `generate_code()`, and
+  `execute_approved_code()` now preserve typed IO packages returned by
+  DatasetGraph product nodes.
+- Gateway recorder methods validate IO packages with the existing
+  `AgentNodeInput` / `AgentNodeOutput` contracts before persisting them.
+- Every canonical graph-state write now syncs dataset-level agent IO up to the
+  study-level read model, matching the existing agent-decision rollup pattern.
+- Added focused Gateway regression coverage proving input-spec finalization and
+  code generation persist agent IO at dataset level, study level, and in
+  `graph_state.json`.
+
+Current boundary:
+
+- This slice only closes the persistence gap between DatasetGraph product-node
+  IO packages and Gateway-owned canonical state.
+- It does not change workflow routing, provider calls, dependency planning,
+  draft-spec authority, code generation prompts, static-rule semantics,
+  R execution, compare, repair, terminal-failure handling, or UI behavior.
+- Static rules remain generic and limited-scope. No dataset-specific,
+  demo-specific, variable-specific, or PSY201-specific rule was added.
+- Reference ADaM remains compare/output-shape evidence only, not derivation
+  authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+```

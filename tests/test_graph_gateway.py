@@ -828,6 +828,31 @@ class GraphGatewayTests(unittest.TestCase):
                 "input_spec_path": str(spec_path.as_posix()),
                 "product_context_warnings": ["Context warning."],
                 "agent_decisions": [],
+                "agent_node_inputs": [
+                    {
+                        "agent": "evidence_agent",
+                        "node": "prepare_inputs",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_finalize_input_spec",
+                        "dataset": "ADAE",
+                        "task": "Validate supplied input spec and prepare product context.",
+                        "created_at": "2026-05-31T00:00:01Z",
+                    }
+                ],
+                "agent_node_outputs": [
+                    {
+                        "agent": "evidence_agent",
+                        "node": "prepare_inputs",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_finalize_input_spec",
+                        "dataset": "ADAE",
+                        "status": "ready",
+                        "decision": "input_spec_ready",
+                        "reason": "A supplied input spec was selected as the derivation authority.",
+                        "outputs": {"spec_source": "input_spec"},
+                        "created_at": "2026-05-31T00:00:02Z",
+                    }
+                ],
                 "risk_flags": [],
             }
             result = gateway.finalize_inputs(
@@ -857,6 +882,15 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(dataset_state.current_interrupt)
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "input_spec_ready")
+        self.assertEqual(dataset_state.agent_node_inputs[0]["agent"], "evidence_agent")
+        self.assertEqual(dataset_state.agent_node_outputs[0]["decision"], "input_spec_ready")
+        self.assertEqual(result.graph_state.agent_node_inputs[0]["agent"], "evidence_agent")
+        self.assertEqual(result.graph_state.agent_node_outputs[0]["decision"], "input_spec_ready")
+        persisted_state = json.loads(
+            (study_dir / "runs" / "run_lg2_gateway_finalize_input_spec" / "graph_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(persisted_state["datasets"]["ADAE"]["agent_node_outputs"][0]["decision"], "input_spec_ready")
+        self.assertEqual(persisted_state["agent_node_outputs"][0]["decision"], "input_spec_ready")
 
     def test_gateway_finalize_inputs_records_review_required_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_finalize_draft_spec") / "PSY201"
@@ -1256,6 +1290,53 @@ class GraphGatewayTests(unittest.TestCase):
                 "code_expected_outputs": ["outputs/adae.csv"],
                 "product_context_warnings": ["Context warning."],
                 "agent_decisions": [],
+                "agent_node_inputs": [
+                    {
+                        "agent": "code_agent",
+                        "node": "code_generation",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_generate_code",
+                        "dataset": "ADAE",
+                        "task": "Generate R code from the approved ADaM spec.",
+                        "inputs": {"spec_source": "input_spec"},
+                        "created_at": "2026-05-31T00:01:01Z",
+                    },
+                    {
+                        "agent": "static_review_agent",
+                        "node": "code_generation",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_generate_code",
+                        "dataset": "ADAE",
+                        "task": "Run deterministic static checks on generated R code.",
+                        "artifact_ids": ["static_check_adae"],
+                        "created_at": "2026-05-31T00:01:02Z",
+                    },
+                ],
+                "agent_node_outputs": [
+                    {
+                        "agent": "code_agent",
+                        "node": "code_generation",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_generate_code",
+                        "dataset": "ADAE",
+                        "status": "needs_review",
+                        "decision": "r_code_generated",
+                        "outputs": {"code_path": str(code_path.as_posix())},
+                        "created_at": "2026-05-31T00:01:03Z",
+                    },
+                    {
+                        "agent": "static_review_agent",
+                        "node": "code_generation",
+                        "study_id": "PSY201",
+                        "run_id": "run_lg2_gateway_generate_code",
+                        "dataset": "ADAE",
+                        "status": "warning",
+                        "decision": "static_check_recorded",
+                        "outputs": {"static_check_path": str(static_path.as_posix())},
+                        "risk_flags": ["static_check_limited_scope"],
+                        "created_at": "2026-05-31T00:01:04Z",
+                    },
+                ],
                 "risk_flags": [],
             }
             result = gateway.generate_code(
@@ -1288,8 +1369,20 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["static_check_sha256"], static_sha)
         self.assertTrue(dataset_state.code_state["generation_quality"]["not_real_derivation"])
         self.assertEqual(dataset_state.code_state["generation_quality"]["llm_provider"], "mock")
+        self.assertEqual([item["agent"] for item in dataset_state.agent_node_inputs], ["code_agent", "static_review_agent"])
+        self.assertEqual([item["agent"] for item in dataset_state.agent_node_outputs], ["code_agent", "static_review_agent"])
+        self.assertEqual([item["agent"] for item in result.graph_state.agent_node_outputs], ["code_agent", "static_review_agent"])
         self.assertEqual(workflow_state["projection_source"], "langgraph")
         self.assertEqual(workflow_state["current_interrupt"], "code_review")
+        persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["decision"] for item in persisted_state["datasets"]["ADAE"]["agent_node_outputs"]],
+            ["r_code_generated", "static_check_recorded"],
+        )
+        self.assertEqual(
+            [item["decision"] for item in persisted_state["agent_node_outputs"]],
+            ["r_code_generated", "static_check_recorded"],
+        )
 
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"

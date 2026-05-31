@@ -11,7 +11,14 @@ from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from adam_agent.agents import AgentDecision, build_agent_audit_summary_from_state, record_agent_decision, write_agent_audit_summary
+from adam_agent.agents import (
+    AgentDecision,
+    AgentNodeInput,
+    AgentNodeOutput,
+    build_agent_audit_summary_from_state,
+    record_agent_decision,
+    write_agent_audit_summary,
+)
 from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
 from adam_agent.graph.execution_modes import (
@@ -605,6 +612,8 @@ class GraphGateway:
         warnings: list[str] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
+        agent_node_inputs: list[dict[str, Any]] | None = None,
+        agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist a generated draft spec and its review interrupt."""
@@ -677,6 +686,7 @@ class GraphGateway:
                 )
             ],
         )
+        _append_agent_node_io(dataset_state, inputs=agent_node_inputs or [], outputs=agent_node_outputs or [])
         _append_risk_flags(dataset_state, risk_flags or ["draft_spec_requires_human_review"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
@@ -696,6 +706,8 @@ class GraphGateway:
         input_spec_path: str | Path,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
+        agent_node_inputs: list[dict[str, Any]] | None = None,
+        agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist an available input spec into canonical graph state."""
@@ -753,6 +765,7 @@ class GraphGateway:
                 )
             ],
         )
+        _append_agent_node_io(dataset_state, inputs=agent_node_inputs or [], outputs=agent_node_outputs or [])
         _append_risk_flags(dataset_state, risk_flags or [])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state)
@@ -772,6 +785,8 @@ class GraphGateway:
         approved_spec_path: str | Path,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
+        agent_node_inputs: list[dict[str, Any]] | None = None,
+        agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Mark an already approved draft spec as ready after a terminal-failure follow-up."""
@@ -830,6 +845,7 @@ class GraphGateway:
                 )
             ],
         )
+        _append_agent_node_io(dataset_state, inputs=agent_node_inputs or [], outputs=agent_node_outputs or [])
         _append_risk_flags(dataset_state, risk_flags or ["uses_approved_draft_spec"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state)
@@ -901,6 +917,8 @@ class GraphGateway:
                 input_spec_path=input_spec_path,
                 input_fingerprint_payload=fingerprint,
                 agent_decisions=list(result.get("agent_decisions", [])),
+                agent_node_inputs=list(result.get("agent_node_inputs", [])),
+                agent_node_outputs=list(result.get("agent_node_outputs", [])),
                 risk_flags=list(result.get("risk_flags", [])),
             )
             projection = self._handoff_dependency_review_to_product_step(
@@ -929,6 +947,8 @@ class GraphGateway:
                 approved_spec_path=approved_spec_path,
                 input_fingerprint_payload=fingerprint,
                 agent_decisions=list(result.get("agent_decisions", [])),
+                agent_node_inputs=list(result.get("agent_node_inputs", [])),
+                agent_node_outputs=list(result.get("agent_node_outputs", [])),
                 risk_flags=list(result.get("risk_flags", [])),
             )
             projection = self._handoff_dependency_review_to_product_step(
@@ -964,6 +984,8 @@ class GraphGateway:
             warnings=warnings,
             input_fingerprint_payload=fingerprint,
             agent_decisions=list(result.get("agent_decisions", [])),
+            agent_node_inputs=list(result.get("agent_node_inputs", [])),
+            agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
         projection = self._handoff_dependency_review_to_product_step(
@@ -1395,6 +1417,8 @@ class GraphGateway:
         generation_quality: dict[str, Any] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
+        agent_node_inputs: list[dict[str, Any]] | None = None,
+        agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist generated-code review interrupt into canonical graph state."""
@@ -1475,6 +1499,7 @@ class GraphGateway:
                 spec_source=spec_source,
             ),
         )
+        _append_agent_node_io(dataset_state, inputs=agent_node_inputs or [], outputs=agent_node_outputs or [])
         _append_risk_flags(dataset_state, risk_flags or ["static_check_limited_scope"])
         next_state.datasets[target] = dataset_state
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
@@ -1560,6 +1585,8 @@ class GraphGateway:
             generation_quality=_generation_quality_from_dataset_result(result, llm_provider=llm_provider),
             input_fingerprint_payload=input_fingerprint(root),
             agent_decisions=list(result.get("agent_decisions", [])),
+            agent_node_inputs=list(result.get("agent_node_inputs", [])),
+            agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
         projection = self._handoff_dependency_review_to_product_step(
@@ -1601,6 +1628,8 @@ class GraphGateway:
         failures: list[FailureRecord] | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
         agent_decisions: list[dict[str, Any]] | None = None,
+        agent_node_inputs: list[dict[str, Any]] | None = None,
+        agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
     ) -> GraphGatewayResult:
         """Persist graph-owned R execution result into canonical graph state."""
@@ -1667,6 +1696,7 @@ class GraphGateway:
                 )
             ],
         )
+        _append_agent_node_io(dataset_state, inputs=agent_node_inputs or [], outputs=agent_node_outputs or [])
         _append_risk_flags(dataset_state, risk_flags or (["terminal_failure"] if terminal_failure else []))
         dataset_state.result_summary = DatasetResultSummary(
             dataset=target,
@@ -1763,6 +1793,8 @@ class GraphGateway:
             failures=list(result.get("failure_records", [])),
             input_fingerprint_payload=input_fingerprint(root),
             agent_decisions=list(result.get("agent_decisions", [])),
+            agent_node_inputs=list(result.get("agent_node_inputs", [])),
+            agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
         return GraphGatewayExecutionResult(
@@ -2458,6 +2490,7 @@ class GraphGateway:
     def _persist_graph_state(self, study_dir: str | Path, state: StudyRunState, *, node: str) -> None:
         root = Path(study_dir)
         _sync_study_agent_decisions(state)
+        _sync_study_agent_node_io(state)
         _update_agent_audit_summary(root, state)
         path = _graph_state_path(study_dir, state.run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -3390,6 +3423,48 @@ def _append_agent_decisions(dataset_state: DatasetRunState, decisions: list[dict
             existing.add(key)
 
 
+def _append_agent_node_io(
+    dataset_state: DatasetRunState,
+    *,
+    inputs: list[dict[str, Any]],
+    outputs: list[dict[str, Any]],
+) -> None:
+    _append_unique_agent_io_records(dataset_state.agent_node_inputs, inputs, model=AgentNodeInput)
+    _append_unique_agent_io_records(dataset_state.agent_node_outputs, outputs, model=AgentNodeOutput)
+
+
+def _append_unique_agent_io_records(
+    existing_records: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+    *,
+    model: type[AgentNodeInput] | type[AgentNodeOutput],
+) -> None:
+    existing_keys = {_agent_io_key(item) for item in existing_records if isinstance(item, dict)}
+    for record in new_records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            normalized = model.model_validate(record).model_dump(mode="json")
+        except ValueError:
+            continue
+        key = _agent_io_key(normalized)
+        if key in existing_keys:
+            continue
+        existing_records.append(normalized)
+        existing_keys.add(key)
+
+
+def _agent_io_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(record.get("agent")),
+        str(record.get("node")),
+        str(record.get("dataset")),
+        str(record.get("decision")),
+        str(record.get("task")),
+        str(record.get("created_at")),
+    )
+
+
 def _append_risk_flags(dataset_state: DatasetRunState, flags: list[str]) -> None:
     existing = set(dataset_state.risk_flags)
     for flag in flags:
@@ -3435,6 +3510,15 @@ def _sync_study_agent_decisions(state: StudyRunState) -> None:
             if normalized and normalized not in existing_risk_flags:
                 state.risk_flags.append(normalized)
                 existing_risk_flags.add(normalized)
+
+
+def _sync_study_agent_node_io(state: StudyRunState) -> None:
+    state.agent_node_inputs = []
+    state.agent_node_outputs = []
+    for dataset in sorted(state.datasets):
+        dataset_state = state.datasets[dataset]
+        _append_unique_agent_io_records(state.agent_node_inputs, dataset_state.agent_node_inputs, model=AgentNodeInput)
+        _append_unique_agent_io_records(state.agent_node_outputs, dataset_state.agent_node_outputs, model=AgentNodeOutput)
 
 
 def _update_agent_audit_summary(study_dir: Path, state: StudyRunState) -> None:

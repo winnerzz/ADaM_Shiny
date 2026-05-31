@@ -4572,3 +4572,39 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dat
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Gateway Agent IO Persistence 切片
+
+已完成：
+
+- 在 canonical `DatasetRunState` 和 `StudyRunState` 里新增
+  `agent_node_inputs` 与 `agent_node_outputs`。
+- `GraphGateway.finalize_inputs()`、`generate_code()`、
+  `execute_approved_code()` 现在会保留 DatasetGraph product nodes 返回的
+  typed IO packages。
+- Gateway recorder methods 会用现有 `AgentNodeInput` / `AgentNodeOutput`
+  合同校验 IO package，再写入 canonical state。
+- 每次 canonical graph-state 写入时，Gateway 都会把 dataset-level agent IO
+  汇总到 study-level read model，模式与已有 agent-decision rollup 保持一致。
+- 增加 focused Gateway regression，证明 input-spec finalize 和 code
+  generation 会把 agent IO 同时写到 dataset state、study state 和
+  `graph_state.json`。
+
+当前边界：
+
+- 本切片只补齐 DatasetGraph product-node IO packages 到 Gateway-owned
+  canonical state 的持久化链路。
+- 不改变 workflow routing、provider calls、dependency planning、draft-spec
+  authority、code generation prompts、static-rule semantics、R execution、
+  compare、repair、terminal-failure handling 或 UI 行为。
+- Static rules 仍然是 generic 且 limited-scope。本切片没有加入
+  dataset-specific、demo-specific、variable-specific 或 PSY201-specific 规则。
+- Reference ADaM 仍然只是 compare/output-shape evidence，不能作为
+  derivation authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+```
