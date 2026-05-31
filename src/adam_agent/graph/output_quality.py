@@ -37,7 +37,7 @@ def dataset_output_quality(
     structural_stub = (
         status_value == "completed_stub"
         or execution_status == "completed_stub"
-        or validation_status == "structural_stub_pass"
+        or validation_status in {"structural_stub_pass", "passed_stub"}
         or execution.get("stubbed_r_execution") is True
     )
     not_real_derivation = (

@@ -2102,7 +2102,7 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["dependency_resolution"], [])
         self.assertEqual(result["audit_manifest"].metadata["auto_added_datasets"], [])
 
-    def test_approved_midstream_dependency_still_requires_its_missing_parent(self) -> None:
+    def test_approved_midstream_stub_dependency_does_not_unlock_downstream(self) -> None:
         study_dir = _workspace_dir("phase74_midstream_dependency_requires_parent") / "PSY201"
         spec_dir = study_dir / "input_spec"
         spec_dir.mkdir(parents=True)
@@ -2139,15 +2139,76 @@ class GraphSmokeTests(unittest.TestCase):
 
         summaries = {summary.dataset: summary for summary in result["dataset_results"]}
         self.assertEqual(summaries["ADLB"].status, "completed")
-        self.assertEqual(summaries["ADTTE"].status, "completed")
+        self.assertEqual(summaries["ADLB"].validation_status, "passed_stub")
+        self.assertEqual(summaries["ADTTE"].status, "failed")
+        self.assertEqual(summaries["ADTTE"].validation_status, "dependency_not_runtime_evidence")
         self.assertEqual(result["runnable_datasets"], ["ADLB", "ADTTE"])
-        self.assertFalse(result["dependency_action_required"])
-        self.assertEqual(result["blocked_datasets"], [])
+        self.assertIn(
+            {"dataset": "ADTTE", "reason": "dependency_not_runtime_evidence", "blocked_by": "ADLB"},
+            result["blocked_datasets"],
+        )
         resolutions = {
             (record["target_dataset"], record["required_dataset"]): record["resolution_status"]
             for record in result["dependency_resolution"]
         }
         self.assertEqual(resolutions[("ADTTE", "ADLB")], "approved_for_system_generation")
+        self.assertEqual(result["status"], "failed")
+
+    def test_real_midstream_dependency_output_unlocks_downstream(self) -> None:
+        study_dir = _workspace_dir("lg2_real_midstream_dependency_unlocks_downstream") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ADTTE.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use generated ADLB records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fake_invoke(task):
+            dataset = task["dataset"]
+            return {
+                "summary": DatasetResultSummary(
+                    dataset=dataset,
+                    status="completed",
+                    validation_status="pass",
+                    compare_status="not_run",
+                    metadata={"stubbed_r_execution": False, "not_real_derivation": False},
+                ),
+                "audit_artifacts": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+
+        with patch("adam_agent.graph.study_graph._invoke_dataset_task", side_effect=fake_invoke):
+            result = compile_study_graph().invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_real_midstream_dependency_unlocks_downstream",
+                    "target_datasets": ["ADTTE"],
+                    "execution_mode": "stub",
+                    "study_dir": str(study_dir),
+                    "approved_dependency_datasets": ["ADLB"],
+                    "dataset_results": [],
+                    "blocked_datasets": [],
+                    "audit_artifacts": [],
+                }
+            )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADLB"].status, "completed")
+        self.assertEqual(summaries["ADTTE"].status, "completed")
+        self.assertEqual(result["blocked_datasets"], [])
+        self.assertEqual(result["status"], "completed")
 
     def test_downstream_stub_failure_does_not_change_completed_adsl_status(self) -> None:
         graph = compile_study_graph()
@@ -2216,6 +2277,135 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["audit_manifest"].metadata["execution_batches"], [["ADAE", "ADLB"], ["ADTTE"]])
         self.assertEqual(result["status"], "failed")
 
+    def test_completed_stub_in_same_study_run_does_not_unlock_downstream_dependency(self) -> None:
+        study_dir = _workspace_dir("lg2_same_run_stub_dependency_block") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ADTTE.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use generated ADLB records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fake_invoke(task):
+            dataset = task["dataset"]
+            if dataset == "ADLB":
+                return {
+                    "summary": DatasetResultSummary(
+                        dataset="ADLB",
+                        status="completed_stub",
+                        validation_status="structural_stub_pass",
+                        compare_status="not_run",
+                        metadata={"stubbed_r_execution": True, "not_real_derivation": True},
+                    ),
+                    "audit_artifacts": [],
+                    "agent_decisions": [],
+                    "risk_flags": [],
+                }
+            return {
+                "summary": DatasetResultSummary(
+                    dataset=dataset,
+                    status="completed",
+                    validation_status="pass",
+                    compare_status="not_run",
+                    metadata={"stubbed_r_execution": False, "not_real_derivation": False},
+                ),
+                "audit_artifacts": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+
+        with patch("adam_agent.graph.study_graph._invoke_dataset_task", side_effect=fake_invoke):
+            result = compile_study_graph().invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_same_run_stub_dependency_block",
+                    "target_datasets": ["ADTTE"],
+                    "execution_mode": "stub",
+                    "study_dir": str(study_dir),
+                    "approved_dependency_datasets": ["ADLB"],
+                    "dataset_results": [],
+                    "blocked_datasets": [],
+                    "audit_artifacts": [],
+                }
+            )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADLB"].status, "completed_stub")
+        self.assertEqual(summaries["ADTTE"].status, "failed")
+        self.assertEqual(summaries["ADTTE"].validation_status, "dependency_not_runtime_evidence")
+        self.assertIn(
+            {"dataset": "ADTTE", "reason": "dependency_not_runtime_evidence", "blocked_by": "ADLB"},
+            result["blocked_datasets"],
+        )
+        self.assertIn("ADLB_not_runtime_dependency_evidence", result["risk_flags"])
+        self.assertEqual(result["status"], "failed")
+
+    def test_legacy_passed_stub_in_same_study_run_does_not_unlock_downstream_dependency(self) -> None:
+        study_dir = _workspace_dir("lg2_same_run_passed_stub_dependency_block") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "ADTTE.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use generated ADLB records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fake_invoke(task):
+            dataset = task["dataset"]
+            return {
+                "summary": DatasetResultSummary(
+                    dataset=dataset,
+                    status="completed",
+                    validation_status="passed_stub" if dataset == "ADLB" else "pass",
+                    compare_status="not_run_stub" if dataset == "ADLB" else "not_run",
+                ),
+                "audit_artifacts": [],
+                "agent_decisions": [],
+                "risk_flags": [],
+            }
+
+        with patch("adam_agent.graph.study_graph._invoke_dataset_task", side_effect=fake_invoke):
+            result = compile_study_graph().invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_same_run_passed_stub_dependency_block",
+                    "target_datasets": ["ADTTE"],
+                    "execution_mode": "stub",
+                    "study_dir": str(study_dir),
+                    "approved_dependency_datasets": ["ADLB"],
+                    "dataset_results": [],
+                    "blocked_datasets": [],
+                    "audit_artifacts": [],
+                }
+            )
+
+        summaries = {summary.dataset: summary for summary in result["dataset_results"]}
+        self.assertEqual(summaries["ADLB"].validation_status, "passed_stub")
+        self.assertEqual(summaries["ADTTE"].status, "failed")
+        self.assertEqual(summaries["ADTTE"].validation_status, "dependency_not_runtime_evidence")
+        self.assertEqual(summaries["ADTTE"].metadata["blocked_dependency_quality"], {"ADLB": "structural_stub"})
+
     def test_study_graph_dependency_status_is_generic_for_upstream_adam(self) -> None:
         study_dir = _workspace_dir("lg2_generic_dependency_status") / "PSY201"
         spec_dir = study_dir / "input_spec"
@@ -2237,8 +2427,9 @@ class GraphSmokeTests(unittest.TestCase):
                 "summary": DatasetResultSummary(
                     dataset=task["dataset"],
                     status="completed",
-                    validation_status="passed_stub",
-                    compare_status="not_run_stub",
+                    validation_status="pass",
+                    compare_status="not_run",
+                    metadata={"stubbed_r_execution": False, "not_real_derivation": False},
                 ),
                 "audit_artifacts": [],
                 "agent_decisions": [],

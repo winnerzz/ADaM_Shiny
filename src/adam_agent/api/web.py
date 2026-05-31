@@ -2078,6 +2078,7 @@ INDEX_HTML = r"""<!doctype html>
       if (value === 'dependency_user_action_required') return 'missing upstream ADaM; provide it or approve system generation later';
       if (value === 'unsupported_dataset') return 'not an ADaM target supported by this prototype';
       if (value === 'blocked_by_dependency') return 'another required dataset is not ready';
+      if (value === 'dependency_not_runtime_evidence') return 'upstream output is review-only and cannot be used as runtime input';
       return escapeHtml(value || 'review required');
     }
 

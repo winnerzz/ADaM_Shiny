@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
 from adam_agent.graph.dataset_graph import compile_dataset_graph, compile_legacy_stub_dataset_graph
 from adam_agent.graph.execution_modes import LEGACY_STUB_MODE, STUDY_GRAPH_EXECUTION_MODES, format_execution_modes
+from adam_agent.graph.output_quality import dataset_output_quality
 from adam_agent.graph.dependency_resolution import (
     approved_dependency_targets,
     available_dependency_targets,
@@ -197,22 +198,30 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
     blocked_datasets = []
     completed: set[str] = set()
     failed: set[str] = set()
+    unusable_runtime_evidence: dict[str, str] = {}
     satisfied: set[str] = set(state.get("satisfied_dependency_datasets", []))
 
     for batch in state.get("execution_batches", []):
         runnable: list[DatasetTask] = []
         for dataset in batch:
             failed_dependencies = [dependency for dependency in dependencies.get(dataset, []) if dependency in failed]
+            unusable_dependencies = [
+                dependency for dependency in dependencies.get(dataset, []) if dependency in unusable_runtime_evidence
+            ]
             missing_dependencies = [
                 dependency
                 for dependency in dependencies.get(dataset, [])
-                if dependency not in completed and dependency not in failed and dependency not in satisfied
+                if dependency not in completed
+                and dependency not in failed
+                and dependency not in unusable_runtime_evidence
+                and dependency not in satisfied
             ]
-            if failed_dependencies or missing_dependencies:
-                blocked_by = failed_dependencies or missing_dependencies
+            if failed_dependencies or unusable_dependencies or missing_dependencies:
+                blocked_by = failed_dependencies or unusable_dependencies or missing_dependencies
+                reason = "dependency_not_runtime_evidence" if unusable_dependencies and not failed_dependencies else "blocked_by_dependency"
                 blocked_record = {
                     "dataset": dataset,
-                    "reason": "blocked_by_dependency",
+                    "reason": reason,
                     "blocked_by": ",".join(blocked_by),
                 }
                 blocked_datasets.append(blocked_record)
@@ -223,6 +232,12 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
                         validation_status=blocked_record["reason"],
                         compare_status="not_run",
                         failure_ids=[blocked_record["reason"]],
+                        metadata={
+                            "blocked_dependency_quality": {
+                                dependency: unusable_runtime_evidence.get(dependency, "failed")
+                                for dependency in blocked_by
+                            },
+                        },
                     )
                 )
                 failed.add(dataset)
@@ -238,8 +253,11 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             audit_artifacts.extend(result.get("audit_artifacts", []))
             agent_decisions.extend(result.get("agent_decisions", []))
             risk_flags.extend(result.get("risk_flags", []))
-            if summary.status in {"completed", "completed_stub"}:
+            if _summary_runtime_dependency_eligible(summary):
                 completed.add(summary.dataset)
+            elif summary.status in {"completed", "completed_stub"}:
+                unusable_runtime_evidence[summary.dataset] = _summary_runtime_dependency_reason(summary)
+                risk_flags.append(f"{summary.dataset}_not_runtime_dependency_evidence")
             else:
                 failed.add(summary.dataset)
 
@@ -260,6 +278,28 @@ def reduce_dataset_results(state: StudyGraphState) -> StudyGraphState:
     if any(result.status == "failed" for result in results):
         status = "failed"
     return {"status": status}
+
+
+def _summary_runtime_dependency_eligible(summary: DatasetResultSummary) -> bool:
+    quality = _summary_output_quality(summary)
+    return bool(quality.get("runtime_dependency_eligible"))
+
+
+def _summary_runtime_dependency_reason(summary: DatasetResultSummary) -> str:
+    quality = _summary_output_quality(summary)
+    quality_status = str(quality.get("quality_status") or "").strip()
+    if quality_status and quality_status != "real_runtime_output":
+        return quality_status
+    return "not_runtime_dependency_evidence"
+
+
+def _summary_output_quality(summary: DatasetResultSummary) -> dict[str, Any]:
+    validation_summary = {"status": summary.validation_status}
+    return dataset_output_quality(
+        status=summary.status,
+        execution_state=summary.metadata,
+        validation_summary=validation_summary,
+    )
 
 
 def write_audit_manifest(state: StudyGraphState) -> StudyGraphState:
