@@ -578,6 +578,7 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             next_action="review_draft_spec",
         )
 
+    code_input = _code_agent_input(state, context_dict)
     try:
         provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
         exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
@@ -637,6 +638,40 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     except (LLMGeneratedCodeError, LLMProviderResponseError, StaticRuleError, ValueError) as exc:
         return _product_failure("code_generation_error", str(exc), next_action="generate_code")
 
+    code_artifact_ids = [
+        prompt_artifact.artifact_id,
+        artifacts.response_artifact.artifact_id,
+        artifacts.package_artifact.artifact_id,
+        artifacts.code_artifact.artifact_id,
+    ]
+    static_artifact = _tool_log_artifact(state, static_check_path, kind_id="static_check")
+    code_output = _code_agent_output(
+        state,
+        decision="r_code_generated",
+        status="needs_review",
+        reason="Generated R code from an approved spec and stopped before execution.",
+        outputs={
+            "code_path": artifacts.code_artifact.path,
+            "spec_source": spec_source,
+            "next_action": "review_code",
+        },
+        risk_flags=package.risk_points,
+        artifact_ids=code_artifact_ids,
+    )
+    static_input = _static_review_agent_input(
+        state,
+        code_artifact_id=artifacts.code_artifact.artifact_id,
+        target_spec=target_spec,
+    )
+    static_output = _static_review_agent_output(
+        state,
+        decision="static_check_passed_for_review",
+        status="warning",
+        reason="Limited deterministic static checks passed before human code review.",
+        outputs={"static_check_path": str(static_check_path.as_posix())},
+        risk_flags=["static_check_limited_scope"],
+        artifact_ids=[static_artifact.artifact_id],
+    )
     return {
         "status": "needs_review",
         "route": "human_review",
@@ -662,43 +697,112 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
             artifacts.response_artifact,
             artifacts.package_artifact,
             artifacts.code_artifact,
-            _tool_log_artifact(state, static_check_path, kind_id="static_check"),
+            static_artifact,
         ],
-        "agent_decisions": [
-            record_agent_decision(
-                agent="code_agent",
-                node="generate_r_code_agent",
-                decision="r_code_generated",
-                dataset=target,
-                status="needs_review",
-                reason="Generated R code from an approved spec and stopped before execution.",
-                outputs={
-                    "code_path": artifacts.code_artifact.path,
-                    "spec_source": spec_source,
-                    "next_action": "review_code",
-                },
-                risk_flags=package.risk_points,
-                artifact_ids=[
-                    prompt_artifact.artifact_id,
-                    artifacts.response_artifact.artifact_id,
-                    artifacts.package_artifact.artifact_id,
-                    artifacts.code_artifact.artifact_id,
-                ],
-            ),
-            record_agent_decision(
-                agent="static_review_agent",
-                node="generate_r_code_agent",
-                decision="static_check_passed_for_review",
-                dataset=target,
-                status="warning",
-                reason="Limited deterministic static checks passed before human code review.",
-                outputs={"static_check_path": str(static_check_path.as_posix())},
-                risk_flags=["static_check_limited_scope"],
-                artifact_ids=[f"static_check_{target.lower()}"],
-            ),
-        ],
+        "agent_node_inputs": [code_input, static_input],
+        "agent_node_outputs": [code_output, static_output],
+        "agent_decisions": list(code_output["agent_decisions"]) + list(static_output["agent_decisions"]),
         "risk_flags": package.risk_points + ["static_check_limited_scope"],
     }
+
+
+def _code_agent_input(state: DatasetGraphState, context_dict: dict[str, object]) -> dict[str, object]:
+    return build_agent_node_input(
+        agent="code_agent",
+        node="generate_r_code_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        task="Generate review-required R code from an approved ADaM specification and prepared study context.",
+        inputs={
+            "spec_source": state.get("spec_source"),
+            "context_keys": sorted(str(key) for key in context_dict.keys()),
+            "datasets_included": _datasets_included(context_dict),
+            "variables_included_count": len(_variables_included(context_dict)),
+        },
+        artifact_ids=[item for item in [_artifact_id(state.get("product_context_artifact"))] if item],
+        risk_flags=list(state.get("risk_flags", [])),
+        evidence_bundle_id=state.get("evidence_bundle_id"),
+        reference_query_ids=[
+            str(item.get("query_id"))
+            for item in state.get("reference_queries", [])
+            if isinstance(item, dict) and item.get("query_id")
+        ],
+    )
+
+
+def _code_agent_output(
+    state: DatasetGraphState,
+    *,
+    decision: str,
+    status: str,
+    reason: str,
+    outputs: dict[str, object],
+    artifact_ids: list[str],
+    risk_flags: list[str] | None = None,
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="code_agent",
+        node="generate_r_code_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        status=status,
+        decision=decision,
+        reason=reason,
+        outputs=outputs,
+        artifact_ids=artifact_ids,
+        risk_flags=risk_flags or [],
+    )
+
+
+def _static_review_agent_input(
+    state: DatasetGraphState,
+    *,
+    code_artifact_id: str,
+    target_spec: dict[str, object],
+) -> dict[str, object]:
+    return build_agent_node_input(
+        agent="static_review_agent",
+        node="generate_r_code_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        task="Run limited deterministic static checks on generated R code before human code review.",
+        inputs={
+            "code_artifact_id": code_artifact_id,
+            "required_identifier_count": len(_required_identifiers_from_spec(target_spec)),
+            "required_identifier_source_id": _spec_source_id(target_spec),
+            "scope": "limited_policy_check",
+        },
+        artifact_ids=[code_artifact_id],
+        risk_flags=["static_check_limited_scope"],
+    )
+
+
+def _static_review_agent_output(
+    state: DatasetGraphState,
+    *,
+    decision: str,
+    status: str,
+    reason: str,
+    outputs: dict[str, object],
+    artifact_ids: list[str],
+    risk_flags: list[str] | None = None,
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="static_review_agent",
+        node="generate_r_code_agent",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        dataset=state["dataset"],
+        status=status,
+        decision=decision,
+        reason=reason,
+        outputs=outputs,
+        artifact_ids=artifact_ids,
+        risk_flags=risk_flags or [],
+    )
 
 
 def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:

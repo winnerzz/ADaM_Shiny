@@ -4874,3 +4874,43 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Code And Static Review Agent IO Migration Slice
+
+Completed:
+
+- Migrated the successful DatasetGraph `generate_r_code_agent` path to emit
+  typed IO packages for two bounded roles:
+  - `code_agent`
+  - `static_review_agent`
+- The code-agent input records the approved spec source, prepared context keys,
+  included datasets, variable-count summary, product-context artifact id, risk
+  flags, evidence bundle id, and reference query ids.
+- The code-agent output wraps the existing `r_code_generated` audit decision
+  and records generated-code artifact ids plus the next human action.
+- The static-review input records the generated-code artifact id, required
+  identifier count, required identifier source id, and its limited-check scope.
+- The static-review output wraps the existing
+  `static_check_passed_for_review` warning decision and records the static-check
+  artifact id.
+- Added focused smoke assertions proving direct DatasetGraph code generation
+  and StudyGraph batch execution retain both code/static IO packages.
+
+Current boundary:
+
+- This slice changes only success-path audit packaging for code generation and
+  limited static review.
+- It does not change prompt construction, provider calls, approved-spec gates,
+  generated R code parsing, static-rule semantics, code review, R execution,
+  compare, repair, dependency planning, or UI behavior.
+- Static review remains explicitly limited scope. No clinical, dataset-specific,
+  study-specific, demo-specific, or variable-specific static rule was added.
+- Reference ADaM remains compare/output-shape evidence only, not derivation
+  authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

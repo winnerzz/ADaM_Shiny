@@ -838,6 +838,14 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertTrue(
             (study_dir / "runs" / "run_lg2_product_generate_code_spec" / "static_checks" / "adae_static_check.json").exists()
         )
+        code_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "code_agent"]
+        static_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "static_review_agent"]
+        self.assertEqual(len(code_outputs), 1)
+        self.assertEqual(len(static_outputs), 1)
+        self.assertEqual(code_outputs[0]["decision"], "r_code_generated")
+        self.assertEqual(static_outputs[0]["decision"], "static_check_passed_for_review")
+        self.assertEqual(result["agent_decisions"][-2], code_outputs[0]["agent_decisions"][0])
+        self.assertEqual(result["agent_decisions"][-1], static_outputs[0]["agent_decisions"][0])
         summary = result["summary"]
         self.assertEqual(summary.status, "needs_review")
         self.assertEqual(summary.metadata["next_action"], "review_code")
@@ -883,6 +891,12 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertTrue(evidence_outputs)
         self.assertEqual(evidence_inputs[0]["node"], "prepare_product_context")
         self.assertEqual(evidence_outputs[0]["decision"], "input_spec_ready")
+        code_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "code_agent"]
+        static_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "static_review_agent"]
+        self.assertTrue(code_outputs)
+        self.assertTrue(static_outputs)
+        self.assertEqual(code_outputs[0]["node"], "generate_r_code_agent")
+        self.assertEqual(static_outputs[0]["node"], "generate_r_code_agent")
         self.assertIn("static_check_limited_scope", result["risk_flags"])
         self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
         self.assertEqual(result["audit_manifest"].metadata["agent_node_outputs"][0]["agent"], "evidence_agent")

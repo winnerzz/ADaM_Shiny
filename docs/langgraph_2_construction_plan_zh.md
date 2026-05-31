@@ -4466,3 +4466,43 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dat
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_prepare_generates_draft_spec_then_stops_for_review -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Code And Static Review Agent IO Migration 切片
+
+已完成：
+
+- 将 DatasetGraph `generate_r_code_agent` 成功路径迁到两个 bounded role 的
+  typed IO packages：
+  - `code_agent`
+  - `static_review_agent`
+- code-agent input 现在记录 approved spec source、准备好的 context keys、
+  included datasets、变量数量摘要、product-context artifact id、risk flags、
+  evidence bundle id、reference query ids。
+- code-agent output 现在包住已有 `r_code_generated` audit decision，并记录生成
+  R code 的 artifact ids 和下一步人工动作。
+- static-review input 现在记录 generated-code artifact id、required identifier
+  数量、required identifier source id，以及 limited-check scope。
+- static-review output 现在包住已有 `static_check_passed_for_review` warning
+  decision，并记录 static-check artifact id。
+- 增加 focused smoke assertions，证明直接 DatasetGraph code generation 和
+  StudyGraph batch execution 都会保留 code/static IO packages。
+
+当前边界：
+
+- 本切片只改变 code generation 和 limited static review 成功路径的 audit
+  packaging。
+- 不改变 prompt construction、provider calls、approved-spec gates、generated R
+  code parsing、static-rule semantics、code review、R execution、compare、
+  repair、dependency planning 或 UI 行为。
+- Static review 仍然明确是 limited scope。本切片没有新增 clinical、
+  dataset-specific、study-specific、demo-specific 或 variable-specific static
+  rule。
+- Reference ADaM 仍然只是 compare/output-shape evidence，不能作为 derivation
+  authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_generate_code_uses_input_spec_and_stops_for_review tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
