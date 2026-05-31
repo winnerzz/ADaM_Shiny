@@ -2437,6 +2437,7 @@ class GraphGateway:
             "target_datasets": list(graph_state.target_datasets),
             "runnable_datasets": list(graph_state.runnable_datasets),
             "blocked_datasets": list(graph_state.blocked_datasets),
+            "review_queue": _human_review_queue_items(graph_state, datasets),
             "datasets": datasets,
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
             "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
@@ -3287,6 +3288,152 @@ def _available_dataset_actions(dataset_state: DatasetRunState) -> list[dict[str,
     ):
         return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
     return []
+
+
+def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    study_interrupt = state.current_interrupt if state.current_interrupt is not None and state.current_interrupt.dataset is None else None
+    _add_human_review_queue_item(
+        items,
+        seen,
+        study_interrupt,
+        scope="study",
+        status=state.status,
+        reason=_study_interrupt_reason(state),
+    )
+    if study_interrupt is None and _study_next_action_requires_dependency_review(state):
+        _add_human_review_queue_item(
+            items,
+            seen,
+            None,
+            scope="study",
+            status=state.status or "open",
+            source="progress",
+            interrupt_name="dependency_review",
+            reason=_study_interrupt_reason(state),
+        )
+    for dataset_progress in datasets:
+        dataset = str(dataset_progress.get("dataset") or "").strip().upper()
+        current_interrupt = _interrupt_from_payload(dataset_progress.get("current_interrupt"))
+        if _interrupt_is_reviewable_dataset_gate(dataset_progress, current_interrupt):
+            reviewable_interrupt = current_interrupt
+        else:
+            reviewable_interrupt = None
+        _add_human_review_queue_item(
+            items,
+            seen,
+            reviewable_interrupt,
+            scope="dataset",
+            dataset=dataset,
+            status=str(dataset_progress.get("status") or ""),
+            reason=str(dataset_progress.get("action_label") or dataset_progress.get("blocked_reason") or ""),
+        )
+        interrupt_name = _interrupt_name_for_next_action(str(dataset_progress.get("next_action") or ""))
+        if current_interrupt is None and interrupt_name:
+            _add_human_review_queue_item(
+                items,
+                seen,
+                None,
+                scope="dataset",
+                dataset=dataset,
+                status=str(dataset_progress.get("status") or "open"),
+                source="progress",
+                interrupt_name=interrupt_name,
+                reason=str(dataset_progress.get("action_label") or dataset_progress.get("blocked_reason") or ""),
+            )
+    return items
+
+
+def _study_next_action_requires_dependency_review(state: StudyRunState) -> bool:
+    return state.dependency_review_status in {"blocked", "warning", "review_required", "stale"} or bool(
+        state.dependency_plan.get("plan_stale")
+    )
+
+
+def _interrupt_is_reviewable_dataset_gate(dataset_progress: dict[str, Any], interrupt: InterruptState | None) -> bool:
+    if interrupt is None:
+        return False
+    if interrupt.name != "terminal_failure":
+        return True
+    return str(dataset_progress.get("next_action") or "") == "review_terminal_failure"
+
+
+def _add_human_review_queue_item(
+    items: list[dict[str, Any]],
+    seen: set[tuple[str, str, str]],
+    interrupt: InterruptState | None,
+    *,
+    scope: str,
+    status: str,
+    reason: str = "",
+    dataset: str = "",
+    source: str = "interrupt",
+    interrupt_name: str = "",
+) -> None:
+    normalized_dataset = dataset.strip().upper()
+    name = interrupt_name.strip()
+    item_source = source
+    item_reason = reason.strip()
+    item_status = status.strip() or "open"
+    if interrupt is not None:
+        if interrupt.status != "open":
+            return
+        name = interrupt.name
+        normalized_dataset = (interrupt.dataset or normalized_dataset).strip().upper()
+        item_source = "interrupt"
+        item_reason = interrupt.reason or item_reason
+        item_status = interrupt.status
+        scope = "dataset" if normalized_dataset else scope
+    if not name:
+        return
+    key = (normalized_dataset or "study", name, item_source)
+    if key in seen:
+        return
+    seen.add(key)
+    items.append(
+        {
+            "scope": "dataset" if normalized_dataset else "study",
+            "dataset": normalized_dataset,
+            "name": name,
+            "status": item_status,
+            "source": item_source,
+            "reason": item_reason,
+            "action": _action_for_interrupt(name),
+            "action_label": _interrupt_label(name),
+        }
+    )
+
+
+def _study_interrupt_reason(state: StudyRunState) -> str:
+    if state.current_interrupt is not None and state.current_interrupt.reason:
+        return state.current_interrupt.reason
+    if state.dependency_review_status:
+        return f"Dependency review status: {state.dependency_review_status}."
+    return ""
+
+
+def _interrupt_from_payload(payload: Any) -> InterruptState | None:
+    if payload is None:
+        return None
+    if isinstance(payload, InterruptState):
+        return payload
+    if isinstance(payload, dict):
+        try:
+            return InterruptState.model_validate(payload)
+        except Exception:
+            return None
+    return None
+
+
+def _interrupt_name_for_next_action(next_action: str) -> str:
+    return {
+        "review_dependency_plan": "dependency_review",
+        "review_draft_spec": "draft_spec_review",
+        "review_code": "code_review",
+        "review_terminal_failure": "terminal_failure",
+        "resolve_dependency": "dependency_user_action_required",
+    }.get(next_action.strip(), "")
 
 
 def _blocked_dataset_progress_reason(state: StudyRunState, dataset: str) -> str:

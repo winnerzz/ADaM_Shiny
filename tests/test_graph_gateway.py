@@ -2513,6 +2513,10 @@ class GraphGatewayTests(unittest.TestCase):
         adae_progress = {item["dataset"]: item for item in progress["datasets"]}["ADAE"]
         self.assertEqual(adae_progress["next_action"], "repair_generated_code")
         self.assertEqual(adae_progress["available_actions"], [])
+        self.assertNotIn(
+            ("dataset", "ADAE", "terminal_failure"),
+            {(item["scope"], item["dataset"], item["name"]) for item in progress["review_queue"]},
+        )
         persisted_state = json.loads(
             (study_dir / "runs" / "run_lg2_terminal_failure_review" / "graph_state.json").read_text(encoding="utf-8")
         )
@@ -2601,6 +2605,10 @@ class GraphGatewayTests(unittest.TestCase):
 
         adae_progress = {item["dataset"]: item for item in progress["datasets"]}["ADAE"]
         self.assertEqual(adae_progress["next_action"], "review_terminal_failure")
+        self.assertIn(
+            ("dataset", "ADAE", "terminal_failure", "interrupt"),
+            {(item["scope"], item["dataset"], item["name"], item["source"]) for item in progress["review_queue"]},
+        )
         self.assertEqual(
             [item["action"] for item in adae_progress["available_actions"]],
             [
@@ -2628,6 +2636,10 @@ class GraphGatewayTests(unittest.TestCase):
         reviewed_adae = {item["dataset"]: item for item in reviewed_progress["datasets"]}["ADAE"]
         self.assertEqual(reviewed_adae["next_action"], "continue_other_datasets")
         self.assertEqual(reviewed_adae["available_actions"], [])
+        self.assertNotIn(
+            ("dataset", "ADAE", "terminal_failure"),
+            {(item["scope"], item["dataset"], item["name"]) for item in reviewed_progress["review_queue"]},
+        )
 
     def test_gateway_review_terminal_failure_entrypoint_rejects_invalid_decision(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_invalid_decision") / "PSY201"
@@ -2892,6 +2904,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("Study-level dependency review", by_dataset["ADAE"]["blocked_reason"])
         self.assertEqual(by_dataset["ADCM"]["next_action"], "blocked")
         self.assertIn("Study-level dependency review", by_dataset["ADCM"]["blocked_reason"])
+        review_items = {(item["scope"], item["dataset"], item["name"], item["source"]) for item in progress["review_queue"]}
+        self.assertIn(("study", "", "dependency_review", "interrupt"), review_items)
+        self.assertIn(("dataset", "ADAE", "code_review", "interrupt"), review_items)
+        self.assertIn("Review dependency plan.", {item["action_label"] for item in progress["review_queue"]})
         self.assertTrue(Path(progress["graph_state_path"]).exists())
 
     def test_gateway_progress_summary_marks_not_real_outputs_as_review_only(self) -> None:
@@ -3063,6 +3079,10 @@ class GraphGatewayTests(unittest.TestCase):
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_progress_review_required")
 
         self.assertEqual(progress["next_action"], "review_dependency_plan")
+        self.assertIn(
+            ("study", "", "dependency_review", "progress"),
+            {(item["scope"], item["dataset"], item["name"], item["source"]) for item in progress["review_queue"]},
+        )
         by_dataset = {item["dataset"]: item for item in progress["datasets"]}
         self.assertTrue(by_dataset["ADAE"]["blocked"])
         self.assertEqual(by_dataset["ADAE"]["next_action"], "blocked")

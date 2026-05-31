@@ -5771,3 +5771,43 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Graph-Owned Human Review Queue Slice
+
+Completed:
+
+- Added `review_queue` to the graph progress read model. `GraphGateway` now
+  derives open human gates from canonical study/dataset interrupts and
+  graph-owned next actions.
+- The read model includes review scope, dataset, interrupt name, source, reason,
+  action, and action label, so the browser does not need to infer the queue from
+  raw graph state when progress data is current.
+- Updated the browser human-review queue to prefer `progress.review_queue`.
+  The old local inference path remains only as a compatibility fallback for
+  older progress payloads.
+- Fixed review-queue semantics after subagent review:
+  - terminal-failure follow-up states after triage no longer appear as open
+    triage review gates;
+  - study-level dependency review is still shown when the dependency status
+    requires review but no interrupt payload is present;
+  - dataset-level interrupts are handled from dataset progress, not mistaken for
+    study-level interrupts.
+- Added focused gateway and UI contract tests proving the queue is exposed from
+  graph progress and consumed by the UI.
+
+Current boundary:
+
+- This slice changes only read-model ownership and UI consumption.
+- It does not change approval semantics, interrupt resume behavior, dependency
+  planning, provider calls, static rules, R execution, compare, repair, or
+  Reference ADaM authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_blocks_review_required_dependency_sources tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+node --check .tmp_tests\ui_script_check.js
+```

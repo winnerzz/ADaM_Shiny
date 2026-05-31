@@ -5321,3 +5321,42 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Graph-Owned Human Review Queue 切片
+
+已完成：
+
+- 在 graph progress read model 中新增 `review_queue`。`GraphGateway` 现在从
+  canonical study/dataset interrupt 和 graph-owned next action 推导当前打开的
+  人工审核门。
+- read model 包含 review scope、dataset、interrupt name、source、reason、
+  action 和 action label，所以当前 progress payload 可用时，浏览器不需要再从
+  raw graph state 自己推断审核队列。
+- 浏览器 human-review queue 现在优先使用 `progress.review_queue`。旧的本地推断
+  逻辑只作为旧 progress payload 的兼容 fallback 保留。
+- 根据子 agent 审查意见修正 review-queue 语义：
+  - terminal-failure 已经 triage 后的 follow-up 状态不再显示为 open triage
+    review gate；
+  - dependency status 需要审核但没有 interrupt payload 时，仍会显示 study-level
+    dependency review；
+  - dataset-level interrupt 从 dataset progress 处理，不会误当作 study-level
+    interrupt。
+- 增加 focused gateway 和 UI contract 测试，证明审核队列由 graph progress 暴露，
+  并且 UI 会优先消费它。
+
+当前边界：
+
+- 本切片只改变 read-model ownership 和 UI consumption。
+- 不改变 approval semantics、interrupt resume behavior、dependency planning、
+  provider calls、static rules、R execution、compare、repair 或 Reference ADaM
+  authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_blocks_review_required_dependency_sources tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m unittest tests.test_graph_gateway -v
+node --check .tmp_tests\ui_script_check.js
+```

@@ -2653,6 +2653,16 @@ INDEX_HTML = r"""<!doctype html>
 
     function humanReviewQueueItems() {
       const progress = state.runProgress || {};
+      if (Array.isArray(progress.review_queue)) {
+        return progress.review_queue.map((item) => ({
+          scope: item.scope || (item.dataset ? 'dataset' : 'study'),
+          dataset: String(item.dataset || '').toUpperCase(),
+          name: item.name || item.interrupt || progressInterruptName(item.action),
+          status: item.status || 'open',
+          source: item.source || 'graph_progress',
+          reason: item.reason || item.action_label || ''
+        })).filter((item) => item.name);
+      }
       const graph = state.graphState || {};
       const items = [];
       const seen = new Set();

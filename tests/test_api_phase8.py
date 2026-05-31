@@ -420,6 +420,10 @@ class Phase8ApiTests(unittest.TestCase):
         html = response.text
         queue_body = html.split("function renderHumanReviewQueue()", 1)[1].split("function graphInterruptLabel()", 1)[0]
         self.assertIn("state.runProgress", queue_body)
+        self.assertIn("Array.isArray(progress.review_queue)", queue_body)
+        self.assertIn("return progress.review_queue.map", queue_body)
+        self.assertLess(queue_body.index("Array.isArray(progress.review_queue)"), queue_body.index("const graph = state.graphState || {};"))
+        self.assertIn("source: item.source || 'graph_progress'", queue_body)
         self.assertIn("progress.current_interrupt", queue_body)
         self.assertIn("datasetProgress.current_interrupt", queue_body)
         self.assertIn("progressInterruptName(datasetProgress.next_action)", queue_body)
