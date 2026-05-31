@@ -244,10 +244,17 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
     invalidation 和 legacy `/runs` compatibility projection writes。
   - API 回归测试会防止 service helpers 直接写 `workflow_state.json`，或在受保护的
     product actions 中调用 low-level recorders。
+  - 新增 checkpointer 边界：默认仍支持 in-memory saver；当安装可选
+    `langgraph-checkpoint-sqlite` 包时，可以显式启用本地 SQLite saver。
+  - 本地 SQLite saver 写入 `runs/{run_id}/langgraph_checkpoints.sqlite`，刻意和
+    现有产品审计 ledger `graph_checkpoints.sqlite` 分开。
+  - 增加 restart-style 覆盖：当可选包可用时，重新创建一个 `GraphGateway` 可以从同一个
+    LangGraph SQLite checkpoint 读回 native dependency-review interrupt。
 - 仍待完成：
-  - 审核决策和产品动作已经持久化到 canonical graph state，但完整产品循环还不是一个
-    可在进程重启后通过 checkpointer-backed interrupts 全链路恢复的 native
-    LangGraph run。
+  - 审核决策和产品动作已经持久化到 canonical graph state；native pilot interrupt
+    在安装可选依赖后可以使用本地 SQLite checkpointer。但完整产品循环还不是一个
+    可在进程重启后恢复所有 gate 的单次 native LangGraph run。公开 FastAPI/UI 默认
+    仍使用 in-memory checkpointer，除非后续切片接入明确产品配置。
   - repair/spec-revision 闭环仍需要更多原生 graph routing；当前 terminal-failure
     triage 会记录受控 next action，但不会自动执行 repair cycle。
 
@@ -6365,4 +6372,64 @@ Ran 279 tests in 27.897s - OK
 python -B -m compileall -q src tests
 git diff --check
 Exited 0; CRLF warnings only.
+```
+
+### 2026-06-01 - LG2.1 本地 SQLite Checkpointer 接线切片
+
+已完成：
+
+- 扩展 `CheckpointerBundle`，加入明确的资源生命周期字段：
+  `checkpoint_path`、`close_callback` 和 `close()`。
+- 新增 `default_sqlite_checkpointer_path(study_dir, run_id)`，让 LangGraph
+  runtime checkpoint store 使用单独、可预测的路径：
+  `runs/{run_id}/langgraph_checkpoints.sqlite`。
+- `build_checkpointer("sqlite", sqlite_path=...)` 现在会：
+  - 要求显式传入 SQLite path；
+  - 在未安装 `langgraph-checkpoint-sqlite` 时 fail closed；
+  - 当可选包安装后，构建 `langgraph.checkpoint.sqlite.SqliteSaver`；
+  - 只有真实 SQLite saver 启用时，才标记
+    `langgraph_checkpointer_persistent=true` 和
+    `native_interrupt_resume=true`；
+  - 同时报告 `native_interrupt_resume_scope=native_pilot_interrupts_only`，避免被误读成
+    完整产品循环已经能在重启后恢复。
+- `GraphGateway` 现在可以通过
+  `checkpointer_backend="sqlite"` 和 `sqlite_checkpointer_path=...` 显式构建；
+  公开默认路径仍保持 `memory`。
+- 新增可选依赖声明：
+  `adam-agent-studio[sqlite-checkpoint]` 会安装
+  `langgraph-checkpoint-sqlite>=3.0.3,<3.1`。
+- 增加测试覆盖：
+  - SQLite path 必须显式传入；
+  - 可选包缺失时 fail closed；
+  - `langgraph_checkpoints.sqlite` 与产品审计 ledger
+    `graph_checkpoints.sqlite` 分开；
+  - 可选包存在时的 SQLite metadata；
+  - restart-style readback：重新创建一个 `GraphGateway` 后，可以从同一个
+    SQLite checkpoint 读回 native dependency-review interrupt。
+
+当前边界：
+
+- 公开 FastAPI/UI 产品路径仍默认使用 in-memory checkpointer。
+- SQLite checkpointer 入口已经接好并做过 smoke 验证，但完整产品循环还不是一个
+  可在进程重启后恢复所有 gate 的单次 native LangGraph run。
+- 这个本地 SQLite saver 适合本地单进程恢复测试，不是生产多 worker 部署方案。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 已接受两个中等风险建议：
+  - 增加 `native_interrupt_resume_scope`，避免暗示 full product-loop native
+    resume 已完成；
+  - 将“可选包缺失”测试改为 patch `find_spec`，即使 CI 安装了 SQLite extra，
+    该测试仍稳定。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_requires_sqlite_path tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_sqlite_backend tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_postgres_backend tests.test_graph_gateway.GraphGatewayTests.test_default_sqlite_checkpointer_path_is_separate_from_product_ledger tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 7 tests in 0.044s - OK (skipped=1)
+
+$env:PYTHONPATH = ".tmp_tests\sqlite_pkg;src"
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_can_read_interrupt_after_new_gateway_when_package_available -v
+Ran 2 tests in 0.078s - OK
 ```

@@ -207,13 +207,32 @@ class GraphGateway:
     same gateway instead of adding more FastAPI-local state transitions.
     """
 
-    def __init__(self, *, checkpointer: Any | None = None, checkpointer_bundle: CheckpointerBundle | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        checkpointer: Any | None = None,
+        checkpointer_bundle: CheckpointerBundle | None = None,
+        checkpointer_backend: str = "memory",
+        sqlite_checkpointer_path: str | Path | None = None,
+    ) -> None:
         bundle = checkpointer_bundle if checkpointer is None else None
         if checkpointer is None and bundle is None:
-            bundle = build_checkpointer()
+            bundle = build_checkpointer(checkpointer_backend, sqlite_path=sqlite_checkpointer_path)  # type: ignore[arg-type]
         self._checkpointer_bundle = bundle
         self._checkpointer = checkpointer if checkpointer is not None else bundle.checkpointer
         self._graph = compile_study_graph(checkpointer=self._checkpointer)
+
+    def close(self) -> None:
+        """Release process-local resources held by the configured checkpointer."""
+
+        if self._checkpointer_bundle is not None:
+            self._checkpointer_bundle.close()
+
+    def __enter__(self) -> GraphGateway:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
 
     def start_dependency_plan(
         self,

@@ -18,7 +18,7 @@ TMP_ROOT = ROOT / ".tmp_tests"
 try:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
-    from adam_agent.graph.checkpointing import build_checkpointer, describe_checkpointer
+    from adam_agent.graph.checkpointing import build_checkpointer, default_sqlite_checkpointer_path, describe_checkpointer
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -33,7 +33,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
-    from adam_agent.graph.checkpointing import build_checkpointer, describe_checkpointer
+    from adam_agent.graph.checkpointing import build_checkpointer, default_sqlite_checkpointer_path, describe_checkpointer
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -354,6 +354,7 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(runtime_persistence["langgraph_checkpointer_backend"], "memory")
         self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
         self.assertFalse(runtime_persistence["native_interrupt_resume"])
+        self.assertEqual(runtime_persistence["native_interrupt_resume_scope"], "none")
 
     def test_checkpointing_boundary_defaults_to_nonpersistent_memory(self) -> None:
         study_dir = _workspace_dir("lg2_checkpointing_boundary") / "PSY201"
@@ -364,11 +365,20 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(payload["langgraph_checkpointer_backend"], "memory")
         self.assertEqual(payload["langgraph_checkpointer_type"], "InMemorySaver")
         self.assertFalse(payload["langgraph_checkpointer_persistent"])
+        self.assertFalse(payload["native_interrupt_resume"])
+        self.assertEqual(payload["native_interrupt_resume_scope"], "none")
         self.assertEqual(payload["restart_recovery_source"], "graph_state_json")
         self.assertIn("in-memory only", " ".join(payload["notes"]))
 
     def test_checkpointing_boundary_rejects_unavailable_sqlite_backend(self) -> None:
-        with self.assertRaisesRegex(ValueError, "SQLite LangGraph checkpointer is not installed|not wired database lifecycle"):
+        study_dir = _workspace_dir("lg2_checkpointing_sqlite_unavailable") / "PSY201"
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, "run_sqlite")
+        with patch("adam_agent.graph.checkpointing.importlib.util.find_spec", return_value=None):
+            with self.assertRaisesRegex(ValueError, "SQLite LangGraph checkpointer is not installed"):
+                build_checkpointer("sqlite", sqlite_path=sqlite_path)  # type: ignore[arg-type]
+
+    def test_checkpointing_boundary_requires_sqlite_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "sqlite_path is required"):
             build_checkpointer("sqlite")  # type: ignore[arg-type]
 
     def test_checkpointing_boundary_rejects_unavailable_postgres_backend(self) -> None:
@@ -386,6 +396,78 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(payload["langgraph_checkpointer_type"], "CustomCheckpointer")
         self.assertFalse(payload["langgraph_checkpointer_persistent"])
         self.assertEqual(payload["restart_recovery_source"], "graph_state_json")
+
+    def test_default_sqlite_checkpointer_path_is_separate_from_product_ledger(self) -> None:
+        study_dir = _workspace_dir("lg2_checkpointing_path") / "PSY201"
+        path = default_sqlite_checkpointer_path(study_dir, "run_path")
+
+        self.assertEqual(path.name, "langgraph_checkpoints.sqlite")
+        self.assertTrue(str(path.as_posix()).endswith("runs/run_path/langgraph_checkpoints.sqlite"))
+        self.assertNotEqual(path.name, "graph_checkpoints.sqlite")
+
+    def test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available(self) -> None:
+        study_dir = _workspace_dir("lg2_checkpointing_sqlite_available") / "PSY201"
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, "run_sqlite")
+        try:
+            bundle = build_checkpointer(
+                "sqlite",
+                sqlite_path=sqlite_path,
+            )
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            payload = describe_checkpointer(
+                checkpointer=bundle.checkpointer,
+                study_dir=_workspace_dir("lg2_checkpointing_sqlite_payload") / "PSY201",
+                run_id="run_sqlite",
+                bundle=bundle,
+            )
+            self.assertEqual(payload["langgraph_checkpointer_backend"], "sqlite")
+            self.assertEqual(payload["langgraph_checkpointer_type"], "SqliteSaver")
+            self.assertTrue(payload["langgraph_checkpointer_persistent"])
+            self.assertTrue(payload["native_interrupt_resume"])
+            self.assertEqual(payload["native_interrupt_resume_scope"], "native_pilot_interrupts_only")
+            self.assertEqual(payload["restart_recovery_source"], "langgraph_sqlite_checkpointer")
+            self.assertTrue(payload["langgraph_checkpoint_path"].endswith("langgraph_checkpoints.sqlite"))
+            self.assertEqual(payload["langgraph_checkpoint_path"], str(sqlite_path.as_posix()))
+            self.assertIn("local single-process recovery", " ".join(payload["notes"]))
+        finally:
+            bundle.close()
+
+    def test_sqlite_checkpointer_can_read_interrupt_after_new_gateway_when_package_available(self) -> None:
+        study_dir = _workspace_dir("lg2_checkpointing_sqlite_restart") / "PSY201"
+        study_dir.mkdir(parents=True)
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, "run_sqlite_restart")
+
+        try:
+            gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            gateway.start_native_dependency_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_sqlite_restart",
+                target_datasets=["ADAE"],
+            )
+        finally:
+            gateway.close()
+
+        reloaded_gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        try:
+            snapshot = reloaded_gateway.get_state(study_id="PSY201", run_id="run_sqlite_restart")
+        finally:
+            reloaded_gateway.close()
+
+        self.assertEqual(snapshot["study_id"], "PSY201")
+        self.assertEqual(snapshot["run_id"], "run_sqlite_restart")
+        self.assertEqual(snapshot["current_interrupt"], "dependency_review")
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"

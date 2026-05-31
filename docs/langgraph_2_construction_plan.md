@@ -289,11 +289,22 @@ Current implementation status:
   - API regression tests guard against service helpers writing
     `workflow_state.json` directly or calling low-level recorders for protected
     product actions.
+  - Added a checkpointer boundary that supports the default in-memory saver and
+    a guarded local SQLite saver when the optional
+    `langgraph-checkpoint-sqlite` package is installed.
+  - The local SQLite saver writes to `runs/{run_id}/langgraph_checkpoints.sqlite`,
+    deliberately separate from the existing product audit ledger
+    `graph_checkpoints.sqlite`.
+  - Added restart-style coverage proving a new `GraphGateway` can read a
+    native dependency-review interrupt from the same LangGraph SQLite
+    checkpoint when the optional package is available.
 - Still open:
   - Review decisions and product actions are persisted in canonical graph state,
-    but the full product loop is not yet a single native LangGraph run that
-    resumes all gates through checkpointer-backed interrupts after process
-    restart.
+    and native pilot interrupts can use a local SQLite checkpointer when the
+    optional dependency is installed. The full product loop is still not a
+    single native LangGraph run that resumes every gate after process restart.
+    Public FastAPI/UI defaults still use the in-memory checkpointer unless a
+    later slice wires explicit product configuration.
   - Repair/spec-revision loops still require more native graph routing; current
     terminal-failure triage records the controlled next action but does not run
     an autonomous repair cycle.
@@ -6901,4 +6912,67 @@ Ran 279 tests in 27.897s - OK
 python -B -m compileall -q src tests
 git diff --check
 Exited 0; CRLF warnings only.
+```
+
+### 2026-06-01 - LG2.1 Local SQLite Checkpointer Wiring Slice
+
+Completed:
+
+- Extended `CheckpointerBundle` with explicit resource lifecycle metadata:
+  `checkpoint_path`, `close_callback`, and `close()`.
+- Added `default_sqlite_checkpointer_path(study_dir, run_id)` so the LangGraph
+  runtime checkpoint store has a separate, predictable path:
+  `runs/{run_id}/langgraph_checkpoints.sqlite`.
+- `build_checkpointer("sqlite", sqlite_path=...)` now:
+  - requires an explicit SQLite path;
+  - fails closed when `langgraph-checkpoint-sqlite` is not installed;
+  - builds `langgraph.checkpoint.sqlite.SqliteSaver` when the optional package
+    is installed;
+  - marks `langgraph_checkpointer_persistent=true` and
+    `native_interrupt_resume=true` only for that real SQLite saver;
+  - reports `native_interrupt_resume_scope=native_pilot_interrupts_only` so the
+    metadata cannot be read as full product-loop restart recovery.
+- `GraphGateway` can now be constructed with
+  `checkpointer_backend="sqlite"` and `sqlite_checkpointer_path=...`, while the
+  public default remains `memory`.
+- Added optional packaging metadata:
+  `adam-agent-studio[sqlite-checkpoint]` installs
+  `langgraph-checkpoint-sqlite>=3.0.3,<3.1`.
+- Added tests for:
+  - required SQLite path;
+  - missing optional package fail-closed behavior;
+  - separation between `langgraph_checkpoints.sqlite` and the product audit
+    ledger `graph_checkpoints.sqlite`;
+  - SQLite metadata when the optional package is available;
+  - restart-style readback where a new `GraphGateway` reads a native
+    dependency-review interrupt from the same SQLite checkpoint.
+
+Current boundary:
+
+- The public FastAPI/UI product path still defaults to the in-memory
+  checkpointer.
+- The optional SQLite checkpointer has been wired and smoke-tested, but the full
+  product loop is not yet one native LangGraph run that resumes every gate after
+  process restart.
+- This local SQLite saver is suitable for local single-process recovery testing,
+  not production multi-worker deployment.
+
+Review:
+
+- Subagent review returned GO.
+- Accepted both medium-risk suggestions:
+  - added `native_interrupt_resume_scope` to avoid implying full product-loop
+    native resume;
+  - changed the unavailable-package test to patch `find_spec`, so it remains
+    stable even if CI installs the optional SQLite extra.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_requires_sqlite_path tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_sqlite_backend tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_postgres_backend tests.test_graph_gateway.GraphGatewayTests.test_default_sqlite_checkpointer_path_is_separate_from_product_ledger tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 7 tests in 0.044s - OK (skipped=1)
+
+$env:PYTHONPATH = ".tmp_tests\sqlite_pkg;src"
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_can_read_interrupt_after_new_gateway_when_package_available -v
+Ran 2 tests in 0.078s - OK
 ```
