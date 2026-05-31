@@ -5869,3 +5869,45 @@ git diff --check
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_checkpoint_can_be_read_from_same_graph_instance tests.test_graph_gateway.GraphGatewayTests.test_gateway_persists_canonical_state_for_process_restart_resume -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/workflow_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-06-01 - LG2.1 Strict Human Resume Gate 切片
+
+已完成：
+
+- 收紧 `GraphGateway.resume()`：human command 必须匹配当前 open graph interrupt，
+  否则 fail closed。
+- study-level command 只能恢复当前 open study interrupt，例如
+  `dependency_review`。
+- dataset-level command 只能恢复同一 dataset 上当前 open dataset interrupt，例如
+  `ADAE/draft_spec_review`。
+- resolved interrupt、缺失 dataset interrupt、dataset 上的错误 interrupt 名称，都不会再
+  被静默写入 canonical graph state。
+- 增加回归测试，证明不匹配 command 不会写出 `graph_state.json`。
+
+当前边界：
+
+- 本切片只收紧 human command -> interrupt 的匹配规则。
+- 不实现完整 native LangGraph interrupt/checkpointer resume。
+- 不改变 dependency planning、draft/spec/code review 业务语义、LLM generation、R
+  execution、compare、static rules、UI 行为或 legacy `/runs` 行为。
+- 这是为后续 native interrupt/resume 做前置安全约束：人工命令必须先被证明属于当前
+  open gate，才能进入 canonical state。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 resume gate 在 canonical state 持久化前执行，能正确区分 study-level
+  和 dataset-level interrupt，能保留无关 dataset 的 open interrupt，也不会阻断现有
+  split-flow review endpoints。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_dependency_owns_interrupt_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_preserves_other_dataset_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_study_command_without_matching_open_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_dataset_command_for_other_open_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_dataset_command_without_dataset_interrupt -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 260 tests in 29.362s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```

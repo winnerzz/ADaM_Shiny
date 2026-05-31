@@ -349,6 +349,7 @@ class GraphGateway:
         product nodes. Those node transitions are introduced in LG2.2.
         """
 
+        _assert_resume_command_matches_open_interrupt(graph_state, command)
         next_state = graph_state.model_copy(deep=True)
         next_state.human_commands.append(command)
         next_state.updated_at = utc_now()
@@ -3685,6 +3686,43 @@ def _runtime_persistence_payload(study_dir: str | Path, run_id: str, checkpointe
             "Full native LangGraph interrupt/checkpointer resume remains future work.",
         ],
     }
+
+
+def _assert_resume_command_matches_open_interrupt(state: StudyRunState, command: HumanCommand) -> None:
+    """Fail closed unless a human command matches the current open interrupt."""
+
+    expected = _matching_open_interrupt(state, command)
+    if expected is None:
+        target = command.dataset.strip().upper() if command.dataset else "study"
+        raise ValueError(
+            f"Human command {command.interrupt} for {target} does not match any current open graph interrupt."
+        )
+
+
+def _matching_open_interrupt(state: StudyRunState, command: HumanCommand) -> InterruptState | None:
+    if command.dataset:
+        dataset_key = command.dataset.strip().upper()
+        dataset_state = state.datasets.get(dataset_key)
+        if dataset_state is None:
+            return None
+        interrupt = dataset_state.current_interrupt
+        if (
+            interrupt is not None
+            and interrupt.status == "open"
+            and interrupt.name == command.interrupt
+            and (interrupt.dataset or "").strip().upper() == dataset_key
+        ):
+            return interrupt
+        return None
+    interrupt = state.current_interrupt
+    if (
+        interrupt is not None
+        and interrupt.status == "open"
+        and interrupt.dataset is None
+        and interrupt.name == command.interrupt
+    ):
+        return interrupt
+    return None
 
 
 def _artifact_ref(dataset: str, artifact_id: str, role: str, path: str | Path, *, kind: str) -> ArtifactRef:

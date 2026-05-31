@@ -550,6 +550,93 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.current_interrupt.dataset, "ADCM")
         self.assertEqual(result.graph_state.status, "needs_review")
 
+    def test_gateway_resume_rejects_study_command_without_matching_open_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_resume_reject_study_mismatch") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_resume_reject_study_mismatch",
+            status="needs_review",
+            current_interrupt=InterruptState(name="dependency_review", status="resolved"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            GraphGateway().resume(
+                study_dir=study_dir,
+                graph_state=state,
+                command=HumanCommand(
+                    interrupt="dependency_review",
+                    action="approve",
+                    reviewer="tester",
+                ),
+            )
+
+        self.assertFalse((study_dir / "runs" / "run_lg2_resume_reject_study_mismatch" / "graph_state.json").exists())
+
+    def test_gateway_resume_rejects_dataset_command_for_other_open_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_resume_reject_dataset_mismatch") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_resume_reject_dataset_mismatch",
+            status="needs_review",
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_resume_reject_dataset_mismatch",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="draft_spec_review", dataset="ADAE"),
+                )
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            GraphGateway().resume(
+                study_dir=study_dir,
+                graph_state=state,
+                command=HumanCommand(
+                    interrupt="code_review",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="tester",
+                ),
+            )
+
+        self.assertFalse((study_dir / "runs" / "run_lg2_resume_reject_dataset_mismatch" / "graph_state.json").exists())
+
+    def test_gateway_resume_rejects_dataset_command_without_dataset_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_resume_reject_missing_dataset_interrupt") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_resume_reject_missing_dataset_interrupt",
+            status="needs_review",
+            current_interrupt=InterruptState(name="dependency_review"),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_resume_reject_missing_dataset_interrupt",
+                    dataset="ADAE",
+                    status="pending",
+                )
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            GraphGateway().resume(
+                study_dir=study_dir,
+                graph_state=state,
+                command=HumanCommand(
+                    interrupt="draft_spec_review",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="tester",
+                ),
+            )
+
+        self.assertFalse((study_dir / "runs" / "run_lg2_resume_reject_missing_dataset_interrupt" / "graph_state.json").exists())
+
     def test_gateway_records_dataset_code_review_in_canonical_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_code_review") / "PSY201"
         code_dir = study_dir / "runs" / "run_lg2_code_review" / "code"

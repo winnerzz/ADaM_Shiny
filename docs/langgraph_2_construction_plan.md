@@ -6355,3 +6355,48 @@ Verification:
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_checkpoint_can_be_read_from_same_graph_instance tests.test_graph_gateway.GraphGatewayTests.test_gateway_persists_canonical_state_for_process_restart_resume -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/workflow_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-06-01 - LG2.1 Strict Human Resume Gate Slice
+
+Completed:
+
+- Tightened `GraphGateway.resume()` so a human command must match the current
+  open graph interrupt or fail closed.
+- Study-level commands can only resume the current open study interrupt, such as
+  `dependency_review`.
+- Dataset-level commands can only resume the current open interrupt on the same
+  dataset, such as `ADAE/draft_spec_review`.
+- Resolved interrupts, missing dataset interrupts, and wrong interrupt names on
+  a dataset are no longer silently recorded into canonical graph state.
+- Added regressions proving mismatched commands do not write `graph_state.json`.
+
+Current boundary:
+
+- This slice only tightens human command -> interrupt matching.
+- It does not implement full native LangGraph interrupt/checkpointer resume.
+- It does not change dependency planning, draft/spec/code review semantics, LLM
+  generation, R execution, compare, static rules, UI behavior, or legacy
+  `/runs` behavior.
+- It is a safety precondition for later native interrupt/resume work: a human
+  command must first prove it belongs to the current open gate before it can
+  enter canonical state.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the resume gate runs before canonical state
+  persistence, separates study-level and dataset-level interrupts correctly,
+  preserves unrelated open dataset interrupts, and does not block the existing
+  split-flow review endpoints.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_dependency_owns_interrupt_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_preserves_other_dataset_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_study_command_without_matching_open_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_dataset_command_for_other_open_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_resume_rejects_dataset_command_without_dataset_interrupt -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 260 tests in 29.362s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
