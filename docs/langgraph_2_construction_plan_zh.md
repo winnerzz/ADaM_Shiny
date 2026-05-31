@@ -3863,3 +3863,45 @@ Python 文件；diff check passed。Source scan 未发现运行时代码继续�
   和 materialization metadata；audit-agent summary 不再给 virtual reference 写
   stub metadata；legacy DatasetGraph stub audit metadata 仍保留；没有引入
   static-rule 或 product-routing drift。
+
+### 2026-05-31 - LG2.8 Dataset-Neutral Stub Scenario Defaults 切片
+
+已完成：
+
+- 移除 StudyGraph 中最后一个针对 `ADAE` 的默认 stub 场景特判。
+- StudyGraph 现在给每个 runnable dataset 同一个 legacy stub 默认场景：
+  `success`。
+- 测试需要模拟 repair/failure 时，必须显式传入 `stub_scenarios`。
+- 新增回归，证明 ADAE 和 ADLB 在默认 stub 场景下都不会隐式产生 repair
+  attempt；同时证明显式 `code_error_then_success` 仍可触发 legacy repair 路径。
+
+当前边界：
+
+- 这是 legacy/test stub 默认值清理，不改变 dependency planning、product
+  DatasetGraph routing、LLM generation、R execution、compare、UI state 或
+  static-rule governance。
+- 显式 DatasetGraph `code_error_then_success` 场景仍保留，用于测试 repair
+  routing；它不再隐藏成 StudyGraph 对 ADAE 的默认行为。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_default_stub_scenarios_are_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_study_graph_stub_repair_requires_explicit_scenario -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "code_error_then_success\" if dataset == \"ADAE\"|dataset == \"ADAE\"" src\adam_agent\graph tests\test_graph_smoke.py
+```
+
+结果：focused default-scenario 回归通过；240 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。Source scan 未发现 graph runtime 代码仍保留
+`ADAE` special-case default stub repair scenario。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：StudyGraph 现在对 downstream 和 foundation tasks 使用同一个默认
+  stub scenario；显式 repair simulation 仍可通过 `stub_scenarios` 使用；新增测试
+  覆盖了默认路径和显式 repair 路径；没有引入 dependency-planning、
+  product-routing 或 static-rule governance drift。

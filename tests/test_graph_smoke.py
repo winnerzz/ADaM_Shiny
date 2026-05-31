@@ -379,6 +379,47 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["audit_manifest"].metadata["dependency_evidence"], "no_dependency_evidence")
         self.assertTrue(result["audit_manifest"].metadata["dependency_decisions"][1]["review_required"])
 
+    def test_study_graph_default_stub_scenarios_are_dataset_neutral(self) -> None:
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_dataset_neutral_stub_defaults",
+                "target_datasets": ["ADAE", "ADLB"],
+                "execution_mode": "stub",
+                "approved_dependency_datasets": ["ADSL"],
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        audit_by_dataset = {artifact.dataset: artifact for artifact in result["audit_artifacts"] if artifact.dataset}
+        self.assertEqual(audit_by_dataset["ADAE"].metadata["repair_attempts"], 0)
+        self.assertEqual(audit_by_dataset["ADLB"].metadata["repair_attempts"], 0)
+        self.assertEqual(result["status"], "completed")
+
+    def test_study_graph_stub_repair_requires_explicit_scenario(self) -> None:
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_explicit_stub_repair_scenario",
+                "target_datasets": ["ADAE"],
+                "execution_mode": "stub",
+                "stub_scenarios": {"ADAE": "code_error_then_success"},
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        audit_by_dataset = {artifact.dataset: artifact for artifact in result["audit_artifacts"] if artifact.dataset}
+        self.assertEqual(audit_by_dataset["ADAE"].metadata["repair_attempts"], 1)
+        self.assertEqual(result["status"], "completed")
+
     def test_study_graph_virtual_audit_refs_are_not_stub_metadata(self) -> None:
         graph = compile_study_graph()
 

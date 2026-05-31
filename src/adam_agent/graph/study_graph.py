@@ -79,7 +79,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         _make_dataset_task(
             state,
             dataset,
-            scenarios.get(dataset, "code_error_then_success" if dataset == "ADAE" else "success"),
+            scenarios.get(dataset, "success"),
             _dependency_status(plan.dependencies.get(dataset, [])),
             _dependency_resolution_for_dataset(dataset, dependency_resolution_dicts),
         )

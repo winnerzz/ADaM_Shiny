@@ -4233,3 +4233,50 @@ Subagent review:
   longer uses stub metadata for a virtual reference, legacy DatasetGraph stub
   audit metadata remains intact, and no static-rule or product-routing drift was
   introduced.
+
+### 2026-05-31 - LG2.8 Dataset-Neutral Stub Scenario Defaults Slice
+
+Completed:
+
+- Removed the remaining StudyGraph default stub scenario special case for
+  `ADAE`.
+- StudyGraph now gives every runnable dataset the same default legacy stub
+  scenario, `success`.
+- Tests that need repair/failure simulation must pass `stub_scenarios`
+  explicitly.
+- Added regressions proving ADAE and ADLB both get zero implicit repair attempts
+  under default stub scenarios, while an explicit `code_error_then_success`
+  scenario still exercises the legacy repair path.
+
+Current boundary:
+
+- This is a legacy/test stub default cleanup only. It does not change dependency
+  planning, product DatasetGraph routing, LLM generation, R execution, compare,
+  UI state, or static-rule governance.
+- The explicit DatasetGraph `code_error_then_success` scenario remains available
+  for testing repair routing. It is no longer hidden as a StudyGraph ADAE
+  default.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_default_stub_scenarios_are_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_study_graph_stub_repair_requires_explicit_scenario -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "code_error_then_success\" if dataset == \"ADAE\"|dataset == \"ADAE\"" src\adam_agent\graph tests\test_graph_smoke.py
+```
+
+Result: focused default-scenario regressions passed; 240 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed. Source scan found no remaining `ADAE` special-case
+default stub repair scenario in graph runtime code.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that StudyGraph now uses the same default stub scenario
+  for downstream and foundation tasks, explicit repair simulation remains
+  available through `stub_scenarios`, the new tests cover both paths, and no
+  dependency-planning, product-routing, or static-rule governance drift was
+  introduced.
