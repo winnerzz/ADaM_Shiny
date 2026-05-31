@@ -4562,3 +4562,46 @@ Subagent review:
   validation first, and uses it consistently for output quality, validation
   status/report, warnings, and errors.
 - Final review: GO. No blocking findings.
+
+### 2026-05-31 - LG2.8 Review Summary Source Metadata Slice
+
+Completed:
+
+- Added explicit read-model source metadata to `RunReviewSummary`:
+  `read_model_source`, `graph_state_path`, and `workflow_state_path`.
+- Made run-level `study_id` and `status` follow the same graph-state-first rule
+  as dataset reviews.
+- Split fallback labels into:
+  - `graph_state` when canonical graph state is loaded.
+  - `workflow_state_fallback` when graph state is unavailable but the legacy
+    projection is available.
+  - `artifact_fallback` when the read model is reconstructed only from run
+    artifacts such as outputs, validation files, and manifests.
+
+Current boundary:
+
+- This is source visibility for a read model only. It does not mutate graph
+  state, workflow projections, dependency resolution, LLM generation,
+  R execution, compare, or static-rule behavior.
+- The fields are intended to remove UI/API ambiguity while legacy fallback
+  remains available.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+Result: focused source-metadata tests passed; broader graph-gateway/API suite
+passed with 155 tests; AST syntax check covered 80 Python files; `git diff
+--check` reported only CRLF line-ending warnings.
+
+Subagent review:
+
+- First review: GO, with a non-blocking suggestion to distinguish artifact-only
+  fallback from workflow fallback.
+- Fix applied: `artifact_fallback` is now explicit and covered by regression.
+- Final review: GO.

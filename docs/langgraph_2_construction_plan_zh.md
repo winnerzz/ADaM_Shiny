@@ -4170,3 +4170,44 @@ git diff --check
   优先，并一致用于 output quality、validation status/report、warnings 和
   errors。
 - 最终 review：GO。未发现 blocking findings。
+
+### 2026-05-31 - LG2.8 Review Summary 来源元数据切片
+
+已完成：
+
+- 给 `RunReviewSummary` 增加明确的 read-model 来源字段：
+  `read_model_source`、`graph_state_path`、`workflow_state_path`。
+- run 级 `study_id` 和 `status` 也遵循和 dataset review 一样的
+  graph-state-first 规则。
+- 将 fallback 来源拆成三类：
+  - `graph_state`：成功读取 canonical graph state。
+  - `workflow_state_fallback`：graph state 不可用，但 legacy projection 可用。
+  - `artifact_fallback`：只能从 outputs、validation files、manifest 等 run
+    artifacts 恢复 review summary。
+
+当前边界：
+
+- 这只是 read model 的来源可见性切片，不修改 graph state、workflow
+  projection、dependency resolution、LLM generation、R execution、compare 或
+  static-rule 行为。
+- 这些字段用于减少 UI/API 状态歧义，同时保留 legacy fallback。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+结果：focused source-metadata tests 通过；更宽的 graph-gateway/API suite
+通过 155 个测试；AST syntax check 覆盖 80 个 Python 文件；`git diff
+--check` 只有 CRLF line-ending warnings。
+
+子 agent review：
+
+- 第一次 review：GO，同时提出非阻塞建议：把 artifact-only fallback 与
+  workflow fallback 分开。
+- 已修复：现在显式返回 `artifact_fallback`，并有回归测试覆盖。
+- 最终 review：GO。
