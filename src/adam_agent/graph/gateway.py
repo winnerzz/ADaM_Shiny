@@ -15,6 +15,8 @@ from adam_agent.agents import (
     AgentDecision,
     AgentNodeInput,
     AgentNodeOutput,
+    build_agent_node_input,
+    build_agent_node_output,
     build_agent_audit_summary_from_state,
     record_agent_decision,
     write_agent_audit_summary,
@@ -1853,35 +1855,74 @@ class GraphGateway:
                     dataset_state,
                     _artifact_ref(target, "compare_report", "output", report_path, kind="compare_report"),
                 )
+        compare_artifact_ids = [
+            artifact.artifact_id
+            for artifact in dataset_state.artifacts
+            if artifact.kind == "compare_report"
+        ]
+        validation_input = build_agent_node_input(
+            agent="validation_agent",
+            node="compare_reference_output",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            task="Record generated-vs-reference ADaM comparison evidence.",
+            inputs={
+                "compare_summary_keys": sorted(summary.keys()),
+                "input_fingerprint_digest": fingerprint.get("digest"),
+                "generated_file": summary.get("generated_file"),
+                "reference_file": summary.get("reference_file"),
+                "reference_role": "comparison_evidence_only",
+            },
+            artifact_ids=compare_artifact_ids,
+            risk_flags=["reference_compare_limited_scope"],
+        )
+        validation_decision = record_agent_decision(
+            agent="validation_agent",
+            node="compare_reference_output",
+            decision="reference_compare_recorded",
+            dataset=target,
+            status=str(summary.get("status") or "unknown"),
+            reason=(
+                "Recorded generated-vs-reference ADaM comparison as validation evidence. "
+                "This does not establish clinical derivation correctness."
+            ),
+            inputs={
+                "input_fingerprint_digest": fingerprint.get("digest"),
+                "reference_role": "comparison_evidence_only",
+            },
+            outputs={
+                "compare_status": summary.get("status"),
+                "report_path": str(report_path.as_posix()) if report_path else None,
+            },
+            risk_flags=["reference_compare_limited_scope"],
+            artifact_ids=compare_artifact_ids,
+        )
+        validation_output = build_agent_node_output(
+            agent="validation_agent",
+            node="compare_reference_output",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            status=str(summary.get("status") or "unknown"),
+            decision="reference_compare_recorded",
+            reason=(
+                "Recorded generated-vs-reference ADaM comparison as validation evidence. "
+                "This does not establish clinical derivation correctness."
+            ),
+            outputs={
+                "compare_status": summary.get("status"),
+                "report_path": str(report_path.as_posix()) if report_path else None,
+                "reference_role": "comparison_evidence_only",
+            },
+            risk_flags=["reference_compare_limited_scope"],
+            artifact_ids=compare_artifact_ids,
+            agent_decisions=[validation_decision],
+        )
+        _append_agent_node_io(dataset_state, inputs=[validation_input], outputs=[validation_output])
         _append_agent_decisions(
             dataset_state,
-            [
-                record_agent_decision(
-                    agent="validation_agent",
-                    node="compare_reference_output",
-                    decision="reference_compare_recorded",
-                    dataset=target,
-                    status=str(summary.get("status") or "unknown"),
-                    reason=(
-                        "Recorded generated-vs-reference ADaM comparison as validation evidence. "
-                        "This does not establish clinical derivation correctness."
-                    ),
-                    inputs={
-                        "input_fingerprint_digest": fingerprint.get("digest"),
-                        "reference_role": "comparison_evidence_only",
-                    },
-                    outputs={
-                        "compare_status": summary.get("status"),
-                        "report_path": str(report_path.as_posix()) if report_path else None,
-                    },
-                    risk_flags=["reference_compare_limited_scope"],
-                    artifact_ids=[
-                        artifact.artifact_id
-                        for artifact in dataset_state.artifacts
-                        if artifact.kind == "compare_report"
-                    ],
-                )
-            ],
+            list(validation_output["agent_decisions"]),
         )
         _append_risk_flags(dataset_state, ["reference_compare_limited_scope"])
         existing_summary = dataset_state.result_summary
@@ -3399,25 +3440,13 @@ def _default_code_generation_agent_decisions(
 
 def _append_agent_decisions(dataset_state: DatasetRunState, decisions: list[dict[str, Any]]) -> None:
     existing = {
-        (
-            str(item.get("agent")),
-            str(item.get("node")),
-            str(item.get("decision")),
-            str(item.get("dataset")),
-            str(item.get("created_at")),
-        )
+        _agent_record_key(item)
         for item in dataset_state.agent_decisions
         if isinstance(item, dict)
     }
     for decision in decisions:
         normalized = AgentDecision.model_validate(decision).model_dump(mode="json")
-        key = (
-            str(normalized.get("agent")),
-            str(normalized.get("node")),
-            str(normalized.get("decision")),
-            str(normalized.get("dataset")),
-            str(normalized.get("created_at")),
-        )
+        key = _agent_record_key(normalized)
         if key not in existing:
             dataset_state.agent_decisions.append(normalized)
             existing.add(key)
@@ -3454,15 +3483,12 @@ def _append_unique_agent_io_records(
         existing_keys.add(key)
 
 
-def _agent_io_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
-    return (
-        str(record.get("agent")),
-        str(record.get("node")),
-        str(record.get("dataset")),
-        str(record.get("decision")),
-        str(record.get("task")),
-        str(record.get("created_at")),
-    )
+def _agent_io_key(record: dict[str, Any]) -> str:
+    return _agent_record_key(record)
+
+
+def _agent_record_key(record: dict[str, Any]) -> str:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _append_risk_flags(dataset_state: DatasetRunState, flags: list[str]) -> None:
@@ -3476,13 +3502,7 @@ def _append_risk_flags(dataset_state: DatasetRunState, flags: list[str]) -> None
 
 def _sync_study_agent_decisions(state: StudyRunState) -> None:
     existing_decisions = {
-        (
-            str(item.get("agent")),
-            str(item.get("node")),
-            str(item.get("decision")),
-            str(item.get("dataset")),
-            str(item.get("created_at")),
-        )
+        _agent_record_key(item)
         for item in state.agent_decisions
         if isinstance(item, dict)
     }
@@ -3492,13 +3512,7 @@ def _sync_study_agent_decisions(state: StudyRunState) -> None:
                 normalized = AgentDecision.model_validate(decision).model_dump(mode="json")
             except ValueError:
                 continue
-            key = (
-                str(normalized.get("agent")),
-                str(normalized.get("node")),
-                str(normalized.get("decision")),
-                str(normalized.get("dataset")),
-                str(normalized.get("created_at")),
-            )
+            key = _agent_record_key(normalized)
             if key not in existing_decisions:
                 state.agent_decisions.append(normalized)
                 existing_decisions.add(key)

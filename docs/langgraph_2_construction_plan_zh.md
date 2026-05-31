@@ -4994,3 +4994,39 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.p
 python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
 node --check .tmp_tests/ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.4 Validation Agent IO Compare 切片
+
+已完成：
+
+- 扩展 graph-owned compare recording：`validation_agent` 现在会为
+  `compare_reference_output` 写入 typed `AgentNodeInput` 和
+  `AgentNodeOutput`。
+- 保留原有 `validation_agent` decision payload 形态，同时通过 typed node
+  output 携带该 decision，避免破坏现有 audit summary 和 UI projection。
+- Study-level `agent_node_inputs` 和 `agent_node_outputs` 现在会从 dataset
+  state 汇总 compare IO，和 evidence/spec/code/static/execution agent 保持
+  一致。
+- 收紧 generic agent-record 去重逻辑：同一秒内重复运行但 payload 不同的记录
+  会保留在 audit trail 中。
+- 增加 gateway tests，证明 compare IO 会同时持久化到 dataset 与 study
+  level，同一秒 compare rerun 会保留独立 audit records，并且 compare status /
+  result-summary 行为不变。
+
+当前边界：
+
+- 本切片只改变 canonical agent IO persistence for compare。
+- 不改变 compare calculation、Reference ADaM authority、dependency planning、
+  provider calls、static rules、R execution、repair、terminal-failure routing
+  或 UI 行为。
+- Reference ADaM 仍然只是 comparison/output-shape evidence，不能作为
+  derivation authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_keeps_same_second_rerun_audit_records tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_reference_output_computes_and_records_compare -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+```

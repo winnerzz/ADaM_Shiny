@@ -5415,3 +5415,40 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.p
 python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
 node --check .tmp_tests/ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.4 Validation Agent IO Compare Slice
+
+Completed:
+
+- Extended graph-owned compare recording so `validation_agent` now writes typed
+  `AgentNodeInput` and `AgentNodeOutput` records for
+  `compare_reference_output`.
+- Kept the existing `validation_agent` decision payload shape while deriving it
+  through the typed node output, so existing audit summaries and UI projections
+  remain compatible.
+- Study-level `agent_node_inputs` and `agent_node_outputs` now roll up compare
+  IO from the dataset state, matching evidence/spec/code/static/execution agent
+  behavior.
+- Tightened generic agent-record deduplication so same-second reruns with
+  different payloads are preserved in the audit trail.
+- Added gateway tests proving compare IO is persisted at both dataset and study
+  level, same-second compare reruns keep separate audit records, and compare
+  status/result-summary behavior is unchanged.
+
+Current boundary:
+
+- This slice changes only canonical agent IO persistence for compare.
+- It does not change compare calculation, reference ADaM authority, dependency
+  planning, provider calls, static rules, R execution, repair, terminal-failure
+  routing, or UI behavior.
+- Reference ADaM remains comparison/output-shape evidence only and is not used
+  as derivation authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_keeps_same_second_rerun_audit_records tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_compare_summary_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_compare_reference_output_computes_and_records_compare -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+```
