@@ -5052,6 +5052,42 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Review-Only Output UI Wording Slice
+
+Completed:
+
+- Added a browser helper that reads dataset output quality from graph progress
+  or the review-summary read model before choosing user-facing output wording.
+- Changed Dependency Map runtime text so structural demo and mock/offline
+  outputs are explicitly described as review-only and unable to satisfy
+  downstream runtime dependencies.
+- Changed Dataset Execution Cards so review-only/demo outputs use a warning
+  stage style instead of the same completed-run visual state as real local R
+  runtime outputs.
+- Updated next-action wording after completed execution so review-only/demo
+  outputs are inspected as evidence, not treated as runtime inputs for another
+  dataset.
+- Added a focused UI contract test for the shared output-quality wording path.
+
+Current boundary:
+
+- This slice changes only browser read-model wording and stage styling.
+- It does not change canonical graph state, dependency planning, dependency
+  resolution, provider calls, static rules, R execution, compare, repair, or
+  Reference ADaM authority.
+- It does not block mock/demo outputs from being displayed for review. It only
+  prevents the UI from presenting them as real runtime dependency evidence.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Input-Change Target Selection Reset UI Slice
 
 Completed:

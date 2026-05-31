@@ -626,6 +626,7 @@ INDEX_HTML = r"""<!doctype html>
     .stage.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
     .stage.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
     .stage.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .stage.review-only { color: #8a5b00; background: #fff6dc; border-color: #e4c36b; }
     .agent-audit-panel {
       margin-top: 12px;
       padding: 12px;
@@ -2932,9 +2933,12 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function dependencyRuntimeSummary(target, status, isBlocked) {
+      const quality = datasetOutputQualityStatus(target);
       if (isBlocked || status === 'blocked') return `${target} cannot generate until the dependency gate is resolved.`;
       if (status === 'ready') return `${target} can move to spec/code review once required review gates are satisfied.`;
-      if (status === 'completed') return `${target} has a completed runtime output for review.`;
+      if (quality === 'structural_stub') return `${target} has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.`;
+      if (quality === 'not_real_derivation') return `${target} has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.`;
+      if (quality === 'real_runtime_output' || status === 'completed') return `${target} has a completed local R runtime output for review.`;
       if (status === 'reference evidence') return 'Reference ADaM supports comparison/output-shape review only; it is not derivation authority.';
       return `${target} is tracked as ${status || 'candidate'} in the current study plan.`;
     }
@@ -2972,7 +2976,12 @@ INDEX_HTML = r"""<!doctype html>
       if (generatedFor(target)?.status === 'stale') return 'Inputs changed after code generation. Regenerate R code before review or execution.';
       if (!generatedFor(target)?.generated_code) return 'Generated-code state exists, but the code text is not loaded in this browser. Reload the run review before approving.';
       if (!reviewFor(target) && !executionFor(target)) return 'Next: review the generated R code, then approve local execution.';
-      if (executionFor(target)?.status === 'completed') return 'Next: inspect the generated ADaM table, compare result, and downloads.';
+      const completedExecution = executionFor(target)?.status === 'completed' || datasetProgressFor(target)?.execution_status === 'completed';
+      if (completedExecution) {
+        const quality = datasetOutputQualityStatus(target);
+        if (quality === 'structural_stub' || quality === 'not_real_derivation') return 'Next: inspect this review-only/demo output. It cannot be used as runtime input for another dataset.';
+        return 'Next: inspect the generated ADaM table, compare result, and downloads.';
+      }
       if (executionFor(target)?.status === 'terminal_failure') return 'Execution failed. Review diagnostics before retrying.';
       if (status === 'reference evidence') return 'Reference ADaM is available for compare/output-shape evidence only. It is not an approved derivation rule or runtime input by itself.';
       return 'Next: continue with the active review step shown below.';
@@ -2997,13 +3006,15 @@ INDEX_HTML = r"""<!doctype html>
         const isGenerated = Boolean(generated || persisted?.generated_code || progress?.code_status);
         const isCompleted = execution?.status === 'completed' || progress?.execution_status === 'completed' || Boolean(persisted?.output_preview);
         const hasReview = Boolean(review || persisted?.generated_code || progress?.code_status === 'approved');
-        const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
+        const qualityStatus = datasetOutputQualityStatus(target);
+        const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);
+        const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : reviewOnlyOutput ? 'warn' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         const isBlocked = blockedNames.has(target) || progress?.blocked;
         const isReferenceOnly = status === 'reference evidence' && !isPlanned;
         const planStageClass = state.plan ? (isBlocked ? 'blocked' : isPlanned ? 'done' : '') : (isPlanned || isActive ? 'active' : '');
         const codeStageClass = isGenerated ? 'done' : isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';
         const reviewStageClass = hasReview ? 'done' : isGenerated ? 'active' : '';
-        const runStageClass = isCompleted ? 'done' : execution ? 'blocked' : '';
+        const runStageClass = reviewOnlyOutput ? 'review-only' : isCompleted ? 'done' : execution ? 'blocked' : '';
         return `
           <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
@@ -3238,8 +3249,9 @@ INDEX_HTML = r"""<!doctype html>
     function datasetStatus(target, runnable, blocked) {
       const progress = datasetProgressFor(target);
       if (progress?.blocked) return 'blocked';
-      if (progress?.output_quality?.quality_status === 'structural_stub') return 'demo output';
-      if (progress?.output_quality?.quality_status === 'not_real_derivation') return 'review only';
+      const quality = datasetOutputQualityStatus(target);
+      if (quality === 'structural_stub') return 'demo output';
+      if (quality === 'not_real_derivation') return 'review only';
       if (progress?.status) return progress.status;
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
       const execution = executionFor(target);
@@ -3253,6 +3265,14 @@ INDEX_HTML = r"""<!doctype html>
       if (hasReferenceAdamEvidence(target)) return 'reference evidence';
       if (state.plan) return 'waiting';
       return 'candidate';
+    }
+
+    function datasetOutputQualityStatus(target) {
+      const progressQuality = datasetProgressFor(target)?.output_quality?.quality_status;
+      if (progressQuality) return progressQuality;
+      const reviewQuality = datasetReviewFor(target)?.output_quality?.quality_status;
+      if (reviewQuality) return reviewQuality;
+      return '';
     }
 
     async function generateCode() {

@@ -4644,6 +4644,39 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Review-Only Output UI 文案切片
+
+已完成：
+
+- 增加 browser helper，从 graph progress 或 review-summary read model 读取
+  dataset output quality，再决定用户可见的输出状态文案。
+- 调整 Dependency Map 的 runtime meaning：structural demo 和 mock/offline
+  outputs 会明确显示为 review-only，且不能满足下游 runtime dependency。
+- 调整 Dataset Execution Cards：review-only/demo outputs 使用 warning stage
+  style，不再和真实 local R runtime output 共用 completed-run 视觉状态。
+- 调整 completed execution 后的 next action：review-only/demo output 只能作为
+  review evidence 检查，不能作为另一个 dataset 的 runtime input。
+- 增加 focused UI contract test，固定共享 output-quality 文案路径。
+
+当前边界：
+
+- 本切片只改变 browser read-model 文案和 stage styling。
+- 不改变 canonical graph state、dependency planning、dependency resolution、
+  provider calls、static rules、R execution、compare、repair 或 Reference ADaM
+  authority。
+- 不阻止 mock/demo output 被展示给用户 review，只避免 UI 把它说成真实 runtime
+  dependency evidence。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Input-Change Target Selection Reset UI 切片
 
 已完成：

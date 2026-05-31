@@ -693,6 +693,29 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("reference ADaM only: compare/output-shape evidence, not generation input", context_body)
         self.assertNotIn("target === state.selectedTarget && !progress?.blocked ? 'active' : ''", board_body)
 
+    def test_index_marks_review_only_outputs_without_runtime_language(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        runtime_body = html.split("function dependencyRuntimeSummary(target, status, isBlocked)", 1)[1].split("function dependencyFlowRowHtml", 1)[0]
+        action_body = html.split("function nextActionText(target, status, isBlocked)", 1)[1].split("function renderDatasetBoard", 1)[0]
+        board_body = html.split("function renderDatasetBoard(targets, runnable, blocked)", 1)[1].split("function datasetPlanningContext", 1)[0]
+        status_body = html.split("function datasetStatus(target, runnable, blocked)", 1)[1].split("async function generateCode", 1)[0]
+        self.assertIn("function datasetOutputQualityStatus(target)", html)
+        self.assertIn("const quality = datasetOutputQualityStatus(target);", runtime_body)
+        self.assertIn("has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.", runtime_body)
+        self.assertIn("has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.", runtime_body)
+        self.assertIn("has a completed local R runtime output for review.", runtime_body)
+        self.assertIn("const completedExecution = executionFor(target)?.status === 'completed' || datasetProgressFor(target)?.execution_status === 'completed';", action_body)
+        self.assertIn("inspect this review-only/demo output. It cannot be used as runtime input for another dataset.", action_body)
+        self.assertIn("const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);", board_body)
+        self.assertIn("const runStageClass = reviewOnlyOutput ? 'review-only' : isCompleted ? 'done' : execution ? 'blocked' : '';", board_body)
+        self.assertIn(".stage.review-only", html)
+        self.assertIn("datasetOutputQualityStatus(target)", status_body)
+
     def test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency(self) -> None:
         client = TestClient(create_app())
 
