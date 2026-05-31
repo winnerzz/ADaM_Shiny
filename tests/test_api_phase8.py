@@ -499,6 +499,25 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("await scanInputs()", demo_body)
         self.assertNotIn("await refreshRunProgress()", demo_body)
 
+    def test_index_does_not_default_target_selection_to_adae(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        infer_body = html.split("function inferTargets(summary)", 1)[1].split("function inferAdTokens(text)", 1)[0]
+        auto_body = html.split("function autoSelectFirstTarget(targets)", 1)[1].split("function renderTargetButtons(targets)", 1)[0]
+        render_body = html.split("function renderTargetButtons(targets)", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
+        progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
+        graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
+        self.assertNotIn("merged.add('ADAE')", infer_body)
+        self.assertIn("state.selectedTarget = available[0] || null;", auto_body)
+        self.assertIn("state.selectedTarget = targets[0];", render_body)
+        self.assertIn("state.selectedTarget = progressTargets[0];", progress_body)
+        self.assertIn("state.selectedTarget = graphTargets[0];", graph_body)
+        self.assertNotIn("includes('ADAE') ? 'ADAE'", auto_body + render_body + progress_body + graph_body)
+
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())
 

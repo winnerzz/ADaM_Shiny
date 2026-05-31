@@ -4644,6 +4644,35 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Dataset-Neutral Target Selection UI 切片
+
+已完成：
+
+- 移除 browser 在没有推断出 ADaM target 时自动发明 `ADAE` 的 fallback。
+- 移除 browser 对 `ADAE` 的 target-selection 优先级；UI 现在从真实
+  read model 的 inferred/planned targets 中选择第一个，而不是静默偏向某个
+  dataset。
+- 增加 focused UI contract test，覆盖 inference、demo auto-selection、
+  progress recovery 和 graph-state recovery。
+
+当前边界：
+
+- 本切片只改变 browser target-selection defaults。
+- 不改变 target inference rules、manual target entry、dependency planning、
+  GraphGateway state transitions、provider calls、static rules、R execution、
+  compare、repair 或 Reference ADaM authority。
+- Demo data 中如果 specs/reference evidence 包含 ADAE，UI 仍会显示 ADAE。
+  UI 不再在缺少证据时自己发明 ADAE。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Approve-Run Dependency Gate UI 切片
 
 已完成：

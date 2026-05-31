@@ -1674,7 +1674,6 @@ INDEX_HTML = r"""<!doctype html>
         for (const token of inferAdTokens(`${legacy.file_name} ${legacy.dataset || ''}`)) candidates.add(token);
       }
       const merged = new Set([...(state.targetCandidates || []), ...candidates]);
-      if (!merged.size) merged.add('ADAE');
       state.targetCandidates = Array.from(merged).sort();
       return state.targetCandidates;
     }
@@ -1693,7 +1692,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function autoSelectFirstTarget(targets) {
       const available = targets.length ? targets : inferTargets(state.inputSummary);
-      state.selectedTarget = available.includes('ADAE') ? 'ADAE' : available[0];
+      state.selectedTarget = available[0] || null;
       state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
       renderTargetButtons(available);
       if (state.selectedTarget) preparePlan();
@@ -1707,7 +1706,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (!state.selectedTarget || !targets.includes(state.selectedTarget)) {
-        state.selectedTarget = targets.includes('ADAE') ? 'ADAE' : targets[0];
+        state.selectedTarget = targets[0];
       }
       const allowed = new Set(targets);
       state.selectedTargetsForPlan = selectedTargets().filter((target) => allowed.has(target));
@@ -1858,7 +1857,7 @@ INDEX_HTML = r"""<!doctype html>
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...progressTargets])).sort();
       }
       if (progressTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
-        state.selectedTarget = progressTargets.includes('ADAE') ? 'ADAE' : progressTargets[0];
+        state.selectedTarget = progressTargets[0];
       }
     }
 
@@ -1877,7 +1876,7 @@ INDEX_HTML = r"""<!doctype html>
         state.selectedTargetsForPlan = requestedTargets.map((target) => String(target || '').toUpperCase()).filter(Boolean);
       }
       if (graphTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
-        state.selectedTarget = graphTargets.includes('ADAE') ? 'ADAE' : graphTargets[0];
+        state.selectedTarget = graphTargets[0];
       }
       for (const [dataset, datasetState] of Object.entries(graph?.datasets || {})) {
         const target = dataset.toUpperCase();
