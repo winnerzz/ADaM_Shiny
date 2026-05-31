@@ -5322,6 +5322,37 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dependency Next-Action Text 切片
+
+已完成：
+
+- 收紧 dependency map 中的 `nextActionText(...)`。
+- 当 graph progress 已加载，但某个 target 没有 dataset progress item 时，UI
+  不再用本地 generated/review/execution 缓存推断“review code”或
+  “inspect output”。
+- dependency map 现在会提示刷新 graph state 或重新准备 dependency plan；同时保留
+  Reference ADaM 只是 compare/output-shape evidence 的文案。
+- 增加 Node 执行的 UI 测试，证明 graph progress 已加载但缺该 target 时，过期的
+  本地 generated/review/execution 缓存不会影响下一步提示。
+
+当前边界：
+
+- 这是 UI guidance text 修正。
+- 不改变 action gating、GraphGateway progress 生成、dependency planning、
+  provider calls、R execution、compare、repair 或 Reference ADaM authority。
+
+审查：
+
+- 子 agent 审查 GO，并确认该 guard 在真实 graph target action
+  （`blocked_reason` / `action_label`）之后才执行，不会隐藏有效 graph action。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_next_action_text_ignores_local_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_dataset_status_ignores_local_completion_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dataset Status Fallback 切片
 
 已完成：

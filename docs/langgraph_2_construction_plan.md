@@ -5772,6 +5772,39 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dependency Next-Action Text Slice
+
+Completed:
+
+- Tightened `nextActionText(...)` for the dependency map.
+- If graph progress is loaded but a target has no dataset progress item, the UI
+  no longer falls back to local generated/review/execution caches to say
+  "review code" or "inspect output".
+- The dependency map now shows refresh/reprepare guidance for missing graph
+  progress, while preserving Reference ADaM wording as compare/output-shape
+  evidence only.
+- Added a Node-executed UI test proving stale local generated/review/execution
+  cache is ignored when graph progress is loaded and missing the target.
+
+Current boundary:
+
+- This is UI guidance text only.
+- It does not change action gating, GraphGateway progress generation, dependency
+  planning, provider calls, R execution, compare, repair, or Reference ADaM
+  authority.
+
+Review:
+
+- Subagent review returned GO and confirmed the guard runs only after real graph
+  target actions (`blocked_reason` / `action_label`) are honored.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_next_action_text_ignores_local_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_dataset_status_ignores_local_completion_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dataset Status Fallback Slice
 
 Completed:

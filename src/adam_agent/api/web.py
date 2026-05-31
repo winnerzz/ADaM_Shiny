@@ -3074,6 +3074,11 @@ INDEX_HTML = r"""<!doctype html>
         const block = (state.plan?.blocked_datasets || []).find((item) => item.dataset === target);
         return `Action required before generation: ${block ? `${block.dataset} needs ${block.blocked_by}` : 'resolve blocked dependencies'}.`;
       }
+      if (state.runProgress && !progress) {
+        if (status === 'reference evidence') return 'Reference ADaM is available for compare/output-shape evidence only. It is not an approved derivation rule or runtime input by itself.';
+        if (status === 'ready') return `${target} is in the plan, but graph progress has no dataset step yet. Refresh graph state or prepare the dependency plan again before continuing.`;
+        return `Graph progress has no dataset step for ${target}. Refresh graph state or prepare the dependency plan again before continuing.`;
+      }
       if (!state.plan) return 'Next: prepare the dependency plan for this target.';
       if (!targetSpecGateSatisfied(target)) return 'Next: click Finalize Inputs / Draft Spec, then approve the draft spec if no uploaded spec exists.';
       if (!generatedFor(target)) return 'Next: click Generate R Code. This will not run R yet.';
