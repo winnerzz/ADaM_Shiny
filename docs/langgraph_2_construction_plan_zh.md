@@ -5826,3 +5826,46 @@ Ran 126 tests in 8.109s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1/LG2.8 Runtime Persistence Boundary 切片
+
+已完成：
+
+- 在 canonical `StudyRunState` 中新增 `runtime_persistence` metadata。
+- `GraphGateway._persist_graph_state()` 每次写入 graph state 前都会更新这份 metadata。
+- `project_graph_state_to_workflow()` 会把同一份 metadata 投影到
+  `workflow_state.json`。
+- `GraphGateway.progress_summary()` 和 `RunProgressResponse` 现在也暴露
+  `runtime_persistence`，方便 UI/API/reviewer 看清当前恢复能力。
+- 当前 metadata 明确说明：
+  - 产品事实来源是 `graph_state.json`；
+  - `graph_checkpoints.sqlite` 是本地 product audit ledger，不是 LangGraph
+    SQLite checkpointer；
+  - 当前默认 LangGraph checkpointer 是 `InMemorySaver`；
+  - `langgraph_checkpointer_persistent` 当前保守标记为 `false`，只有后续正式接入
+    persistent LangGraph checkpointer 后才能改为 `true`；
+  - `native_interrupt_resume` 仍是 `false`；
+  - restart recovery 目前来自 `graph_state.json`。
+
+当前边界：
+
+- 本切片不实现真正的 LangGraph SQLite/Postgres checkpointer。
+- 本切片不改变 workflow routing、review semantics、LLM generation、R execution、
+  compare、static rules、UI 行为或 legacy `/runs` 行为。
+- 这只是把现有 persistence 能力显式化，防止后续误把本地
+  `graph_checkpoints.sqlite` ledger 当作原生 LangGraph checkpoint store。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认该切片没有把 `workflow_state.json` 重新变成事实来源，也没有夸大 native
+  LangGraph/checkpointer resume 成熟度。
+- 已接受一个非阻断建议：`langgraph_checkpointer_persistent` 不再根据 class name
+  乐观推断，而是在当前切片中保守标记为 `false`。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_checkpoint_can_be_read_from_same_graph_instance tests.test_graph_gateway.GraphGatewayTests.test_gateway_persists_canonical_state_for_process_restart_resume -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/workflow_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

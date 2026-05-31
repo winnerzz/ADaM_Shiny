@@ -109,6 +109,7 @@ class RunProgressResponse(StrictBaseModel):
     blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
     review_queue: list[dict[str, Any]] = Field(default_factory=list)
     datasets: list[DatasetProgressItem] = Field(default_factory=list)
+    runtime_persistence: dict[str, Any] = Field(default_factory=dict)
     graph_state_path: str
     workflow_state_path: str | None = None
 

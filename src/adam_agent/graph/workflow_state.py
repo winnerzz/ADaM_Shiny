@@ -243,6 +243,7 @@ def project_graph_state_to_workflow(
         "agent_decisions": list(state.agent_decisions),
         "evidence_bundle_id": state.evidence_bundle_id,
         "reference_queries": list(state.reference_queries),
+        "runtime_persistence": dict(state.runtime_persistence),
         "workflow_control": "graph_gateway_compatibility_shim",
         "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
         "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),

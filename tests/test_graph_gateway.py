@@ -289,6 +289,15 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.workflow_projection["workflow_control"], workflow_state["workflow_control"])
         self.assertEqual(result.workflow_projection["graph_state_path"], workflow_state["graph_state_path"])
         self.assertEqual(result.workflow_projection["workflow_state_path"], workflow_state["workflow_state_path"])
+        runtime_persistence = result.graph_state.runtime_persistence
+        self.assertEqual(runtime_persistence["source_of_truth"], "graph_state_json")
+        self.assertEqual(runtime_persistence["langgraph_checkpointer_type"], "InMemorySaver")
+        self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
+        self.assertFalse(runtime_persistence["native_interrupt_resume"])
+        self.assertEqual(runtime_persistence["restart_recovery_source"], "graph_state_json")
+        self.assertTrue(runtime_persistence["checkpoint_ledger_path"].endswith("runs/run_lg2_gateway_plan/graph_checkpoints.sqlite"))
+        self.assertIn("not a LangGraph SQLite checkpointer", " ".join(runtime_persistence["notes"]))
+        self.assertEqual(workflow_state["runtime_persistence"], runtime_persistence)
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
         self.assertEqual(workflow_state["agent_decisions"][0]["agent"], "dependency_agent")
         self.assertEqual(workflow_state["agent_audit_summary"]["summary_type"], "agent_audit_summary")
@@ -314,6 +323,33 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(checkpoint_state["run_id"], "run_lg2_gateway_restart")
         self.assertEqual(checkpoint_state["target_datasets"], ["ADAE", "ADCM"])
         self.assertEqual(checkpoint_state["current_interrupt"], "dependency_review")
+
+    def test_gateway_progress_reports_runtime_persistence_boundary(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_runtime_persistence") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_runtime_persistence",
+            target_datasets=["ADAE"],
+        )
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_runtime_persistence")
+        graph_state = json.loads(
+            (study_dir / "runs" / "run_lg2_runtime_persistence" / "graph_state.json").read_text(encoding="utf-8")
+        )
+        workflow_state = json.loads(
+            (study_dir / "runs" / "run_lg2_runtime_persistence" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+
+        runtime_persistence = progress["runtime_persistence"]
+        self.assertEqual(runtime_persistence, graph_state["runtime_persistence"])
+        self.assertEqual(runtime_persistence, workflow_state["runtime_persistence"])
+        self.assertEqual(runtime_persistence["source_of_truth"], "graph_state_json")
+        self.assertEqual(runtime_persistence["langgraph_checkpointer_type"], "InMemorySaver")
+        self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
+        self.assertFalse(runtime_persistence["native_interrupt_resume"])
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"

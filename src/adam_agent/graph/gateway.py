@@ -2440,6 +2440,7 @@ class GraphGateway:
             "blocked_datasets": list(graph_state.blocked_datasets),
             "review_queue": _human_review_queue_items(graph_state, datasets),
             "datasets": datasets,
+            "runtime_persistence": dict(graph_state.runtime_persistence),
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
             "workflow_state_path": str(workflow_state_path.as_posix()) if workflow_state_path.exists() else None,
         }
@@ -2644,6 +2645,7 @@ class GraphGateway:
 
     def _persist_graph_state(self, study_dir: str | Path, state: StudyRunState, *, node: str) -> None:
         root = Path(study_dir)
+        state.runtime_persistence = _runtime_persistence_payload(root, state.run_id, self._checkpointer)
         _sync_study_agent_decisions(state)
         _sync_study_agent_node_io(state)
         _update_agent_audit_summary(root, state)
@@ -3661,6 +3663,28 @@ def _write_graph_sqlite_checkpoint(
         conn.commit()
     finally:
         conn.close()
+
+
+def _runtime_persistence_payload(study_dir: str | Path, run_id: str, checkpointer: Any) -> dict[str, Any]:
+    """Describe current persistence boundaries without overstating recovery semantics."""
+
+    run_dir = Path(study_dir) / "runs" / run_id
+    checkpointer_type = type(checkpointer).__name__
+    return {
+        "source_of_truth": "graph_state_json",
+        "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
+        "checkpoint_ledger_path": str((run_dir / "graph_checkpoints.sqlite").as_posix()),
+        "workflow_projection_path": str((run_dir / "workflow_state.json").as_posix()),
+        "langgraph_checkpointer_type": checkpointer_type,
+        "langgraph_checkpointer_persistent": False,
+        "native_interrupt_resume": False,
+        "restart_recovery_source": "graph_state_json",
+        "notes": [
+            "Current product recovery reloads canonical graph_state.json.",
+            "graph_checkpoints.sqlite is a local product audit ledger, not a LangGraph SQLite checkpointer.",
+            "Full native LangGraph interrupt/checkpointer resume remains future work.",
+        ],
+    }
 
 
 def _artifact_ref(dataset: str, artifact_id: str, role: str, path: str | Path, *, kind: str) -> ArtifactRef:

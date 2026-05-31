@@ -6307,3 +6307,51 @@ Ran 126 tests in 8.109s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1/LG2.8 Runtime Persistence Boundary Slice
+
+Completed:
+
+- Added `runtime_persistence` metadata to canonical `StudyRunState`.
+- `GraphGateway._persist_graph_state()` now refreshes this metadata before each
+  canonical graph-state write.
+- `project_graph_state_to_workflow()` projects the same metadata into
+  `workflow_state.json`.
+- `GraphGateway.progress_summary()` and `RunProgressResponse` now expose
+  `runtime_persistence` so UI/API/reviewers can see the current recovery
+  boundary.
+- The metadata explicitly states that:
+  - the product source of truth is `graph_state.json`;
+  - `graph_checkpoints.sqlite` is a local product audit ledger, not a LangGraph
+    SQLite checkpointer;
+  - the default LangGraph checkpointer is currently `InMemorySaver`;
+  - `langgraph_checkpointer_persistent` is conservatively `false` until a real
+    persistent LangGraph checkpointer is integrated;
+  - `native_interrupt_resume` remains `false`;
+  - restart recovery currently comes from `graph_state.json`.
+
+Current boundary:
+
+- This slice does not implement a real LangGraph SQLite/Postgres checkpointer.
+- It does not change workflow routing, review semantics, LLM generation, R
+  execution, compare, static rules, UI behavior, or legacy `/runs` behavior.
+- It only makes the current persistence capability explicit so future work does
+  not mistake the local `graph_checkpoints.sqlite` ledger for a native
+  LangGraph checkpoint store.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the slice does not make `workflow_state.json` a source
+  of truth again and does not overstate native LangGraph/checkpointer resume
+  maturity.
+- Accepted one non-blocking suggestion: `langgraph_checkpointer_persistent` no
+  longer infers persistence optimistically from the checkpointer class name and
+  is conservative `false` in this slice.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_checkpoint_can_be_read_from_same_graph_instance tests.test_graph_gateway.GraphGatewayTests.test_gateway_persists_canonical_state_for_process_restart_resume -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('src/adam_agent/api/models.py'), pathlib.Path('src/adam_agent/graph/workflow_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

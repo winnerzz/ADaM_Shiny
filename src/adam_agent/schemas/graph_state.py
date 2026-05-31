@@ -116,6 +116,7 @@ class StudyRunState(StrictBaseModel):
     agent_audit_summary: dict[str, Any] = Field(default_factory=dict)
     evidence_bundle_id: str | None = None
     reference_queries: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_persistence: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
