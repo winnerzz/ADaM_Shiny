@@ -4612,3 +4612,34 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_fi
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.7 Agent Node Trace UI 切片
+
+已完成：
+
+- 扩展现有 Agent Audit 面板，用人话显示来自 canonical graph state 的 agent
+  node handoff trace。
+- UI 现在优先读取 active dataset 的 `agent_node_inputs` 和
+  `agent_node_outputs`，没有 active dataset 记录时再回退到 study-level graph
+  state。
+- Trace cards 显示 bounded agent role、node、task、decision/status、dataset
+  scope、risk-flag 数量和 artifact-reference 数量。
+- 面板仍然不显示原始 JSON，主界面也不暴露技术路径。
+- 增加 focused UI contract test，证明面板使用 graph-state agent IO 字段，并
+  继续避免 `JSON.stringify`。
+
+当前边界：
+
+- 本切片只改变 browser read model 和展示。
+- 不改变 FastAPI endpoints、GraphGateway persistence、workflow routing、
+  provider calls、dependency planning、static rules、R execution、compare、
+  repair 或 Reference ADaM authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```

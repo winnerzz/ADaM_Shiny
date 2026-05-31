@@ -5021,3 +5021,33 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_fi
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('src/adam_agent/schemas/graph_state.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.7 Agent Node Trace UI Slice
+
+Completed:
+
+- Extended the existing Agent Audit panel to show a plain-language agent node
+  handoff trace from canonical graph state.
+- The UI now reads `agent_node_inputs` and `agent_node_outputs` from the active
+  dataset first, then falls back to study-level graph state.
+- Trace cards show the bounded agent role, node, task, decision/status, dataset
+  scope, risk-flag count, and artifact-reference count.
+- The panel still avoids raw JSON and keeps technical paths out of the main UI.
+- Added a focused UI contract test proving the panel uses graph-state agent IO
+  fields and continues to avoid `JSON.stringify`.
+
+Current boundary:
+
+- This slice changes only the browser read model and display.
+- It does not change FastAPI endpoints, GraphGateway persistence, workflow
+  routing, provider calls, dependency planning, static rules, R execution,
+  compare, repair, or Reference ADaM authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```

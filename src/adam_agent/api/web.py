@@ -664,6 +664,32 @@ INDEX_HTML = r"""<!doctype html>
     .agent-audit-node span { color: var(--muted); }
     .agent-audit-node.warn { border-color: #f0d19b; background: #fff8ea; }
     .agent-audit-node.fail { border-color: #efc4be; background: #fff8f7; }
+    .agent-trace-list {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 9px;
+    }
+    .agent-trace-card {
+      display: grid;
+      grid-template-columns: 130px 1fr 150px;
+      gap: 8px;
+      align-items: start;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .agent-trace-card.warn { border-color: #f0d19b; background: #fff8ea; }
+    .agent-trace-card.fail { border-color: #efc4be; background: #fff8f7; }
+    .agent-trace-card strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .agent-trace-card span { color: var(--muted); overflow-wrap: anywhere; }
     .timeline {
       display: grid;
       gap: 8px;
@@ -819,7 +845,7 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 1120px) {
       main { grid-template-columns: 1fr; }
       aside { position: static; }
-      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid, .dependency-summary { grid-template-columns: 1fr; }
+      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid, .agent-trace-card, .dependency-summary { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
@@ -929,6 +955,7 @@ INDEX_HTML = r"""<!doctype html>
               <span class="pill warn" id="agentAuditStatus">waiting</span>
             </div>
             <div class="agent-audit-grid" id="agentAuditGrid"></div>
+            <div class="agent-trace-list" id="agentNodeTrace"></div>
             <div class="note" id="agentAuditRiskNote">No agent risk flags yet.</div>
           </div>
         </div>
@@ -2893,17 +2920,21 @@ INDEX_HTML = r"""<!doctype html>
     function renderAgentAuditPanel() {
       const node = byId('agentAuditGrid');
       const decisions = activeAgentDecisions().slice(-8).reverse();
+      const traces = activeAgentNodeTrace().slice(-6).reverse();
       const risks = activeRiskFlags();
       byId('agentAuditTitle').textContent = state.selectedTarget
         ? `${state.selectedTarget} agent decisions`
         : 'Study agent decisions';
       byId('agentAuditDetail').textContent = decisions.length
-        ? `${decisions.length} recent bounded graph node decision(s) shown.`
+        ? `${decisions.length} recent decision(s), ${traces.length} node handoff(s).`
         : 'No agent decisions are recorded for the active view yet.';
       setPill('agentAuditStatus', decisions.length ? 'audited' : 'waiting');
       node.innerHTML = decisions.length
         ? decisions.map((decision) => agentDecisionCard(decision)).join('')
         : '<div class="muted">Run dependency planning, draft spec, code generation, execution, or compare to populate agent audit.</div>';
+      byId('agentNodeTrace').innerHTML = traces.length
+        ? traces.map((trace) => agentNodeTraceCard(trace)).join('')
+        : '<div class="muted">Agent node handoffs will appear here after graph product steps run.</div>';
       const readableRisks = risks.map(readableRiskFlag);
       byId('agentAuditRiskNote').innerHTML = readableRisks.length
         ? `<strong>Risk flags:</strong> ${escapeHtml(readableRisks.slice(0, 12).join(', '))}${readableRisks.length > 12 ? ' ...' : ''}`
@@ -2918,6 +2949,32 @@ INDEX_HTML = r"""<!doctype html>
         ? datasetState.agent_decisions
         : graph.agent_decisions || [];
       return Array.isArray(decisions) ? decisions : [];
+    }
+
+    function activeAgentNodeTrace() {
+      const graph = state.graphState || {};
+      const target = state.selectedTarget;
+      const datasetState = target ? graph.datasets?.[target] : null;
+      const datasetInputs = Array.isArray(datasetState?.agent_node_inputs) ? datasetState.agent_node_inputs : [];
+      const datasetOutputs = Array.isArray(datasetState?.agent_node_outputs) ? datasetState.agent_node_outputs : [];
+      const hasDatasetTrace = Boolean(datasetInputs.length || datasetOutputs.length);
+      const inputs = hasDatasetTrace ? datasetInputs : graph.agent_node_inputs || [];
+      const outputs = hasDatasetTrace ? datasetOutputs : graph.agent_node_outputs || [];
+      const inputByKey = new Map((Array.isArray(inputs) ? inputs : []).map((item) => [agentNodeTraceKey(item), item]));
+      return (Array.isArray(outputs) ? outputs : []).map((output) => ({
+        output,
+        input: inputByKey.get(agentNodeTraceKey(output)) || null
+      }));
+    }
+
+    function agentNodeTraceKey(record) {
+      return [
+        record?.agent || '',
+        record?.node || '',
+        record?.dataset || '',
+        record?.study_id || '',
+        record?.run_id || ''
+      ].join('|');
     }
 
     function activeRiskFlags() {
@@ -2936,6 +2993,34 @@ INDEX_HTML = r"""<!doctype html>
         <div class="agent-audit-node ${klass}">
           <strong>${escapeHtml(agent)}</strong>
           <span>${escapeHtml(detail || 'Decision recorded')}</span>
+        </div>
+      `;
+    }
+
+    function agentNodeTraceCard(trace) {
+      const output = trace.output || {};
+      const input = trace.input || {};
+      const status = String(output.status || '').toLowerCase();
+      const riskCount = (output.risk_flags || []).length + (input.risk_flags || []).length;
+      const klass = status.includes('fail') || status.includes('terminal') ? 'fail' : riskCount || status.includes('warning') || status.includes('review') ? 'warn' : '';
+      const task = input.task || readableNodeName(output.node);
+      const result = readableDecisionName(output.decision || output.status || 'recorded');
+      const artifactCount = (output.artifact_ids || []).length + (input.artifact_ids || []).length;
+      const scope = output.dataset || input.dataset || 'Study';
+      return `
+        <div class="agent-trace-card ${klass}">
+          <div>
+            <strong>${escapeHtml(readableAgentName(output.agent || input.agent))}</strong>
+            <span>${escapeHtml(readableNodeName(output.node || input.node))}</span>
+          </div>
+          <div>
+            <strong>${escapeHtml(task)}</strong>
+            <span>${escapeHtml(result)} for ${escapeHtml(scope)}${riskCount ? ` | ${riskCount} risk flag(s)` : ''}</span>
+          </div>
+          <div>
+            <strong>${escapeHtml(output.status || 'recorded')}</strong>
+            <span>${artifactCount ? `${artifactCount} artifact reference(s)` : 'No artifact reference'}</span>
+          </div>
         </div>
       `;
     }
