@@ -4325,3 +4325,52 @@ Subagent review:
   DatasetGraph legacy stub behavior is unchanged, StudyGraph changes are
   label-only for non-execution/no-output cases, and real execution/compare
   failures remain owned by DatasetGraph/Product/Gateway paths.
+
+### 2026-05-31 - LG2.8 Stub Dependency Artifact Guard Slice
+
+Completed:
+
+- Tightened run-output dependency availability so a graph-state-backed
+  `completed_stub` output cannot silently satisfy a downstream ADaM runtime
+  dependency.
+- The guard also blocks run outputs whose graph execution state says
+  `completed_stub`, `structural_stub_pass`, or `stubbed_r_execution: true`.
+- Added a regression proving an upstream `ADSL` output with a structural stub
+  graph state leaves downstream `ADAE` blocked as `found_but_unusable`.
+- Kept normal completed run outputs usable when graph state records a real
+  output artifact and a non-terminal execution state.
+
+Current boundary:
+
+- This is a dependency-quality signal guard only. It does not change mock code
+  generation, legacy stub graph execution, product DatasetGraph routing, UI
+  state, compare, R execution, or static-rule governance.
+- The local mock/demo flow may still produce `completed_stub` outputs for UI
+  smoke testing. Such outputs remain visible as demo artifacts, but they no
+  longer unlock downstream runtime dependencies.
+- This slice does not block every `not_real_derivation` result. Mock provider
+  plus real R execution remains a separate policy question.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_run_output_dependency_artifact_wins_over_reference_adam tests.test_graph_smoke.GraphSmokeTests.test_unbacked_run_output_dependency_is_not_usable tests.test_graph_smoke.GraphSmokeTests.test_terminal_failure_run_output_dependency_does_not_satisfy_downstream tests.test_graph_smoke.GraphSmokeTests.test_completed_stub_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+```
+
+Result: focused dependency-availability regressions passed; 241 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed.
+
+Subagent review:
+
+- GO. No blocking findings. The review confirmed that the guard is narrow to
+  current-run `run_output` dependency candidates, preserves the rule that a
+  present run output takes precedence over reference ADaM, does not affect
+  reference ADaM visibility or UI/demo progress paths, and does not block every
+  `not_real_derivation` case.
+- Follow-up from the review was addressed in the same slice by splitting the
+  unusable-run-output reason text into more precise messages for terminal
+  failures, missing/corrupt graph state, mismatched output paths, and structural
+  stub outputs.

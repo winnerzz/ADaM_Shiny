@@ -3946,3 +3946,48 @@ DatasetGraph legacy stub runtime code、legacy test fixtures 和本文档说明�
 - GO。未发现重大业务或架构回归。review 确认 DatasetGraph legacy stub 行为未
   改变，StudyGraph 改动只是 non-execution/no-output 情况的状态标签清理，真实
   execution/compare failure 仍由 DatasetGraph/Product/Gateway 路径负责。
+
+### 2026-05-31 - LG2.8 Stub Dependency Artifact Guard 切片
+
+已完成：
+
+- 收紧 run-output dependency availability：graph state 标记为
+  `completed_stub` 的上游输出，不能静默满足下游 ADaM runtime dependency。
+- guard 同时拦截 graph execution state 中的 `completed_stub`、
+  `structural_stub_pass` 或 `stubbed_r_execution: true`。
+- 新增回归测试，证明上游 `ADSL` 如果只是 structural stub graph state，下游
+  `ADAE` 会保持阻塞，dependency resolution 为 `found_but_unusable`。
+- 正常 completed run output 仍可用，前提是 graph state 记录了真实 output
+  artifact，且 execution state 不是 terminal/failure/stub。
+
+当前边界：
+
+- 这是 dependency-quality signal guard，不改变 mock code generation、legacy
+  stub graph execution、product DatasetGraph routing、UI state、compare、R
+  execution 或 static-rule governance。
+- 本地 mock/demo flow 仍可产生 `completed_stub` 输出用于 UI smoke testing；
+  这些输出仍可见，但不再解锁下游 runtime dependency。
+- 本切片不拦截所有 `not_real_derivation` 结果。mock provider 加 real R
+  execution 是否能作为依赖，是另一个需要单独决定的 policy 问题。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_run_output_dependency_artifact_wins_over_reference_adam tests.test_graph_smoke.GraphSmokeTests.test_unbacked_run_output_dependency_is_not_usable tests.test_graph_smoke.GraphSmokeTests.test_terminal_failure_run_output_dependency_does_not_satisfy_downstream tests.test_graph_smoke.GraphSmokeTests.test_completed_stub_run_output_dependency_does_not_satisfy_downstream -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
+```
+
+结果：focused dependency-availability 回归通过；241 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。
+
+子 agent review：
+
+- GO。未发现 blocking findings。审核确认：guard 只作用于当前 run 的
+  `run_output` dependency candidates，保留“当前 run output 优先于 reference
+  ADaM”的规则，不影响 reference ADaM visibility 或 UI/demo progress paths，也
+  不会拦截所有 `not_real_derivation` 情况。
+- 根据 review 的非阻塞建议，本切片同时把 unusable-run-output reason 拆成更精
+  确的消息，分别说明 terminal failure、缺失/损坏 graph state、output path 不
+  匹配，以及 structural stub output 等原因。

@@ -273,15 +273,17 @@ def _find_dependency_artifact(
         candidates.append((root / "reference_adam" / f"{upper}{suffix}", "reference_adam"))
     for path, source in candidates:
         if path.exists() and path.is_file():
-            if source == "run_output" and _run_output_blocked_by_graph_state(dataset, path, study_dir=root, run_id=run_id):
+            unusable_run_output_reason = (
+                _run_output_unusable_reason(dataset, path, study_dir=root, run_id=run_id)
+                if source == "run_output"
+                else None
+            )
+            if unusable_run_output_reason:
                 return DependencyArtifactCandidate(
                     path=path,
                     source=source,
                     usable=False,
-                    reason=(
-                        f"{upper} dependency artifact was found at {path.as_posix()}, "
-                        "but the graph state marks its dataset execution as terminal_failure or failed."
-                    ),
+                    reason=unusable_run_output_reason,
                 )
             return DependencyArtifactCandidate(
                 path=path,
@@ -292,45 +294,57 @@ def _find_dependency_artifact(
     return None
 
 
-def _run_output_blocked_by_graph_state(
+def _run_output_unusable_reason(
     dataset: str,
     path: Path,
     *,
     study_dir: Path,
     run_id: str | None,
-) -> bool:
+) -> str | None:
+    prefix = f"{dataset.strip().upper()} dependency artifact was found at {path.as_posix()}, but"
     if not run_id:
-        return False
+        return None
     graph_state_path = study_dir / "runs" / run_id / "graph_state.json"
     if not graph_state_path.exists() or not graph_state_path.is_file():
-        return True
+        return f"{prefix} no graph state was found to prove the run output is usable."
     try:
         payload = json.loads(graph_state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return True
+        return f"{prefix} the graph state could not be read."
     datasets = payload.get("datasets")
     if not isinstance(datasets, dict):
-        return True
+        return f"{prefix} the graph state has no dataset execution records."
     dataset_state = datasets.get(dataset.strip().upper())
     if not isinstance(dataset_state, dict):
-        return True
-    if str(dataset_state.get("status") or "").strip().lower() in {"terminal_failure", "failed"}:
-        return True
+        return f"{prefix} the graph state has no execution record for {dataset.strip().upper()}."
+    dataset_status = str(dataset_state.get("status") or "").strip().lower()
+    if dataset_status in {"terminal_failure", "failed"}:
+        return f"{prefix} the graph state marks its dataset execution as {dataset_status}."
+    if dataset_status == "completed_stub":
+        return f"{prefix} the graph state marks it as completed_stub, which cannot satisfy runtime dependencies."
     current_interrupt = dataset_state.get("current_interrupt")
     if isinstance(current_interrupt, dict) and current_interrupt.get("name") == "terminal_failure":
-        return True
+        return f"{prefix} the graph state still has an open terminal_failure interrupt."
     execution_state = dataset_state.get("execution_state")
     if isinstance(execution_state, dict):
+        execution_status = str(execution_state.get("status") or "").strip().lower()
+        validation_status = str(execution_state.get("validation_status") or "").strip().lower()
+        if execution_status == "completed_stub":
+            return f"{prefix} its execution state is completed_stub, which cannot satisfy runtime dependencies."
+        if validation_status == "structural_stub_pass":
+            return f"{prefix} its validation status is structural_stub_pass, which cannot satisfy runtime dependencies."
+        if execution_state.get("stubbed_r_execution") is True:
+            return f"{prefix} its execution state says R execution was stubbed."
         if execution_state.get("terminal_failure") is True:
-            return True
+            return f"{prefix} its execution state records a terminal failure."
         if execution_state.get("partial_output_usable") is False:
-            return True
+            return f"{prefix} its execution state marks the partial output unusable."
         output_path = execution_state.get("output_path")
         if output_path and str(Path(str(output_path)).as_posix()) != str(path.as_posix()):
-            return True
+            return f"{prefix} its graph execution output path points to a different artifact."
     artifacts = dataset_state.get("artifacts")
     if not isinstance(artifacts, list):
-        return True
+        return f"{prefix} the graph state has no artifact records for the run output."
     normalized_path = str(path.as_posix())
     has_output_artifact = any(
         isinstance(artifact, dict)
@@ -339,8 +353,8 @@ def _run_output_blocked_by_graph_state(
         for artifact in artifacts
     )
     if not has_output_artifact:
-        return True
-    return False
+        return f"{prefix} the graph state does not record this file as an output ADaM artifact."
+    return None
 
 
 def _is_usable_dependency_artifact(path: Path) -> bool:

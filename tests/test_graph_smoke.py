@@ -1936,7 +1936,72 @@ class GraphSmokeTests(unittest.TestCase):
         resolution = result["dependency_resolution"][0]
         self.assertEqual(resolution["resolution_status"], "found_but_unusable")
         self.assertEqual(resolution["artifact_source"], "run_output")
-        self.assertIn("terminal_failure or failed", resolution["reason"])
+        self.assertIn("dataset execution as terminal_failure", resolution["reason"])
+        self.assertEqual(result["blocked_datasets"][0]["dataset"], "ADAE")
+        self.assertEqual(result["runnable_datasets"], [])
+
+    def test_completed_stub_run_output_dependency_does_not_satisfy_downstream(self) -> None:
+        study_dir = _workspace_dir("lg2_stub_dependency_not_runtime_evidence") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        run_id = "run_lg2_stub_dependency_not_runtime_evidence"
+        output_dir = study_dir / "runs" / run_id / "outputs"
+        spec_dir.mkdir(parents=True)
+        output_dir.mkdir(parents=True)
+        adsl_path = output_dir / "adsl.csv"
+        adsl_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "TRTSDT", "source_domains": ["ADSL"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id).model_copy(deep=True)
+        state.datasets["ADSL"].status = "completed_stub"
+        state.datasets["ADSL"].execution_state.update(
+            {
+                "status": "completed_stub",
+                "validation_status": "structural_stub_pass",
+                "stubbed_r_execution": True,
+                "not_real_derivation": True,
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(adsl_path.as_posix()),
+            }
+        )
+        state.datasets["ADSL"].artifacts.append(
+            ArtifactRef(
+                artifact_id="output_adam_psy201_run_lg2_stub_dependency_not_runtime_evidence_adsl",
+                kind="output_adam",
+                path=str(adsl_path.as_posix()),
+                sha256=f"sha256:{sha256_file(adsl_path)}",
+                dataset="ADSL",
+                format="csv",
+                role="output",
+            )
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_completed_stub_dependency_output")
+
+        result = compile_study_graph().invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": run_id,
+                "target_datasets": ["ADAE"],
+                "study_dir": str(study_dir),
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        resolution = result["dependency_resolution"][0]
+        self.assertEqual(resolution["resolution_status"], "found_but_unusable")
+        self.assertEqual(resolution["artifact_source"], "run_output")
+        self.assertIn("completed_stub", resolution["reason"])
         self.assertEqual(result["blocked_datasets"][0]["dataset"], "ADAE")
         self.assertEqual(result["runnable_datasets"], [])
 
