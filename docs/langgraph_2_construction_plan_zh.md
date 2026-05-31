@@ -5596,3 +5596,49 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-06-01 - LG2.8 Gateway-Owned Compatibility Metadata 切片
+
+已完成：
+
+- 将 graph compatibility response metadata 继续收回 graph 边界：
+  `project_graph_state_to_workflow()` 现在会把 `workflow_control`、
+  `graph_state_path`、`workflow_state_path` 写入 compatibility
+  `workflow_state.json` 投影。
+- 移除 FastAPI service 中旧的“根据 `study_dir` 和 `run_id` 自己拼
+  graph/workflow 路径”的 helper。
+- 产品 split-flow responses 现在从 `GraphGateway` result projection 中复制
+  compatibility metadata。
+- 对 schema 不包含 `workflow_control` 的响应：
+  `RunPlanResponse`、`DependencyReviewResponse`、
+  `TerminalFailureReviewResponse`，只从同一个 gateway projection 复制两个路径
+  字段。
+- 增加回归测试，证明：
+  - graph projection 自己携带它对外声明的 compatibility metadata；
+  - service 不再保留旧的本地拼路径 helper；
+  - dependency-review 和 terminal-failure-review response 会转发 gateway
+    projection paths，而不是在 service 层重新拼一个看起来正确的路径。
+
+当前边界：
+
+- 这是 read-model/compatibility metadata 清理，不改变业务流程。
+- 不改变 canonical `graph_state.json`、dependency planning、interrupt
+  semantics、provider calls、static rules、R execution、compare 或 legacy
+  `/runs` behavior。
+- `GET /runs/{run_id}/progress` 仍是 graph-state read model；当 compatibility
+  projection 文件不存在时，仍返回 `workflow_state_path: null`。
+
+审查：
+
+- 子 agent 审查 GO。
+- 审查指出的测试缺口已补：新增 dependency-review 和
+  terminal-failure-review 的 API 层 projection path 转发测试。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m compileall -q src tests
+git diff --check
+```

@@ -277,6 +277,18 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(persisted_state["agent_node_inputs"][0]["agent"], "dependency_agent")
         self.assertEqual(persisted_state["agent_node_outputs"][0]["decision"], "dependency_plan_prepared")
         self.assertEqual(workflow_state["projection_source"], "langgraph")
+        self.assertEqual(workflow_state["workflow_control"], "graph_gateway_compatibility_shim")
+        self.assertEqual(
+            workflow_state["graph_state_path"],
+            str((study_dir / "runs" / "run_lg2_gateway_plan" / "graph_state.json").as_posix()),
+        )
+        self.assertEqual(
+            workflow_state["workflow_state_path"],
+            str((study_dir / "runs" / "run_lg2_gateway_plan" / "workflow_state.json").as_posix()),
+        )
+        self.assertEqual(result.workflow_projection["workflow_control"], workflow_state["workflow_control"])
+        self.assertEqual(result.workflow_projection["graph_state_path"], workflow_state["graph_state_path"])
+        self.assertEqual(result.workflow_projection["workflow_state_path"], workflow_state["workflow_state_path"])
         self.assertEqual(workflow_state["current_interrupt"], "dependency_review")
         self.assertEqual(workflow_state["agent_decisions"][0]["agent"], "dependency_agent")
         self.assertEqual(workflow_state["agent_audit_summary"]["summary_type"], "agent_audit_summary")

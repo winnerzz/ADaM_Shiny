@@ -219,6 +219,7 @@ def project_graph_state_to_workflow(
     """
 
     state = graph_state if isinstance(graph_state, StudyRunState) else StudyRunState.model_validate(graph_state)
+    run_dir = Path(study_dir) / "runs" / state.run_id
     dataset_projection = {
         dataset: _project_dataset_state(dataset_state)
         for dataset, dataset_state in sorted(state.datasets.items())
@@ -242,6 +243,9 @@ def project_graph_state_to_workflow(
         "agent_decisions": list(state.agent_decisions),
         "evidence_bundle_id": state.evidence_bundle_id,
         "reference_queries": list(state.reference_queries),
+        "workflow_control": "graph_gateway_compatibility_shim",
+        "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
+        "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
     }
     return update_workflow_state(
         study_dir,

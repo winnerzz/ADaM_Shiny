@@ -6063,3 +6063,50 @@ python -B -m unittest tests.test_api_phase8 -v
 python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
+
+### 2026-06-01 - LG2.8 Gateway-Owned Compatibility Metadata Slice
+
+Completed:
+
+- Moved graph compatibility response metadata closer to the graph boundary:
+  `project_graph_state_to_workflow()` now writes `workflow_control`,
+  `graph_state_path`, and `workflow_state_path` into the compatibility
+  `workflow_state.json` projection.
+- Removed the old FastAPI service helper that reconstructed graph/workflow
+  paths from `study_dir` and `run_id`.
+- Product split-flow responses now copy compatibility metadata from
+  `GraphGateway` result projections.
+- Responses whose schemas do not expose `workflow_control`
+  (`RunPlanResponse`, `DependencyReviewResponse`,
+  `TerminalFailureReviewResponse`) copy only the two path fields from the same
+  gateway projection.
+- Added regression tests proving:
+  - graph projections carry the compatibility metadata they advertise;
+  - service no longer has the old path-synthesizing helper;
+  - dependency-review and terminal-failure-review responses forward gateway
+    projection paths, rather than rebuilding correct-looking paths locally.
+
+Current boundary:
+
+- This is read-model/compatibility metadata cleanup only.
+- It does not change canonical `graph_state.json`, dependency planning,
+  interrupt semantics, provider calls, static rules, R execution, compare, or
+  legacy `/runs` behavior.
+- `GET /runs/{run_id}/progress` remains a graph-state read model and still
+  reports `workflow_state_path: null` when the compatibility projection file is
+  absent.
+
+Review:
+
+- Subagent review returned GO.
+- Follow-up test gap from the review was closed by adding direct API-level tests
+  for dependency-review and terminal-failure-review projection paths.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8 -v
+python -B -m compileall -q src tests
+git diff --check
+```

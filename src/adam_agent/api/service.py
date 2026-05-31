@@ -111,18 +111,35 @@ UPLOAD_ROLE_TO_FOLDER = {
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
-GRAPH_GATEWAY_COMPATIBILITY_SHIM = "graph_gateway_compatibility_shim"
 
 
-def _graph_compatibility_metadata(study_dir: str | Path, run_id: str) -> dict[str, str]:
-    """Return explicit metadata for old endpoints that now write graph state."""
+def _gateway_compatibility_metadata(result: Any) -> dict[str, str]:
+    """Copy compatibility metadata from the gateway-owned workflow projection."""
 
-    root = Path(study_dir)
-    run_dir = root / "runs" / run_id
+    projection = getattr(result, "workflow_projection", None)
+    if not isinstance(projection, dict):
+        raise ApiServiceError("GraphGateway did not return a workflow projection.")
+    metadata = {
+        "workflow_control": projection.get("workflow_control"),
+        "graph_state_path": projection.get("graph_state_path"),
+        "workflow_state_path": projection.get("workflow_state_path"),
+    }
+    missing = [key for key, value in metadata.items() if not value]
+    if missing:
+        raise ApiServiceError(
+            "GraphGateway workflow projection is missing compatibility metadata: "
+            + ", ".join(missing)
+        )
+    return {key: str(value) for key, value in metadata.items()}
+
+
+def _gateway_projection_paths(result: Any) -> dict[str, str]:
+    """Copy canonical/projection paths from the gateway-owned workflow projection."""
+
+    metadata = _gateway_compatibility_metadata(result)
     return {
-        "workflow_control": GRAPH_GATEWAY_COMPATIBILITY_SHIM,
-        "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
-        "workflow_state_path": str((run_dir / "workflow_state.json").as_posix()),
+        "graph_state_path": metadata["graph_state_path"],
+        "workflow_state_path": metadata["workflow_state_path"],
     }
 
 
@@ -342,8 +359,7 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
         dependency_decisions=list(graph_state.dependency_decisions),
         dependency_resolution=list(graph_state.dependency_resolution),
         dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
-        graph_state_path=str((study_dir / "runs" / request.run_id / "graph_state.json").as_posix()),
-        workflow_state_path=str((study_dir / "runs" / request.run_id / "workflow_state.json").as_posix()),
+        **_gateway_projection_paths(gateway_result),
     )
 
 
@@ -378,8 +394,7 @@ def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResp
         decision=result.decision,
         approved=result.approved,
         current_interrupt=result.current_interrupt,
-        graph_state_path=str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
-        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
+        **_gateway_projection_paths(result),
     )
 
 
@@ -471,7 +486,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         static_check_path=result.static_check_path,
         dependency_review_status=result.dependency_review_status,
         warnings=warnings,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -514,7 +529,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             message=f"Approved input_spec found for {target}. Draft spec generation is not needed.",
             input_spec_path=result.input_spec_path,
             warnings=warnings,
-            **_graph_compatibility_metadata(study_dir, run_id),
+            **_gateway_compatibility_metadata(result),
         )
     if result.spec_source == "approved_draft_spec":
         return FinalizeInputsResponse(
@@ -529,7 +544,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
             message=f"A previously approved draft spec is available for {target}.",
             approved_spec_path=result.approved_spec_path,
             warnings=warnings,
-            **_graph_compatibility_metadata(study_dir, run_id),
+            **_gateway_compatibility_metadata(result),
         )
     draft_response = DraftSpecResponse(
         study_id=study_id,
@@ -541,7 +556,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         response_path=result.draft_spec_response_path or "",
         variables=list(result.draft_spec_variables or []),
         warnings=warnings,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
     return FinalizeInputsResponse(
         study_id=study_id,
@@ -558,7 +573,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
         ),
         draft_spec=draft_response,
         warnings=draft_response.warnings,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -599,7 +614,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
         response_path=result.draft_spec_response_path or "",
         variables=list(result.draft_spec_variables or []),
         warnings=warnings,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -634,7 +649,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
         review_path=result.review_path,
         approved=result.approved,
         approved_spec_path=result.approved_spec_path,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -670,7 +685,7 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
         review_path=result.review_path,
         approved=result.approved,
         static_check_path=result.static_check_path,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -705,7 +720,7 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         terminal_failure=result.terminal_failure,
         errors=result.errors,
         warnings=result.warnings,
-        **_graph_compatibility_metadata(study_dir, run_id),
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -735,8 +750,7 @@ def persist_terminal_failure_review(run_id: str, dataset: str, request: Any) -> 
         decision=result.decision,
         current_interrupt=result.current_interrupt,
         next_action=result.next_action,
-        graph_state_path=str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
-        workflow_state_path=str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
+        **_gateway_projection_paths(result),
     )
 
 

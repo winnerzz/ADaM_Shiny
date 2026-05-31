@@ -149,6 +149,10 @@ class Phase8ApiTests(unittest.TestCase):
     def test_service_layer_no_longer_writes_workflow_state_directly(self) -> None:
         from adam_agent.api import service
 
+        self.assertFalse(
+            hasattr(service, "_graph_compatibility_metadata"),
+            "Service must not synthesize graph/workflow paths after gateway-owned product actions.",
+        )
         direct_update_callers: list[str] = []
         for name, obj in vars(service).items():
             if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
@@ -217,6 +221,72 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("progress_summary", called_names)
         self.assertNotIn("load_graph_state", called_names)
         self.assertNotIn("project_graph_state_to_workflow", called_names)
+
+    def test_dependency_review_response_uses_gateway_projection_paths(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_dependency_projection_paths") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        gateway_result = SimpleNamespace(
+            graph_state=SimpleNamespace(study_id="MY_STUDY"),
+            workflow_projection={
+                "workflow_control": "graph_gateway_compatibility_shim",
+                "graph_state_path": "sentinel/graph_state.json",
+                "workflow_state_path": "sentinel/workflow_state.json",
+            },
+            decision="approve",
+            approved=True,
+            current_interrupt=None,
+        )
+
+        with patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway_cls.return_value.review_dependency.return_value = gateway_result
+            response = service.persist_dependency_review(
+                "run_projection_paths",
+                SimpleNamespace(
+                    study_dir=str(study_dir),
+                    reviewer="tester",
+                    decision="approve",
+                    notes="projection path test",
+                    approved_dependency_datasets=[],
+                ),
+            )
+
+        self.assertEqual(response.graph_state_path, "sentinel/graph_state.json")
+        self.assertEqual(response.workflow_state_path, "sentinel/workflow_state.json")
+
+    def test_terminal_failure_review_response_uses_gateway_projection_paths(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_terminal_projection_paths") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        gateway_result = SimpleNamespace(
+            graph_state=SimpleNamespace(study_id="MY_STUDY"),
+            workflow_projection={
+                "workflow_control": "graph_gateway_compatibility_shim",
+                "graph_state_path": "sentinel/terminal_graph_state.json",
+                "workflow_state_path": "sentinel/terminal_workflow_state.json",
+            },
+            decision="skip_dataset",
+            current_interrupt=None,
+            next_action="review_summary",
+        )
+
+        with patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway_cls.return_value.review_terminal_failure.return_value = gateway_result
+            response = service.persist_terminal_failure_review(
+                "run_terminal_projection_paths",
+                "ADAE",
+                SimpleNamespace(
+                    study_dir=str(study_dir),
+                    reviewer="tester",
+                    decision="skip_dataset",
+                    notes="projection path test",
+                ),
+            )
+
+        self.assertEqual(response.graph_state_path, "sentinel/terminal_graph_state.json")
+        self.assertEqual(response.workflow_state_path, "sentinel/terminal_workflow_state.json")
 
     def test_run_study_from_request_delegates_legacy_run_state_to_gateway(self) -> None:
         from adam_agent.api import service
