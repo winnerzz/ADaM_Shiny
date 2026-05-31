@@ -3630,7 +3630,7 @@ API/graph/gateway/static-rule tests passed；diff check passed。
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_unknown_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_graph_product_execute_prepare_does_not_run_r_before_execute_node tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_demo_study_endpoint_prepares_shiny_demo_shape tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph -v
 python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
-python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
 git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\dataset_graph.py src\adam_agent\graph\routing.py src\adam_agent\graph\study_graph.py src\adam_agent\graph\gateway.py src\adam_agent\api\service.py tests\test_graph_smoke.py
 ```
 
@@ -3814,3 +3814,52 @@ dataset-neutral 的 `sandbox_failure` 名称。
 - 审核确认：`fail_adsl` 只保留为显式 legacy stub alias 和类型 literal；
   dataset-neutral 的 `sandbox_failure` 路径已覆盖多个 dataset；旧 alias 有单独
   回归；没有引入 dependency-planning 或 static-rule semantic drift。
+
+### 2026-05-31 - LG2.8 Study Audit Virtual Artifact 命名切片
+
+已完成：
+
+- 移除 StudyGraph 在无 `study_dir` 时返回的残留 `*_study_stub` audit manifest
+  artifact id。
+- 改为 `*_study_virtual`，因为这个 artifact 是尚未落盘的 graph-state 引用，
+  不是 fake/stub study product。
+- 保持 study audit manifest 的 `metadata["stub"] = False`，并新增
+  `manifest_materialized`，让调用方能区分真实写入磁盘的 manifest 和 virtual
+  reference，而不用再借用 stub 语言。
+- 将无 `study_dir` 时 audit-agent summary 的 metadata 从 `stub: true` 改为
+  `materialized: false`。
+- 新增 graph smoke regression，证明 virtual study audit refs 不再带 stub
+  metadata。
+
+当前边界：
+
+- 这是 audit metadata 和命名清理，不改变 StudyGraph planning、dataset
+  dispatch、DatasetGraph product routing、legacy stub graph behavior、LLM
+  generation、R execution、compare、UI state 或 static-rule governance。
+- Dataset-level legacy stub audit artifacts 仍然只在
+  `compile_legacy_stub_dataset_graph()` 的显式 legacy stub 图中保留 stub 标签；
+  本切片只移除 study-level fallback 上误导性的 stub 语言。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_virtual_audit_refs_are_not_stub_metadata tests.test_graph_smoke.GraphSmokeTests.test_study_graph_uses_real_audit_manifest_node_name tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets tests.test_graph_smoke.GraphSmokeTests.test_study_graph_writes_dependency_plan_review_artifacts -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "study_stub|study_virtual|manifest_materialized|materialized: false|materialized\": false" src\adam_agent tests docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused StudyGraph audit metadata 回归通过；238 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。Source scan 未发现运行时代码继续使用
+`study_stub` artifact id；剩余 `study_stub` 命中是文档说明和回归断言，确认旧
+后缀不存在。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：无 `study_dir` 的 StudyGraph manifest 现在使用 virtual artifact id
+  和 materialization metadata；audit-agent summary 不再给 virtual reference 写
+  stub metadata；legacy DatasetGraph stub audit metadata 仍保留；没有引入
+  static-rule 或 product-routing drift。

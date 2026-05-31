@@ -379,6 +379,32 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(result["audit_manifest"].metadata["dependency_evidence"], "no_dependency_evidence")
         self.assertTrue(result["audit_manifest"].metadata["dependency_decisions"][1]["review_required"])
 
+    def test_study_graph_virtual_audit_refs_are_not_stub_metadata(self) -> None:
+        graph = compile_study_graph()
+
+        result = graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_virtual_audit_refs",
+                "target_datasets": ["ADSL", "ADAE"],
+                "execution_mode": "stub",
+                "dataset_results": [],
+                "blocked_datasets": [],
+                "audit_artifacts": [],
+            }
+        )
+
+        audit_manifest = result["audit_manifest"]
+        self.assertTrue(audit_manifest.artifact_id.endswith("_study_virtual"))
+        self.assertFalse(audit_manifest.metadata["stub"])
+        self.assertFalse(audit_manifest.metadata["manifest_materialized"])
+        self.assertNotIn("_study_stub", audit_manifest.artifact_id)
+
+        agent_summary = next(artifact for artifact in result["audit_artifacts"] if artifact.artifact_id.startswith("agent_summary_"))
+        self.assertEqual(agent_summary.metadata["summary_type"], "agent_audit_summary")
+        self.assertFalse(agent_summary.metadata["materialized"])
+        self.assertNotIn("stub", agent_summary.metadata)
+
     def test_study_graph_runs_adsl_through_unified_llm_adam_flow(self) -> None:
         study_dir = _workspace_dir("graph_unified_adsl") / "PSY201"
         input_dir = study_dir / "input_sdtm"

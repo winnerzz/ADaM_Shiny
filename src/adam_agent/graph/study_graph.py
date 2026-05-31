@@ -300,6 +300,7 @@ def _write_study_audit_manifest(
 
     metadata = {
         "stub": False,
+        "manifest_materialized": bool(state.get("study_dir")),
         "manifest_scope": "study",
         "requested_datasets": state.get("requested_datasets", []),
         "target_datasets": state.get("target_datasets", []),
@@ -349,12 +350,12 @@ def _write_study_audit_manifest(
         )
 
     return ArtifactRef(
-        artifact_id=f"manifest_{state['study_id'].lower()}_{state['run_id']}_study_stub",
+        artifact_id=f"manifest_{state['study_id'].lower()}_{state['run_id']}_study_virtual",
         kind="audit_manifest",
         path=relative_path,
         format="json",
         role="audit",
-        metadata={**metadata, "stub": True},
+        metadata=metadata,
     )
 
 
@@ -398,7 +399,7 @@ def _write_agent_audit_summary(state: StudyGraphState) -> tuple[dict[str, Any], 
                 "agent": "audit_agent",
                 "summary_type": "agent_audit_summary",
                 "summary_source": "graph_state",
-                "stub": True,
+                "materialized": False,
             },
         )
     return summary, artifact

@@ -3985,7 +3985,7 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_non_legacy_modes_never_route_to_stub_chain tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_unknown_execution_mode_fails_closed_not_completed_stub tests.test_graph_smoke.GraphSmokeTests.test_graph_product_execute_prepare_does_not_run_r_before_execute_node tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_existing_input_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_generates_code_through_dataset_graph_and_records_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_executes_approved_code_through_dataset_graph_and_records_state -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_demo_study_endpoint_prepares_shiny_demo_shape tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_unknown_execution_mode_before_legacy_graph tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_rejects_unknown_execution_mode_before_graph -v
 python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
-python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'syntax ok: {len(files)} files')"
 git diff --check -- src\adam_agent\graph\execution_modes.py src\adam_agent\graph\dataset_graph.py src\adam_agent\graph\routing.py src\adam_agent\graph\study_graph.py src\adam_agent\graph\gateway.py src\adam_agent\api\service.py tests\test_graph_smoke.py
 ```
 
@@ -4181,3 +4181,55 @@ Subagent review:
   stub alias and type literal, the dataset-neutral `sandbox_failure` path is
   covered for multiple datasets, the alias is covered separately, and no
   dependency-planning or static-rule semantic drift was introduced.
+
+### 2026-05-31 - LG2.8 Study Audit Virtual Artifact Naming Slice
+
+Completed:
+
+- Removed the residual `*_study_stub` artifact id from StudyGraph's
+  no-`study_dir` audit manifest reference.
+- Replaced that fallback id with `*_study_virtual`, because the artifact is a
+  graph-state reference that was not materialized to disk, not a fake/stub study
+  product.
+- Kept `metadata["stub"] = False` for study audit manifests and added
+  `manifest_materialized` so callers can distinguish a written manifest from a
+  virtual reference without using stub language.
+- Replaced the no-`study_dir` audit-agent summary metadata flag
+  `stub: true` with `materialized: false`.
+- Added a graph smoke regression proving virtual study audit refs are not marked
+  with stub metadata.
+
+Current boundary:
+
+- This is an audit metadata and naming cleanup only. It does not change
+  StudyGraph planning, dataset dispatch, DatasetGraph product routing, legacy
+  stub graph behavior, LLM generation, R execution, compare, UI state, or
+  static-rule governance.
+- Dataset-level legacy stub audit artifacts remain explicitly stub-labeled
+  inside `compile_legacy_stub_dataset_graph()`; this slice only removes
+  misleading study-level fallback language.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_virtual_audit_refs_are_not_stub_metadata tests.test_graph_smoke.GraphSmokeTests.test_study_graph_uses_real_audit_manifest_node_name tests.test_graph_smoke.GraphSmokeTests.test_study_graph_runs_foundation_then_downstream_stub_datasets tests.test_graph_smoke.GraphSmokeTests.test_study_graph_writes_dependency_plan_review_artifacts -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\study_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "study_stub|study_virtual|manifest_materialized|materialized: false|materialized\": false" src\adam_agent tests docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused StudyGraph audit metadata regressions passed; 238 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed. Source scan found no runtime `study_stub` artifact id
+use; the remaining `study_stub` hits are documentation notes and the regression
+assertion that the old suffix is absent.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that the no-`study_dir` StudyGraph manifest now uses the
+  virtual artifact id and materialization metadata, the audit-agent summary no
+  longer uses stub metadata for a virtual reference, legacy DatasetGraph stub
+  audit metadata remains intact, and no static-rule or product-routing drift was
+  introduced.
