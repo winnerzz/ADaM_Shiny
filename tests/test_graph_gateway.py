@@ -855,6 +855,112 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["review_path"], str(review_path.as_posix()))
         self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["code_state"]["status"], "approved")
 
+    def test_gateway_review_code_from_command_bridges_native_interrupt_to_artifact_flow(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_code_review_bridge") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_native_code_review_bridge"
+        code_dir = run_dir / "code"
+        code_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_lg2_native_code_review_bridge",
+            "ADAE",
+            code_path,
+        )
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_bridge",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        result = gateway.review_code_from_command(
+            study_dir=study_dir,
+            run_id="run_lg2_native_code_review_bridge",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="native_tester",
+                notes="Approved from native interrupt bridge.",
+            ),
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        review_path = Path(result.review_path)
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision, "approve")
+        self.assertEqual(review_payload["reviewer"], "native_tester")
+        self.assertEqual(review_payload["code_sha256"], f"sha256:{sha256_file(code_path)}")
+        self.assertEqual(review_payload["static_check_sha256"], static_sha)
+        self.assertEqual(dataset_state.code_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["review_path"], str(review_path.as_posix()))
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(dataset_state.human_commands[-1].interrupt, "code_review")
+        self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["code_state"]["status"], "approved")
+
+    def test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_code_review_bridge_mismatch") / "PSY201"
+        run_dir = study_dir / "runs" / "run_lg2_native_code_review_bridge_mismatch"
+        code_dir = run_dir / "code"
+        code_dir.mkdir(parents=True)
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_lg2_native_code_review_bridge_mismatch",
+            "ADAE",
+            code_path,
+        )
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_bridge_mismatch",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        graph_state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_native_code_review_bridge_mismatch",
+        )
+        graph_state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="draft_spec_review",
+            dataset="ADAE",
+            reason="Different open interrupt for mismatch test.",
+        )
+        gateway._persist_graph_state(study_dir, graph_state, node="test_interrupt_mismatch")
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            gateway.review_code_from_command(
+                study_dir=study_dir,
+                run_id="run_lg2_native_code_review_bridge_mismatch",
+                command=HumanCommand(
+                    interrupt="code_review",
+                    action="approve",
+                    dataset="ADAE",
+                    reviewer="native_tester",
+                ),
+                input_fingerprint_payload=input_fingerprint(study_dir),
+            )
+
+        self.assertFalse((run_dir / "review" / "adae_code_review.json").exists())
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_code_review_bridge_mismatch")
+        self.assertEqual(reloaded.datasets["ADAE"].code_state["status"], "generated")
+
     def test_gateway_review_code_cleans_artifact_when_recording_fails(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_review_code_cleanup") / "PSY201"
         run_dir = study_dir / "runs" / "run_lg2_review_code_cleanup"

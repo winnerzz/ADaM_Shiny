@@ -654,6 +654,36 @@ class GraphGateway:
             static_check_path=str(static_check_path.as_posix()) if static_check_path.exists() else None,
         )
 
+    def review_code_from_command(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        command: HumanCommand,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayCodeReviewResult:
+        """Bridge a graph-native code-review command to the gateway artifact flow."""
+
+        root = Path(study_dir).expanduser()
+        if command.dataset is None:
+            raise ValueError("Code review command must include a dataset.")
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        _assert_resume_command_matches_open_interrupt(graph_state, command)
+        if command.interrupt != "code_review":
+            raise ValueError("Code review command must target code_review.")
+        if command.action not in {"approve", "reject"}:
+            raise ValueError("Code review command action must be approve or reject.")
+        return self.review_code(
+            study_dir=root,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=command.dataset,
+            decision=command.action,
+            reviewer=command.reviewer,
+            notes=command.notes,
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+
     def record_code_review(
         self,
         *,

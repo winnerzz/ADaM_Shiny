@@ -6069,3 +6069,46 @@ Ran 271 tests in 27.177s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Command Bridge 切片
+
+已完成：
+
+- 新增 `GraphGateway.review_code_from_command()`。
+- 该入口接收 graph-native `HumanCommand`，先读取当前 canonical
+  `graph_state.json`，并用现有 resume gate 校验 command 是否匹配当前 open
+  dataset-level `code_review` interrupt。
+- 校验通过后，委托现有 `GraphGateway.review_code()` 写出
+  `review/{dataset}_code_review.json`，并复用已有 code hash、static-check hash、
+  input fingerprint、approved spec 校验和 canonical state 持久化。
+- 增加测试证明：
+  - 匹配的 `code_review` command 会进入正式 code-review artifact/state flow；
+  - 不匹配当前 open interrupt 的 command 会 fail closed，且不会写 review artifact。
+
+当前边界：
+
+- 本切片只提供 native command 到 gateway artifact flow 的安全桥接入口。
+- 不改变公开 UI/API 默认路径，不自动把 DatasetGraph native interrupt 接入浏览器。
+- 不复制 `review_code()` 内部校验，不绕过 existing code-review artifact/hash/fingerprint
+  语义。
+- 不实现 persistent LangGraph SQLite/Postgres checkpointer，不改变 LLM 生成、R
+  execution、compare、static rules、repair 或 UI 行为。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认该桥接入口会先加载 canonical graph state，并使用 open interrupt gate
+  校验 command，再委托现有 `review_code()`；它没有复制或削弱 code hash、
+  static-check hash、input fingerprint、approved spec 校验；不匹配的 command 会在
+  写 review artifact 前 fail closed。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_native_interrupt_to_artifact_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_writes_artifact_and_records_canonical_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 273 tests in 29.084s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```

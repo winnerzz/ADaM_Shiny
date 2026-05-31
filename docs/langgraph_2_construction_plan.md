@@ -6573,3 +6573,53 @@ Ran 271 tests in 27.177s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Command Bridge Slice
+
+Completed:
+
+- Added `GraphGateway.review_code_from_command()`.
+- The entry point accepts a graph-native `HumanCommand`, loads the current
+  canonical `graph_state.json`, and uses the existing resume gate to verify the
+  command matches the current open dataset-level `code_review` interrupt.
+- After validation, it delegates to the existing `GraphGateway.review_code()` to
+  write `review/{dataset}_code_review.json` and reuse existing code hash,
+  static-check hash, input fingerprint, approved spec checks, and canonical
+  state persistence.
+- Added tests proving:
+  - a matching `code_review` command enters the formal code-review
+    artifact/state flow;
+  - a command that does not match the current open interrupt fails closed and
+    does not write a review artifact.
+
+Current boundary:
+
+- This slice only provides a safe bridge from native command to gateway artifact
+  flow.
+- It does not change the public UI/API default path and does not automatically
+  connect the DatasetGraph native interrupt to the browser.
+- It does not duplicate `review_code()` validation and does not bypass existing
+  code-review artifact/hash/fingerprint semantics.
+- It does not implement a persistent LangGraph SQLite/Postgres checkpointer and
+  does not change LLM generation, R execution, compare, static rules, repair, or
+  UI behavior.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the bridge first loads canonical graph state and uses
+  the open interrupt gate to validate the command before delegating to the
+  existing `review_code()`; it does not duplicate or weaken code hash,
+  static-check hash, input fingerprint, or approved spec checks; mismatched
+  commands fail closed before any review artifact is written.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_bridges_native_interrupt_to_artifact_flow tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_code_writes_artifact_and_records_canonical_state -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 273 tests in 29.084s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
