@@ -4644,6 +4644,36 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Reference-Only Dataset Card UI 切片
+
+已完成：
+
+- 更新 Dataset Execution Cards：如果某个 target 只是因为用户上传了
+  Reference ADaM 文件而出现，不再让它看起来可以直接进入 code generation
+  阶段。
+- reference-only card 的 `code` 阶段保持 inactive，除非该 target 真的被纳入
+  当前 run 的 plan，或者已有 generated code / review history。
+- 增加明确 card context 文案：Reference ADaM 只用于 compare/output-shape
+  evidence，不是 generation input。
+- 增加 focused UI contract test，锁住 reference-only card 行为。
+
+当前边界：
+
+- 本切片只改变 browser read-model rendering 和解释文案。
+- 不改变 target discovery、`/study-inputs`、dependency planning、
+  GraphGateway state transitions、provider calls、static rules、R execution、
+  compare、repair 或 Reference ADaM authority。
+- 不移除 Reference ADaM 可见性，只是避免 card stage strip 把
+  reference-only evidence 表达成 runnable generation progress。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 SAS7BDAT Preview Status UI 切片
 
 已完成：

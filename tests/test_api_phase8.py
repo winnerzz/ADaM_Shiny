@@ -612,7 +612,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("function plannedTargetsForDisplay(plan, fallbackTargets = null)", html)
         self.assertIn("function renderTargetSelectionSummary()", html)
         self.assertIn("Code generation and R execution still run only for the active detail target.", html)
-        self.assertIn("function datasetPlanningContext(target, isPlanned, isActive)", html)
+        self.assertIn("function datasetPlanningContext(target, isPlanned, isActive, status)", html)
         self.assertIn("planned in this run", html)
         self.assertIn("view-only history/candidate", html)
         planned_display_body = html.split("function plannedTargetsForDisplay(plan, fallbackTargets = null)", 1)[1].split("function dependencyPlanSummary(plan)", 1)[0]
@@ -624,6 +624,21 @@ class Phase8ApiTests(unittest.TestCase):
         dataset_card_handler = html.split("for (const card of node.querySelectorAll('[data-card-target]'))", 1)[1].split("function hasReferenceAdamEvidence", 1)[0]
         self.assertIn("state.selectedTarget = card.dataset.cardTarget;", dataset_card_handler)
         self.assertNotIn("preparePlan();", dataset_card_handler)
+
+    def test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        board_body = html.split("function renderDatasetBoard(targets, runnable, blocked)", 1)[1].split("function datasetPlanningContext", 1)[0]
+        context_body = html.split("function datasetPlanningContext(target, isPlanned, isActive, status)", 1)[1].split("function renderAgentAuditPanel", 1)[0]
+        self.assertIn("const isReferenceOnly = status === 'reference evidence' && !isPlanned;", board_body)
+        self.assertIn("const codeStageClass = isGenerated ? 'done' : isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';", board_body)
+        self.assertIn("datasetPlanningContext(target, isPlanned, isActive, status)", board_body)
+        self.assertIn("reference ADaM only: compare/output-shape evidence, not generation input", context_body)
+        self.assertNotIn("target === state.selectedTarget && !progress?.blocked ? 'active' : ''", board_body)
 
     def test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency(self) -> None:
         client = TestClient(create_app())

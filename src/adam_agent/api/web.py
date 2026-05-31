@@ -2903,19 +2903,25 @@ INDEX_HTML = r"""<!doctype html>
         const isCompleted = execution?.status === 'completed' || progress?.execution_status === 'completed' || Boolean(persisted?.output_preview);
         const hasReview = Boolean(review || persisted?.generated_code || progress?.code_status === 'approved');
         const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
+        const isBlocked = blockedNames.has(target) || progress?.blocked;
+        const isReferenceOnly = status === 'reference evidence' && !isPlanned;
+        const planStageClass = state.plan ? (isBlocked ? 'blocked' : isPlanned ? 'done' : '') : (isPlanned || isActive ? 'active' : '');
+        const codeStageClass = isGenerated ? 'done' : isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';
+        const reviewStageClass = hasReview ? 'done' : isGenerated ? 'active' : '';
+        const runStageClass = isCompleted ? 'done' : execution ? 'blocked' : '';
         return `
-          <div class="dataset-card ${isActive ? 'active' : ''} ${blockedNames.has(target) || progress?.blocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
+          <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
               <span class="dataset-name">${escapeHtml(target)}</span>
               <span class="pill ${statusClass}">${escapeHtml(status)}</span>
             </div>
-            <div class="dataset-context">${escapeHtml(datasetPlanningContext(target, isPlanned, isActive))}</div>
+            <div class="dataset-context">${escapeHtml(datasetPlanningContext(target, isPlanned, isActive, status))}</div>
             <div class="stage-strip">
               <div class="stage done">inputs</div>
-              <div class="stage ${state.plan ? (blockedNames.has(target) || progress?.blocked ? 'blocked' : 'done') : 'active'}">plan</div>
-              <div class="stage ${isGenerated ? 'done' : target === state.selectedTarget && !progress?.blocked ? 'active' : ''}">code</div>
-              <div class="stage ${hasReview ? 'done' : isGenerated ? 'active' : ''}">review</div>
-              <div class="stage ${isCompleted ? 'done' : execution ? 'blocked' : ''}">run</div>
+              <div class="stage ${planStageClass}">plan</div>
+              <div class="stage ${codeStageClass}">code</div>
+              <div class="stage ${reviewStageClass}">review</div>
+              <div class="stage ${runStageClass}">run</div>
             </div>
           </div>
         `;
@@ -2929,9 +2935,10 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    function datasetPlanningContext(target, isPlanned, isActive) {
+    function datasetPlanningContext(target, isPlanned, isActive, status) {
       const parts = [];
       parts.push(isPlanned ? 'planned in this run' : 'view-only history/candidate');
+      if (status === 'reference evidence' && !isPlanned) parts.push('reference ADaM only: compare/output-shape evidence, not generation input');
       if (isActive) parts.push('active detail view');
       return `${target}: ${parts.join(' | ')}`;
     }

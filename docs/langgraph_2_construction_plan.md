@@ -5052,6 +5052,36 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Reference-Only Dataset Card UI Slice
+
+Completed:
+
+- Updated Dataset Execution Cards so a target that appears only because a
+  Reference ADaM file was uploaded no longer looks like it can enter the code
+  generation stage.
+- Reference-only cards now keep the `code` stage inactive unless the target is
+  actually planned in the current run or has generated code/review history.
+- Added explicit card context text: Reference ADaM is compare/output-shape
+  evidence only, not generation input.
+- Added a focused UI contract test for the reference-only card behavior.
+
+Current boundary:
+
+- This slice changes only browser read-model rendering and explanatory text.
+- It does not change target discovery, `/study-inputs`, dependency planning,
+  GraphGateway state transitions, provider calls, static rules, R execution,
+  compare, repair, or Reference ADaM authority.
+- It does not remove Reference ADaM visibility. It only prevents the card stage
+  strip from presenting reference-only evidence as runnable generation progress.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 SAS7BDAT Preview Status UI Slice
 
 Completed:
