@@ -397,7 +397,7 @@ def _evidence_agent_output(
 def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     """Generate a review-required draft spec from graph-prepared context."""
 
-    if not _is_graph_product_prepare_mode(state):
+    if not (_is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state)):
         return {}
     if not state.get("draft_spec_required"):
         return {}
@@ -1755,10 +1755,10 @@ def route_after_product_context(state: DatasetGraphState) -> str:
         return "summarize"
     if _is_graph_product_execute_mode(state):
         return "execute_approved_code"
-    if _is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state):
-        return "generate_r_code_agent"
     if (_is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state)) and state.get("spec_source") == "missing_input_spec":
         return "draft_spec_agent"
+    if _is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state):
+        return "generate_r_code_agent"
     if _is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state):
         return "summarize"
     if _is_legacy_stub_mode(state) and _is_legacy_stub_graph_enabled(state):

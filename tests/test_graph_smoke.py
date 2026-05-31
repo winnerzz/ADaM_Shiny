@@ -26,6 +26,7 @@ try:
     from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.execution_modes import (
         GRAPH_PRODUCT_EXECUTE_MODE,
+        GRAPH_PRODUCT_FULL_LOOP_MODE,
         GRAPH_PRODUCT_GENERATE_CODE_MODE,
         GRAPH_PRODUCT_PREPARE_MODE,
         LLM_DOWNSTREAM_MODES,
@@ -49,6 +50,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.dataset_graph import route_after_product_context
     from adam_agent.graph.execution_modes import (
         GRAPH_PRODUCT_EXECUTE_MODE,
+        GRAPH_PRODUCT_FULL_LOOP_MODE,
         GRAPH_PRODUCT_GENERATE_CODE_MODE,
         GRAPH_PRODUCT_PREPARE_MODE,
         LLM_DOWNSTREAM_MODES,
@@ -678,6 +680,9 @@ class GraphSmokeTests(unittest.TestCase):
             (GRAPH_PRODUCT_PREPARE_MODE, {"spec_source": "missing_input_spec"}, "draft_spec_agent"),
             (GRAPH_PRODUCT_GENERATE_CODE_MODE, {}, "generate_r_code_agent"),
             (GRAPH_PRODUCT_EXECUTE_MODE, {}, "execute_approved_code"),
+            (GRAPH_PRODUCT_FULL_LOOP_MODE, {"spec_source": "missing_input_spec"}, "draft_spec_agent"),
+            (GRAPH_PRODUCT_FULL_LOOP_MODE, {"spec_source": "input_spec"}, "generate_r_code_agent"),
+            (GRAPH_PRODUCT_FULL_LOOP_MODE, {"spec_source": "approved_draft_spec"}, "generate_r_code_agent"),
             *[(mode, {}, "summarize") for mode in sorted(LLM_DOWNSTREAM_MODES)],
             (RETIRED_ADSL_TEMPLATE_MODE, {}, "summarize"),
         ]

@@ -2473,6 +2473,141 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.current_interrupt.name, "code_review")
         self.assertNotIn("native_dataset_product_loop_resume", rejected.graph_state.runtime_persistence)
 
+    def test_gateway_native_dataset_product_loop_missing_spec_stops_at_draft_review(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_loop_missing_spec") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+
+        started = gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_missing_spec",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = started.graph_state.datasets["ADAE"]
+        self.assertEqual(started.spec_source, "draft_spec")
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
+        self.assertFalse(dataset_state.code_state)
+        self.assertIn("native_dataset_product_loop_interrupt", started.graph_state.runtime_persistence)
+        self.assertEqual(
+            started.graph_state.runtime_persistence["native_dataset_product_loop_interrupt"]["boundary"],
+            "dataset_product_loop_pilot_only",
+        )
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_loop_missing_spec"
+                / "specs"
+                / "adae_draft_spec.json"
+            ).exists()
+        )
+
+    def test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_loop_draft_to_code") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_draft_to_code",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        continued = gateway.resume_native_dataset_product_loop_draft_spec(
+            study_dir=study_dir,
+            run_id="run_lg2_native_loop_draft_to_code",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve generated draft spec and continue the native loop pilot.",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = continued.graph_state.datasets["ADAE"]
+        self.assertTrue(continued.draft_review.approved)
+        self.assertIsNotNone(continued.code_generation)
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["spec_source"], "approved_draft_spec")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.human_commands[-1].interrupt, "draft_spec_review")
+        self.assertIn("native_dataset_product_loop_draft_resume", continued.graph_state.runtime_persistence)
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_loop_draft_to_code"
+                / "code"
+                / "build_adae.R"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_loop_draft_to_code"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
+    def test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_loop_draft_reject") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_draft_reject",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch.object(gateway, "start_native_dataset_product_loop") as start_loop:
+            rejected = gateway.resume_native_dataset_product_loop_draft_spec(
+                study_dir=study_dir,
+                run_id="run_lg2_native_loop_draft_reject",
+                dataset="ADAE",
+                decision="reject",
+                reviewer="tester",
+                notes="Draft spec is not acceptable.",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        start_loop.assert_not_called()
+        dataset_state = rejected.graph_state.datasets["ADAE"]
+        self.assertFalse(rejected.draft_review.approved)
+        self.assertIsNone(rejected.code_generation)
+        self.assertEqual(dataset_state.spec_state["status"], "rejected")
+        self.assertFalse(dataset_state.code_state)
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertFalse((study_dir / "runs" / "run_lg2_native_loop_draft_reject" / "code").exists())
+
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"
         run_id = "run_lg2_gateway_owned_dependency_plan"

@@ -6576,3 +6576,38 @@ Ran 3 tests in 0.141s - OK
 
 python -B -m compileall -q src tests
 ```
+
+### 2026-06-01 - LG2.2 Native Dataset Loop 缺 Spec 切片
+
+已完成：
+
+- 扩展内部 `graph_product_full_loop` 试点，让它先走 spec 闸门，再走 code 闸门：
+  - 如果有 approved input spec 或 approved draft spec，继续到 native
+    `code_review`；
+  - 如果没有 approved spec，先生成需要审核的 draft spec，并停在 native
+    `draft_spec_review`。
+- 新增 `GraphGateway.resume_native_dataset_product_loop_draft_spec()`：
+  - 通过现有正式 draft-spec review artifact flow 恢复 native draft-spec
+    interrupt；
+  - 审核通过后，重新进入 Gateway 拥有的 native dataset 产品路径，并继续到
+    native `code_review`；
+  - 审核拒绝时，不生成 R code。
+- 保持边界不变：这仍然是 internal pilot；draft review、code review 和 execution
+  的正式状态仍由 GraphGateway 统一拥有。
+
+当前边界：
+
+- 公开 FastAPI/UI 仍使用现有 split-flow endpoints。
+- 新 continuation 只覆盖 draft-spec approval 到 code review。code review approval
+  和可选执行继续通过 `resume_native_dataset_product_loop()`。
+- repair/revise-spec 自动路由和 StudyGraph 多 dataset native 编排仍是后续切片。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_missing_spec_stops_at_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code -v
+Ran 3 tests in 0.533s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_reject_does_not_execute -v
+Ran 2 tests in 0.413s - OK
+```

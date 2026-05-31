@@ -7129,3 +7129,42 @@ Ran 3 tests in 0.141s - OK
 
 python -B -m compileall -q src tests
 ```
+
+### 2026-06-01 - LG2.2 Native Dataset Loop Missing-Spec Slice
+
+Completed:
+
+- Extended the internal `graph_product_full_loop` pilot so it respects the spec
+  gate before the code gate:
+  - if an approved input spec or approved draft spec exists, it continues to
+    native `code_review`;
+  - if no approved spec exists, it generates a review-required draft spec and
+    stops at native `draft_spec_review`.
+- Added `GraphGateway.resume_native_dataset_product_loop_draft_spec()`:
+  - resumes the native draft-spec interrupt through the existing formal
+    draft-spec review artifact flow;
+  - on approval, restarts the Gateway-owned native dataset product path and
+    continues to native `code_review`;
+  - on rejection, it does not generate R code.
+- Kept the boundary unchanged: this remains an internal pilot and GraphGateway
+  remains the canonical owner of draft review, code generation review, and
+  execution state.
+
+Current boundary:
+
+- Public FastAPI/UI still uses the existing split-flow endpoints.
+- The new continuation covers draft-spec approval to code review only. Code
+  review approval and optional execution continue through
+  `resume_native_dataset_product_loop()`.
+- Repair/revise-spec automatic routing and StudyGraph multi-dataset native
+  orchestration remain future slices.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_missing_spec_stops_at_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code -v
+Ran 3 tests in 0.533s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_reject_does_not_execute -v
+Ran 2 tests in 0.413s - OK
+```
