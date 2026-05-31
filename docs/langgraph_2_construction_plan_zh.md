@@ -3507,3 +3507,54 @@ python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test
 
 结果：focused graph split tests passed；compileall passed；228 个相关
 graph/gateway/API/static-rule tests passed。
+
+### 2026-05-31 - LG2.8 API/CLI 入口禁止隐式 Stub 切片
+
+已完成：
+
+- 移除 `POST /runs` 入口残留的隐式 fallback：当 config 使用 mock provider 且
+  请求没有传 `execution_mode` 时，系统不再偷偷选择 `execution_mode="stub"`。
+- 移除 CLI `adam-agent run-study` 中同样的 fallback：mock provider 的 CLI run
+  如果没有显式传 `--execution-mode`，现在会 fail closed。
+- 保留显式 legacy 兼容行为：
+  - `POST /runs` 显式传 `execution_mode="stub"` 仍然可以跑 legacy
+    compatibility/test path；
+  - mock config 显式传 `--execution-mode llm_downstream_provider` 仍然保留现有
+    configured provider boundary 测试路径；
+  - 非 mock 的旧 `/runs` 请求如果没有传 `execution_mode`，仍会解析为 LLM
+    run-to-completion，然后被 split-flow gate 拦截，避免绕过 review gates。
+- 新增 API 和 CLI 回归测试，证明 omitted execution mode 不会再生成 completed
+  legacy stub run。
+
+当前边界：
+
+- 本切片不改变 product split-flow endpoints、dependency planning、DatasetGraph
+  产品拓扑或 LLM/R sandbox 行为。
+- static-rule governance 不变。本切片不新增任何 static rule，也不新增
+  clinical、dataset-specific、study-specific、demo-specific 或 variable-specific
+  check。后续 static check 仍只能作为 generic artifact/execution/spec
+  contract，或作为带 authority/source/version/scope/severity/evidence 的
+  governed rule-pack item 进入。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_requires_explicit_execution_mode_instead_of_implicit_stub tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_requires_explicit_execution_mode_with_mock_config tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_uses_configured_provider_boundary_with_mock tests.test_graph_smoke.GraphSmokeTests.test_study_graph_missing_execution_mode_fails_closed_not_completed_stub -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; count=0; ...; print(f'syntax ok: {count} files')"
+git diff --check -- src\adam_agent\api\service.py src\adam_agent\cli.py tests\test_api_phase8.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused API 和 CLI entry tests passed；230 个相关
+API/graph/gateway/static-rule tests passed；AST syntax check 覆盖 61 个
+Python 文件；diff check passed。`python -m compileall` 仍被本地 Windows
+pycache 权限问题阻塞（`PermissionError` / `WinError 5`），不是语法失败。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：API/CLI implicit stub fallback 已移除；显式 legacy stub
+  compatibility 仍保留；显式 LLM run-to-completion 仍会被 split-flow gate
+  拦截；DatasetGraph/legacy stub graph 分离没有被削弱；static-rule
+  governance 仍然只限 generic contract/rule-pack。

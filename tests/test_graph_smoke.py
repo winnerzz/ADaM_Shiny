@@ -1418,6 +1418,53 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(payload["dataset_results"][0]["status"], "completed_stub")
         self.assertTrue((study_dir / "runs" / "run_phase76_cli" / "llm" / "adae_response.json").exists())
 
+    def test_cli_run_study_requires_explicit_execution_mode_with_mock_config(self) -> None:
+        study_dir = _workspace_dir("phase8_cli_no_implicit_stub") / "PSY201"
+        input_sdtm = study_dir / "input_sdtm"
+        input_spec = study_dir / "input_spec"
+        config_dir = study_dir / "configs"
+        input_sdtm.mkdir(parents=True)
+        input_spec.mkdir()
+        config_dir.mkdir()
+        (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        config_path = config_dir / "mock.json"
+        config_path.write_text(
+            json.dumps({"llm_exposure": {}, "llm_provider": {"provider": "mock", "model": "mock-model"}}),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "adam_agent.cli",
+                "run-study",
+                "--study-dir",
+                str(study_dir),
+                "--run-id",
+                "run_cli_no_implicit_stub",
+                "--target",
+                "ADAE",
+                "--config",
+                str(config_path),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("requires an explicit --execution-mode", payload["error"])
+        self.assertIn("--execution-mode stub", payload["error"])
+        self.assertFalse((study_dir / "runs" / "run_cli_no_implicit_stub").exists())
+
     @unittest.skipUnless(LOCAL_RSCRIPT.exists(), "local Rscript is not available")
     def test_study_graph_runs_llm_downstream_r_sandbox_with_mock_config(self) -> None:
         study_dir = _workspace_dir("phase77_graph_llm_r_sandbox") / "PSY201"

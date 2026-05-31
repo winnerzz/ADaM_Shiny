@@ -883,6 +883,25 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIsNone(workflow_state["graph_state_path"])
         self.assertEqual(workflow_state["workflow_state_path"], payload["workflow_state_path"])
 
+    def test_create_run_requires_explicit_execution_mode_instead_of_implicit_stub(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_api_no_implicit_stub")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_no_implicit_stub",
+                "target_datasets": ["ADAE"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        detail = response.json()["detail"]
+        self.assertIn("requires an explicit execution_mode", detail)
+        self.assertIn("execution_mode='stub'", detail)
+        self.assertFalse((study_dir / "runs" / "run_no_implicit_stub" / "workflow_state.json").exists())
+
     def test_generate_review_execute_split_flow(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_split_flow")
         client = TestClient(create_app())

@@ -257,7 +257,11 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
     if execution_mode is None and config.llm_provider.provider != "mock":
         execution_mode = "llm_downstream_provider"
     if execution_mode is None:
-        execution_mode = "stub"
+        raise ApiServiceError(
+            "POST /runs requires an explicit execution_mode. "
+            "Use execution_mode='stub' only for the legacy compatibility/test path, "
+            "or use the split-flow endpoints for product LLM generation."
+        )
     gateway = GraphGateway()
     if execution_mode in {"llm_downstream_provider", "llm_downstream_r_sandbox"}:
         gateway.block_legacy_run_to_completion(

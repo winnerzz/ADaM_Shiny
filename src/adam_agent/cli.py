@@ -78,7 +78,21 @@ def main() -> int:
         if execution_mode is None and config.llm_provider.provider != "mock":
             execution_mode = "llm_downstream_provider"
         if execution_mode is None:
-            execution_mode = "stub"
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error": (
+                            "run-study requires an explicit --execution-mode. "
+                            "Use --execution-mode stub only for the legacy compatibility/test path, "
+                            "or use split-flow product API endpoints for reviewed LLM generation."
+                        ),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 1
         graph = compile_study_graph()
         result = graph.invoke(
             {

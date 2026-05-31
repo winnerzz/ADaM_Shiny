@@ -3852,3 +3852,58 @@ python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test
 
 Result: focused graph split tests passed; compileall passed; 228 related
 graph/gateway/API/static-rule tests passed.
+
+### 2026-05-31 - LG2.8 API/CLI No Implicit Stub Entry Slice
+
+Completed:
+
+- Removed the remaining API entry fallback where `POST /runs` could silently
+  choose `execution_mode="stub"` when the loaded run config used the mock
+  provider and the request omitted `execution_mode`.
+- Removed the same CLI fallback from `adam-agent run-study`; mock-provider CLI
+  runs now fail closed unless the caller explicitly chooses `--execution-mode`.
+- Preserved explicit legacy compatibility:
+  - `POST /runs` with `execution_mode="stub"` still exercises the legacy
+    compatibility/test path.
+  - `--execution-mode llm_downstream_provider` with a mock config still
+    exercises the configured provider boundary test path.
+  - non-mock legacy `/runs` requests that omit `execution_mode` still resolve
+    to LLM run-to-completion and are blocked by the split-flow gate, so they do
+    not bypass review gates.
+- Added API and CLI regressions proving omitted execution mode no longer
+  creates a completed legacy stub run.
+
+Current boundary:
+
+- This slice does not change product split-flow endpoints, dependency planning,
+  DatasetGraph product topology, or LLM/R sandbox behavior.
+- Static-rule governance is unchanged. This slice adds no static rule and no
+  clinical, dataset-specific, study-specific, demo-specific, or
+  variable-specific check. Future static checks remain limited to generic
+  artifact/execution/spec contracts or governed rule-pack items with explicit
+  authority/source/version/scope/severity/evidence.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_requires_explicit_execution_mode_instead_of_implicit_stub tests.test_api_phase8.Phase8ApiTests.test_create_run_stub_is_marked_legacy_compatibility_shim tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion -v
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_requires_explicit_execution_mode_with_mock_config tests.test_graph_smoke.GraphSmokeTests.test_cli_run_study_uses_configured_provider_boundary_with_mock tests.test_graph_smoke.GraphSmokeTests.test_study_graph_missing_execution_mode_fails_closed_not_completed_stub -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_smoke tests.test_graph_gateway tests.test_static_rules -v
+python -B -c "import ast, pathlib; count=0; ...; print(f'syntax ok: {count} files')"
+git diff --check -- src\adam_agent\api\service.py src\adam_agent\cli.py tests\test_api_phase8.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused API and CLI entry tests passed; 230 related
+API/graph/gateway/static-rule tests passed; AST syntax check covered 61 Python
+files; diff check passed. `python -m compileall` remains blocked by the local
+Windows pycache permission issue (`PermissionError` / `WinError 5`), not by a
+syntax failure.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that API/CLI implicit stub fallback is removed, explicit
+  legacy stub compatibility remains available, explicit LLM run-to-completion is
+  still blocked by the split-flow gate, DatasetGraph/legacy stub graph
+  separation was not weakened, and static-rule governance remains generic
+  contract/rule-pack only.
