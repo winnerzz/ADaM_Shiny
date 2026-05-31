@@ -1608,7 +1608,7 @@ INDEX_HTML = r"""<!doctype html>
       state.inputSummary = payload;
       renderInputSummary(payload);
       addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
-      await refreshRunProgress();
+      await refreshGraphReadModels();
       return payload;
     }
 

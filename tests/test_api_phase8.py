@@ -477,6 +477,17 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Reference compare limited scope", audit_body)
         self.assertNotIn("JSON.stringify", audit_body)
 
+    def test_index_scan_inputs_refreshes_graph_read_models(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        scan_body = html.split("async function scanInputs()", 1)[1].split("function renderInputSummary(summary)", 1)[0]
+        self.assertIn("await refreshGraphReadModels()", scan_body)
+        self.assertNotIn("await refreshRunProgress()", scan_body)
+
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())
 

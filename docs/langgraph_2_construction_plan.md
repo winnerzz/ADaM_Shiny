@@ -5051,3 +5051,31 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.p
 python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
 node --check .tmp_tests/ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Scan Refresh Graph Read Models Slice
+
+Completed:
+
+- Updated the browser `scanInputs()` path to refresh graph read models after
+  rescanning study files.
+- This keeps Agent Audit, agent-node traces, dependency progress, and review
+  gates aligned with canonical graph state after demo load or manual input
+  refresh.
+- Added a focused UI contract test proving `scanInputs()` calls
+  `refreshGraphReadModels()` instead of refreshing progress alone.
+
+Current boundary:
+
+- This slice changes only browser read-model refresh order.
+- It does not change upload handling, input scanning, dependency planning,
+  GraphGateway state transitions, provider calls, static rules, R execution,
+  compare, repair, or Reference ADaM authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_scan_inputs_refreshes_graph_read_models tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```

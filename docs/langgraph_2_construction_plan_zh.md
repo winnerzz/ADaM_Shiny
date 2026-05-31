@@ -4643,3 +4643,30 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.p
 python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
 node --check .tmp_tests/ui_script_check.js
 ```
+
+### 2026-05-31 - LG2.7 Scan Refresh Graph Read Models 切片
+
+已完成：
+
+- 更新 browser `scanInputs()` 路径：study files 重新扫描后刷新 graph read
+  models。
+- 这样 demo load 或手动刷新 inputs 之后，Agent Audit、agent-node traces、
+  dependency progress 和 review gates 都会继续对齐 canonical graph state。
+- 增加 focused UI contract test，证明 `scanInputs()` 调用
+  `refreshGraphReadModels()`，而不是只刷新 progress。
+
+当前边界：
+
+- 本切片只改变 browser read-model refresh 顺序。
+- 不改变 upload handling、input scanning、dependency planning、GraphGateway
+  state transitions、provider calls、static rules、R execution、compare、repair
+  或 Reference ADaM authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_scan_inputs_refreshes_graph_read_models tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
