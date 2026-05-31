@@ -680,6 +680,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("approveRun: ['review_code', 'execute_approved_code', 'retry_approved_execution']", gate_body)
         self.assertIn("Graph next action:", gate_body)
         self.assertIn("Graph next action is", gate_body)
+        self.assertIn("function graphAllowsCodeGeneration(progress)", html)
         self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';", html)
         self.assertIn("const nextAction = String(datasetProgressFor(generated.dataset)?.next_action || '');", approve_body)
         self.assertIn("const alreadyApproved = nextAction === 'execute_approved_code' || nextAction === 'retry_approved_execution';", approve_body)
@@ -740,6 +741,19 @@ function check(nextAction) {
   };
 }
 const results = ['finalize_inputs', 'review_draft_spec', 'generate_code', 'revise_approved_spec', 'review_code', 'execute_approved_code'].map(check);
+function graphGenerateWithoutLocalSpecGate() {
+  state.selectedTarget = 'ADAE';
+  state.selectedTargetsForPlan = ['ADAE'];
+  state.plan = {requested_datasets: ['ADAE'], blocked_datasets: []};
+  state.finalizedInputsByDataset = {};
+  state.draftSpecByDataset = {};
+  state.draftSpecReviewByDataset = {};
+  state.inputSummary = {specs: []};
+  state.generatedByDataset = {};
+  state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'generate_code', action_label: 'Generate R code.', blocked: false}]};
+  return actionAvailability().generate.ready;
+}
+results.push({nextAction: 'graph_generate_without_local_spec_gate', generate: graphGenerateWithoutLocalSpecGate()});
 console.log(JSON.stringify(results));
 """
         script_path = TMP_ROOT / "ui_action_matrix.js"
@@ -762,6 +776,7 @@ console.log(JSON.stringify(results));
         self.assertTrue(results["revise_approved_spec"]["generate"])
         self.assertEqual(results["revise_approved_spec"]["generateLabel"], "Generate Revised Draft Spec")
         self.assertFalse(results["revise_approved_spec"]["finalize"])
+        self.assertTrue(results["graph_generate_without_local_spec_gate"]["generate"])
         self.assertTrue(results["review_code"]["approveRun"])
         self.assertTrue(results["execute_approved_code"]["approveRun"])
 

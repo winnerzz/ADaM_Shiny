@@ -5322,6 +5322,44 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Generate Gate 切片
+
+已完成：
+
+- 新增 `graphAllowsCodeGeneration(progress)`，让浏览器把 graph progress 的
+  `next_action` 作为代码生成可用性的依据。
+- 当 dataset progress 说明下一步是 `generate_code`、`repair_generated_code`
+  或 `revise_approved_spec` 时，UI 不再仅因为浏览器本地 spec-gate 缓存缺失或
+  过期而阻止 Generate 动作。
+- 在 `generateCode()` 内部也使用同一 graph-owned guard，保证按钮可用状态和实际
+  点击路径一致。
+- 保留人工审核边界：
+  - `review_draft_spec` 仍进入 draft-spec review；
+  - `revise_approved_spec` 仍调用 `/draft-spec`；
+  - 生成后的代码仍需要 code review 才能执行。
+- 增加 UI 行为测试，覆盖“graph 已允许生成，但本地 spec gate 缓存为空”的情况。
+
+当前边界：
+
+- 这是 UI gate/read-model 修正。
+- 后端 GraphGateway/product endpoints 仍是真正的硬校验边界。
+- 不改变 dependency planning、draft-spec approval 语义、provider calls、
+  R execution、compare、repair、static rules 或 Reference ADaM authority。
+
+审查：
+
+- 子 agent 审查 GO。
+- 审查确认这不会绕过 draft-spec/code-review 审核门，因为 graph progress 仍是事实
+  来源，后端校验仍然保留。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_draft_review_gate_overrides_local_input_spec_shortcuts -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dataset Card 阶段条切片
 
 已完成：

@@ -5772,6 +5772,45 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Generate Gate Slice
+
+Completed:
+
+- Added `graphAllowsCodeGeneration(progress)` so the browser treats graph
+  progress `next_action` values as the authority for code-generation readiness.
+- When dataset progress says `generate_code`, `repair_generated_code`, or
+  `revise_approved_spec`, the UI no longer blocks the Generate action only
+  because local browser spec-gate cache is missing or stale.
+- Applied the same graph-owned guard inside `generateCode()`, so the direct
+  button path and the visible availability state stay consistent.
+- Preserved the human-review boundary:
+  - `review_draft_spec` still routes to draft-spec review;
+  - `revise_approved_spec` still calls `/draft-spec`;
+  - generated code still requires code review before execution.
+- Added UI behavior coverage for the stale-local-spec-cache case.
+
+Current boundary:
+
+- This is a UI gate/read-model correction only.
+- Backend GraphGateway/product endpoints remain the hard validation boundary.
+- It does not change dependency planning, draft-spec approval semantics, provider
+  calls, R execution, compare, repair, static rules, or Reference ADaM authority.
+
+Review:
+
+- Subagent review returned GO.
+- The review confirmed this does not bypass draft-spec/code-review gates because
+  graph progress remains the source of truth and backend validation remains in
+  place.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_draft_review_gate_overrides_local_input_spec_shortcuts -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Dataset Card Stage Slice
 
 Completed:

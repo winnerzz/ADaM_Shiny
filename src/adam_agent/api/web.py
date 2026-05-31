@@ -2145,6 +2145,10 @@ INDEX_HTML = r"""<!doctype html>
       };
     }
 
+    function graphAllowsCodeGeneration(progress) {
+      return ['generate_code', 'repair_generated_code', 'revise_approved_spec'].includes(String(progress?.next_action || ''));
+    }
+
     function actionAvailability() {
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
@@ -2167,6 +2171,7 @@ INDEX_HTML = r"""<!doctype html>
       const draftGate = graphActionGate(progress, 'approveDraft');
       const generateGate = graphActionGate(progress, 'generate');
       const approveRunGate = graphActionGate(progress, 'approveRun');
+      const effectiveSpecGate = hasSpecGate || Boolean(generateGate?.ready && graphAllowsCodeGeneration(progress));
       const finalizeReady = finalizeGate
         ? Boolean(target && targetIsPlanned && !blocked && finalizeGate.ready)
         : Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
@@ -2174,7 +2179,7 @@ INDEX_HTML = r"""<!doctype html>
         ? Boolean(target && draftGate.ready && draft && !draftReview?.approved)
         : Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
       const generateReady = generateGate
-        ? Boolean(target && targetIsPlanned && !blocked && generateGate.ready && hasSpecGate)
+        ? Boolean(target && targetIsPlanned && !blocked && generateGate.ready && effectiveSpecGate)
         : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
       const codeApprovalReady = approveRunGate?.nextAction === 'review_code'
         ? canApproveGeneratedCode(target)
@@ -2238,7 +2243,7 @@ INDEX_HTML = r"""<!doctype html>
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
                 : generateGate?.nextAction === 'revise_approved_spec'
                   ? 'Graph requires a revised draft spec before new R code can be generated.'
-                : !hasSpecGate
+                : !effectiveSpecGate
                   ? 'Confirm the uploaded input spec or review/approve the generated draft spec first.'
                   : generated?.status === 'stale'
                     ? 'Inputs changed after code generation; regenerate R code before review.'
@@ -3429,7 +3434,8 @@ INDEX_HTML = r"""<!doctype html>
       const activeProgress = datasetProgressFor(state.selectedTarget);
       const nextAction = String(activeProgress?.next_action || '');
       const revisingSpec = nextAction === 'revise_approved_spec';
-      if (!revisingSpec && !targetSpecGateSatisfied(state.selectedTarget)) {
+      const graphOwnedGeneration = graphAllowsCodeGeneration(activeProgress);
+      if (!graphOwnedGeneration && !targetSpecGateSatisfied(state.selectedTarget)) {
         byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Click Finalize Inputs / Draft Spec, review the draft spec, then approve it before generating R code.</p>';
         byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
