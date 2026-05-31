@@ -4134,3 +4134,50 @@ Subagent review:
   `dataset_dependencies` and `execution_batches`, not by the task label; the new
   test is not order-sensitive under ThreadPool execution; DatasetGraph legacy
   stub behavior and static-rule governance were untouched.
+
+### 2026-05-31 - LG2.8 Legacy Stub Sandbox Failure Scenario Naming Slice
+
+Completed:
+
+- Added the dataset-neutral legacy stub scenario name `sandbox_failure`.
+- Kept the old `fail_adsl` string as an explicit compatibility alias for
+  existing stub tests or historical harnesses.
+- Updated current graph smoke tests to use `sandbox_failure` when simulating a
+  sandbox failure for ADSL, ADAE, or ADLB.
+- Added focused regression coverage proving the generic scenario works for
+  multiple ADaM datasets and that the old `fail_adsl` alias still fails in the
+  same controlled way.
+
+Current boundary:
+
+- This is a legacy/test stub naming cleanup only. It does not change product
+  DatasetGraph routing, StudyGraph dependency semantics, LLM generation, R
+  execution, compare, UI state, or static-rule governance.
+- The product path must not use `fail_adsl` as business language. The alias is
+  retained only so old stub harnesses fail compatibly instead of breaking with
+  an unrelated input error.
+- No dataset-specific clinical or static-rule behavior was added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_sandbox_failure_scenario_is_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_legacy_fail_adsl_stub_scenario_remains_alias tests.test_graph_smoke.GraphSmokeTests.test_adsl_failure_blocks_downstream_without_running_it tests.test_graph_smoke.GraphSmokeTests.test_downstream_stub_failure_does_not_change_completed_adsl_status tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\state.py src\adam_agent\graph\dataset_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "fail_adsl|sandbox_failure" src\adam_agent tests docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+Result: focused legacy stub naming regressions passed; 237 related
+graph/gateway/API/static-rule tests passed; AST syntax check covered 79 Python
+files; diff check passed. Source scan found `fail_adsl` only in the explicit
+legacy alias path, alias regression, and documentation note; current failure
+scenario tests use the dataset-neutral `sandbox_failure` name.
+
+Subagent review:
+
+- Read-only review returned GO.
+- The review confirmed that `fail_adsl` remains only as the explicit legacy
+  stub alias and type literal, the dataset-neutral `sandbox_failure` path is
+  covered for multiple datasets, the alias is covered separately, and no
+  dependency-planning or static-rule semantic drift was introduced.

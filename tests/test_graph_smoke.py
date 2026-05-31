@@ -459,6 +459,46 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(adsl["summary"].dataset, "ADSL")
         self.assertEqual(adae["summary"].dataset, "ADAE")
 
+    def test_legacy_stub_sandbox_failure_scenario_is_dataset_neutral(self) -> None:
+        dataset_graph = compile_legacy_stub_dataset_graph()
+
+        for dataset in ("ADAE", "ADLB"):
+            with self.subTest(dataset=dataset):
+                result = dataset_graph.invoke(
+                    {
+                        "study_id": "PSY201",
+                        "run_id": "run_legacy_stub_sandbox_failure",
+                        "dataset": dataset,
+                        "execution_mode": "stub",
+                        "stub_scenario": "sandbox_failure",
+                        "audit_artifacts": [],
+                    }
+                )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["failure_type"], "sandbox_error")
+                self.assertEqual(result["summary"].dataset, dataset)
+                self.assertEqual(result["summary"].status, "failed")
+
+    def test_legacy_fail_adsl_stub_scenario_remains_alias(self) -> None:
+        dataset_graph = compile_legacy_stub_dataset_graph()
+
+        result = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_legacy_stub_fail_adsl_alias",
+                "dataset": "ADLB",
+                "execution_mode": "stub",
+                "stub_scenario": "fail_adsl",
+                "audit_artifacts": [],
+            }
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_type"], "sandbox_error")
+        self.assertEqual(result["summary"].dataset, "ADLB")
+        self.assertEqual(result["summary"].status, "failed")
+
     def test_dataset_graph_missing_execution_mode_fails_closed_not_completed_stub(self) -> None:
         dataset_graph = compile_dataset_graph()
 
@@ -1077,7 +1117,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "run_id": "run_phase3_blocked",
                 "target_datasets": ["ADSL", "ADAE"],
                 "execution_mode": "stub",
-                "stub_scenarios": {"ADSL": "fail_adsl"},
+                "stub_scenarios": {"ADSL": "sandbox_failure"},
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -1906,7 +1946,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "run_id": "run_phase7_downstream_fail",
                 "target_datasets": ["ADSL", "ADAE"],
                 "execution_mode": "stub",
-                "stub_scenarios": {"ADAE": "fail_adsl"},
+                "stub_scenarios": {"ADAE": "sandbox_failure"},
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],
@@ -1947,7 +1987,7 @@ class GraphSmokeTests(unittest.TestCase):
                 "execution_mode": "stub",
                 "study_dir": str(study_dir),
                 "approved_dependency_datasets": ["ADSL", "ADLB"],
-                "stub_scenarios": {"ADLB": "fail_adsl"},
+                "stub_scenarios": {"ADLB": "sandbox_failure"},
                 "dataset_results": [],
                 "blocked_datasets": [],
                 "audit_artifacts": [],

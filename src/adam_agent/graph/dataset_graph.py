@@ -883,7 +883,7 @@ def run_sandbox_stub(state: DatasetGraphState) -> DatasetGraphState:
     sandbox_runs = state.get("sandbox_runs", 0) + 1
     scenario = state.get("stub_scenario", "success")
 
-    if scenario == "fail_adsl":
+    if scenario in {"sandbox_failure", "fail_adsl"}:
         return {
             "sandbox_runs": sandbox_runs,
             "status": "failed",

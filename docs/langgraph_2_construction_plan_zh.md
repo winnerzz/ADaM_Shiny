@@ -3771,3 +3771,46 @@ Python 文件；diff check passed。Source scan 未发现 retired
   `execution_batches` 控制，而不是由 task label 控制；新测试在 ThreadPool
   execution 下不依赖完成顺序；DatasetGraph legacy stub behavior 和 static-rule
   governance 未被触碰。
+
+### 2026-05-31 - LG2.8 Legacy Stub 沙盒失败场景命名清理切片
+
+已完成：
+
+- 新增 dataset-neutral 的 legacy stub 场景名 `sandbox_failure`。
+- 保留旧字符串 `fail_adsl`，但只作为既有 stub 测试或历史 harness 的兼容别名。
+- 将当前 graph smoke tests 中用于模拟 ADSL、ADAE、ADLB 沙盒失败的场景名改为
+  `sandbox_failure`。
+- 新增 focused regression，证明通用场景名可用于多个 ADaM dataset，并证明旧
+  `fail_adsl` 别名仍会以同样受控的方式失败。
+
+当前边界：
+
+- 这是 legacy/test stub 命名清理，不改变产品 DatasetGraph routing、StudyGraph
+  dependency semantics、LLM generation、R execution、compare、UI state 或
+  static-rule governance。
+- 产品路径不能再把 `fail_adsl` 当作业务语言使用。保留这个别名只是为了让旧
+  stub harness 兼容失败，而不是因为一个命名变化触发无关 input error。
+- 未新增任何 dataset-specific clinical rule 或 static-rule 行为。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_legacy_stub_sandbox_failure_scenario_is_dataset_neutral tests.test_graph_smoke.GraphSmokeTests.test_legacy_fail_adsl_stub_scenario_remains_alias tests.test_graph_smoke.GraphSmokeTests.test_adsl_failure_blocks_downstream_without_running_it tests.test_graph_smoke.GraphSmokeTests.test_downstream_stub_failure_does_not_change_completed_adsl_status tests.test_graph_smoke.GraphSmokeTests.test_midstream_dependency_failure_blocks_only_dependent_datasets -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 tests.test_static_rules -v
+python -B -c "import ast, pathlib; files=[...]; ...; print(f'syntax ok: {len(files)} files')"
+git diff --check -- src\adam_agent\graph\state.py src\adam_agent\graph\dataset_graph.py tests\test_graph_smoke.py docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+rg -n "fail_adsl|sandbox_failure" src\adam_agent tests docs\langgraph_2_construction_plan.md docs\langgraph_2_construction_plan_zh.md
+```
+
+结果：focused legacy stub 命名回归通过；237 个相关
+graph/gateway/API/static-rule tests passed；AST syntax check 覆盖 79 个
+Python 文件；diff check passed。Source scan 显示 `fail_adsl` 只保留在显式
+legacy alias 路径、alias regression 和文档说明中；当前失败场景测试使用
+dataset-neutral 的 `sandbox_failure` 名称。
+
+子 agent review：
+
+- 只读 review 返回 GO。
+- 审核确认：`fail_adsl` 只保留为显式 legacy stub alias 和类型 literal；
+  dataset-neutral 的 `sandbox_failure` 路径已覆盖多个 dataset；旧 alias 有单独
+  回归；没有引入 dependency-planning 或 static-rule semantic drift。

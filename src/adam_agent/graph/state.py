@@ -20,7 +20,7 @@ GraphRunStatus = Literal[
     "completed_stub",
     "failed",
 ]
-StubScenario = Literal["success", "code_error_then_success", "spec_error_then_success", "fail_adsl"]
+StubScenario = Literal["success", "code_error_then_success", "spec_error_then_success", "sandbox_failure", "fail_adsl"]
 DatasetRoute = Literal["continue", "human_review", "repair_code", "revise_spec", "success", "fail"]
 
 
