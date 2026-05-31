@@ -9,7 +9,6 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from adam_agent.agents import (
@@ -22,6 +21,7 @@ from adam_agent.agents import (
     record_agent_decision,
     write_agent_audit_summary,
 )
+from adam_agent.graph.checkpointing import CheckpointerBundle, build_checkpointer, describe_checkpointer
 from adam_agent.graph.dataset_graph import compile_dataset_graph
 from adam_agent.graph.execution import GraphExecutionError, assert_graph_code_review_current
 from adam_agent.graph.execution_modes import (
@@ -207,8 +207,12 @@ class GraphGateway:
     same gateway instead of adding more FastAPI-local state transitions.
     """
 
-    def __init__(self, *, checkpointer: Any | None = None) -> None:
-        self._checkpointer = checkpointer or InMemorySaver()
+    def __init__(self, *, checkpointer: Any | None = None, checkpointer_bundle: CheckpointerBundle | None = None) -> None:
+        bundle = checkpointer_bundle if checkpointer is None else None
+        if checkpointer is None and bundle is None:
+            bundle = build_checkpointer()
+        self._checkpointer_bundle = bundle
+        self._checkpointer = checkpointer if checkpointer is not None else bundle.checkpointer
         self._graph = compile_study_graph(checkpointer=self._checkpointer)
 
     def start_dependency_plan(
@@ -2769,7 +2773,12 @@ class GraphGateway:
         runtime_persistence_extra: dict[str, Any] | None = None,
     ) -> None:
         root = Path(study_dir)
-        state.runtime_persistence = _runtime_persistence_payload(root, state.run_id, self._checkpointer)
+        state.runtime_persistence = describe_checkpointer(
+            checkpointer=self._checkpointer,
+            study_dir=root,
+            run_id=state.run_id,
+            bundle=self._checkpointer_bundle,
+        )
         if runtime_persistence_extra:
             state.runtime_persistence.update(runtime_persistence_extra)
         _sync_study_agent_decisions(state)
@@ -3792,28 +3801,6 @@ def _write_graph_sqlite_checkpoint(
         conn.commit()
     finally:
         conn.close()
-
-
-def _runtime_persistence_payload(study_dir: str | Path, run_id: str, checkpointer: Any) -> dict[str, Any]:
-    """Describe current persistence boundaries without overstating recovery semantics."""
-
-    run_dir = Path(study_dir) / "runs" / run_id
-    checkpointer_type = type(checkpointer).__name__
-    return {
-        "source_of_truth": "graph_state_json",
-        "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
-        "checkpoint_ledger_path": str((run_dir / "graph_checkpoints.sqlite").as_posix()),
-        "workflow_projection_path": str((run_dir / "workflow_state.json").as_posix()),
-        "langgraph_checkpointer_type": checkpointer_type,
-        "langgraph_checkpointer_persistent": False,
-        "native_interrupt_resume": False,
-        "restart_recovery_source": "graph_state_json",
-        "notes": [
-            "Current product recovery reloads canonical graph_state.json.",
-            "graph_checkpoints.sqlite is a local product audit ledger, not a LangGraph SQLite checkpointer.",
-            "Full native LangGraph interrupt/checkpointer resume remains future work.",
-        ],
-    }
 
 
 def _native_interrupt_payload(snapshot: Any) -> dict[str, Any]:

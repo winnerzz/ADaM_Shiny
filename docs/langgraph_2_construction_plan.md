@@ -6131,6 +6131,47 @@ python -B -m compileall -q src tests
 git diff --check
 ```
 
+### 2026-06-01 - LG2.1 Checkpointer Boundary Extraction Slice
+
+Completed:
+
+- Added `src/adam_agent/graph/checkpointing.py` as the explicit LangGraph
+  checkpointer boundary.
+- `GraphGateway` now obtains the default checkpointer through this boundary and
+  uses the same module to describe runtime persistence metadata.
+- The boundary currently exposes only the in-memory backend and rejects unknown
+  backends fail-closed.
+- Custom checkpointers are reported as `custom` without claiming persistence.
+
+Current boundary:
+
+- This slice does not install or enable `langgraph-checkpoint-sqlite`.
+- `langgraph_checkpointer_persistent` remains `false` for the default product
+  path.
+- Restart recovery remains `graph_state.json`.
+- `graph_checkpoints.sqlite` remains a product audit ledger, not a LangGraph
+  checkpointer.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the checkpointer boundary centralizes creation and
+  metadata without enabling unsupported persistence, keeps `GraphGateway`
+  defaults aligned with prior InMemory behavior, fails closed for unknown
+  backends, reports custom checkpointers without claiming persistence, and does
+  not change public API/UI defaults.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_backend tests.test_graph_gateway.GraphGatewayTests.test_custom_checkpointer_is_reported_without_persistence_claim -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 267 tests in 28.419s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
+
 ### 2026-06-01 - LG2.1 Native Dependency-Review Interrupt Pilot Slice
 
 Completed:

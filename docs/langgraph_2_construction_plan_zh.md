@@ -5661,6 +5661,43 @@ python -B -m compileall -q src tests
 git diff --check
 ```
 
+### 2026-06-01 - LG2.1 Checkpointer Boundary Extraction 切片
+
+已完成：
+
+- 新增 `src/adam_agent/graph/checkpointing.py`，作为明确的 LangGraph checkpointer
+  边界。
+- `GraphGateway` 现在通过这个边界获得默认 checkpointer，并由同一个模块生成
+  runtime persistence metadata。
+- 当前边界只暴露 in-memory backend；未知 backend 会 fail closed。
+- 自定义 checkpointer 会被报告为 `custom`，但不会被说成 persistent。
+
+当前边界：
+
+- 本切片不安装、不启用 `langgraph-checkpoint-sqlite`。
+- 默认产品路径的 `langgraph_checkpointer_persistent` 仍为 `false`。
+- restart recovery 仍来自 `graph_state.json`。
+- `graph_checkpoints.sqlite` 仍是 product audit ledger，不是 LangGraph checkpointer。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 checkpointer 边界集中管理创建和 metadata，但没有启用未支持的
+  persistent checkpointer；`GraphGateway` 默认仍保持之前的 InMemory 行为；未知
+  backend 会 fail closed；custom checkpointer 不会被说成 persistent；公开 API/UI
+  默认行为未改变。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_defaults_to_nonpersistent_memory tests.test_graph_gateway.GraphGatewayTests.test_checkpointing_boundary_rejects_unavailable_backend tests.test_graph_gateway.GraphGatewayTests.test_custom_checkpointer_is_reported_without_persistence_claim -v
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 267 tests in 28.419s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```
+
 ### 2026-06-01 - LG2.1 Native Dependency-Review Interrupt 试点切片
 
 已完成：

@@ -18,6 +18,7 @@ TMP_ROOT = ROOT / ".tmp_tests"
 try:
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
+    from adam_agent.graph.checkpointing import build_checkpointer, describe_checkpointer
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -32,6 +33,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(SRC))
     from adam_agent.api.models import RunPlanRequest
     from adam_agent.api.service import prepare_run_plan
+    from adam_agent.graph.checkpointing import build_checkpointer, describe_checkpointer
     from adam_agent.graph.gateway import GraphGateway, _generation_quality_from_dataset_result
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -292,6 +294,7 @@ class GraphGatewayTests(unittest.TestCase):
         runtime_persistence = result.graph_state.runtime_persistence
         self.assertEqual(runtime_persistence["source_of_truth"], "graph_state_json")
         self.assertEqual(runtime_persistence["langgraph_checkpointer_type"], "InMemorySaver")
+        self.assertEqual(runtime_persistence["langgraph_checkpointer_backend"], "memory")
         self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
         self.assertFalse(runtime_persistence["native_interrupt_resume"])
         self.assertEqual(runtime_persistence["restart_recovery_source"], "graph_state_json")
@@ -348,8 +351,37 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(runtime_persistence, workflow_state["runtime_persistence"])
         self.assertEqual(runtime_persistence["source_of_truth"], "graph_state_json")
         self.assertEqual(runtime_persistence["langgraph_checkpointer_type"], "InMemorySaver")
+        self.assertEqual(runtime_persistence["langgraph_checkpointer_backend"], "memory")
         self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
         self.assertFalse(runtime_persistence["native_interrupt_resume"])
+
+    def test_checkpointing_boundary_defaults_to_nonpersistent_memory(self) -> None:
+        study_dir = _workspace_dir("lg2_checkpointing_boundary") / "PSY201"
+        bundle = build_checkpointer()
+        payload = describe_checkpointer(checkpointer=bundle.checkpointer, study_dir=study_dir, run_id="run_boundary", bundle=bundle)
+
+        self.assertEqual(payload["source_of_truth"], "graph_state_json")
+        self.assertEqual(payload["langgraph_checkpointer_backend"], "memory")
+        self.assertEqual(payload["langgraph_checkpointer_type"], "InMemorySaver")
+        self.assertFalse(payload["langgraph_checkpointer_persistent"])
+        self.assertEqual(payload["restart_recovery_source"], "graph_state_json")
+        self.assertIn("in-memory only", " ".join(payload["notes"]))
+
+    def test_checkpointing_boundary_rejects_unavailable_backend(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Only the in-memory LangGraph checkpointer is available"):
+            build_checkpointer("sqlite")  # type: ignore[arg-type]
+
+    def test_custom_checkpointer_is_reported_without_persistence_claim(self) -> None:
+        class CustomCheckpointer:
+            pass
+
+        study_dir = _workspace_dir("lg2_checkpointing_custom") / "PSY201"
+        payload = describe_checkpointer(checkpointer=CustomCheckpointer(), study_dir=study_dir, run_id="run_custom")
+
+        self.assertEqual(payload["langgraph_checkpointer_backend"], "custom")
+        self.assertEqual(payload["langgraph_checkpointer_type"], "CustomCheckpointer")
+        self.assertFalse(payload["langgraph_checkpointer_persistent"])
+        self.assertEqual(payload["restart_recovery_source"], "graph_state_json")
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"
