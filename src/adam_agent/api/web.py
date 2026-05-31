@@ -3213,8 +3213,21 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderAdvanced() {
+      const review = state.runReview || {};
       const artifacts = state.runReview?.advanced_artifacts || {};
-      const rows = Object.entries(artifacts).map(([key, value]) => `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`).join('');
+      const sourceRows = [];
+      if (review.read_model_source) {
+        sourceRows.push(['review_summary_source', titleFromToken(review.read_model_source)]);
+      }
+      if (review.graph_state_path) {
+        sourceRows.push(['graph_state', review.graph_state_path]);
+      }
+      if (review.workflow_state_path) {
+        sourceRows.push(['workflow_state', review.workflow_state_path]);
+      }
+      const rows = sourceRows.concat(Object.entries(artifacts))
+        .map(([key, value]) => `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`)
+        .join('');
       byId('advancedPane').innerHTML = rows
         ? `<table><thead><tr><th>Artifact</th><th>Path</th></tr></thead><tbody>${rows}</tbody></table>`
         : 'Audit artifacts appear after a run.';
