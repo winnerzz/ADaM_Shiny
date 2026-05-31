@@ -2468,6 +2468,207 @@ class GraphGateway:
             warnings=list(result.get("execution_warnings", [])),
         )
 
+    def start_native_terminal_failure_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayExecutionResult:
+        """Start an internal native terminal-failure review interrupt pilot."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            self.dependency_gate_for_product_step(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                start_if_missing=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(
+                "Graph state does not exist for this run. Generate code through the graph flow before execution."
+            ) from exc
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="execute")
+        self._assert_approved_code_execution_ready(study_dir=root, run_id=run_id, dataset=target)
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        result = dataset_graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": GRAPH_PRODUCT_EXECUTE_MODE,
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "native_terminal_failure_review": True,
+                "audit_artifacts": [],
+            },
+            config=self._dataset_config(study_id, run_id, target),
+        )
+        if "__interrupt__" not in result:
+            raise ValueError(f"DatasetGraph did not stop at native terminal_failure for {target}.")
+        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        values = dict(snapshot.values or {})
+        if not bool(values.get("terminal_failure")):
+            raise ValueError(f"DatasetGraph native terminal_failure pilot requires a failed execution for {target}.")
+        response_status = str(values.get("response_status") or "terminal_failure")
+        validation_report = values.get("validation_report") or {}
+        validation_status = str(values.get("real_validation_status") or validation_report.get("status") or "unknown")
+        output_path = str(values.get("output_path") or "") or None
+        validation_report_path = str(values.get("validation_report_path") or "") or None
+        diagnostics_path = str(values.get("diagnostics_path") or "") or None
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        dataset_state = graph_state.datasets.get(target)
+        generation_quality = dict(dataset_state.code_state.get("generation_quality") or {}) if dataset_state else {}
+        gateway_result = self.record_execution(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            execution_state={
+                "status": response_status,
+                "validation_status": validation_status,
+                "output_path": output_path,
+                "validation_report_path": validation_report_path,
+                "diagnostics_path": diagnostics_path,
+                "terminal_failure": True,
+                "partial_output_usable": False,
+                "generation_quality": generation_quality,
+                "not_real_derivation": bool(generation_quality.get("not_real_derivation", False)),
+            },
+            validation_summary=validation_report,
+            artifacts=list((values.get("real_run_artifacts") or {}).values()),
+            failures=list(values.get("failure_records", [])),
+            input_fingerprint_payload=input_fingerprint(root),
+            agent_decisions=list(values.get("agent_decisions", [])),
+            agent_node_inputs=list(values.get("agent_node_inputs", [])),
+            agent_node_outputs=list(values.get("agent_node_outputs", [])),
+            risk_flags=list(values.get("risk_flags", [])),
+        )
+        self._persist_graph_state(
+            root,
+            gateway_result.graph_state,
+            node="native_terminal_failure_review_interrupt",
+            runtime_persistence_extra={
+                "native_terminal_failure_review_interrupt": _native_interrupt_payload(
+                    snapshot,
+                    boundary="terminal_failure_review_pilot_only",
+                )
+            },
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            gateway_result.graph_state,
+            node="graph_gateway_native_terminal_failure_review_interrupt",
+        )
+        return GraphGatewayExecutionResult(
+            graph_state=gateway_result.graph_state,
+            workflow_projection=projection,
+            status=response_status,
+            validation_status=validation_status,
+            output_path=output_path,
+            validation_report_path=validation_report_path,
+            diagnostics_path=diagnostics_path,
+            terminal_failure=True,
+            errors=list(values.get("execution_errors", [])),
+            warnings=list(values.get("execution_warnings", [])),
+        )
+
+    def resume_native_terminal_failure_review(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayTerminalFailureReviewResult:
+        """Resume native terminal-failure triage through the formal gateway flow."""
+
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
+        if normalized_decision not in allowed:
+            raise ValueError("Terminal failure decision is not supported.")
+        open_study_interrupt = _open_study_interrupt(graph_state)
+        if open_study_interrupt is not None:
+            raise ValueError(
+                f"Study-level interrupt {open_study_interrupt.name} must be resolved before dataset terminal_failure."
+            )
+        _assert_resume_command_matches_open_interrupt(
+            graph_state,
+            HumanCommand(
+                interrupt="terminal_failure",
+                action=normalized_decision,
+                dataset=target,
+                reviewer=reviewer,
+                notes=notes,
+            ),
+        )
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": normalized_decision,
+                    "reviewer": reviewer,
+                    "notes": notes,
+                }
+            ),
+            config=self._dataset_config(graph_state.study_id, run_id, target),
+        )
+        if resumed.get("native_terminal_failure_review_status") != "triaged":
+            raise ValueError(f"DatasetGraph did not resume native terminal_failure for {target}.")
+        commands = resumed.get("human_commands") or []
+        if not commands:
+            raise ValueError(f"DatasetGraph native terminal_failure resume did not produce a human command for {target}.")
+        command_payload = dict(commands[-1])
+        result = self.review_terminal_failure_from_command(
+            study_dir=root,
+            run_id=run_id,
+            command=HumanCommand(
+                interrupt=command_payload.get("interrupt", "terminal_failure"),
+                action=command_payload.get("action", normalized_decision),
+                dataset=command_payload.get("dataset", target),
+                reviewer=command_payload.get("reviewer", reviewer),
+                notes=command_payload.get("notes", notes),
+                payload=command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {},
+            ),
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+        self._persist_graph_state(
+            root,
+            result.graph_state,
+            node="native_terminal_failure_review_resume",
+            runtime_persistence_extra={
+                "native_terminal_failure_review_resume": {
+                    "resumed": True,
+                    "dataset": target,
+                    "action": normalized_decision,
+                    "native_status": resumed.get("native_terminal_failure_review_status"),
+                }
+            },
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            result.graph_state,
+            node="graph_gateway_native_terminal_failure_review_resume",
+        )
+        return GraphGatewayTerminalFailureReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=projection,
+            decision=result.decision,
+            current_interrupt=result.current_interrupt,
+            next_action=result.next_action,
+        )
+
     def record_compare(
         self,
         *,

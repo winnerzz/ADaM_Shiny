@@ -113,6 +113,9 @@ class DatasetGraphState(TypedDict, total=False):
     native_code_review: bool
     native_code_review_status: str
     native_code_review_resume: dict[str, object]
+    native_terminal_failure_review: bool
+    native_terminal_failure_review_status: str
+    native_terminal_failure_review_resume: dict[str, object]
     human_commands: Annotated[list[dict[str, object]], operator.add]
     legacy_stub_graph_enabled: bool
     evidence_bundle_id: str

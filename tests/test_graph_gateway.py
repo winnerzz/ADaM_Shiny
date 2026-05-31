@@ -10,6 +10,7 @@ import unittest
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2593,6 +2594,298 @@ class GraphGatewayTests(unittest.TestCase):
             "r_execution_completed",
         )
         self.assertEqual(persisted_state["agent_node_outputs"][-1]["decision"], "r_execution_completed")
+
+    def test_gateway_native_terminal_failure_review_roundtrip_persists_triage(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_terminal_failure_roundtrip") / "PSY201"
+        run_id = "run_lg2_native_terminal_failure_roundtrip"
+        run_dir = study_dir / "runs" / run_id
+        code_dir = run_dir / "code"
+        review_dir = run_dir / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adae.R"
+        review_path = review_dir / "adae_code_review.json"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg2_native_terminal_failure_roundtrip_adae",
+            kind="validation_report",
+            path="runs/run_lg2_native_terminal_failure_roundtrip/validation/adae_validation_report.json",
+            sha256=f"sha256:{'5' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        failure = FailureRecord(
+            failure_id="failure_adae_native_terminal",
+            dataset="ADAE",
+            node="execute_approved_code",
+            failure_type="sandbox_error",
+            message="R execution failed.",
+            root_cause="r_runtime_error",
+            recommended_route="repair_code",
+        )
+        fake_result = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg2_native_terminal_failure_roundtrip/validation/adae_validation_report.json",
+            diagnostics_path="runs/run_lg2_native_terminal_failure_roundtrip/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": []},
+            failure_records=[failure],
+            artifacts={"validation_report": validation_artifact},
+        )
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+                notes="Approved failing native terminal pilot.",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            started = gateway.start_native_terminal_failure_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
+
+        self.assertTrue(started.terminal_failure)
+        self.assertEqual(started.graph_state.datasets["ADAE"].current_interrupt.name, "terminal_failure")
+        self.assertIn("native_terminal_failure_review_interrupt", started.graph_state.runtime_persistence)
+        self.assertEqual(
+            started.graph_state.runtime_persistence["native_terminal_failure_review_interrupt"]["boundary"],
+            "terminal_failure_review_pilot_only",
+        )
+
+        reviewed = gateway.resume_native_terminal_failure_review(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="repair_code",
+            reviewer="native_tester",
+            notes="Repair after native terminal-failure review.",
+        )
+
+        dataset_state = reviewed.graph_state.datasets["ADAE"]
+        self.assertEqual(reviewed.decision, "repair_code")
+        self.assertEqual(reviewed.current_interrupt, "terminal_failure")
+        self.assertEqual(reviewed.next_action, "repair_generated_code")
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_review"]["action"], "repair_code")
+        self.assertEqual(dataset_state.human_commands[-1].reviewer, "native_tester")
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_terminal_failure_review_resume"]["native_status"],
+            "triaged",
+        )
+        persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted_state["datasets"]["ADAE"]["execution_state"]["terminal_failure_review"]["action"],
+            "repair_code",
+        )
+
+    def test_gateway_native_terminal_failure_review_resume_requires_canonical_terminal_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_terminal_failure_resume_gate") / "PSY201"
+        run_id = "run_lg2_native_terminal_failure_resume_gate"
+        code_dir = study_dir / "runs" / run_id / "code"
+        review_dir = study_dir / "runs" / run_id / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adae.R"
+        review_path = review_dir / "adae_code_review.json"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        fake_result = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path=None,
+            diagnostics_path="runs/run_lg2_native_terminal_failure_resume_gate/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail"},
+            failure_records=[],
+            artifacts={},
+        )
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            gateway.start_native_terminal_failure_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
+
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        graph_state.datasets["ADAE"].current_interrupt = InterruptState(
+            name="code_review",
+            dataset="ADAE",
+            reason="Canonical state changed before native resume.",
+        )
+        gateway._persist_graph_state(study_dir, graph_state, node="test_native_terminal_failure_resume_gate")
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+                gateway.resume_native_terminal_failure_review(
+                    study_dir=study_dir,
+                    run_id=run_id,
+                    dataset="ADAE",
+                    decision="repair_code",
+                    reviewer="native_tester",
+                )
+
+        compile_graph.assert_not_called()
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
+        self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "code_review")
+
+    def test_gateway_native_terminal_failure_review_resume_rejects_study_interrupt_before_native_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_terminal_failure_study_gate") / "PSY201"
+        run_id = "run_lg2_native_terminal_failure_study_gate"
+        code_dir = study_dir / "runs" / run_id / "code"
+        review_dir = study_dir / "runs" / run_id / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adae.R"
+        review_path = review_dir / "adae_code_review.json"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        fake_result = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path=None,
+            diagnostics_path="runs/run_lg2_native_terminal_failure_study_gate/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail"},
+            failure_records=[],
+            artifacts={},
+        )
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            gateway.start_native_terminal_failure_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
+
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        graph_state.current_interrupt = InterruptState(
+            name="dependency_review",
+            reason="Study dependency review must be resolved first.",
+        )
+        gateway._persist_graph_state(study_dir, graph_state, node="test_native_terminal_failure_study_gate")
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            with self.assertRaisesRegex(ValueError, "Study-level interrupt dependency_review must be resolved"):
+                gateway.resume_native_terminal_failure_review(
+                    study_dir=study_dir,
+                    run_id=run_id,
+                    dataset="ADAE",
+                    decision="repair_code",
+                    reviewer="native_tester",
+                )
+
+        compile_graph.assert_not_called()
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(reloaded.current_interrupt.name, "dependency_review")
+        self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
 
     def test_gateway_execution_preserves_generation_quality_signal(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_generation_quality") / "PSY201"

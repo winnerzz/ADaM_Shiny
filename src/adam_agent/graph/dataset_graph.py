@@ -1017,6 +1017,77 @@ def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
+def wait_for_terminal_failure_review_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Pause at the terminal-failure triage gate using a native interrupt.
+
+    This internal pilot lets DatasetGraph own the pause after a failed R
+    execution while the formal triage artifact and state transition remain in
+    GraphGateway.
+    """
+
+    if not state.get("native_terminal_failure_review"):
+        return {}
+    target = state["dataset"]
+    command = interrupt(
+        {
+            "interrupt": "terminal_failure",
+            "scope": "dataset",
+            "study_id": state["study_id"],
+            "run_id": state["run_id"],
+            "dataset": target,
+            "diagnostics_path": state.get("diagnostics_path"),
+            "validation_report_path": state.get("validation_report_path"),
+            "execution_errors": state.get("execution_errors", []),
+            "execution_warnings": state.get("execution_warnings", []),
+            "available_actions": [
+                "retry_execution",
+                "repair_code",
+                "revise_spec",
+                "request_new_input",
+                "skip_dataset",
+                "continue_other_datasets",
+            ],
+            "message": f"Review terminal R execution failure for {target}.",
+        }
+    )
+    command_payload = command if isinstance(command, dict) else {"action": str(command)}
+    action = str(command_payload.get("action") or "").strip().lower()
+    if action not in {
+        "retry_execution",
+        "repair_code",
+        "revise_spec",
+        "request_new_input",
+        "skip_dataset",
+        "continue_other_datasets",
+    }:
+        action = "request_new_input"
+    reviewer = str(command_payload.get("reviewer") or "local_user")
+    notes = str(command_payload.get("notes") or "")
+    payload = command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {}
+    human_command = {
+        "interrupt": "terminal_failure",
+        "dataset": target,
+        "action": action,
+        "reviewer": reviewer,
+        "notes": notes,
+        "payload": payload,
+    }
+    return {
+        "status": "terminal_failure",
+        "route": "human_review",
+        "current_interrupt": None,
+        "native_terminal_failure_review_status": "triaged",
+        "native_terminal_failure_review_resume": {
+            "resumed": True,
+            "action": action,
+            "reviewer": reviewer,
+            "notes": notes,
+        },
+        "next_action": "persist_terminal_failure_review",
+        "human_commands": [human_command],
+    }
+
+
 def _execution_agent_input(state: DatasetGraphState) -> dict[str, object]:
     artifact_ids = [
         item
@@ -1544,6 +1615,7 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
     graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
     graph.add_node("wait_for_code_review", wait_for_code_review_node)
     graph.add_node("execute_approved_code", execute_approved_code_node)
+    graph.add_node("wait_for_terminal_failure_review", wait_for_terminal_failure_review_node)
     graph.add_node("summarize_dataset", summarize_dataset)
     if include_legacy_stub_chain:
         graph.add_node("draft_lineage_stub", draft_lineage_stub)
@@ -1584,7 +1656,15 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
         },
     )
     graph.add_edge("wait_for_code_review", "summarize_dataset")
-    graph.add_edge("execute_approved_code", "summarize_dataset")
+    graph.add_conditional_edges(
+        "execute_approved_code",
+        route_after_execute_approved_code,
+        {
+            "wait_for_terminal_failure_review": "wait_for_terminal_failure_review",
+            "summarize": "summarize_dataset",
+        },
+    )
+    graph.add_edge("wait_for_terminal_failure_review", "summarize_dataset")
     if include_legacy_stub_chain:
         graph.add_edge("draft_lineage_stub", "draft_spec_stub")
         graph.add_edge("draft_spec_stub", "route_risk_stub")
@@ -1651,6 +1731,18 @@ def route_after_generate_r_code_agent(state: DatasetGraphState) -> str:
         and state.get("status") == "needs_review"
     ):
         return "wait_for_code_review"
+    return "summarize"
+
+
+def route_after_execute_approved_code(state: DatasetGraphState) -> str:
+    """Route the internal native terminal-failure review pilot when enabled."""
+
+    if (
+        state.get("native_terminal_failure_review")
+        and state.get("current_interrupt") == "terminal_failure"
+        and state.get("terminal_failure")
+    ):
+        return "wait_for_terminal_failure_review"
     return "summarize"
 
 

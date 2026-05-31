@@ -639,8 +639,9 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn(("generate_r_code_agent", "summarize_dataset", "summarize"), edges)
         self.assertIn(("generate_r_code_agent", "wait_for_code_review", None), edges)
         self.assertIn(("wait_for_code_review", "summarize_dataset", None), edges)
-        for product_node in {"execute_approved_code"}:
-            self.assertIn((product_node, "summarize_dataset", None), edges)
+        self.assertIn(("execute_approved_code", "summarize_dataset", "summarize"), edges)
+        self.assertIn(("execute_approved_code", "wait_for_terminal_failure_review", None), edges)
+        self.assertIn(("wait_for_terminal_failure_review", "summarize_dataset", None), edges)
         for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
             self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
 
@@ -1186,6 +1187,77 @@ class GraphSmokeTests(unittest.TestCase):
         summary = result["summary"]
         self.assertEqual(summary.status, "failed")
         self.assertTrue(summary.metadata["terminal_failure"])
+
+    def test_dataset_graph_native_terminal_failure_review_interrupt_can_resume(self) -> None:
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg2_native_terminal_failure_adae",
+            kind="validation_report",
+            path="runs/run_lg2_native_terminal_failure/validation/adae_validation_report.json",
+            sha256=f"sha256:{'4' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        fake_result = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg2_native_terminal_failure/validation/adae_validation_report.json",
+            diagnostics_path="runs/run_lg2_native_terminal_failure/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=["Review diagnostics"],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": ["Review diagnostics"]},
+            failure_records=[],
+            artifacts={"validation_report": validation_artifact},
+        )
+        checkpointer = InMemorySaver()
+        dataset_graph = compile_dataset_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_terminal_failure:ADAE"}}
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_result):
+            interrupted = dataset_graph.invoke(
+                {
+                    "study_id": "PSY201",
+                    "run_id": "run_lg2_native_terminal_failure",
+                    "dataset": "ADAE",
+                    "execution_mode": "graph_product_execute",
+                    "study_dir": str(_workspace_dir("lg2_native_terminal_failure") / "PSY201"),
+                    "native_terminal_failure_review": True,
+                    "audit_artifacts": [],
+                },
+                config=config,
+            )
+        snapshot = dataset_graph.get_state(config)
+
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(snapshot.next, ("wait_for_terminal_failure_review",))
+        self.assertEqual(snapshot.values["current_interrupt"], "terminal_failure")
+        self.assertTrue(snapshot.values["terminal_failure"])
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["interrupt"], "terminal_failure")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["scope"], "dataset")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["dataset"], "ADAE")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["available_actions"][0], "retry_execution")
+
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": "repair_code",
+                    "reviewer": "tester",
+                    "notes": "Repair generated R after diagnostics review.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertNotIn("__interrupt__", resumed)
+        self.assertEqual(resumed["native_terminal_failure_review_status"], "triaged")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["next_action"], "persist_terminal_failure_review")
+        self.assertEqual(resumed["human_commands"][0]["interrupt"], "terminal_failure")
+        self.assertEqual(resumed["human_commands"][0]["action"], "repair_code")
+        self.assertEqual(resumed["summary"].status, "terminal_failure")
+        self.assertEqual(dataset_graph.get_state(config).next, ())
 
     def test_study_graph_batch_path_preserves_agent_decisions(self) -> None:
         study_dir = _workspace_dir("lg2_study_graph_agent_decisions") / "PSY201"

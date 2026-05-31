@@ -6433,3 +6433,70 @@ $env:PYTHONPATH = ".tmp_tests\sqlite_pkg;src"
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_can_read_interrupt_after_new_gateway_when_package_available -v
 Ran 2 tests in 0.078s - OK
 ```
+
+### 2026-06-01 - LG2.1 Native Terminal-Failure Gateway Roundtrip 切片
+
+已完成：
+
+- 新增 DatasetGraph 原生 terminal-failure review 试点：
+  - 新增 `wait_for_terminal_failure_review` 节点；
+  - 新增 `native_terminal_failure_review`、
+    `native_terminal_failure_review_status` 和
+    `native_terminal_failure_review_resume` state 字段；
+  - `execute_approved_code` 只有在执行失败并且显式打开 pilot flag 时，才会路由到
+    这个 native interrupt。
+- 新增 `GraphGateway.start_native_terminal_failure_review()`：
+  - 复用现有 dependency gate 和 approved-code preflight；
+  - 使用 `native_terminal_failure_review=True` 运行 DatasetGraph；
+  - 通过现有 canonical `record_execution()` 路径记录失败执行；
+  - 写入 `native_terminal_failure_review_interrupt` metadata，boundary 标记为
+    `terminal_failure_review_pilot_only`。
+- 新增 `GraphGateway.resume_native_terminal_failure_review()`：
+  - 在恢复 native checkpoint 前先检查 canonical `graph_state.json`；
+  - 如果 study-level interrupt 仍 open，或者 dataset 已不再等待
+    `terminal_failure`，会 fail closed；
+  - 只有 canonical guard 通过后，才恢复 DatasetGraph checkpoint；
+  - 将 DatasetGraph 返回的 native human command 桥回现有
+    `review_terminal_failure_from_command()` -> `review_terminal_failure()` ->
+    `record_terminal_failure_review()` 流程。
+- 增加回归测试：
+  - DatasetGraph 可以在 native `terminal_failure` interrupt 暂停并恢复；
+  - gateway roundtrip 会写正式 terminal-failure triage 状态和
+    diagnosis/repair agent audit；
+  - canonical dataset interrupt 已变化时，会在消费 DatasetGraph checkpoint 之前阻断
+    native resume；
+  - study-level interrupt 仍 open 时，也会在消费 DatasetGraph checkpoint 之前阻断
+    native resume。
+
+当前边界：
+
+- 这仍是内部 pilot。公开 FastAPI/UI 执行路径没有翻转为 native terminal-failure
+  resume。
+- 它不自动执行 repair、revise-spec、retry execution 或 continue other datasets。
+  它只通过现有 gateway flow 记录人工 triage 决策和下一步受控动作。
+- 不改变 R 执行质量、LLM 生成、compare、static rules 或生产沙盒能力。
+
+审查：
+
+- 子 agent 审查返回 GO，没有 must-fix 项。
+- 审查确认当前边界成立：DatasetGraph 只拥有 native pause/resume 试点，
+  GraphGateway 仍然是 canonical 产品状态转换边界。
+- 非阻断的后续加固建议：
+  - 增加“pilot 执行但意外没有 interrupt”场景的保护测试；
+  - 将 native interrupt action list 从共享 terminal-failure action contract
+    派生，降低后续漂移风险。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_terminal_failure_review_interrupt_can_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_requires_canonical_terminal_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_rejects_study_interrupt_before_native_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes -v
+Ran 5 tests in 0.474s - OK
+
+python -B -m compileall -q src tests
+
+git diff --check
+Exited 0; CRLF warnings only.
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 296 tests in 28.761s - OK (skipped=2)
+```

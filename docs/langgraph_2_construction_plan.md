@@ -6976,3 +6976,75 @@ $env:PYTHONPATH = ".tmp_tests\sqlite_pkg;src"
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_metadata_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_checkpointer_can_read_interrupt_after_new_gateway_when_package_available -v
 Ran 2 tests in 0.078s - OK
 ```
+
+### 2026-06-01 - LG2.1 Native Terminal-Failure Gateway Roundtrip Slice
+
+Completed:
+
+- Added a DatasetGraph native terminal-failure review pilot:
+  - new `wait_for_terminal_failure_review` node;
+  - new `native_terminal_failure_review`,
+    `native_terminal_failure_review_status`, and
+    `native_terminal_failure_review_resume` state fields;
+  - `execute_approved_code` now routes to this native interrupt only when the
+    execution failed and the pilot flag is explicitly enabled.
+- Added `GraphGateway.start_native_terminal_failure_review()`:
+  - reuses the existing dependency gate and approved-code preflight;
+  - runs DatasetGraph with `native_terminal_failure_review=True`;
+  - records the failed execution through the existing canonical
+    `record_execution()` path;
+  - stores `native_terminal_failure_review_interrupt` metadata with boundary
+    `terminal_failure_review_pilot_only`.
+- Added `GraphGateway.resume_native_terminal_failure_review()`:
+  - checks canonical `graph_state.json` before resuming the native checkpoint;
+  - fails closed if a study-level interrupt is open or the dataset is no longer
+    waiting at `terminal_failure`;
+  - resumes the DatasetGraph checkpoint only after that canonical guard passes;
+  - bridges the returned native human command into the existing
+    `review_terminal_failure_from_command()` -> `review_terminal_failure()` ->
+    `record_terminal_failure_review()` flow.
+- Added regressions proving:
+  - DatasetGraph can pause and resume at a native `terminal_failure` interrupt;
+  - the gateway roundtrip writes the formal terminal-failure triage state and
+    diagnosis/repair agent audit;
+  - a changed canonical dataset interrupt blocks native resume before the
+    DatasetGraph checkpoint is consumed;
+  - an open study-level interrupt also blocks native resume before the
+    DatasetGraph checkpoint is consumed.
+
+Current boundary:
+
+- This is still an internal pilot. It does not flip public FastAPI/UI execution
+  to native terminal-failure resume.
+- It does not run automatic repair, revise-spec, retry execution, or continue
+  other datasets. It only records the human triage decision and next controlled
+  action through the existing gateway flow.
+- It does not change R execution quality, LLM generation, compare, static rules,
+  or production sandboxing.
+
+Review:
+
+- Subagent review returned GO with no must-fix items.
+- The review confirmed the intended boundary: DatasetGraph owns only the native
+  pause/resume pilot, while GraphGateway remains the canonical product state
+  transition boundary.
+- Non-blocking future hardening suggestions:
+  - add a guard test for the case where the pilot execution unexpectedly does
+    not interrupt;
+  - derive the native interrupt action list from the shared terminal-failure
+    action contract to reduce drift risk.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_terminal_failure_review_interrupt_can_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_requires_canonical_terminal_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_rejects_study_interrupt_before_native_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes -v
+Ran 5 tests in 0.474s - OK
+
+python -B -m compileall -q src tests
+
+git diff --check
+Exited 0; CRLF warnings only.
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 296 tests in 28.761s - OK (skipped=2)
+```
