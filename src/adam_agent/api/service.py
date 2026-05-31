@@ -1733,14 +1733,29 @@ def _status_from_reviews(reviews: list[DatasetReview]) -> str:
 def _plain_run_summary(status: str, reviews: list[DatasetReview]) -> str:
     if not reviews:
         return f"Run status is {status}. No dataset output was found yet."
-    completed = sum(1 for review in reviews if review.status in {"completed", "completed_stub"})
     failed = sum(1 for review in reviews if review.status == "failed")
-    stubbed = sum(1 for review in reviews if review.status == "completed_stub")
-    parts = [f"Run status is {status}.", f"{completed} dataset(s) completed"]
+    real_runtime = sum(
+        1
+        for review in reviews
+        if review.output_quality.get("quality_status") == "real_runtime_output"
+    )
+    review_only = sum(
+        1
+        for review in reviews
+        if review.output_quality.get("quality_status") in {"structural_stub", "not_real_derivation"}
+    )
+    terminal_failure = sum(
+        1
+        for review in reviews
+        if review.output_quality.get("quality_status") == "terminal_failure"
+    )
+    parts = [f"Run status is {status}.", f"{real_runtime} dataset(s) have real runtime output"]
+    if review_only:
+        parts.append(f"{review_only} review-only/demo output(s)")
     if failed:
         parts.append(f"{failed} failed")
-    if stubbed:
-        parts.append(f"{stubbed} used structural stub mode")
+    if terminal_failure:
+        parts.append(f"{terminal_failure} terminal failure output(s) hidden")
     return " ".join(parts) + "."
 
 

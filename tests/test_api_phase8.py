@@ -2156,6 +2156,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(download.status_code, 404)
         self.assertEqual(review.status_code, 200, review.text)
         dataset_review = review.json()["dataset_reviews"][0]
+        self.assertIn("0 dataset(s) have real runtime output", review.json()["plain_summary"])
+        self.assertIn("1 failed", review.json()["plain_summary"])
+        self.assertIn("1 terminal failure output(s) hidden", review.json()["plain_summary"])
         self.assertIsNone(dataset_review["output_preview"])
         self.assertIsNone(dataset_review["output_path"])
         self.assertEqual(dataset_review["output_quality"]["quality_status"], "terminal_failure")
@@ -2713,6 +2716,7 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         reviews = response.json()["dataset_reviews"]
+        self.assertIn("2 dataset(s) have real runtime output", response.json()["plain_summary"])
         self.assertEqual({item["dataset"] for item in reviews}, {"ADSL", "ADAE"})
         for item in reviews:
             self.assertEqual(item["status"], "completed")
@@ -2775,6 +2779,8 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         review = response.json()["dataset_reviews"][0]
+        self.assertIn("0 dataset(s) have real runtime output", response.json()["plain_summary"])
+        self.assertIn("1 review-only/demo output(s)", response.json()["plain_summary"])
         self.assertEqual(review["status"], "completed")
         self.assertEqual(review["output_quality"]["quality_status"], "not_real_derivation")
         self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
