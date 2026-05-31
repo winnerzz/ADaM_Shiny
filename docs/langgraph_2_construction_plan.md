@@ -5052,6 +5052,32 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Demo Load Graph Read Model Refresh Slice
+
+Completed:
+
+- Removed the direct progress-only refresh from the browser demo-load path.
+- Demo load still calls `scanInputs()`, and `scanInputs()` now refreshes graph
+  read models, which includes the graph-owned progress read model.
+- Added a focused UI contract test proving `createDemoStudy()` no longer calls
+  `refreshRunProgress()` directly after scanning inputs.
+
+Current boundary:
+
+- This slice changes only browser read-model refresh sequencing after demo load.
+- It does not change demo file copying, input scanning, target inference,
+  dependency planning, GraphGateway state transitions, provider calls, static
+  rules, R execution, compare, repair, or Reference ADaM authority.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_demo_load_does_not_refresh_progress_directly tests.test_api_phase8.Phase8ApiTests.test_index_scan_inputs_refreshes_graph_read_models -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Scan Refresh Graph Read Models Slice
 
 Completed:

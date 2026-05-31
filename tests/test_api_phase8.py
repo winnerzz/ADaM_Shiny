@@ -488,6 +488,17 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("await refreshGraphReadModels()", scan_body)
         self.assertNotIn("await refreshRunProgress()", scan_body)
 
+    def test_index_demo_load_does_not_refresh_progress_directly(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        demo_body = html.split("async function createDemoStudy()", 1)[1].split("function applyWorkspacePayload(payload)", 1)[0]
+        self.assertIn("await scanInputs()", demo_body)
+        self.assertNotIn("await refreshRunProgress()", demo_body)
+
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())
 

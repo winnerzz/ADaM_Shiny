@@ -1508,7 +1508,6 @@ INDEX_HTML = r"""<!doctype html>
         const payload = await api('/demo-study', {method: 'POST'});
         applyWorkspacePayload(payload);
         await scanInputs();
-        await refreshRunProgress();
         autoSelectFirstTarget(inferTargets(state.inputSummary));
         addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
         setPill('workspaceStatus', 'ready');
