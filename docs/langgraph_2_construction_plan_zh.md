@@ -5322,6 +5322,53 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dataset Card 阶段条切片
+
+已完成：
+
+- 将 dataset card 的阶段条（`code`、`review`、`run`）继续收敛到 graph
+  progress read model。
+- 新增前端 helper：
+  - `codeStageClassFor(...)`
+  - `reviewStageClassFor(...)`
+  - `runStageClassFor(...)`
+- 这些 helper 现在以 `GET /runs/{run_id}/progress` 中每个 dataset 的
+  `code_status`、`execution_status`、`next_action` 作为阶段完成显示依据。
+- 移除了本地浏览器/review-summary fallback 对阶段完成态的影响：
+  `generatedFor(...)`、`reviewFor(...)`、`executionFor(...)`、
+  `datasetReviewFor(...)` 在 graph progress 没有说明完成时，不能再把阶段条标成
+  `done`。
+- 保留 Reference ADaM 保护：reference-only target 不进入 code 阶段；
+  review-only/mock/stub output 仍显示为 review-only，不显示成 runtime-complete。
+- 增加 Node 执行的 UI matrix 测试，证明 graph progress 驱动阶段条，并证明本地
+  generated/review/execution 缓存即使存在，也不能在 graph progress 为空时把阶段标
+  成完成。
+
+当前边界：
+
+- 这是 UI read-model 展示切片。
+- 不改变 GraphGateway、dependency planning、provider calls、static rules、
+  R execution、compare、repair 或 terminal-failure 语义。
+- 阶段条只是 graph progress 的查看器，不成为 workflow controller，也不决定 API
+  调用。
+
+审查：
+
+- 子 agent 第一次审查 NO-GO：阶段 helper 仍把本地浏览器缓存和 persisted review
+  summary 当成完成 fallback。
+- 已修复：从完成态判断中移除这些 fallback，并增加“本地缓存存在但 graph progress
+  为空”的回归用例。
+- 子 agent 复审 GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Graph-Owned 主动作门控切片
 
 已完成：

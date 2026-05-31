@@ -5772,6 +5772,55 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dataset Card Stage Slice
+
+Completed:
+
+- Moved the dataset-card stage strip (`code`, `review`, `run`) toward the graph
+  progress read model.
+- Added focused browser helpers:
+  - `codeStageClassFor(...)`
+  - `reviewStageClassFor(...)`
+  - `runStageClassFor(...)`
+- The helpers now treat `GET /runs/{run_id}/progress` dataset fields
+  (`code_status`, `execution_status`, `next_action`) as the source for completed
+  stage display.
+- Removed local browser/review-summary fallback from stage completion:
+  `generatedFor(...)`, `reviewFor(...)`, `executionFor(...)`, and
+  `datasetReviewFor(...)` can no longer mark the card stages as `done` when
+  graph progress does not say so.
+- Kept Reference ADaM protection: reference-only targets do not enter the code
+  stage, and review-only/mock/stub outputs still show as review-only rather than
+  runtime-complete.
+- Added a Node-executed UI matrix test proving graph progress drives stage
+  classes and that local cached generated/review/execution data without graph
+  progress cannot mark stages complete.
+
+Current boundary:
+
+- This is UI read-model display only.
+- It does not change GraphGateway, dependency planning, provider calls, static
+  rules, R execution, compare, repair, or terminal-failure semantics.
+- The stage strip is a viewer of graph progress. It does not become a workflow
+  controller and does not make API decisions.
+
+Review:
+
+- Subagent first returned NO-GO because stage helpers still used local browser
+  caches and persisted review summary as completion fallback.
+- Fixed by removing those fallbacks from completed-stage logic and adding a
+  regression case where local caches exist but graph progress is empty.
+- Subagent re-review returned GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+node --check .tmp_tests\ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Graph-Owned Primary Action Gates Slice
 
 Completed:

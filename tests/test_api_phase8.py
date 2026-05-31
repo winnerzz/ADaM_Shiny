@@ -839,10 +839,91 @@ console.log(JSON.stringify(results));
         board_body = html.split("function renderDatasetBoard(targets, runnable, blocked)", 1)[1].split("function datasetPlanningContext", 1)[0]
         context_body = html.split("function datasetPlanningContext(target, isPlanned, isActive, status)", 1)[1].split("function renderAgentAuditPanel", 1)[0]
         self.assertIn("const isReferenceOnly = status === 'reference evidence' && !isPlanned;", board_body)
-        self.assertIn("const codeStageClass = isGenerated ? 'done' : isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';", board_body)
+        self.assertIn("codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly)", board_body)
+        self.assertIn("function codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly)", html)
+        self.assertIn("!isReferenceOnly ? 'active' : ''", html)
         self.assertIn("datasetPlanningContext(target, isPlanned, isActive, status)", board_body)
         self.assertIn("reference ADaM only: compare/output-shape evidence, not generation input", context_body)
         self.assertNotIn("target === state.selectedTarget && !progress?.blocked ? 'active' : ''", board_body)
+
+    def test_index_dataset_card_stages_prefer_graph_progress_read_model(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_stage_matrix' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+function stages(progress) {
+  state.generatedByDataset = {};
+  state.reviewByDataset = {};
+  state.executionByDataset = {};
+  state.reviewSummaryByDataset = {};
+  return {
+    code: codeStageClassFor('ADAE', progress, true, true, false, false),
+    review: reviewStageClassFor('ADAE', progress),
+    run: runStageClassFor('ADAE', progress, false),
+  };
+}
+console.log(JSON.stringify({
+  reviewCode: stages({next_action: 'review_code', code_status: 'generated'}),
+  executeApproved: stages({next_action: 'execute_approved_code', code_status: 'approved'}),
+  terminalFailure: stages({next_action: 'review_terminal_failure', execution_status: 'terminal_failure'}),
+  completed: stages({next_action: 'complete', execution_status: 'completed'}),
+  localCacheWithoutProgress: (() => {
+    state.generatedByDataset = {ADAE: {dataset: 'ADAE', generated_code: 'x <- 1'}};
+    state.reviewByDataset = {ADAE: {approved: true}};
+    state.executionByDataset = {ADAE: {status: 'completed'}};
+    state.reviewSummaryByDataset = {ADAE: {output_preview: [{USUBJID: '01'}]}};
+    return {
+      code: codeStageClassFor('ADAE', {}, true, true, false, false),
+      review: reviewStageClassFor('ADAE', {}),
+      run: runStageClassFor('ADAE', {}, false),
+    };
+  })(),
+  referenceOnly: codeStageClassFor('ADAE', null, true, true, false, true)
+}));
+"""
+        script_path = TMP_ROOT / "ui_dataset_stage_matrix.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["reviewCode"], {"code": "done", "review": "active", "run": ""})
+        self.assertEqual(result["executeApproved"], {"code": "done", "review": "done", "run": "active"})
+        self.assertEqual(result["terminalFailure"], {"code": "done", "review": "done", "run": "blocked"})
+        self.assertEqual(result["completed"], {"code": "done", "review": "done", "run": "done"})
+        self.assertEqual(result["localCacheWithoutProgress"], {"code": "active", "review": "", "run": ""})
+        self.assertEqual(result["referenceOnly"], "")
 
     def test_index_marks_review_only_outputs_without_runtime_language(self) -> None:
         client = TestClient(create_app())
@@ -863,7 +944,9 @@ console.log(JSON.stringify(results));
         self.assertIn("const completedExecution = executionFor(target)?.status === 'completed' || datasetProgressFor(target)?.execution_status === 'completed';", action_body)
         self.assertIn("inspect this review-only/demo output. It cannot be used as runtime input for another dataset.", action_body)
         self.assertIn("const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);", board_body)
-        self.assertIn("const runStageClass = reviewOnlyOutput ? 'review-only' : isCompleted ? 'done' : execution ? 'blocked' : '';", board_body)
+        self.assertIn("runStageClassFor(target, progress, reviewOnlyOutput)", board_body)
+        self.assertIn("function runStageClassFor(target, progress, reviewOnlyOutput)", html)
+        self.assertIn("if (reviewOnlyOutput) return 'review-only';", html)
         self.assertIn(".stage.review-only", html)
         self.assertIn("datasetOutputQualityStatus(target)", status_body)
 

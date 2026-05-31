@@ -3098,22 +3098,15 @@ INDEX_HTML = r"""<!doctype html>
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
         const isPlanned = selectedTargets().includes(target);
-        const generated = generatedFor(target);
-        const review = reviewFor(target);
-        const execution = executionFor(target);
-        const persisted = datasetReviewFor(target);
-        const isGenerated = Boolean(generated || persisted?.generated_code || progress?.code_status);
-        const isCompleted = execution?.status === 'completed' || progress?.execution_status === 'completed' || Boolean(persisted?.output_preview);
-        const hasReview = Boolean(review || persisted?.generated_code || progress?.code_status === 'approved');
         const qualityStatus = datasetOutputQualityStatus(target);
         const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);
         const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : reviewOnlyOutput ? 'warn' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         const isBlocked = blockedNames.has(target) || progress?.blocked;
         const isReferenceOnly = status === 'reference evidence' && !isPlanned;
         const planStageClass = state.plan ? (isBlocked ? 'blocked' : isPlanned ? 'done' : '') : (isPlanned || isActive ? 'active' : '');
-        const codeStageClass = isGenerated ? 'done' : isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';
-        const reviewStageClass = hasReview ? 'done' : isGenerated ? 'active' : '';
-        const runStageClass = reviewOnlyOutput ? 'review-only' : isCompleted ? 'done' : execution ? 'blocked' : '';
+        const codeStageClass = codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly);
+        const reviewStageClass = reviewStageClassFor(target, progress);
+        const runStageClass = runStageClassFor(target, progress, reviewOnlyOutput);
         return `
           <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
@@ -3138,6 +3131,47 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
+    }
+
+    function codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly) {
+      const codeStatus = String(progress?.code_status || '').toLowerCase();
+      const executionStatus = String(progress?.execution_status || '').toLowerCase();
+      const nextAction = String(progress?.next_action || '').toLowerCase();
+      if (codeStatus === 'stale') return 'blocked';
+      if (
+        ['generated', 'approved'].includes(codeStatus) ||
+        ['running', 'executing', 'completed', 'terminal_failure', 'failed'].includes(executionStatus) ||
+        ['review_code', 'execute_approved_code', 'retry_approved_execution', 'review_terminal_failure', 'complete'].includes(nextAction)
+      ) {
+        return 'done';
+      }
+      return isActive && isPlanned && !isBlocked && !isReferenceOnly ? 'active' : '';
+    }
+
+    function reviewStageClassFor(target, progress) {
+      const codeStatus = String(progress?.code_status || '').toLowerCase();
+      const executionStatus = String(progress?.execution_status || '').toLowerCase();
+      const nextAction = String(progress?.next_action || '').toLowerCase();
+      if (codeStatus === 'stale') return 'blocked';
+      if (
+        codeStatus === 'approved' ||
+        ['running', 'executing', 'completed', 'terminal_failure', 'failed'].includes(executionStatus) ||
+        ['execute_approved_code', 'retry_approved_execution', 'review_terminal_failure', 'complete'].includes(nextAction)
+      ) {
+        return 'done';
+      }
+      if (nextAction === 'review_code' || codeStatus === 'generated') return 'active';
+      return '';
+    }
+
+    function runStageClassFor(target, progress, reviewOnlyOutput) {
+      if (reviewOnlyOutput) return 'review-only';
+      const executionStatus = String(progress?.execution_status || '').toLowerCase();
+      const nextAction = String(progress?.next_action || '').toLowerCase();
+      if (executionStatus === 'completed' || nextAction === 'complete') return 'done';
+      if (['terminal_failure', 'failed', 'stale'].includes(executionStatus) || nextAction === 'review_terminal_failure') return 'blocked';
+      if (executionStatus || ['execute_approved_code', 'retry_approved_execution'].includes(nextAction)) return 'active';
+      return '';
     }
 
     function datasetPlanningContext(target, isPlanned, isActive, status) {
