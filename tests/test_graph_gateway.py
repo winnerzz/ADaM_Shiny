@@ -1928,6 +1928,149 @@ class GraphGatewayTests(unittest.TestCase):
             ["dependency_plan_prepared", "r_code_generated", "static_check_recorded"],
         )
 
+    def test_gateway_native_code_review_roundtrip_persists_formal_review_artifact(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_code_review_roundtrip") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir.mkdir(parents=True)
+        sdtm_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,ARM\n01,Placebo\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+
+        started = gateway.start_native_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_roundtrip",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+        )
+
+        dataset_state = started.graph_state.datasets["ADSL"]
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertIn("native_code_review_interrupt", started.graph_state.runtime_persistence)
+        self.assertEqual(
+            started.graph_state.runtime_persistence["native_code_review_interrupt"]["next_nodes"],
+            ["wait_for_code_review"],
+        )
+
+        reviewed = gateway.resume_native_code_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_code_review_roundtrip",
+            dataset="ADSL",
+            decision="approve",
+            reviewer="native_tester",
+            notes="Native code review gateway roundtrip approved.",
+        )
+
+        review_path = Path(reviewed.review_path)
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        reviewed_dataset = reviewed.graph_state.datasets["ADSL"]
+        self.assertTrue(reviewed.approved)
+        self.assertEqual(review_payload["decision"], "approve")
+        self.assertEqual(review_payload["reviewer"], "native_tester")
+        self.assertEqual(reviewed_dataset.code_state["status"], "approved")
+        self.assertIsNone(reviewed_dataset.current_interrupt)
+        self.assertEqual(reviewed_dataset.human_commands[-1].interrupt, "code_review")
+        self.assertEqual(reviewed.graph_state.runtime_persistence["native_code_review_resume"]["native_status"], "approved")
+        persisted_state = json.loads(
+            (study_dir / "runs" / "run_lg2_native_code_review_roundtrip" / "graph_state.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(persisted_state["datasets"]["ADSL"]["code_state"]["status"], "approved")
+        self.assertTrue((study_dir / "runs" / "run_lg2_native_code_review_roundtrip" / "review" / "adsl_code_review.json").exists())
+
+    def test_gateway_native_code_review_reject_roundtrip_keeps_execution_locked(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_code_review_reject_roundtrip") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir.mkdir(parents=True)
+        sdtm_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,ARM\n01,Placebo\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_reject_roundtrip",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+        )
+
+        reviewed = gateway.resume_native_code_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_code_review_reject_roundtrip",
+            dataset="ADSL",
+            decision="reject",
+            reviewer="native_tester",
+            notes="Generated code needs revision.",
+        )
+
+        review_payload = json.loads(Path(reviewed.review_path).read_text(encoding="utf-8"))
+        dataset_state = reviewed.graph_state.datasets["ADSL"]
+        self.assertFalse(reviewed.approved)
+        self.assertEqual(review_payload["decision"], "reject")
+        self.assertEqual(dataset_state.code_state["status"], "rejected")
+        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(reviewed.graph_state.runtime_persistence["native_code_review_resume"]["native_status"], "rejected")
+
+    def test_gateway_native_code_review_resume_requires_canonical_code_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_code_review_resume_gate") / "PSY201"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir.mkdir(parents=True)
+        sdtm_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,ARM\n01,Placebo\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_resume_gate",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+        )
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_code_review_resume_gate")
+        graph_state.datasets["ADSL"].current_interrupt = InterruptState(
+            name="draft_spec_review",
+            dataset="ADSL",
+            reason="Canonical state is no longer waiting for code review.",
+        )
+        gateway._persist_graph_state(study_dir, graph_state, node="test_native_code_review_resume_gate")
+
+        with self.assertRaisesRegex(ValueError, "does not match any current open graph interrupt"):
+            gateway.resume_native_code_review(
+                study_dir=study_dir,
+                run_id="run_lg2_native_code_review_resume_gate",
+                dataset="ADSL",
+                decision="approve",
+                reviewer="native_tester",
+            )
+
+        self.assertFalse(
+            (study_dir / "runs" / "run_lg2_native_code_review_resume_gate" / "review" / "adsl_code_review.json").exists()
+        )
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_native_code_review_resume_gate")
+        self.assertEqual(reloaded.datasets["ADSL"].code_state["status"], "generated")
+
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"
         run_id = "run_lg2_gateway_owned_dependency_plan"

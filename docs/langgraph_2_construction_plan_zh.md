@@ -6158,3 +6158,60 @@ python -B -m compileall -q src tests
 git diff --check
 Exited 0; CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Gateway Roundtrip 切片
+
+已完成：
+
+- 新增内部 `GraphGateway.start_native_code_review()`：
+  - 使用 DatasetGraph 的 native `code_review` interrupt 真正暂停；
+  - 暂停后仍通过 shared `_record_code_generation_from_dataset_result()` 进入现有
+    canonical `record_code_generation()` 状态和正式 code-review interrupt；
+  - 记录 `native_code_review_interrupt` metadata，但继续明确当前默认
+    LangGraph checkpointer 不是 persistent。
+- 新增内部 `GraphGateway.resume_native_code_review()`：
+  - 先恢复 DatasetGraph native interrupt；
+  - 再把 DatasetGraph 返回的 human command 交给 `review_code_from_command()`；
+  - 因此正式 review artifact、code hash、static-check hash、spec hash 和 input
+    fingerprint 仍全部复用现有 gateway 校验。
+- 将 `generate_code()` 的 DatasetGraph result 记录逻辑抽到 shared helper，保证
+  public split-flow 和 native pilot 共用同一条 canonical code-generation 记录路径。
+- 增加回归测试：
+  - native approve roundtrip 会写正式 `review/{dataset}_code_review.json`，并关闭
+    `code_review` interrupt；
+  - native reject roundtrip 会写正式 reject artifact，但保持 execution locked；
+  - native resume 在恢复 DatasetGraph 前会先检查 canonical open `code_review`
+    interrupt，避免 canonical state 已变更时关闭 native checkpoint。
+
+当前边界：
+
+- 本切片仍是内部 pilot，不改变公开 FastAPI/UI split-flow 默认路径。
+- 不实现 persistent LangGraph SQLite/Postgres checkpointer。
+- 不改变 R execution、compare、repair、static rules 或 Reference ADaM authority。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认没有引入第二套 code-review 状态；native interrupt 只是临时暂停点，
+  最终仍桥回 `review_code_from_command()` -> `review_code()` ->
+  `record_code_review()`。
+- 审查确认 `generate_code()` 仍保持 public 默认路径，没有启用
+  `native_code_review=True`，FastAPI/UI split-flow 未被翻转。
+- 接受两条非阻断建议并修正：
+  - native interrupt metadata boundary 改为按 pilot 显式标注；
+  - `resume_native_code_review()` 在恢复 native checkpoint 前先做 canonical
+    open-interrupt 预检。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_reject_roundtrip_keeps_execution_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_resume_requires_canonical_code_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dependency_review_interrupt_roundtrip_persists_state -v
+Ran 4 tests in 0.546s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 279 tests in 27.897s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+Exited 0; CRLF warnings only.
+```

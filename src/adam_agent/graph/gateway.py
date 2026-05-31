@@ -284,7 +284,10 @@ class GraphGateway:
         )
         plan_values = self.get_state(study_id=study_id, run_id=run_id)
         graph_state = self._canonical_state_from_plan(plan_values or result, study_dir=root)
-        native_interrupt = _native_interrupt_payload(self._graph.get_state(self._config(study_id, run_id)))
+        native_interrupt = _native_interrupt_payload(
+            self._graph.get_state(self._config(study_id, run_id)),
+            boundary="dependency_review_pilot_only",
+        )
         _sync_study_agent_decisions(graph_state)
         self._persist_graph_state(
             root,
@@ -342,7 +345,10 @@ class GraphGateway:
         next_state.dependency_review_status = "approved" if command.action == "approve" else "rejected"
         next_state.current_interrupt = None
         next_state.status = "pending" if command.action == "approve" else "failed"
-        native_interrupt = _native_interrupt_payload(self._graph.get_state(self._config(graph_state.study_id, run_id)))
+        native_interrupt = _native_interrupt_payload(
+            self._graph.get_state(self._config(graph_state.study_id, run_id)),
+            boundary="dependency_review_pilot_only",
+        )
         _sync_study_agent_decisions(next_state)
         self._persist_graph_state(
             root,
@@ -687,6 +693,159 @@ class GraphGateway:
             reviewer=command.reviewer,
             notes=command.notes,
             input_fingerprint_payload=input_fingerprint_payload,
+        )
+
+    def start_native_code_review(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayCodeGenerationResult:
+        """Start an internal DatasetGraph native code-review interrupt pilot."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        plan = self.dependency_gate_for_product_step(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+        )
+        dependency_resolution = list(plan.dependency_resolution)
+        dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
+        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        result = dataset_graph.invoke(
+            {
+                "study_id": study_id,
+                "run_id": run_id,
+                "dataset": target,
+                "execution_mode": GRAPH_PRODUCT_GENERATE_CODE_MODE,
+                "study_dir": str(root),
+                "rscript_path": rscript_path or "",
+                "dependency_resolution": dependency_resolution,
+                "llm_provider": llm_provider,
+                "llm_exposure": llm_exposure,
+                "llm_client_builder": llm_client_builder,
+                "target_context_builder": target_context_builder,
+                "native_code_review": True,
+                "audit_artifacts": [],
+            },
+            config=self._dataset_config(study_id, run_id, target),
+        )
+        if "__interrupt__" not in result:
+            raise ValueError(f"DatasetGraph did not stop at native code_review for {target}.")
+        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        gateway_result = self._record_code_generation_from_dataset_result(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            result=snapshot.values,
+            dependency_artifacts=dependency_artifacts,
+            llm_provider=llm_provider,
+            gate=plan,
+            runtime_persistence_extra={
+                "native_code_review_interrupt": _native_interrupt_payload(
+                    snapshot,
+                    boundary="code_review_pilot_only",
+                )
+            },
+        )
+        return gateway_result
+
+    def resume_native_code_review(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayCodeReviewResult:
+        """Resume the native code-review pilot through the formal review artifact flow."""
+
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        target = dataset.strip().upper()
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approve", "reject"}:
+            raise ValueError("Code review decision must be approve or reject.")
+        _assert_resume_command_matches_open_interrupt(
+            graph_state,
+            HumanCommand(
+                interrupt="code_review",
+                action="approve" if normalized_decision == "approve" else "reject",
+                dataset=target,
+                reviewer=reviewer,
+                notes=notes,
+            ),
+        )
+        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": normalized_decision,
+                    "reviewer": reviewer,
+                    "notes": notes,
+                }
+            ),
+            config=self._dataset_config(graph_state.study_id, run_id, target),
+        )
+        expected_native_status = "approved" if normalized_decision == "approve" else "rejected"
+        if resumed.get("native_code_review_status") != expected_native_status:
+            raise ValueError(f"DatasetGraph did not resume native code_review for {target}.")
+        commands = resumed.get("human_commands") or []
+        if not commands:
+            raise ValueError(f"DatasetGraph native code_review resume did not produce a human command for {target}.")
+        command_payload = dict(commands[-1])
+        result = self.review_code_from_command(
+            study_dir=root,
+            run_id=run_id,
+            command=HumanCommand(
+                interrupt=command_payload.get("interrupt", "code_review"),
+                action=command_payload.get("action", normalized_decision),
+                dataset=command_payload.get("dataset", target),
+                reviewer=command_payload.get("reviewer", reviewer),
+                notes=command_payload.get("notes", notes),
+                payload=command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {},
+            ),
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+        self._persist_graph_state(
+            root,
+            result.graph_state,
+            node="native_code_review_resume",
+            runtime_persistence_extra={
+                "native_code_review_resume": {
+                    "resumed": True,
+                    "dataset": target,
+                    "action": normalized_decision,
+                    "native_status": resumed.get("native_code_review_status"),
+                }
+            },
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            result.graph_state,
+            node="graph_gateway_native_code_review_resume",
+        )
+        return GraphGatewayCodeReviewResult(
+            graph_state=result.graph_state,
+            workflow_projection=projection,
+            decision=result.decision,
+            review_path=result.review_path,
+            approved=result.approved,
+            static_check_path=result.static_check_path,
         )
 
     def record_code_review(
@@ -1750,6 +1909,32 @@ class GraphGateway:
                 "audit_artifacts": [],
             }
         )
+        return self._record_code_generation_from_dataset_result(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            result=result,
+            dependency_artifacts=dependency_artifacts,
+            llm_provider=llm_provider,
+            gate=plan,
+        )
+
+    def _record_code_generation_from_dataset_result(
+        self,
+        *,
+        root: Path,
+        study_id: str,
+        run_id: str,
+        target: str,
+        result: dict[str, Any],
+        dependency_artifacts: list[dict[str, Any]],
+        llm_provider: dict[str, Any],
+        gate: GraphGatewayDependencyGateResult,
+        runtime_persistence_extra: dict[str, Any] | None = None,
+    ) -> GraphGatewayCodeGenerationResult:
+        """Persist a DatasetGraph code-generation result through the canonical gateway path."""
+
         if result.get("status") == "failed":
             message = str(result.get("real_run_error") or f"Code generation failed for {target}.")
             if "No approved input_spec or approved draft spec is available" in message:
@@ -1791,9 +1976,21 @@ class GraphGateway:
         projection = self._handoff_dependency_review_to_product_step(
             root=root,
             state=gateway_result.graph_state,
-            gate=plan,
+            gate=gate,
             preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
         )
+        if runtime_persistence_extra:
+            self._persist_graph_state(
+                root,
+                gateway_result.graph_state,
+                node="native_code_review_interrupt",
+                runtime_persistence_extra=runtime_persistence_extra,
+            )
+            projection = project_graph_state_to_workflow(
+                root,
+                gateway_result.graph_state,
+                node="graph_gateway_native_code_review_interrupt",
+            )
         context_artifact = result.get("product_context_artifact")
         return GraphGatewayCodeGenerationResult(
             graph_state=gateway_result.graph_state,
@@ -1811,7 +2008,7 @@ class GraphGateway:
             expected_outputs=list(result.get("code_expected_outputs", [])),
             warnings=list(result.get("product_context_warnings", [])),
             dependency_review_status=gateway_result.graph_state.dependency_review_status,
-            dependency_warnings=list(plan.dependency_warnings),
+            dependency_warnings=list(gate.dependency_warnings),
         )
 
     def record_execution(
@@ -2860,6 +3057,10 @@ class GraphGateway:
     def _config(study_id: str, run_id: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": f"{study_id}:{run_id}"}}
 
+    @staticmethod
+    def _dataset_config(study_id: str, run_id: str, dataset: str) -> dict[str, Any]:
+        return {"configurable": {"thread_id": f"{study_id}:{run_id}:{dataset.strip().upper()}"}}
+
     def _load_or_create_state(
         self,
         *,
@@ -3838,7 +4039,7 @@ def _write_graph_sqlite_checkpoint(
         conn.close()
 
 
-def _native_interrupt_payload(snapshot: Any) -> dict[str, Any]:
+def _native_interrupt_payload(snapshot: Any, *, boundary: str = "native_interrupt_pilot_only") -> dict[str, Any]:
     """Summarize native LangGraph interrupt state without exposing internals as product truth."""
 
     tasks = list(getattr(snapshot, "tasks", ()) or ())
@@ -3856,7 +4057,7 @@ def _native_interrupt_payload(snapshot: Any) -> dict[str, Any]:
         "open_interrupt_count": len(interrupts),
         "next_nodes": list(getattr(snapshot, "next", ()) or ()),
         "interrupts": interrupts,
-        "boundary": "dependency_review_pilot_only",
+        "boundary": boundary,
     }
 
 

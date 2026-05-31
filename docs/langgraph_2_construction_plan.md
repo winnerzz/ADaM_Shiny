@@ -6676,3 +6676,69 @@ python -B -m compileall -q src tests
 git diff --check
 Exited 0; CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.1 Native Code Review Gateway Roundtrip Slice
+
+Completed:
+
+- Added internal `GraphGateway.start_native_code_review()`:
+  - uses the DatasetGraph native `code_review` interrupt to actually pause;
+  - after the pause, still records through shared
+    `_record_code_generation_from_dataset_result()` into existing canonical
+    `record_code_generation()` state and the formal code-review interrupt;
+  - records `native_code_review_interrupt` metadata while still reporting that
+    the default LangGraph checkpointer is not persistent.
+- Added internal `GraphGateway.resume_native_code_review()`:
+  - resumes the DatasetGraph native interrupt first;
+  - passes the returned human command into `review_code_from_command()`;
+  - therefore formal review artifacts, code hash, static-check hash, spec hash,
+    and input fingerprint validation continue to reuse the existing gateway
+    checks.
+- Extracted DatasetGraph result recording from `generate_code()` into a shared
+  helper so the public split-flow and native pilot use the same canonical
+  code-generation record path.
+- Added regressions proving:
+  - native approve roundtrip writes formal `review/{dataset}_code_review.json`
+    and closes the `code_review` interrupt;
+  - native reject roundtrip writes a formal reject artifact while keeping
+    execution locked;
+  - native resume checks the canonical open `code_review` interrupt before
+    resuming the DatasetGraph checkpoint, so a changed canonical state fails
+    closed first.
+
+Current boundary:
+
+- This remains an internal pilot and does not change the public FastAPI/UI
+  split-flow default path.
+- It does not implement a persistent LangGraph SQLite/Postgres checkpointer.
+- It does not change R execution, compare, repair, static rules, or Reference
+  ADaM authority.
+
+Review:
+
+- Subagent review returned GO.
+- The review confirmed this does not introduce a second product code-review
+  state; the native interrupt is a transient pause that still bridges back
+  through `review_code_from_command()` -> `review_code()` ->
+  `record_code_review()`.
+- The review confirmed `generate_code()` keeps the public default path and does
+  not enable `native_code_review=True`, so the FastAPI/UI split-flow is not
+  flipped.
+- Accepted and fixed two non-blocking notes:
+  - native interrupt metadata boundary is now labeled per pilot;
+  - `resume_native_code_review()` performs a canonical open-interrupt preflight
+    before resuming the native checkpoint.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_reject_roundtrip_keeps_execution_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_code_review_resume_requires_canonical_code_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dependency_review_interrupt_roundtrip_persists_state -v
+Ran 4 tests in 0.546s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 279 tests in 27.897s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+Exited 0; CRLF warnings only.
+```
