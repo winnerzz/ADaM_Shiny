@@ -60,6 +60,7 @@ from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
 )
+from adam_agent.schemas.graph_state import DatasetRunState, StudyRunState
 from adam_agent.llm.clients import (
     LLMClientConfigError,
     LLMProviderConfig,
@@ -946,8 +947,14 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         if str(result.get("dataset", "")).strip()
     ]
     datasets = _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
-    workflow_state = _read_json_if_exists(run_dir / "workflow_state.json")
-    dataset_reviews = [_dataset_review(root, run_id, dataset, manifest, workflow_state) for dataset in datasets]
+    graph_state = _load_review_graph_state(root, run_id)
+    workflow_state = _read_json_if_exists(run_dir / "workflow_state.json") if graph_state is None else {}
+    graph_datasets = _review_datasets_from_graph_state(graph_state)
+    datasets = _unique_non_empty(datasets + graph_datasets)
+    dataset_reviews = [
+        _dataset_review(root, run_id, dataset, manifest, workflow_state, graph_state)
+        for dataset in datasets
+    ]
     status = str(manifest.get("status") or _status_from_reviews(dataset_reviews))
 
     return RunReviewSummary(
@@ -1540,36 +1547,66 @@ def _string_cell(value: Any) -> str:
     return str(value)
 
 
-def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, Any], workflow_state: dict[str, Any] | None = None) -> DatasetReview:
+def _dataset_review(
+    root: Path,
+    run_id: str,
+    dataset: str,
+    manifest: dict[str, Any],
+    workflow_state: dict[str, Any] | None = None,
+    graph_state: StudyRunState | None = None,
+) -> DatasetReview:
     dataset_lower = dataset.lower()
     run_dir = root / "runs" / run_id
     result = _dataset_result_from_manifest(manifest, dataset)
-    projected_dataset = _projected_dataset_state(workflow_state or {}, dataset)
+    graph_dataset = _graph_dataset_state(graph_state, dataset)
+    projected_dataset = _projected_dataset_state(workflow_state or {}, dataset) if graph_dataset is None else {}
     validation_report = _read_json_if_exists(run_dir / "validation" / f"{dataset_lower}_validation_report.json")
     diagnostics = _read_json_if_exists(run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json")
     parsed_response = _read_json_if_exists(run_dir / "llm" / f"{dataset_lower}_parsed_response.json")
     code_path = run_dir / "code" / f"build_{dataset_lower}.R"
-    output_path = usable_generated_output_path(run_dir, dataset)
+    output_path = _review_output_path(run_dir, dataset, graph_dataset)
     reference_path = reference_adam_path(root, dataset)
     reader = SDTMReader()
     compare_summary = DatasetCompareResponse(**compare_dataset_files(dataset, output_path, reference_path))
-    compare_status = compare_summary.status if compare_summary.status != "missing_generated" else result.get("compare_status")
-    status = str(result.get("status") or _dataset_status_from_report(validation_report, output_path) or projected_dataset.get("status") or "unknown")
+    graph_compare_status = str(graph_dataset.compare_summary.get("status") or "") if graph_dataset else ""
+    compare_status = (
+        compare_summary.status
+        if compare_summary.status != "missing_generated"
+        else graph_compare_status or result.get("compare_status")
+    )
+    status = str(
+        _graph_dataset_review_status(graph_dataset)
+        or result.get("status")
+        or _dataset_status_from_report(validation_report, output_path)
+        or projected_dataset.get("status")
+        or "unknown"
+    )
+    code_state = graph_dataset.code_state if graph_dataset else _state_map(projected_dataset.get("code_state"))
+    execution_state = graph_dataset.execution_state if graph_dataset else _state_map(projected_dataset.get("execution_state"))
+    graph_validation = graph_dataset.validation_summary if graph_dataset else {}
+    review_validation = graph_validation or validation_report or _state_map(projected_dataset.get("validation_summary"))
     output_quality = dataset_output_quality(
         status=status,
-        code_state=_state_map(projected_dataset.get("code_state")),
-        execution_state=_state_map(projected_dataset.get("execution_state")),
-        validation_summary=validation_report or _state_map(projected_dataset.get("validation_summary")),
+        code_state=code_state,
+        execution_state=execution_state,
+        validation_summary=review_validation,
     )
     warnings = _unique_strings(
-        _string_list(validation_report.get("warnings"))
+        _string_list(review_validation.get("warnings"))
         + _string_list(output_quality.get("warnings"))
+        + _graph_dataset_warnings(graph_dataset)
     )
 
     return DatasetReview(
         dataset=dataset,
         status=status,
-        validation_status=result.get("validation_status") or validation_report.get("status"),
+        validation_status=(
+            str(review_validation.get("status") or execution_state.get("validation_status") or "")
+            if graph_dataset
+            else ""
+        )
+        or result.get("validation_status")
+        or validation_report.get("status"),
         compare_status=compare_status,
         output_path=str(output_path.as_posix()) if output_path else None,
         output_quality=output_quality,
@@ -1586,8 +1623,8 @@ def _dataset_review(root: Path, run_id: str, dataset: str, manifest: dict[str, A
         assumptions=_string_list(parsed_response.get("assumptions")),
         risk_points=_string_list(parsed_response.get("risk_points")),
         warnings=warnings,
-        errors=_string_list(validation_report.get("errors")),
-        validation_report=validation_report,
+        errors=_string_list(review_validation.get("errors")),
+        validation_report=review_validation,
         diagnostics=diagnostics,
     )
 
@@ -1598,6 +1635,98 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
         if str(result.get("dataset", "")).strip().upper() == target:
             return result
     return {}
+
+
+def _load_review_graph_state(root: Path, run_id: str) -> StudyRunState | None:
+    try:
+        return GraphGateway().load_graph_state(study_dir=root, run_id=run_id)
+    except (FileNotFoundError, ValueError, ValidationError):
+        return None
+
+
+def _review_datasets_from_graph_state(graph_state: StudyRunState | None) -> list[str]:
+    if graph_state is None:
+        return []
+    return _unique_non_empty(
+        list(graph_state.target_datasets)
+        + list(graph_state.requested_datasets)
+        + list(graph_state.datasets)
+    )
+
+
+def _graph_dataset_state(graph_state: StudyRunState | None, dataset: str) -> DatasetRunState | None:
+    if graph_state is None:
+        return None
+    return graph_state.datasets.get(dataset.strip().upper())
+
+
+def _graph_dataset_review_status(dataset_state: DatasetRunState | None) -> str:
+    if dataset_state is None:
+        return ""
+    return str(dataset_state.status or "").strip()
+
+
+def _review_output_path(run_dir: Path, dataset: str, dataset_state: DatasetRunState | None) -> Path | None:
+    output_from_state = ""
+    if dataset_state is not None:
+        output_from_state = str(dataset_state.execution_state.get("output_path") or "").strip()
+        if not output_from_state:
+            for artifact in dataset_state.artifacts:
+                if artifact.kind == "output_adam":
+                    output_from_state = str(artifact.path or "").strip()
+                    break
+    if output_from_state:
+        candidate = _resolve_review_artifact_path(run_dir, output_from_state)
+        if candidate is not None and candidate.exists() and candidate.is_file():
+            return candidate
+    return usable_generated_output_path(run_dir, dataset)
+
+
+def _resolve_review_artifact_path(run_dir: Path, artifact_path: str) -> Path | None:
+    artifact_path = artifact_path.strip()
+    if not artifact_path:
+        return None
+    candidate = Path(artifact_path)
+    if candidate.is_absolute():
+        return candidate if _path_is_under(candidate, run_dir) else None
+    normalized = Path(str(artifact_path).replace("\\", "/"))
+    parts = normalized.parts
+    run_marker_index = None
+    for index in range(len(parts) - 1):
+        if parts[index].lower() == "runs" and parts[index + 1] == run_dir.name:
+            run_marker_index = index + 2
+            break
+    if run_marker_index is not None:
+        candidate = run_dir.joinpath(*parts[run_marker_index:])
+    else:
+        candidate = run_dir / normalized
+    return candidate if _path_is_under(candidate, run_dir) else None
+
+
+def _path_is_under(candidate: Path, parent: Path) -> bool:
+    try:
+        candidate.resolve(strict=False).relative_to(parent.resolve(strict=False))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _graph_dataset_warnings(dataset_state: DatasetRunState | None) -> list[str]:
+    if dataset_state is None:
+        return []
+    warnings: list[str] = []
+    for state_map in [dataset_state.spec_state, dataset_state.code_state, dataset_state.execution_state]:
+        raw_warnings = state_map.get("warnings")
+        if isinstance(raw_warnings, list):
+            warnings.extend(str(item) for item in raw_warnings)
+        stale_reason = str(state_map.get("stale_reason") or "").strip()
+        if stale_reason:
+            warnings.append(stale_reason)
+    for failure in dataset_state.failures:
+        message = str(getattr(failure, "message", "") or "").strip()
+        if message:
+            warnings.append(message)
+    return warnings
 
 
 def _projected_dataset_state(workflow_state: dict[str, Any], dataset: str) -> dict[str, Any]:

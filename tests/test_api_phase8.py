@@ -21,6 +21,7 @@ try:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
+    from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
@@ -31,6 +32,7 @@ except ModuleNotFoundError:
     from fastapi.testclient import TestClient
 
     from adam_agent.api.app import create_app
+    from adam_agent.graph.gateway import GraphGateway
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
     from adam_agent.tools.artifacts import sha256_file
     from adam_agent.tools.static_rules import run_generated_r_static_checks, write_static_rule_report
@@ -168,7 +170,7 @@ class Phase8ApiTests(unittest.TestCase):
             "Service helpers must delegate state changes to GraphGateway instead of writing workflow_state directly.",
         )
 
-    def test_service_layer_reads_graph_state_only_for_graph_state_endpoint(self) -> None:
+    def test_service_layer_reads_graph_state_only_for_explicit_read_models(self) -> None:
         from adam_agent.api import service
 
         graph_state_readers: list[str] = []
@@ -187,9 +189,16 @@ class Phase8ApiTests(unittest.TestCase):
 
         self.assertEqual(
             sorted(graph_state_readers),
-            ["read_run_graph_state"],
-            "Service helpers should not inspect graph internals except for the explicit graph-state read endpoint.",
+            ["_load_review_graph_state", "read_run_graph_state"],
+            "Service helpers should not inspect graph internals except explicit graph-state/read-model endpoints.",
         )
+        review_summary_tree = ast.parse(textwrap.dedent(inspect.getsource(service.build_run_review_summary)))
+        review_summary_calls = {
+            node.func.id
+            for node in ast.walk(review_summary_tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("_load_review_graph_state", review_summary_calls)
 
     def test_progress_endpoint_uses_graph_gateway_progress_read_model(self) -> None:
         from adam_agent.api import service
@@ -2790,6 +2799,230 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(review["output_quality"]["quality_status"], "not_real_derivation")
         self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
         self.assertIn("mock", " ".join(review["warnings"]).lower())
+
+    def test_review_summary_prefers_graph_state_without_workflow_projection(self) -> None:
+        study_dir = _workspace_dir("phase8_review_graph_state_authority") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_review_authority"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        output_path = output_dir / "adsl.csv"
+        output_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_review_authority",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_review_authority").model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
+        state.datasets["ADSL"].current_interrupt = None
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].code_state = {
+            "status": "approved",
+            "generation_quality": {
+                "llm_provider": "mock",
+                "llm_model": "mock-model",
+                "not_real_derivation": True,
+            },
+        }
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": str(output_path.as_posix()),
+            "generation_quality": {
+                "llm_provider": "mock",
+                "llm_model": "mock-model",
+                "not_real_derivation": True,
+            },
+            "not_real_derivation": True,
+        }
+        state.datasets["ADSL"].validation_summary = {"status": "pass"}
+        gateway._persist_graph_state(study_dir, state, node="test_seed_review_graph_state_authority")
+        workflow_projection = run_dir / "workflow_state.json"
+        self.assertTrue(workflow_projection.exists())
+        workflow_projection.unlink()
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_graph_review_authority/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        review = response.json()["dataset_reviews"][0]
+        self.assertIn("0 dataset(s) have real runtime output", response.json()["plain_summary"])
+        self.assertIn("1 review-only/demo output(s)", response.json()["plain_summary"])
+        self.assertEqual(review["dataset"], "ADSL")
+        self.assertEqual(review["status"], "completed")
+        self.assertEqual(review["output_quality"]["quality_status"], "not_real_derivation")
+        self.assertEqual(review["output_quality"]["provider"], "mock")
+        self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
+        self.assertTrue(review["output_preview"])
+
+    def test_review_summary_prefers_graph_validation_over_stale_validation_file(self) -> None:
+        study_dir = _workspace_dir("phase8_review_graph_validation_authority") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_validation_authority"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        output_path = output_dir / "adsl.csv"
+        output_path.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADSL",
+                    "status": "pass",
+                    "terminal_failure": False,
+                    "partial_output_usable": True,
+                    "warnings": ["stale validation file warning"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_validation_authority",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_validation_authority").model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
+        state.datasets["ADSL"].current_interrupt = None
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": str(output_path.as_posix()),
+        }
+        state.datasets["ADSL"].validation_summary = {
+            "status": "structural_stub_pass",
+            "warnings": ["canonical graph warning"],
+        }
+        gateway._persist_graph_state(study_dir, state, node="test_seed_review_graph_validation_authority")
+        (run_dir / "workflow_state.json").unlink()
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_graph_validation_authority/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        review = response.json()["dataset_reviews"][0]
+        self.assertEqual(review["validation_status"], "structural_stub_pass")
+        self.assertEqual(review["validation_report"]["status"], "structural_stub_pass")
+        self.assertEqual(review["output_quality"]["quality_status"], "structural_stub")
+        self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
+        self.assertIn("canonical graph warning", " ".join(review["warnings"]))
+        self.assertNotIn("stale validation file warning", " ".join(review["warnings"]))
+
+    def test_review_summary_resolves_graph_state_run_relative_output_path(self) -> None:
+        study_dir = _workspace_dir("phase8_review_graph_state_run_relative_output") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_review_run_relative"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_review_run_relative",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_review_run_relative").model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": "runs/run_graph_review_run_relative/outputs/adsl.csv",
+        }
+        state.datasets["ADSL"].validation_summary = {"status": "pass"}
+        gateway._persist_graph_state(study_dir, state, node="test_seed_review_graph_state_run_relative")
+        (run_dir / "workflow_state.json").unlink()
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_graph_review_run_relative/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        review = response.json()["dataset_reviews"][0]
+        self.assertTrue(review["output_path"].endswith("runs/run_graph_review_run_relative/outputs/adsl.csv"))
+        self.assertTrue(review["output_preview"])
+
+    def test_review_summary_ignores_graph_state_output_path_outside_run_dir(self) -> None:
+        workspace = _workspace_dir("phase8_review_graph_state_output_escape")
+        study_dir = workspace / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_review_escape"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        escaped_output = workspace / "escaped_adsl.csv"
+        escaped_output.write_text("USUBJID,TRTSDT\n99,2099-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_review_escape",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_review_escape").model_copy(deep=True)
+        state.dependency_review_status = "accepted"
+        state.current_interrupt = None
+        state.status = "completed"
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": "../../escaped_adsl.csv",
+        }
+        state.datasets["ADSL"].validation_summary = {"status": "pass"}
+        gateway._persist_graph_state(study_dir, state, node="test_seed_review_graph_state_escape")
+        (run_dir / "workflow_state.json").unlink()
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_graph_review_escape/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        review = response.json()["dataset_reviews"][0]
+        self.assertTrue(review["output_path"].endswith("runs/run_graph_review_escape/outputs/adsl.csv"))
+        self.assertNotIn("2099-01-01", json.dumps(review["output_preview"]))
 
     def test_llm_connection_test_rejects_mock_provider(self) -> None:
         client = TestClient(create_app())
