@@ -6023,3 +6023,49 @@ Ran 260 tests in 29.362s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Dataset Code Review Native Interrupt 试点切片
+
+已完成：
+
+- 新增 dataset-level `wait_for_code_review` graph node。
+- 当 dataset state 显式设置 `native_code_review=True`，且
+  `generate_r_code_agent` 已生成需要审核的 R code 时，DatasetGraph 会使用
+  LangGraph 原生 `interrupt()` 暂停在 `code_review`。
+- 使用 `Command(resume=...)` 恢复后：
+  - `approve` 会关闭 native interrupt，并把下一步标记为
+    `persist_code_review`；
+  - `reject` 会关闭 native interrupt，并把 dataset 保持为 `needs_review`，
+    下一步标记为 `regenerate_code`。
+- 新增 `native_code_review_status`、`native_code_review_resume` state 字段，
+  用于记录内部试点恢复结果。
+
+当前边界：
+
+- 这是 dataset-level native interrupt 的内部试点，不接入公开 UI/API 默认路径。
+- 本切片不写 `review/{dataset}_code_review.json`，也不替代
+  `GraphGateway.review_code()` 的 code hash、static-check hash、input
+  fingerprint 和 approved spec 校验。
+- approve 后不会直接运行 R code；公开产品流仍必须通过 gateway 持久化
+  code-review artifact 后，才能进入 approved-code execution。
+- 本切片不实现 persistent LangGraph SQLite/Postgres checkpointer，不改变 LLM
+  生成、R execution、compare、static rules、repair 或 UI 行为。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认 `native_code_review` 是显式 opt-in，默认 `GraphGateway`/FastAPI/UI
+  split-flow 不会进入该节点；该试点没有绕过 `GraphGateway.review_code()` 的
+  review artifact、code hash、static-check hash、input fingerprint 和 approved
+  spec 校验；approve 后也不会直接执行 R。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_interrupt_can_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_reject_closes_interrupt_for_regeneration tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 271 tests in 27.177s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```

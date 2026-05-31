@@ -878,6 +878,77 @@ def _static_review_agent_output(
     )
 
 
+def wait_for_code_review_node(state: DatasetGraphState) -> DatasetGraphState:
+    """Pause at the code review gate using a native LangGraph interrupt.
+
+    This internal pilot proves the DatasetGraph can own the human code-review
+    pause. It does not replace the public GraphGateway review artifact and hash
+    checks yet.
+    """
+
+    if not state.get("native_code_review"):
+        return {}
+    target = state["dataset"]
+    command = interrupt(
+        {
+            "interrupt": "code_review",
+            "scope": "dataset",
+            "study_id": state["study_id"],
+            "run_id": state["run_id"],
+            "dataset": target,
+            "code_path": state.get("code_path"),
+            "llm_response_path": state.get("llm_response_path"),
+            "parsed_response_path": state.get("parsed_response_path"),
+            "static_check_path": state.get("static_check_path"),
+            "risk_points": state.get("code_risk_points", []),
+            "assumptions": state.get("code_assumptions", []),
+            "message": f"Review generated R code for {target} before execution.",
+        }
+    )
+    command_payload = command if isinstance(command, dict) else {"action": str(command)}
+    action = str(command_payload.get("action") or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        action = "reject"
+    reviewer = str(command_payload.get("reviewer") or "local_user")
+    notes = str(command_payload.get("notes") or "")
+    payload = command_payload.get("payload") if isinstance(command_payload.get("payload"), dict) else {}
+    human_command = {
+        "interrupt": "code_review",
+        "dataset": target,
+        "action": action,
+        "reviewer": reviewer,
+        "notes": notes,
+        "payload": payload,
+    }
+    if action == "approve":
+        return {
+            "status": "needs_review",
+            "current_interrupt": None,
+            "native_code_review_status": "approved",
+            "native_code_review_resume": {
+                "resumed": True,
+                "action": action,
+                "reviewer": reviewer,
+            },
+            "next_action": "persist_code_review",
+            "human_commands": [human_command],
+        }
+    return {
+        "status": "needs_review",
+        "route": "human_review",
+        "current_interrupt": None,
+        "native_code_review_status": "rejected",
+        "native_code_review_resume": {
+            "resumed": True,
+            "action": action,
+            "reviewer": reviewer,
+            "notes": notes,
+        },
+        "next_action": "regenerate_code",
+        "human_commands": [human_command],
+    }
+
+
 def execute_approved_code_node(state: DatasetGraphState) -> DatasetGraphState:
     """Run approved generated R through the graph-owned execution boundary."""
 
@@ -1471,6 +1542,7 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
     graph.add_node("draft_spec_agent", draft_spec_agent_node)
     graph.add_node("wait_for_draft_spec_review", wait_for_draft_spec_review_node)
     graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
+    graph.add_node("wait_for_code_review", wait_for_code_review_node)
     graph.add_node("execute_approved_code", execute_approved_code_node)
     graph.add_node("summarize_dataset", summarize_dataset)
     if include_legacy_stub_chain:
@@ -1503,7 +1575,15 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
         },
     )
     graph.add_edge("wait_for_draft_spec_review", "summarize_dataset")
-    graph.add_edge("generate_r_code_agent", "summarize_dataset")
+    graph.add_conditional_edges(
+        "generate_r_code_agent",
+        route_after_generate_r_code_agent,
+        {
+            "wait_for_code_review": "wait_for_code_review",
+            "summarize": "summarize_dataset",
+        },
+    )
+    graph.add_edge("wait_for_code_review", "summarize_dataset")
     graph.add_edge("execute_approved_code", "summarize_dataset")
     if include_legacy_stub_chain:
         graph.add_edge("draft_lineage_stub", "draft_spec_stub")
@@ -1559,6 +1639,18 @@ def route_after_draft_spec_agent(state: DatasetGraphState) -> str:
         and state.get("status") == "needs_review"
     ):
         return "wait_for_draft_spec_review"
+    return "summarize"
+
+
+def route_after_generate_r_code_agent(state: DatasetGraphState) -> str:
+    """Route the internal native code-review pilot when explicitly enabled."""
+
+    if (
+        state.get("native_code_review")
+        and state.get("current_interrupt") == "code_review"
+        and state.get("status") == "needs_review"
+    ):
+        return "wait_for_code_review"
     return "summarize"
 
 

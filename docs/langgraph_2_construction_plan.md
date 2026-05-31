@@ -6523,3 +6523,53 @@ Ran 260 tests in 29.362s - OK
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.1 Dataset Code Review Native Interrupt Pilot Slice
+
+Completed:
+
+- Added a dataset-level `wait_for_code_review` graph node.
+- When dataset state explicitly sets `native_code_review=True` and
+  `generate_r_code_agent` has generated review-required R code, DatasetGraph
+  now pauses at `code_review` with native LangGraph `interrupt()`.
+- On `Command(resume=...)`:
+  - `approve` closes the native interrupt and marks the next action as
+    `persist_code_review`;
+  - `reject` closes the native interrupt, keeps the dataset in `needs_review`,
+    and marks the next action as `regenerate_code`.
+- Added `native_code_review_status` and `native_code_review_resume` state fields
+  to record the internal pilot resume result.
+
+Current boundary:
+
+- This is an internal dataset-level native interrupt pilot. It is not connected
+  to the public UI/API default path.
+- This slice does not write `review/{dataset}_code_review.json` and does not
+  replace `GraphGateway.review_code()` code hash, static-check hash, input
+  fingerprint, or approved spec checks.
+- Approve does not directly execute R code. The public product flow must still
+  persist the code-review artifact through the gateway before approved-code
+  execution can run.
+- This slice does not implement a persistent LangGraph SQLite/Postgres
+  checkpointer and does not change LLM generation, R execution, compare, static
+  rules, repair, or UI behavior.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed `native_code_review` is explicit opt-in, the default
+  `GraphGateway`/FastAPI/UI split-flow does not enter this node, the pilot does
+  not bypass `GraphGateway.review_code()` review artifact, code hash,
+  static-check hash, input fingerprint, or approved spec checks, and approve
+  does not directly execute R.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_interrupt_can_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_code_review_reject_closes_interrupt_for_regeneration tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_graph_does_not_include_legacy_stub_nodes -v
+python -B -m unittest tests.test_graph_smoke tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 271 tests in 27.177s - OK
+
+python -B -m compileall -q src tests
+git diff --check
+```

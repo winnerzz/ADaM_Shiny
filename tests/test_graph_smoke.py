@@ -636,7 +636,10 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn(("draft_spec_agent", "summarize_dataset", "summarize"), edges)
         self.assertIn(("draft_spec_agent", "wait_for_draft_spec_review", None), edges)
         self.assertIn(("wait_for_draft_spec_review", "summarize_dataset", None), edges)
-        for product_node in {"generate_r_code_agent", "execute_approved_code"}:
+        self.assertIn(("generate_r_code_agent", "summarize_dataset", "summarize"), edges)
+        self.assertIn(("generate_r_code_agent", "wait_for_code_review", None), edges)
+        self.assertIn(("wait_for_code_review", "summarize_dataset", None), edges)
+        for product_node in {"execute_approved_code"}:
             self.assertIn((product_node, "summarize_dataset", None), edges)
         for product_node in {"draft_spec_agent", "generate_r_code_agent", "execute_approved_code"}:
             self.assertNotIn((product_node, "draft_lineage_stub", None), edges)
@@ -953,6 +956,121 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertEqual(summary.metadata["spec_source"], "input_spec")
         self.assertTrue(summary.metadata["code_path"].endswith("code/build_adae.R"))
         self.assertEqual(summary.validation_status, "not_run")
+
+    def test_dataset_graph_native_code_review_interrupt_can_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_native_code_review") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        checkpointer = InMemorySaver()
+        dataset_graph = compile_dataset_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_code_review:ADAE"}}
+
+        interrupted = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_native_code_review",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "native_code_review": True,
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        snapshot = dataset_graph.get_state(config)
+
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(snapshot.next, ("wait_for_code_review",))
+        self.assertEqual(snapshot.values["current_interrupt"], "code_review")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["interrupt"], "code_review")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["scope"], "dataset")
+        self.assertEqual(snapshot.tasks[0].interrupts[0].value["dataset"], "ADAE")
+        self.assertTrue(snapshot.tasks[0].interrupts[0].value["code_path"].endswith("code/build_adae.R"))
+        self.assertTrue(
+            snapshot.tasks[0].interrupts[0].value["static_check_path"].endswith(
+                "static_checks/adae_static_check.json"
+            )
+        )
+
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": "approve",
+                    "reviewer": "tester",
+                    "notes": "Native code review pilot approved.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertNotIn("__interrupt__", resumed)
+        self.assertEqual(resumed["native_code_review_status"], "approved")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["human_commands"][0]["interrupt"], "code_review")
+        self.assertEqual(resumed["human_commands"][0]["dataset"], "ADAE")
+        self.assertEqual(resumed["summary"].status, "needs_review")
+        self.assertEqual(resumed["summary"].metadata["next_action"], "persist_code_review")
+        self.assertEqual(dataset_graph.get_state(config).next, ())
+
+    def test_dataset_graph_native_code_review_reject_closes_interrupt_for_regeneration(self) -> None:
+        study_dir = _workspace_dir("lg2_dataset_native_code_review_reject") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        checkpointer = InMemorySaver()
+        dataset_graph = compile_dataset_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "PSY201:run_native_code_review_reject:ADAE"}}
+
+        interrupted = dataset_graph.invoke(
+            {
+                "study_id": "PSY201",
+                "run_id": "run_lg2_native_code_review_reject",
+                "dataset": "ADAE",
+                "execution_mode": "graph_product_generate_code",
+                "study_dir": str(study_dir),
+                "llm_provider": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure": {},
+                "native_code_review": True,
+                "audit_artifacts": [],
+            },
+            config=config,
+        )
+        self.assertIn("__interrupt__", interrupted)
+
+        resumed = dataset_graph.invoke(
+            Command(
+                resume={
+                    "action": "reject",
+                    "reviewer": "tester",
+                    "notes": "Generated R needs a different derivation approach.",
+                }
+            ),
+            config=config,
+        )
+
+        self.assertNotIn("__interrupt__", resumed)
+        self.assertEqual(resumed["native_code_review_status"], "rejected")
+        self.assertIsNone(resumed["current_interrupt"])
+        self.assertEqual(resumed["next_action"], "regenerate_code")
+        self.assertEqual(resumed["summary"].status, "needs_review")
+        self.assertEqual(resumed["summary"].metadata["next_action"], "regenerate_code")
+        self.assertEqual(resumed["human_commands"][0]["action"], "reject")
+        self.assertEqual(dataset_graph.get_state(config).next, ())
 
     def test_dataset_graph_product_execute_records_execution_agent_io(self) -> None:
         output_artifact = ArtifactRef(
