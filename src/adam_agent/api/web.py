@@ -2012,7 +2012,7 @@ INDEX_HTML = r"""<!doctype html>
       const finalizeReady = Boolean(target && !blocked && !progressBlocked);
       const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
       const generateReady = Boolean(target && !blocked && !progressBlocked && hasSpecGate);
-      const approveReady = Boolean(canApproveGeneratedCode(target) && !progressBlocked);
+      const approveReady = Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2069,6 +2069,8 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : progressBlocked
               ? progressBlockReason
+            : blocked
+              ? `${target} is blocked by ${blocked.blocked_by}; local execution is paused until dependency review is resolved.`
             : execution?.status === 'completed'
               ? `${target} already completed local execution. Approval remains available only if you intentionally rerun the same generated code.`
               : execution?.status === 'terminal_failure' || execution?.status === 'failed'

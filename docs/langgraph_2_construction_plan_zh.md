@@ -4644,6 +4644,33 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Approve-Run Dependency Gate UI 切片
+
+已完成：
+
+- 收紧 browser `Approve And Run Locally` 可用性判断：它现在和 finalize、
+  code generation 使用同一套 active dependency block gate。
+- 如果 graph progress 暂时不可用，但从 recovered dependency plan 能看出 active
+  target 被阻塞，UI 会继续禁用 local execution，并说明必须先解决 dependency
+  review。
+- 增加 focused UI contract assertion 覆盖 approve/run gate。
+
+当前边界：
+
+- 本切片只改变 browser action availability 和用户可见的 gate 文案。
+- 不改变 backend execution preflight、dependency planning、GraphGateway state
+  transitions、provider calls、static rules、R execution、compare、repair 或
+  Reference ADaM authority。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Demo Load Graph Read Model Refresh 切片
 
 已完成：
