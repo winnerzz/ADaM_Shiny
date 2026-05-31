@@ -7168,3 +7168,29 @@ Ran 3 tests in 0.533s - OK
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_reject_does_not_execute -v
 Ran 2 tests in 0.413s - OK
 ```
+
+### 2026-06-01 - LG2.2 Native Loop Terminal-Failure Follow-Up Hardening Slice
+
+Completed:
+
+- Added focused coverage for terminal-failure follow-up actions through the
+  internal native dataset loop:
+  - `repair_code` allows the loop to regenerate code and stop at native
+    `code_review`;
+  - `revise_spec` routes back to draft-spec generation/review before code can
+    be reused.
+- Tightened `record_draft_spec_generation()` so a terminal-failure
+  `revise_spec` follow-up marks the previous code state as `stale` instead of
+  leaving old approved code looking current.
+
+Current boundary:
+
+- This is still graph-state hardening only. It does not add public UI/API
+  actions or automatic repair routing.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code -v
+Ran 4 tests in 1.550s - OK
+```

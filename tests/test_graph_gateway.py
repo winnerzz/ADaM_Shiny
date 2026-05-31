@@ -66,6 +66,93 @@ def _write_static_check_for_code(study_dir: Path, run_id: str, dataset: str, cod
     return static_path, f"sha256:{sha256_file(static_path)}"
 
 
+def _seed_adae_terminal_failure_after_review(
+    *,
+    test_name: str,
+    run_id: str,
+    triage_action: str,
+) -> tuple[GraphGateway, Path]:
+    study_dir = _workspace_dir(test_name) / "PSY201"
+    sdtm_dir = study_dir / "input_sdtm"
+    spec_dir = study_dir / "input_spec"
+    code_dir = study_dir / "runs" / run_id / "code"
+    sdtm_dir.mkdir(parents=True)
+    spec_dir.mkdir()
+    code_dir.mkdir(parents=True)
+    (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+    (spec_dir / "adae.json").write_text(
+        json.dumps({"dataset": "ADAE", "variables": [{"variable": "USUBJID", "source_domains": ["AE"]}]}),
+        encoding="utf-8",
+    )
+    code_path = code_dir / "build_adae.R"
+    code_path.write_text(
+        "dir.create('outputs', showWarnings = FALSE)\n"
+        "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+        encoding="utf-8",
+    )
+    static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+    gateway = GraphGateway()
+    gateway.record_code_generation(
+        study_dir=study_dir,
+        study_id="PSY201",
+        run_id=run_id,
+        dataset="ADAE",
+        code_path=code_path,
+        code_sha256=f"sha256:{sha256_file(code_path)}",
+        static_check_path=static_path,
+        static_check_sha256=static_sha,
+        spec_source="input_spec",
+        spec_path=spec_dir / "adae.json",
+        spec_sha256=f"sha256:{sha256_file(spec_dir / 'adae.json')}",
+        input_fingerprint_payload=input_fingerprint(study_dir),
+    )
+    gateway.review_code(
+        study_dir=study_dir,
+        study_id="PSY201",
+        run_id=run_id,
+        dataset="ADAE",
+        decision="approve",
+        reviewer="tester",
+        input_fingerprint_payload=input_fingerprint(study_dir),
+    )
+    gateway.record_execution(
+        study_dir=study_dir,
+        study_id="PSY201",
+        run_id=run_id,
+        dataset="ADAE",
+        execution_state={
+            "status": "terminal_failure",
+            "validation_status": "failed",
+            "terminal_failure": True,
+            "partial_output_usable": False,
+            "diagnostics_path": str((study_dir / "runs" / run_id / "diagnostics" / "adae_failure.json").as_posix()),
+        },
+        validation_summary={"status": "failed"},
+        artifacts=[],
+        failures=[
+            FailureRecord(
+                failure_id=f"failure_{run_id}_adae",
+                dataset="ADAE",
+                node="execute_approved_code",
+                failure_type="sandbox_error",
+                message="R execution failed.",
+                root_cause="r_runtime_error",
+                recommended_route=triage_action,
+            )
+        ],
+        input_fingerprint_payload=input_fingerprint(study_dir),
+    )
+    gateway.review_terminal_failure(
+        study_dir=study_dir,
+        run_id=run_id,
+        dataset="ADAE",
+        decision=triage_action,
+        reviewer="tester",
+        input_fingerprint_payload=input_fingerprint(study_dir),
+    )
+    return gateway, study_dir
+
+
 class GraphGatewayTests(unittest.TestCase):
     def test_output_quality_classification_matrix(self) -> None:
         cases = [
@@ -2607,6 +2694,52 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(dataset_state.code_state)
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
         self.assertFalse((study_dir / "runs" / "run_lg2_native_loop_draft_reject" / "code").exists())
+
+    def test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup(self) -> None:
+        gateway, study_dir = _seed_adae_terminal_failure_after_review(
+            test_name="lg2_gateway_native_loop_repair_followup",
+            run_id="run_lg2_native_loop_repair_followup",
+            triage_action="repair_code",
+        )
+
+        result = gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_repair_followup",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["terminal_failure_followup"]["action"], "repair_code")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_followup_consumed_by"], "generate_code")
+
+    def test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review(self) -> None:
+        gateway, study_dir = _seed_adae_terminal_failure_after_review(
+            test_name="lg2_gateway_native_loop_revise_followup",
+            run_id="run_lg2_native_loop_revise_followup",
+            triage_action="revise_spec",
+        )
+
+        result = gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_revise_followup",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.spec_state["status"], "draft_generated")
+        self.assertEqual(dataset_state.spec_state["terminal_failure_followup"]["action"], "revise_spec")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_followup_consumed_by"], "draft_spec")
+        self.assertEqual(dataset_state.code_state["status"], "stale")
+        self.assertEqual(dataset_state.code_state["terminal_failure_followup"]["action"], "revise_spec")
 
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"

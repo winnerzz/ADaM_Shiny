@@ -1228,6 +1228,14 @@ class GraphGateway:
             dataset_state.execution_state.pop("terminal_failure_review", None)
             dataset_state.execution_state.pop("terminal_failure_followup", None)
             dataset_state.execution_state.pop("next_action", None)
+            if dataset_state.code_state:
+                dataset_state.code_state.update(
+                    {
+                        "status": "stale",
+                        "stale_reason": "Terminal failure review requested spec revision before code can be reused.",
+                        "terminal_failure_followup": terminal_followup,
+                    }
+                )
         dataset_state.spec_state.update(
             {
                 "status": "draft_generated",
