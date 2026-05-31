@@ -4681,3 +4681,36 @@ git diff --check
 Result: focused UI contract tests passed; broader graph-gateway/API suite
 passed with 155 tests; AST syntax check covered 80 Python files; `git diff
 --check` reported only CRLF line-ending warnings.
+
+### 2026-05-31 - LG2.8 Dependency Map Readability UI Slice
+
+Completed:
+
+- Reworked the browser Dependency Map from a numbered list into a user-facing
+  explanation card for each target:
+  - source evidence recognized from uploaded SDTM files
+  - dependency decision from the graph plan
+  - runtime meaning of the target status
+  - direct next action
+- Kept the reference ADaM warning in the dependency flow so uploaded reference
+  outputs remain comparison/output-shape evidence only, not derivation authority
+  or runtime dependency evidence.
+- Updated UI contract tests to check the new readable dependency-map structure
+  and to keep guarding against treating reference ADaM as runtime dependency.
+
+Current boundary:
+
+- This is a browser UI presentation slice only. It does not change dependency
+  planning, dependency resolution, canonical graph state, LLM generation,
+  R execution, compare, or static-rule behavior.
+- The map still reflects the existing graph read models. It does not add new
+  clinical rules or infer new dependencies.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```

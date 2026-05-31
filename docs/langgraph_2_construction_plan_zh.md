@@ -4281,3 +4281,35 @@ git diff --check
 结果：focused UI contract tests 通过；更宽的 graph-gateway/API suite 通过
 155 个测试；AST syntax check 覆盖 80 个 Python 文件；`git diff --check` 只有
 CRLF line-ending warnings。
+
+### 2026-05-31 - LG2.8 Dependency Map 可读性 UI 切片
+
+已完成：
+
+- 将浏览器 Dependency Map 从编号步骤列表改成每个 target 一张用户可读说明卡：
+  - 当前识别到哪些 SDTM source evidence。
+  - graph plan 给出的 dependency decision。
+  - 当前 target status 在 runtime 上意味着什么。
+  - 用户下一步该做什么。
+- 保留 reference ADaM 边界提醒：reference output 仍只能作为
+  comparison/output-shape evidence，不能作为 derivation authority，也不能单独
+  算 runtime dependency evidence。
+- 更新 UI contract tests，锁住新的 dependency-map 结构，并继续防止 reference
+  ADaM 被 UI 描述成 runtime dependency。
+
+当前边界：
+
+- 这是浏览器 UI presentation 切片，不改变 dependency planning、dependency
+  resolution、canonical graph state、LLM generation、R execution、compare 或
+  static-rule 行为。
+- Dependency Map 仍然只展示现有 graph read model；它不新增临床规则，也不推断
+  新依赖。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```

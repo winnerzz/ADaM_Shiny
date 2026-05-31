@@ -473,33 +473,63 @@ INDEX_HTML = r"""<!doctype html>
       margin-bottom: 8px;
       font-weight: 800;
     }
-    .dependency-steps {
+    .dependency-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .dependency-summary-item {
+      min-height: 58px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdff;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .dependency-summary-item strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .dependency-flow {
       display: grid;
       gap: 7px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
+      margin-bottom: 9px;
     }
-    .dependency-steps li {
+    .dependency-flow-row {
       display: grid;
-      grid-template-columns: 25px 1fr;
-      gap: 8px;
+      grid-template-columns: 86px 1fr;
+      gap: 9px;
       align-items: start;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.4;
     }
-    .step-dot {
-      display: grid;
-      place-items: center;
-      width: 22px;
-      height: 22px;
-      border-radius: 999px;
-      color: #fff;
-      background: var(--accent);
-      font-size: 11px;
+    .dependency-flow-label {
+      color: var(--text);
+      font-size: 12px;
       font-weight: 800;
     }
+    .dependency-action {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdff;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .dependency-action.ready { border-color: #b8dfc9; background: #f2fbf5; }
+    .dependency-action.waiting { border-color: #f0d19b; background: #fff8ea; }
+    .dependency-action.blocked { border-color: #efc4be; background: #fff8f7; color: var(--danger); }
     .dependency-note {
       margin-top: 9px;
       color: var(--muted);
@@ -740,7 +770,7 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 1120px) {
       main { grid-template-columns: 1fr; }
       aside { position: static; }
-      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid { grid-template-columns: 1fr; }
+      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid, .dependency-summary { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
@@ -2634,21 +2664,23 @@ INDEX_HTML = r"""<!doctype html>
         const dependencies = dependenciesForTarget(target);
         const status = datasetStatus(target, runnable, blocked);
         const isBlocked = blockedNames.has(target);
-        const depItems = dependencies.length
-          ? dependencies.map((dependency, index) => dependencyStepHtml(dependency, index, runnable, targets)).join('')
-          : `<li><span class="step-dot">2</span><span>No upstream ADaM dependency is currently detected. This is an evidence-based planning result, not a clinical guarantee.</span></li>`;
         const decision = dependencyDecisionFor(target);
+        const dependencyRows = dependencies.length
+          ? dependencies.map((dependency) => dependencyFlowRowHtml(dependency, runnable, targets)).join('')
+          : `<div class="dependency-flow-row"><div class="dependency-flow-label">ADaM deps</div><div>No upstream ADaM dependency is currently detected. This is an evidence-based planning result, not a clinical guarantee.</div></div>`;
         return `
           <div class="dependency-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''}">
             <div class="dependency-title">
               <span>${escapeHtml(target)} generation plan</span>
               <span class="pill ${isBlocked || status === 'failed' ? 'fail' : status === 'ready' || status === 'completed' || status === 'reference' ? '' : 'warn'}">${escapeHtml(status)}</span>
             </div>
-            <ul class="dependency-steps">
-              <li><span class="step-dot">1</span><span>Use uploaded SDTM evidence${sdtm.length ? `: ${escapeHtml(sdtm.slice(0, 8).join(', '))}${sdtm.length > 8 ? ', ...' : ''}` : '. No SDTM source has been recognized yet.'}</span></li>
-              ${depItems}
-              <li><span class="step-dot">3</span><span>${nextActionText(target, status, isBlocked)}</span></li>
-            </ul>
+            <div class="dependency-summary">
+              <div class="dependency-summary-item"><strong>Source evidence</strong>${escapeHtml(dependencySourceEvidenceText(sdtm))}</div>
+              <div class="dependency-summary-item"><strong>Dependency decision</strong>${escapeHtml(dependencyDecisionSummary(target, decision, dependencies))}</div>
+              <div class="dependency-summary-item"><strong>Runtime meaning</strong>${escapeHtml(dependencyRuntimeSummary(target, status, isBlocked))}</div>
+            </div>
+            <div class="dependency-flow">${dependencyRows}</div>
+            <div class="dependency-action ${isBlocked ? 'blocked' : state.plan ? 'ready' : 'waiting'}">${escapeHtml(nextActionText(target, status, isBlocked))}</div>
             <div class="dependency-note">${escapeHtml(decision?.reason || 'Prepare a dependency plan to explain why this target is ready or blocked.')}</div>
           </div>
         `;
@@ -2656,14 +2688,40 @@ INDEX_HTML = r"""<!doctype html>
       node.innerHTML = rows.join('') || '<div class="muted">No dependency graph yet.</div>';
     }
 
-    function dependencyStepHtml(dependency, index, runnable, targets) {
+    function dependencySourceEvidenceText(sdtm) {
+      if (!sdtm.length) return 'No SDTM source has been recognized yet.';
+      const shown = sdtm.slice(0, 8).join(', ');
+      return `Recognized SDTM domains: ${shown}${sdtm.length > 8 ? ', ...' : ''}.`;
+    }
+
+    function dependencyDecisionSummary(target, decision, dependencies) {
+      if (dependencies.length) return `${target} has upstream ADaM dependency: ${dependencies.join(', ')}.`;
+      if (decision?.source === 'input_spec_no_adam_dependency') return `${target} input spec does not show an upstream ADaM dependency.`;
+      if (decision?.source === 'no_dependency_evidence') return `${target} has no upstream ADaM dependency evidence in the current uploaded materials.`;
+      return `${target} dependency plan has not recorded an upstream ADaM dependency.`;
+    }
+
+    function dependencyRuntimeSummary(target, status, isBlocked) {
+      if (isBlocked || status === 'blocked') return `${target} cannot generate until the dependency gate is resolved.`;
+      if (status === 'ready') return `${target} can move to spec/code review once required review gates are satisfied.`;
+      if (status === 'completed') return `${target} has a completed runtime output for review.`;
+      if (status === 'reference evidence') return 'Reference ADaM supports comparison/output-shape review only; it is not derivation authority.';
+      return `${target} is tracked as ${status || 'candidate'} in the current study plan.`;
+    }
+
+    function dependencyFlowRowHtml(dependency, runnable, targets) {
       const runtimeAvailable = dependencyRuntimeAvailable(dependency, runnable, targets);
       const referenceEvidence = hasReferenceAdamEvidence(dependency);
       const evidence = dependencyEvidenceText(dependency, runnable, targets);
       const authorityNote = referenceEvidence
         ? ' Reference ADaM is comparison/output-shape evidence only; it is not derivation authority or a runtime dependency by itself.'
         : '';
-      return `<li><span class="step-dot">${index + 2}</span><span>Requires upstream ADaM <strong>${escapeHtml(dependency)}</strong>: ${runtimeAvailable ? 'runtime input available or planned' : 'needs user action'} (${escapeHtml(evidence)}).${escapeHtml(authorityNote)}</span></li>`;
+      return `
+        <div class="dependency-flow-row">
+          <div class="dependency-flow-label">Needs ${escapeHtml(dependency)}</div>
+          <div>${runtimeAvailable ? 'Runtime input is available or planned.' : 'User action is needed before this target can generate.'} Evidence: ${escapeHtml(evidence)}.${escapeHtml(authorityNote)}</div>
+        </div>
+      `;
     }
 
     function dependencyDecisionFor(target) {
