@@ -4211,3 +4211,40 @@ git diff --check
   workflow fallback 分开。
 - 已修复：现在显式返回 `artifact_fallback`，并有回归测试覆盖。
 - 最终 review：GO。
+
+### 2026-05-31 - LG2.8 Review Summary 来源 Advanced UI 切片
+
+已完成：
+
+- 将 review-summary 来源元数据接入浏览器 Advanced/Audit 面板：
+  `review_summary_source`、`graph_state`、`workflow_state`。
+- 技术路径仍不进入主工作流界面。draft-spec notice、result summary、action
+  area 仍只提示用户到 Advanced settings 和 audit files 查看路径，不直接打印。
+- 更新 UI 回归测试：Advanced 区必须显示 source/path metadata；draft-spec 和
+  result-facing 区域仍继续隐藏直接技术路径。
+
+当前边界：
+
+- 这是 UI read-model 展示切片，不改变 API state transition、dependency
+  planning/resolution、LLM generation、R execution、compare 或 static-rule 行为。
+- 目的只是审计清晰度：用户能知道 `/review-summary` 来自 canonical graph
+  state、workflow fallback 还是 artifact fallback，同时不污染正常产品流程。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+结果：focused UI/review-summary tests 通过；更宽的 graph-gateway/API suite
+通过 155 个测试；AST syntax check 覆盖 80 个 Python 文件；`git diff
+--check` 只有 CRLF line-ending warnings。
+
+子 agent review：
+
+- GO。未发现 blocking findings。
+- 审核确认本切片只修改 Advanced UI 展示，技术路径没有进入主产品面板，也没有
+  新增后端状态写入或 workflow 行为。

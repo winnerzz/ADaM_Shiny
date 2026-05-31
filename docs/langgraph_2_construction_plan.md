@@ -4605,3 +4605,44 @@ Subagent review:
   fallback from workflow fallback.
 - Fix applied: `artifact_fallback` is now explicit and covered by regression.
 - Final review: GO.
+
+### 2026-05-31 - LG2.8 Review Summary Source Advanced UI Slice
+
+Completed:
+
+- Wired review-summary source metadata into the browser Advanced/Audit panel:
+  `review_summary_source`, `graph_state`, and `workflow_state`.
+- Kept technical paths out of the main workflow panes. Draft-spec notices,
+  result summaries, and action areas still refer users to Advanced settings and
+  audit files instead of printing paths inline.
+- Updated UI regression tests so source/path metadata appears in Advanced while
+  draft-spec and result-facing areas keep hiding direct technical paths.
+
+Current boundary:
+
+- This is UI read-model display only. It does not change API state transitions,
+  dependency planning/resolution, LLM generation, R execution, compare, or
+  static-rule behavior.
+- The purpose is audit clarity: users can tell whether `/review-summary` was
+  read from canonical graph state, workflow fallback, or artifact fallback
+  without cluttering the normal product flow.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_recovers_multiple_outputs_from_same_run -v
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+git diff --check
+```
+
+Result: focused UI/review-summary tests passed; broader graph-gateway/API suite
+passed with 155 tests; AST syntax check covered 80 Python files; `git diff
+--check` reported only CRLF line-ending warnings.
+
+Subagent review:
+
+- GO. No blocking findings.
+- The review confirmed this slice only changes Advanced UI display, keeps
+  technical paths out of the main product panes, and adds no backend state
+  writes or workflow behavior.
