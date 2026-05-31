@@ -450,6 +450,19 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertNotIn("escapeHtml(draft.spec_path)", draft_pane_body)
         self.assertNotIn("escapeHtml(generated.draft_spec_path)", draft_notice_body)
 
+    def test_index_hides_invalid_file_paths_from_input_warnings(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        summary_body = html.split("function renderInputSummary(summary)", 1)[1].split("function renderFiles(containerId, files)", 1)[0]
+        self.assertIn("inputWarningText", summary_body)
+        self.assertIn("Skipped ${fileName}", summary_body)
+        self.assertIn("split(/[\\\\/]/)", summary_body)
+        self.assertNotIn("`${item.path}: ${item.reason}`", summary_body)
+
     def test_index_exposes_agent_audit_from_graph_state(self) -> None:
         client = TestClient(create_app())
 

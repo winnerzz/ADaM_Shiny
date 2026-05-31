@@ -5052,6 +5052,35 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Input Warning Path Hiding UI Slice
+
+Completed:
+
+- Changed the browser input-warning rendering so invalid input files are shown
+  as `Skipped filename: reason` instead of exposing the full local path.
+- Added `inputWarningText()` as a small UI formatter used only by
+  `renderInputSummary()`.
+- Added a focused UI contract test proving `inputWarnings` no longer builds
+  messages from `item.path` directly.
+
+Current boundary:
+
+- This slice changes only browser warning text.
+- It does not change `/study-inputs` API payloads, file scanning, upload
+  handling, dependency planning, GraphGateway state transitions, provider calls,
+  static rules, R execution, compare, repair, or Reference ADaM authority.
+- Full technical paths remain available only through API/audit artifacts and
+  advanced surfaces where explicitly intended.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_hides_invalid_file_paths_from_input_warnings tests.test_api_phase8.Phase8ApiTests.test_index_hides_technical_paths_outside_advanced_artifact_view -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"
+node --check .tmp_tests/ui_script_check.js
+```
+
 ### 2026-05-31 - LG2.7 Dataset-Neutral Target Selection UI Slice
 
 Completed:

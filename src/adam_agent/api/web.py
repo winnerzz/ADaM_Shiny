@@ -1623,13 +1623,18 @@ INDEX_HTML = r"""<!doctype html>
       const define = summary?.define?.length || 0;
       const legacy = summary?.legacy_code?.length || 0;
       byId('inputSummaryLine').textContent = `${sdtm} SDTM, ${specs} spec, ${refs} reference, ${define} define, ${legacy} legacy file(s) recognized.`;
-      const warnings = [...(summary?.warnings || []), ...((summary?.invalid_files || []).map((item) => `${item.path}: ${item.reason}`))];
+      const warnings = [...(summary?.warnings || []), ...((summary?.invalid_files || []).map(inputWarningText))];
       byId('inputWarnings').textContent = warnings.length ? warnings.join(' ') : 'No input warnings.';
       renderTargetButtons(inferTargets(summary));
       renderGraphAwareDashboard();
       if (runId()) {
         loadReviewSummary(runId());
       }
+    }
+
+    function inputWarningText(item) {
+      const fileName = String(item?.path || '').split(/[\\/]/).filter(Boolean).pop() || 'file';
+      return `Skipped ${fileName}: ${item?.reason || 'unsupported input file'}`;
     }
 
     function renderFiles(containerId, files) {
