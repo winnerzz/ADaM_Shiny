@@ -2447,8 +2447,18 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(triage_decisions[0]["outputs"]["next_action"], "repair_generated_code")
         self.assertTrue(triage_decisions[0]["outputs"]["interrupt_open"])
         self.assertIn("repair_code", triage_decisions[0]["inputs"]["recommended_routes"])
+        self.assertEqual(dataset_state.agent_node_inputs[-1]["agent"], "diagnosis_repair_agent")
+        self.assertEqual(dataset_state.agent_node_inputs[-1]["node"], "terminal_failure_review")
+        self.assertEqual(dataset_state.agent_node_inputs[-1]["task"], "Record human triage for a terminal dataset failure.")
+        self.assertEqual(dataset_state.agent_node_inputs[-1]["inputs"]["human_action"], "repair_code")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["agent"], "diagnosis_repair_agent")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["decision"], "terminal_failure_triage_recorded")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "repair_generated_code")
+        self.assertTrue(dataset_state.agent_node_outputs[-1]["outputs"]["interrupt_open"])
         self.assertIn("terminal_failure_triage_limited_scope", dataset_state.risk_flags)
         self.assertIn("diagnosis_repair_agent", [item["agent"] for item in result.graph_state.agent_decisions])
+        self.assertIn("diagnosis_repair_agent", [item["agent"] for item in result.graph_state.agent_node_inputs])
+        self.assertIn("diagnosis_repair_agent", [item["agent"] for item in result.graph_state.agent_node_outputs])
         self.assertEqual(
             result.graph_state.agent_audit_summary["datasets"]["ADAE"]["agent_counts"]["diagnosis_repair_agent"],
             1,
@@ -2458,6 +2468,14 @@ class GraphGatewayTests(unittest.TestCase):
             workflow_state["datasets"]["ADAE"]["agent_audit_summary"]["agent_counts"]["diagnosis_repair_agent"],
             1,
         )
+        persisted_state = json.loads(
+            (study_dir / "runs" / "run_lg2_terminal_failure_review" / "graph_state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            persisted_state["datasets"]["ADAE"]["agent_node_outputs"][-1]["decision"],
+            "terminal_failure_triage_recorded",
+        )
+        self.assertEqual(persisted_state["agent_node_outputs"][-1]["agent"], "diagnosis_repair_agent")
 
     def test_gateway_review_terminal_failure_entrypoint_persists_triage(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_entrypoint") / "PSY201"
@@ -2503,6 +2521,9 @@ class GraphGatewayTests(unittest.TestCase):
         ]
         self.assertEqual(triage_decisions[0]["outputs"]["next_action"], "retry_approved_execution")
         self.assertFalse(triage_decisions[0]["outputs"]["interrupt_open"])
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["agent"], "diagnosis_repair_agent")
+        self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "retry_approved_execution")
+        self.assertFalse(dataset_state.agent_node_outputs[-1]["outputs"]["interrupt_open"])
 
     def test_gateway_review_terminal_failure_entrypoint_rejects_invalid_decision(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_review_invalid_decision") / "PSY201"

@@ -5452,3 +5452,38 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 ```
+
+### 2026-05-31 - LG2.4 Diagnosis/Repair Agent IO Terminal-Failure Slice
+
+Completed:
+
+- Extended `GraphGateway.record_terminal_failure_review()` so
+  `diagnosis_repair_agent` writes typed `AgentNodeInput` and `AgentNodeOutput`
+  records for `terminal_failure_review`.
+- Kept existing terminal-failure triage semantics:
+  - records the human triage decision
+  - records the next controlled product action
+  - does not automatically repair code, revise specs, retry R, or produce
+    output
+- Study-level `agent_node_inputs` and `agent_node_outputs` now roll up
+  terminal-failure triage IO from the dataset state.
+- Added focused gateway assertions proving the diagnosis/repair IO is present
+  at dataset level, study level, and in persisted `graph_state.json`.
+
+Current boundary:
+
+- This slice only changes canonical agent IO persistence for terminal-failure
+  review.
+- It does not implement a dedicated LLM repair prompt, spec-revision subgraph,
+  retry execution, dependency planning, static rules, compare, R execution, or
+  UI behavior.
+- Terminal-failure actions remain human-controlled gates.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+```

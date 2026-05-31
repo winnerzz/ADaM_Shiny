@@ -5030,3 +5030,35 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway tests.test_api_phase8.Phase8ApiTests.test_generate_review_execute_split_flow tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/gateway.py'), pathlib.Path('tests/test_graph_gateway.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
 ```
+
+### 2026-05-31 - LG2.4 Diagnosis/Repair Agent IO Terminal-Failure 切片
+
+已完成：
+
+- 扩展 `GraphGateway.record_terminal_failure_review()`：`diagnosis_repair_agent`
+  现在会为 `terminal_failure_review` 写入 typed `AgentNodeInput` 和
+  `AgentNodeOutput`。
+- 保留原有 terminal-failure triage 语义：
+  - 记录人工 triage decision
+  - 记录下一步受控 product action
+  - 不自动 repair code、revise spec、retry R，也不产出 output
+- Study-level `agent_node_inputs` 和 `agent_node_outputs` 现在会从 dataset
+  state 汇总 terminal-failure triage IO。
+- 增加 focused gateway assertions，证明 diagnosis/repair IO 会出现在 dataset
+  level、study level 和持久化 `graph_state.json` 中。
+
+当前边界：
+
+- 本切片只改变 terminal-failure review 的 canonical agent IO persistence。
+- 不实现 dedicated LLM repair prompt、spec-revision subgraph、retry
+  execution、dependency planning、static rules、compare、R execution 或 UI 行为。
+- Terminal-failure actions 仍然是 human-controlled gates。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_records_terminal_failure_review_in_canonical_state tests.test_graph_gateway.GraphGatewayTests.test_gateway_review_terminal_failure_entrypoint_persists_triage -v
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_execute_approved_code_terminal_failure_is_explicit tests.test_api_phase8.Phase8ApiTests.test_execute_requires_terminal_failure_review_before_retry tests.test_api_phase8.Phase8ApiTests.test_index_exposes_agent_audit_from_graph_state -v
+python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('*.py')]+[p for p in pathlib.Path('tests').rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'AST OK: {len(files)} Python files')"
+```

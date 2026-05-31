@@ -2110,36 +2110,75 @@ class GraphGateway:
                 "terminal_failure_next_action": _terminal_failure_next_action(command.action),
             },
         )
+        failure_ids = [failure.failure_id for failure in dataset_state.failures]
+        recommended_routes = [
+            failure.recommended_route
+            for failure in dataset_state.failures
+            if failure.recommended_route
+        ]
+        terminal_next_action = _terminal_failure_next_action(command.action)
+        interrupt_open = dataset_state.current_interrupt is not None and dataset_state.current_interrupt.status == "open"
+        triage_input = build_agent_node_input(
+            agent="diagnosis_repair_agent",
+            node="terminal_failure_review",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            task="Record human triage for a terminal dataset failure.",
+            inputs={
+                "failure_ids": failure_ids,
+                "recommended_routes": recommended_routes,
+                "human_action": command.action,
+                "input_fingerprint_digest": fingerprint.get("digest"),
+                "current_interrupt": "terminal_failure",
+            },
+            risk_flags=["terminal_failure_triage_limited_scope"],
+        )
+        triage_decision = record_agent_decision(
+            agent="diagnosis_repair_agent",
+            node="terminal_failure_review",
+            decision="terminal_failure_triage_recorded",
+            dataset=target,
+            status=dataset_state.status,
+            reason=(
+                "Recorded the human terminal-failure triage decision and the next controlled product action. "
+                "This does not execute repair, revise specs, or retry R automatically."
+            ),
+            inputs={
+                "failure_ids": failure_ids,
+                "recommended_routes": recommended_routes,
+                "human_action": command.action,
+            },
+            outputs={
+                "next_action": terminal_next_action,
+                "interrupt_open": interrupt_open,
+            },
+            risk_flags=["terminal_failure_triage_limited_scope"],
+        )
+        triage_output = build_agent_node_output(
+            agent="diagnosis_repair_agent",
+            node="terminal_failure_review",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            status=dataset_state.status,
+            decision="terminal_failure_triage_recorded",
+            reason=(
+                "Recorded the human terminal-failure triage decision and the next controlled product action. "
+                "This does not execute repair, revise specs, or retry R automatically."
+            ),
+            outputs={
+                "next_action": terminal_next_action,
+                "interrupt_open": interrupt_open,
+                "human_action": command.action,
+            },
+            risk_flags=["terminal_failure_triage_limited_scope"],
+            agent_decisions=[triage_decision],
+        )
+        _append_agent_node_io(dataset_state, inputs=[triage_input], outputs=[triage_output])
         _append_agent_decisions(
             dataset_state,
-            [
-                record_agent_decision(
-                    agent="diagnosis_repair_agent",
-                    node="terminal_failure_review",
-                    decision="terminal_failure_triage_recorded",
-                    dataset=target,
-                    status=dataset_state.status,
-                    reason=(
-                        "Recorded the human terminal-failure triage decision and the next controlled product action. "
-                        "This does not execute repair, revise specs, or retry R automatically."
-                    ),
-                    inputs={
-                        "failure_ids": [failure.failure_id for failure in dataset_state.failures],
-                        "recommended_routes": [
-                            failure.recommended_route
-                            for failure in dataset_state.failures
-                            if failure.recommended_route
-                        ],
-                        "human_action": command.action,
-                    },
-                    outputs={
-                        "next_action": _terminal_failure_next_action(command.action),
-                        "interrupt_open": dataset_state.current_interrupt is not None
-                        and dataset_state.current_interrupt.status == "open",
-                    },
-                    risk_flags=["terminal_failure_triage_limited_scope"],
-                )
-            ],
+            list(triage_output["agent_decisions"]),
         )
         _append_risk_flags(dataset_state, ["terminal_failure_triage_limited_scope"])
         next_state.datasets[target] = dataset_state
