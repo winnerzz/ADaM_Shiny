@@ -5052,6 +5052,42 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Reference-Only Target Selection UI Slice
+
+Completed:
+
+- Added a browser-side target evidence read model that records whether each
+  target candidate came from input specs, legacy code, reference ADaM, manual
+  entry, graph state, or progress state.
+- Kept reference-only targets visible in Choose Output and Dataset Execution
+  Cards, but stopped auto-planning them.
+- Demo/autoselect flow now prepares a dependency plan only when at least one
+  non-reference-only target can be auto-planned.
+- Added source hints on target chips, such as `spec evidence`,
+  `legacy evidence`, `spec + reference`, and `reference only`.
+- Finalize/generate buttons now tell the user to explicitly select a
+  reference-only target before trying to generate it.
+- Added focused UI contract tests for the reference-only target-selection
+  behavior.
+
+Current boundary:
+
+- This slice changes only browser target-selection state and explanatory text.
+- It does not change `/study-inputs`, target discovery payloads, dependency
+  planning semantics, GraphGateway state transitions, provider calls, static
+  rules, R execution, compare, repair, or Reference ADaM authority.
+- A user can still explicitly select a reference-only target. The change only
+  prevents the UI from silently turning Reference ADaM evidence into a default
+  generation request.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae tests.test_api_phase8.Phase8ApiTests.test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 Advanced Setup Wording UI Slice
 
 Completed:

@@ -1199,6 +1199,7 @@ INDEX_HTML = r"""<!doctype html>
       selectedTarget: null,
       selectedTargetsForPlan: [],
       targetCandidates: [],
+      targetEvidenceSources: {},
       events: [],
       selectedView: 'summary',
       selectedResultView: 'generated',
@@ -1384,6 +1385,40 @@ INDEX_HTML = r"""<!doctype html>
 
     function planSelectionSet() {
       return new Set(selectedTargets());
+    }
+
+    function recordTargetSource(target, source) {
+      const normalized = String(target || '').toUpperCase();
+      if (!normalized) return;
+      const current = new Set(state.targetEvidenceSources?.[normalized] || []);
+      current.add(source);
+      state.targetEvidenceSources[normalized] = Array.from(current).sort();
+    }
+
+    function targetSources(target) {
+      return state.targetEvidenceSources?.[String(target || '').toUpperCase()] || [];
+    }
+
+    function isReferenceOnlyTarget(target) {
+      const sources = targetSources(target);
+      return sources.includes('reference_adam') && !sources.some((source) => source !== 'reference_adam');
+    }
+
+    function targetCanAutoPlan(target) {
+      const sources = targetSources(target);
+      if (!sources.length) return true;
+      return sources.some((source) => source !== 'reference_adam');
+    }
+
+    function targetSourceHint(target) {
+      const sources = targetSources(target);
+      if (isReferenceOnlyTarget(target)) return 'reference only';
+      if (sources.includes('input_spec') && sources.includes('reference_adam')) return 'spec + reference';
+      if (sources.includes('input_spec')) return 'spec evidence';
+      if (sources.includes('legacy_code')) return sources.includes('reference_adam') ? 'legacy + reference' : 'legacy evidence';
+      if (sources.includes('manual')) return 'manual target';
+      if (sources.includes('graph_state') || sources.includes('progress')) return 'run history';
+      return 'candidate';
     }
 
     function llmProviderOverride() {
@@ -1700,18 +1735,40 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function inferTargets(summary) {
+      const inputSources = new Set(['input_spec', 'reference_adam', 'legacy_code']);
+      const preservedSources = {};
+      for (const [target, sources] of Object.entries(state.targetEvidenceSources || {})) {
+        const kept = (sources || []).filter((source) => !inputSources.has(source));
+        if (kept.length) preservedSources[target] = kept;
+      }
+      state.targetEvidenceSources = preservedSources;
+      const preservedTargets = Object.keys(preservedSources);
       const candidates = new Set();
       for (const spec of summary?.specs || []) {
-        if (spec.dataset && spec.dataset.startsWith('AD')) candidates.add(spec.dataset);
-        for (const token of inferAdTokens(`${spec.file_name} ${spec.dataset || ''} ${(spec.columns || []).join(' ')}`)) candidates.add(token);
+        const dataset = String(spec.dataset || '').toUpperCase();
+        if (dataset && dataset.startsWith('AD')) {
+          candidates.add(dataset);
+          recordTargetSource(dataset, 'input_spec');
+        }
+        for (const token of inferAdTokens(`${spec.file_name} ${spec.dataset || ''} ${(spec.columns || []).join(' ')}`)) {
+          candidates.add(token);
+          recordTargetSource(token, 'input_spec');
+        }
       }
       for (const ref of summary?.reference_adam || []) {
-        if (ref.dataset && ref.dataset.startsWith('AD')) candidates.add(ref.dataset);
+        const dataset = String(ref.dataset || '').toUpperCase();
+        if (dataset && dataset.startsWith('AD')) {
+          candidates.add(dataset);
+          recordTargetSource(dataset, 'reference_adam');
+        }
       }
       for (const legacy of summary?.legacy_code || []) {
-        for (const token of inferAdTokens(`${legacy.file_name} ${legacy.dataset || ''}`)) candidates.add(token);
+        for (const token of inferAdTokens(`${legacy.file_name} ${legacy.dataset || ''}`)) {
+          candidates.add(token);
+          recordTargetSource(token, 'legacy_code');
+        }
       }
-      const merged = new Set([...(state.targetCandidates || []), ...candidates]);
+      const merged = new Set([...preservedTargets, ...candidates]);
       state.targetCandidates = Array.from(merged).sort();
       return state.targetCandidates;
     }
@@ -1730,10 +1787,11 @@ INDEX_HTML = r"""<!doctype html>
 
     function autoSelectFirstTarget(targets) {
       const available = targets.length ? targets : inferTargets(state.inputSummary);
-      state.selectedTarget = available[0] || null;
-      state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
+      const autoPlanned = available.filter(targetCanAutoPlan);
+      state.selectedTarget = autoPlanned[0] || available[0] || null;
+      state.selectedTargetsForPlan = autoPlanned.length ? [autoPlanned[0]] : [];
       renderTargetButtons(available);
-      if (state.selectedTarget) preparePlan();
+      if (state.selectedTargetsForPlan.length) preparePlan();
     }
 
     function renderTargetButtons(targets) {
@@ -1748,7 +1806,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       const allowed = new Set(targets);
       state.selectedTargetsForPlan = selectedTargets().filter((target) => allowed.has(target));
-      if (!state.selectedTargetsForPlan.length && state.selectedTarget) {
+      if (!state.selectedTargetsForPlan.length && state.selectedTarget && targetCanAutoPlan(state.selectedTarget)) {
         state.selectedTargetsForPlan = [state.selectedTarget];
       }
       const planned = planSelectionSet();
@@ -1757,6 +1815,7 @@ INDEX_HTML = r"""<!doctype html>
           <label class="target-check">
             <input type="checkbox" data-target-toggle="${escapeHtml(target)}" ${planned.has(target) ? 'checked' : ''}>
             <span class="target-name">${escapeHtml(target)}</span>
+            <span class="target-hint">${escapeHtml(targetSourceHint(target))}</span>
           </label>
           <button class="secondary target-view ${target === state.selectedTarget ? 'active' : ''}" data-target-view="${escapeHtml(target)}">${target === state.selectedTarget ? 'Viewing' : 'View'}</button>
         </span>
@@ -1797,7 +1856,7 @@ INDEX_HTML = r"""<!doctype html>
       const active = state.selectedTarget || '';
       byId('targetSelectionSummary').textContent = planned.length
         ? `Planned together: ${planned.join(', ')}. Active detail view: ${active || 'none'}. Code generation and R execution still run only for the active detail target.`
-        : `No planning target selected. Active detail view: ${active || 'none'}.`;
+        : `No planning target selected. Active detail view: ${active || 'none'}. Reference-only candidates stay unplanned until you explicitly select them.`;
     }
 
     function addManualTarget() {
@@ -1809,6 +1868,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       const next = new Set(state.targetCandidates || []);
       next.add(value);
+      recordTargetSource(value, 'manual');
       state.targetCandidates = Array.from(next).sort();
       state.selectedTarget = value;
       state.selectedTargetsForPlan = Array.from(new Set([...selectedTargets(), value])).sort();
@@ -1834,6 +1894,8 @@ INDEX_HTML = r"""<!doctype html>
       state.finalizedInputsByDataset = {};
       state.runReview = null;
       state.targetCandidates = state.selectedTarget ? [state.selectedTarget] : [];
+      state.targetEvidenceSources = {};
+      if (state.selectedTarget) recordTargetSource(state.selectedTarget, 'manual');
       state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
       state.tablePages = {};
       state.compareResults = {};
@@ -1892,6 +1954,7 @@ INDEX_HTML = r"""<!doctype html>
     function applyRunProgress(progress) {
       const progressTargets = (progress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
       if (progressTargets.length) {
+        for (const target of progressTargets) recordTargetSource(target, 'progress');
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...progressTargets])).sort();
       }
       if (progressTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
@@ -1907,10 +1970,12 @@ INDEX_HTML = r"""<!doctype html>
       }
       const graphTargets = graph?.target_datasets || [];
       if (graphTargets.length) {
+        for (const target of graphTargets) recordTargetSource(target, 'graph_state');
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...graphTargets])).sort();
       }
       const requestedTargets = graph?.requested_datasets || [];
       if (requestedTargets.length) {
+        for (const target of requestedTargets) recordTargetSource(target, 'graph_state');
         state.selectedTargetsForPlan = requestedTargets.map((target) => String(target || '').toUpperCase()).filter(Boolean);
       }
       if (graphTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
@@ -2046,9 +2111,15 @@ INDEX_HTML = r"""<!doctype html>
       const draftReview = draftSpecReviewFor(target);
       const finalized = finalizedInputsFor(target);
       const hasSpecGate = targetSpecGateSatisfied(target);
-      const finalizeReady = Boolean(target && !blocked && !progressBlocked);
+      const targetIsPlanned = Boolean(target && selectedTargets().includes(target));
+      const planRequiredReason = target && !targetIsPlanned && isReferenceOnlyTarget(target)
+        ? `${target} is currently reference-only evidence. Select its checkbox to request generation before finalizing inputs.`
+        : target && !targetIsPlanned
+          ? `${target} is only being viewed. Select its checkbox to include it in this generation plan.`
+          : '';
+      const finalizeReady = Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
       const draftApprovalReady = Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
-      const generateReady = Boolean(target && !blocked && !progressBlocked && hasSpecGate);
+      const generateReady = Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
       const approveReady = Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
       return {
         finalize: {
@@ -2056,6 +2127,8 @@ INDEX_HTML = r"""<!doctype html>
           label: 'Finalize Inputs / Draft Spec',
           reason: !target
             ? 'Choose an ADaM output first.'
+            : !targetIsPlanned
+              ? planRequiredReason
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
               : progressBlocked
@@ -2084,6 +2157,8 @@ INDEX_HTML = r"""<!doctype html>
           label: 'Generate R Code',
           reason: !target
             ? 'Choose an ADaM output first.'
+            : !targetIsPlanned
+              ? planRequiredReason
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
               : progressBlocked

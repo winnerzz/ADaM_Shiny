@@ -548,11 +548,44 @@ class Phase8ApiTests(unittest.TestCase):
         progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
         graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
         self.assertNotIn("merged.add('ADAE')", infer_body)
-        self.assertIn("state.selectedTarget = available[0] || null;", auto_body)
+        self.assertIn("const autoPlanned = available.filter(targetCanAutoPlan);", auto_body)
+        self.assertIn("state.selectedTarget = autoPlanned[0] || available[0] || null;", auto_body)
+        self.assertIn("if (state.selectedTargetsForPlan.length) preparePlan();", auto_body)
         self.assertIn("state.selectedTarget = targets[0];", render_body)
+        self.assertIn("targetCanAutoPlan(state.selectedTarget)", render_body)
         self.assertIn("state.selectedTarget = progressTargets[0];", progress_body)
         self.assertIn("state.selectedTarget = graphTargets[0];", graph_body)
         self.assertNotIn("includes('ADAE') ? 'ADAE'", auto_body + render_body + progress_body + graph_body)
+
+    def test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        helper_body = html.split("function recordTargetSource(target, source)", 1)[1].split("function llmProviderOverride()", 1)[0]
+        infer_body = html.split("function inferTargets(summary)", 1)[1].split("function inferAdTokens(text)", 1)[0]
+        auto_body = html.split("function autoSelectFirstTarget(targets)", 1)[1].split("function renderTargetButtons(targets)", 1)[0]
+        render_body = html.split("function renderTargetButtons(targets)", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
+        summary_body = html.split("function renderTargetSelectionSummary()", 1)[1].split("function addManualTarget()", 1)[0]
+        action_body = html.split("function actionAvailability()", 1)[1].split("function reviewFor(dataset)", 1)[0]
+        self.assertIn("targetEvidenceSources", html)
+        self.assertIn("function isReferenceOnlyTarget(target)", helper_body)
+        self.assertIn("return sources.includes('reference_adam') && !sources.some((source) => source !== 'reference_adam');", helper_body)
+        self.assertIn("function targetCanAutoPlan(target)", helper_body)
+        self.assertIn("return sources.some((source) => source !== 'reference_adam');", helper_body)
+        self.assertIn("if (isReferenceOnlyTarget(target)) return 'reference only';", helper_body)
+        self.assertIn("recordTargetSource(dataset, 'reference_adam')", infer_body)
+        self.assertIn("recordTargetSource(dataset, 'input_spec')", infer_body)
+        self.assertIn("recordTargetSource(token, 'legacy_code')", infer_body)
+        self.assertIn("const autoPlanned = available.filter(targetCanAutoPlan);", auto_body)
+        self.assertIn("state.selectedTarget = autoPlanned[0] || available[0] || null;", auto_body)
+        self.assertIn("state.selectedTargetsForPlan = autoPlanned.length ? [autoPlanned[0]] : [];", auto_body)
+        self.assertIn("targetSourceHint(target)", render_body)
+        self.assertIn("Reference-only candidates stay unplanned until you explicitly select them.", summary_body)
+        self.assertIn("const targetIsPlanned = Boolean(target && selectedTargets().includes(target));", action_body)
+        self.assertIn("is currently reference-only evidence. Select its checkbox to request generation before finalizing inputs.", action_body)
 
     def test_index_explains_disabled_actions_from_existing_state(self) -> None:
         client = TestClient(create_app())

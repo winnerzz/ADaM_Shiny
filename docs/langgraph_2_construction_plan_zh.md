@@ -4644,6 +4644,40 @@ python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').r
 node --check .tmp_tests/ui_script_check.js
 ```
 
+### 2026-05-31 - LG2.7 Reference-Only Target Selection UI 切片
+
+已完成：
+
+- 增加 browser-side target evidence read model，记录每个 target candidate
+  来自 input specs、legacy code、reference ADaM、manual entry、graph state
+  还是 progress state。
+- Reference-only target 仍然显示在 Choose Output 和 Dataset Execution
+  Cards 中，但不再被系统自动纳入 plan。
+- Demo/autoselect 流程现在只有在至少存在一个非 reference-only target 可以
+  auto-plan 时，才会自动准备 dependency plan。
+- target chip 上增加来源提示，例如 `spec evidence`、`legacy evidence`、
+  `spec + reference`、`reference only`。
+- Finalize/generate 按钮现在会提示用户：若要生成 reference-only target，
+  必须先明确勾选该 target。
+- 增加 focused UI contract tests，覆盖 reference-only target-selection 行为。
+
+当前边界：
+
+- 本切片只改变 browser target-selection state 和解释文案。
+- 不改变 `/study-inputs`、target discovery payloads、dependency planning
+  semantics、GraphGateway state transitions、provider calls、static rules、
+  R execution、compare、repair 或 Reference ADaM authority。
+- 用户仍然可以明确选择 reference-only target。本改动只是防止 UI 把
+  Reference ADaM evidence 静默变成默认 generation request。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae tests.test_api_phase8.Phase8ApiTests.test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_index_dataset_cards_keep_reference_only_targets_out_of_code_stage -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(path.read_text(encoding='utf-8')) for path in files]; print('AST OK')"
+python -B -c "from pathlib import Path; html=Path('src/adam_agent/api/web.py').read_text(encoding='utf-8'); script=html.split('<script>', 1)[1].split('</script>', 1)[0]; Path('.tmp_tests').mkdir(exist_ok=True); Path('.tmp_tests/ui_script_check.js').write_text(script, encoding='utf-8')"; node --check .tmp_tests/ui_script_check.js; Remove-Item -LiteralPath .tmp_tests\ui_script_check.js -ErrorAction SilentlyContinue
+```
+
 ### 2026-05-31 - LG2.7 Advanced Setup Wording UI 切片
 
 已完成：
