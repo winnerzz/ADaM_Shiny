@@ -187,7 +187,9 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - 新增 graph state 到 `workflow_state.json` 的投影和一致性检查。
   - 为 risk flags、agent decisions、evidence bundle、reference queries 预留字段。
 - 仍待完成：
-  - 把剩余由 service 直接维护的状态跳转全部迁到 graph-owned state update。
+  - 产品 split-flow 的状态跳转现在已经归 `GraphGateway` 所有，但仍通过一步一步的
+    gateway calls 暴露。后续仍需把完整产品运行做成 LangGraph 原生
+    interrupt/checkpointer execution，而不是一串 API 触发的 graph-state update。
 
 ## 5. Phase LG2.1 - GraphGateway 与原生 Checkpointing
 
@@ -236,8 +238,18 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - `/runs/prepare` 已通过 gateway 启动，并写入 `graph_state.json`、`graph_checkpoints.sqlite` 和 workflow projection。
   - 新增 graph state 读取 endpoint 和 dependency review endpoint。
   - dependency review 决策会写入 canonical graph state，再投影给 UI。
+  - 产品 split-flow endpoints 现在已经通过 `GraphGateway` 委托状态变更，包括
+    input finalization、draft-spec generation/review、code generation/review、
+    approved R execution、terminal-failure triage、compare recording、upload
+    invalidation 和 legacy `/runs` compatibility projection writes。
+  - API 回归测试会防止 service helpers 直接写 `workflow_state.json`，或在受保护的
+    product actions 中调用 low-level recorders。
 - 仍待完成：
-  - draft spec review、code review、R execution、repair、validation、compare endpoints 还需要从 service-owned transitions 迁到 graph interrupts。
+  - 审核决策和产品动作已经持久化到 canonical graph state，但完整产品循环还不是一个
+    可在进程重启后通过 checkpointer-backed interrupts 全链路恢复的 native
+    LangGraph run。
+  - repair/spec-revision 闭环仍需要更多原生 graph routing；当前 terminal-failure
+    triage 会记录受控 next action，但不会自动执行 repair cycle。
 
 ## 6. Phase LG2.2 - 用产品节点替换 DatasetGraph Stub Path
 
@@ -317,10 +329,16 @@ Graph state 应该成为 durable source of truth。`workflow_state.json` 可以�
   - 旧 stub chain 只通过显式 legacy/test mode 保留；graph-product modes 会跳过 stub code generation 和 sandbox execution。
   - FastAPI `/datasets/{dataset}/finalize-inputs` 现在委托给 `graph_product_prepare`。
   - FastAPI `/datasets/{dataset}/generate-code` 现在委托给 `graph_product_generate_code`。
-  - service wrapper 仍会把 graph state 映射回现有 UI response model 和 `workflow_state.json` projection，以保持 UI 兼容。
+  - FastAPI code-review、approved execution、terminal-failure review、compare 和
+    upload invalidation 路径现在会调用 high-level `GraphGateway` methods，然后把
+    graph-owned result 映射回现有 response models。
+  - `GraphGateway` 负责写 `workflow_state.json` compatibility projection；service
+    wrapper 只根据 gateway result 整理 response model。
 - 仍待完成：
-  - 从 `code_review` graph-native resume 到 R execution。
-  - graph-native validation、compare、terminal failure routing 和 repair。
+  - dataset 产品步骤已经由 graph-gateway 拥有，但还不是从 code review 到 R
+    execution 和后续路由的一次连续 native LangGraph interrupt/resume execution。
+  - automatic repair 和 spec-revision loops 尚未完成。当前 terminal-failure
+    handling 会记录人工 triage 和受控 next actions。
   - 等 legacy/test-mode coverage 不再有用后，最终移除旧 stub nodes。
 
 ## 7. Phase LG2.3 - StudyGraph 多 Dataset 产品编排
@@ -5719,4 +5737,38 @@ git diff --check
 ```text
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
 git diff --check -- docs/phase8_1_api_contract.md docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```
+
+### 2026-06-01 - LG2.8 早期阶段状态摘要校准切片
+
+已完成：
+
+- 更新 LG2.0/LG2.1/LG2.2 的当前状态摘要，避免继续暗示产品 split-flow 状态
+  跳转仍由 FastAPI service wrappers 拥有。
+- 澄清当前边界：
+  - 产品 split-flow 状态变更现在已经归 `GraphGateway` 所有；
+  - FastAPI service wrappers 仍负责 request validation、config/provider
+    resolution 和 response shaping；
+  - 完整产品循环还不是单次 native LangGraph interrupt/checkpointer run。
+- 将 open items 收敛到真实剩余架构工作：native full-loop interrupt/resume、
+  checkpointer-backed restart recovery、automatic repair/spec-revision routing，
+  以及最终移除 legacy stub。
+
+当前边界：
+
+- 这是文档/状态摘要校准，不改变代码。
+- 不改变 tests、API behavior、GraphGateway behavior、UI behavior、static rules、
+  R execution、repair 或 compare。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 审查确认这些表述符合当前 service-to-gateway delegation，也没有夸大 native
+  LangGraph/checkpointer 成熟度。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
 ```

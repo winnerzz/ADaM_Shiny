@@ -223,8 +223,10 @@ Current implementation status:
   - Added fields for risk flags, agent decisions, evidence bundles, and
     reference queries.
 - Still open:
-  - Convert every remaining service-owned status transition into graph-owned
-    state updates.
+  - The product split-flow status transitions are now `GraphGateway`-owned, but
+    they are still exposed as stepwise gateway calls. A later phase still needs
+    to make the whole product run a native LangGraph interrupt/checkpointer
+    execution rather than a sequence of API-triggered graph-state updates.
 
 ## 5. Phase LG2.1 - GraphGateway And Native Checkpointing
 
@@ -279,10 +281,22 @@ Current implementation status:
   - Added graph state read and dependency review endpoints.
   - Dependency review decisions are recorded in canonical graph state and then
     projected for the UI.
+  - Product split-flow endpoints now delegate state-changing work through
+    `GraphGateway`, including input finalization, draft-spec generation/review,
+    code generation/review, approved R execution, terminal-failure triage,
+    compare recording, upload invalidation, and legacy `/runs` compatibility
+    projection writes.
+  - API regression tests guard against service helpers writing
+    `workflow_state.json` directly or calling low-level recorders for protected
+    product actions.
 - Still open:
-  - Draft spec review, code review, R execution, repair, validation, and compare
-    endpoints still need to migrate from service-owned transitions to graph
-    interrupts.
+  - Review decisions and product actions are persisted in canonical graph state,
+    but the full product loop is not yet a single native LangGraph run that
+    resumes all gates through checkpointer-backed interrupts after process
+    restart.
+  - Repair/spec-revision loops still require more native graph routing; current
+    terminal-failure triage records the controlled next action but does not run
+    an autonomous repair cycle.
 
 ## 6. Phase LG2.2 - Replace DatasetGraph Stub Path With Product Nodes
 
@@ -375,11 +389,17 @@ Current implementation status:
     `graph_product_prepare`.
   - FastAPI `/datasets/{dataset}/generate-code` now delegates to
     `graph_product_generate_code`.
-  - Service-level wrappers still map graph state back to the existing UI
-    response models and `workflow_state.json` projection for compatibility.
+  - FastAPI code-review, approved execution, terminal-failure review, compare,
+    and upload invalidation paths now call high-level `GraphGateway` methods and
+    then map graph-owned results back to existing response models.
+  - `GraphGateway` writes the `workflow_state.json` compatibility projection;
+    service-level wrappers only shape response models from gateway results.
 - Still open:
-  - Graph-native resume from `code_review` into R execution.
-  - Graph-native validation, compare, terminal failure routing, and repair.
+  - The dataset product steps are graph-gateway owned, but not yet driven as one
+    continuous native LangGraph interrupt/resume execution from code review into
+    R execution and follow-up routing.
+  - Automatic repair and spec-revision loops are not complete. Current
+    terminal-failure handling records human triage and controlled next actions.
   - Final removal of old stub nodes once legacy/test-mode coverage is no longer
     useful.
 
@@ -6191,4 +6211,40 @@ Verification:
 ```text
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
 git diff --check -- docs/phase8_1_api_contract.md docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```
+
+### 2026-06-01 - LG2.8 Early Phase Status Summary Calibration Slice
+
+Completed:
+
+- Updated the LG2.0/LG2.1/LG2.2 current-status summaries so they no longer
+  imply product split-flow state transitions are still owned by FastAPI service
+  wrappers.
+- Clarified the current boundary:
+  - product split-flow state changes are now `GraphGateway`-owned;
+  - FastAPI service wrappers still validate requests, resolve config/provider
+    settings, and shape responses;
+  - the whole product loop is still not a single native LangGraph
+    interrupt/checkpointer run.
+- Kept open items focused on the real remaining architecture work:
+  native full-loop interrupt/resume, checkpointer-backed restart recovery,
+  automatic repair/spec-revision routing, and eventual legacy stub removal.
+
+Current boundary:
+
+- This is documentation/status calibration only.
+- It does not change code, tests, API behavior, GraphGateway behavior, UI
+  behavior, static rules, R execution, repair, or compare.
+
+Review:
+
+- Subagent review returned GO.
+- The reviewer confirmed the wording matches current service-to-gateway
+  delegation and does not overstate the native LangGraph/checkpointer maturity.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_compare_endpoint_delegates_stateful_compare_to_gateway -v
+git diff --check -- docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
 ```
