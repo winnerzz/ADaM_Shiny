@@ -940,6 +940,73 @@ console.log(JSON.stringify({
         self.assertEqual(result["localCacheWithoutProgress"], {"code": "active", "review": "", "run": ""})
         self.assertEqual(result["referenceOnly"], "")
 
+    def test_index_dataset_status_ignores_local_completion_cache_when_progress_loaded(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_status_progress' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.plan = {runnable_datasets: ['ADAE'], blocked_datasets: []};
+state.generatedByDataset = {ADAE: {dataset: 'ADAE', generated_code: 'x <- 1'}};
+state.executionByDataset = {ADAE: {status: 'completed'}};
+state.reviewSummaryByDataset = {ADAE: {status: 'completed', output_preview: [{USUBJID: '01'}]}};
+state.runReview = {
+  dataset_reviews: [{
+    dataset: 'ADAE',
+    status: 'completed',
+    output_quality: {quality_status: 'not_real_derivation'},
+    output_preview: [{USUBJID: '01'}]
+  }]
+};
+state.runProgress = {datasets: [{dataset: 'ADSL', status: 'completed'}]};
+const withProgress = datasetStatus('ADAE', ['ADAE'], []);
+const qualityWithProgress = datasetOutputQualityStatus('ADAE');
+state.runProgress = null;
+const legacyFallback = datasetStatus('ADAE', ['ADAE'], []);
+const qualityLegacyFallback = datasetOutputQualityStatus('ADAE');
+console.log(JSON.stringify({withProgress, qualityWithProgress, legacyFallback, qualityLegacyFallback}));
+"""
+        script_path = TMP_ROOT / "ui_dataset_status_progress.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["withProgress"], "ready")
+        self.assertEqual(result["qualityWithProgress"], "")
+        self.assertEqual(result["legacyFallback"], "review only")
+        self.assertEqual(result["qualityLegacyFallback"], "not_real_derivation")
+
     def test_index_marks_review_only_outputs_without_runtime_language(self) -> None:
         client = TestClient(create_app())
 

@@ -5322,6 +5322,42 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dataset Status Fallback 切片
+
+已完成：
+
+- 收紧 `datasetStatus(...)`：本地 generated/review/execution 缓存只在 graph
+  progress read model 不可用时才作为 fallback。
+- 当 `state.runProgress` 已存在，但某个 target 没有 dataset progress item 时，
+  UI 只退回到 plan/reference/candidate 类状态：
+  `ready`、`reference evidence`、`waiting` 或 `candidate`。
+- 同样收紧 `datasetOutputQualityStatus(...)`。当 graph progress 已加载时，
+  persisted review-summary quality 不再驱动 dataset status。
+- 增加 Node 执行的 UI 测试，证明本地 generated/execution/review 和
+  output-quality 缓存即使过期存在，也不能在 graph progress 已存在但缺该 target
+  时把 dataset 标成 completed 或 review-only。
+
+当前边界：
+
+- 这是 UI read-model fallback 行为修正。
+- 不改变 GraphGateway progress 生成、product state、provider calls、
+  R execution、compare、repair、dependency planning 或 Reference ADaM authority。
+
+审查：
+
+- 子 agent 第一次审查 NO-GO：output-quality fallback 仍在 graph-progress guard
+  之前读取 persisted review summary。
+- 已修复：`datasetOutputQualityStatus(...)` 在 `state.runProgress` 存在且目标没有
+  progress quality 时返回空值。
+- 子 agent 复审 GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_status_ignores_local_completion_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Generate Gate 切片
 
 已完成：

@@ -3401,6 +3401,11 @@ INDEX_HTML = r"""<!doctype html>
       if (quality === 'not_real_derivation') return 'review only';
       if (progress?.status) return progress.status;
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
+      if (state.runProgress) {
+        if ((runnable || []).includes(target)) return 'ready';
+        if (hasReferenceAdamEvidence(target)) return 'reference evidence';
+        return state.plan ? 'waiting' : 'candidate';
+      }
       const execution = executionFor(target);
       const persisted = datasetReviewFor(target);
       if (execution) return execution.status;
@@ -3415,8 +3420,10 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function datasetOutputQualityStatus(target) {
-      const progressQuality = datasetProgressFor(target)?.output_quality?.quality_status;
+      const progress = datasetProgressFor(target);
+      const progressQuality = progress?.output_quality?.quality_status;
       if (progressQuality) return progressQuality;
+      if (state.runProgress) return '';
       const reviewQuality = datasetReviewFor(target)?.output_quality?.quality_status;
       if (reviewQuality) return reviewQuality;
       return '';

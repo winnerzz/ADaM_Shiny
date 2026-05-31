@@ -5772,6 +5772,44 @@ python -B -m unittest tests.test_graph_gateway -v
 node --check .tmp_tests\ui_script_check.js
 ```
 
+### 2026-06-01 - LG2.7 Graph-Owned Dataset Status Fallback Slice
+
+Completed:
+
+- Tightened `datasetStatus(...)` so local generated/review/execution caches are
+  used only when the graph progress read model is unavailable.
+- When `state.runProgress` exists but a target lacks a dataset progress item,
+  the UI now falls back only to plan/reference/candidate status:
+  `ready`, `reference evidence`, `waiting`, or `candidate`.
+- Tightened `datasetOutputQualityStatus(...)` the same way. Persisted
+  review-summary quality no longer drives dataset status when graph progress is
+  already loaded.
+- Added a Node-executed UI test proving stale local generated/execution/review
+  and output-quality caches cannot mark a dataset as completed or review-only
+  while graph progress is present and lacks that target.
+
+Current boundary:
+
+- This is UI read-model fallback behavior only.
+- It does not change GraphGateway progress generation, product state, provider
+  calls, R execution, compare, repair, dependency planning, or Reference ADaM
+  authority.
+
+Review:
+
+- Subagent first returned NO-GO because output-quality fallback still read
+  persisted review summary before the graph-progress guard.
+- Fixed by making `datasetOutputQualityStatus(...)` return empty when
+  `state.runProgress` is present and no progress quality exists for the target.
+- Subagent re-review returned GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_dataset_status_ignores_local_completion_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_dataset_card_stages_prefer_graph_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/api/web.py'), pathlib.Path('tests/test_api_phase8.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```
+
 ### 2026-06-01 - LG2.7 Graph-Owned Generate Gate Slice
 
 Completed:
