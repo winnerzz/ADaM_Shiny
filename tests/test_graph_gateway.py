@@ -2887,6 +2887,77 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(reloaded.current_interrupt.name, "dependency_review")
         self.assertNotIn("terminal_failure_review", reloaded.datasets["ADAE"].execution_state)
 
+    def test_gateway_native_terminal_failure_review_start_fails_closed_without_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_terminal_failure_no_interrupt") / "PSY201"
+        run_id = "run_lg2_native_terminal_failure_no_interrupt"
+        run_dir = study_dir / "runs" / run_id
+        code_dir = run_dir / "code"
+        review_dir = run_dir / "review"
+        code_dir.mkdir(parents=True)
+        review_dir.mkdir()
+        code_path = code_dir / "build_adae.R"
+        review_path = review_dir / "adae_code_review.json"
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names = FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        code_sha = f"sha256:{sha256_file(code_path)}"
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        review_path.write_text(json.dumps({"decision": "approve", "approved": True}), encoding="utf-8")
+        gateway.record_code_review(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            command=HumanCommand(
+                interrupt="code_review",
+                action="approve",
+                dataset="ADAE",
+                reviewer="tester",
+            ),
+            review_path=review_path,
+            code_path=code_path,
+            code_sha256=code_sha,
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        fake_result = {
+            "status": "completed",
+            "response_status": "completed",
+            "terminal_failure": False,
+            "current_interrupt": None,
+        }
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            graph = compile_graph.return_value
+            graph.invoke.return_value = fake_result
+            with self.assertRaisesRegex(ValueError, "did not stop at native terminal_failure"):
+                gateway.start_native_terminal_failure_review(
+                    study_dir=study_dir,
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                )
+            graph.get_state.assert_not_called()
+
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        dataset_state = reloaded.datasets["ADAE"]
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertNotEqual(dataset_state.execution_state.get("status"), "terminal_failure")
+        self.assertNotIn("terminal_failure_review", dataset_state.execution_state)
+        self.assertNotIn("native_terminal_failure_review_interrupt", reloaded.runtime_persistence)
+
     def test_gateway_execution_preserves_generation_quality_signal(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_execute_generation_quality") / "PSY201"
         run_id = "run_lg2_execute_generation_quality"

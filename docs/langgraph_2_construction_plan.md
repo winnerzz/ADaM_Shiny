@@ -7048,3 +7048,40 @@ Exited 0; CRLF warnings only.
 python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
 Ran 296 tests in 28.761s - OK (skipped=2)
 ```
+
+### 2026-06-01 - LG2.1 Native Terminal-Failure Hardening Slice
+
+Completed:
+
+- Followed the previous review's non-blocking hardening suggestions.
+- Moved the terminal-failure human action contract into
+  `src/adam_agent/graph/terminal_failure_actions.py` so DatasetGraph native
+  interrupts and GraphGateway validation use the same action names.
+- Added a fail-closed regression for the internal pilot start path:
+  - if `start_native_terminal_failure_review()` invokes DatasetGraph but the
+    graph does not stop at a native `terminal_failure` interrupt, the gateway
+    raises before reading a native snapshot;
+  - canonical `graph_state.json` is not polluted with terminal-failure triage or
+    native interrupt metadata.
+
+Current boundary:
+
+- The action contract extraction does not make DatasetGraph a product state
+  writer. GraphGateway still records failed execution and formal triage in
+  canonical state.
+- This remains an internal pilot guard, not a public UI/API behavior change.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_start_fails_closed_without_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_requires_canonical_terminal_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_rejects_study_interrupt_before_native_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_terminal_failure_review_interrupt_can_resume -v
+Ran 5 tests in 0.452s - OK
+
+python -B -m compileall -q src tests
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 297 tests in 28.550s - OK (skipped=2)
+
+git diff --check
+Exited 0; CRLF warnings only.
+```

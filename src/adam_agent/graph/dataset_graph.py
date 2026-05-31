@@ -25,6 +25,10 @@ from adam_agent.graph.execution_modes import (
 )
 from adam_agent.graph.routing import route_after_risk, route_after_sandbox
 from adam_agent.graph.state import DatasetGraphState
+from adam_agent.graph.terminal_failure_actions import (
+    TERMINAL_FAILURE_REVIEW_ACTION_NAMES,
+    terminal_failure_review_action_names_payload,
+)
 from adam_agent.graph.workflow_state import compare_fingerprints, input_fingerprint, utc_timestamp
 from adam_agent.llm.clients import (
     LLMClientConfigError,
@@ -1039,27 +1043,13 @@ def wait_for_terminal_failure_review_node(state: DatasetGraphState) -> DatasetGr
             "validation_report_path": state.get("validation_report_path"),
             "execution_errors": state.get("execution_errors", []),
             "execution_warnings": state.get("execution_warnings", []),
-            "available_actions": [
-                "retry_execution",
-                "repair_code",
-                "revise_spec",
-                "request_new_input",
-                "skip_dataset",
-                "continue_other_datasets",
-            ],
+            "available_actions": terminal_failure_review_action_names_payload(),
             "message": f"Review terminal R execution failure for {target}.",
         }
     )
     command_payload = command if isinstance(command, dict) else {"action": str(command)}
     action = str(command_payload.get("action") or "").strip().lower()
-    if action not in {
-        "retry_execution",
-        "repair_code",
-        "revise_spec",
-        "request_new_input",
-        "skip_dataset",
-        "continue_other_datasets",
-    }:
+    if action not in TERMINAL_FAILURE_REVIEW_ACTION_NAMES:
         action = "request_new_input"
     reviewer = str(command_payload.get("reviewer") or "local_user")
     notes = str(command_payload.get("notes") or "")

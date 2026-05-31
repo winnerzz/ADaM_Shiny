@@ -31,6 +31,10 @@ from adam_agent.graph.execution_modes import (
 )
 from adam_agent.graph.output_quality import dataset_output_quality, study_output_quality_rollup
 from adam_agent.graph.study_graph import compile_study_graph
+from adam_agent.graph.terminal_failure_actions import (
+    TERMINAL_FAILURE_REVIEW_ACTIONS,
+    TERMINAL_FAILURE_REVIEW_ACTION_NAMES,
+)
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
@@ -49,14 +53,6 @@ from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_
 
 
 LEGACY_RUN_TO_COMPLETION_COMPATIBILITY_SHIM = "legacy_run_to_completion_compatibility_shim"
-TERMINAL_FAILURE_REVIEW_ACTIONS: tuple[dict[str, str], ...] = (
-    {"action": "retry_execution", "label": "Retry Execution"},
-    {"action": "repair_code", "label": "Repair Code"},
-    {"action": "revise_spec", "label": "Revise Spec"},
-    {"action": "request_new_input", "label": "Request New Input"},
-    {"action": "skip_dataset", "label": "Skip Dataset"},
-    {"action": "continue_other_datasets", "label": "Continue Other Datasets"},
-)
 
 
 @dataclass(frozen=True)
@@ -2595,8 +2591,7 @@ class GraphGateway:
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
         target = dataset.strip().upper()
         normalized_decision = decision.strip().lower()
-        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
-        if normalized_decision not in allowed:
+        if normalized_decision not in TERMINAL_FAILURE_REVIEW_ACTION_NAMES:
             raise ValueError("Terminal failure decision is not supported.")
         open_study_interrupt = _open_study_interrupt(graph_state)
         if open_study_interrupt is not None:
@@ -2906,8 +2901,7 @@ class GraphGateway:
             raise ValueError("Current dataset graph state is not waiting for terminal_failure review.")
         if command.interrupt != "terminal_failure" or command.dataset is None or command.dataset.strip().upper() != target:
             raise ValueError("Terminal failure review command must target the failed dataset.")
-        allowed_actions = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
-        if command.action not in allowed_actions:
+        if command.action not in TERMINAL_FAILURE_REVIEW_ACTION_NAMES:
             raise ValueError("Terminal failure review action is not supported.")
         fingerprint = input_fingerprint_payload or input_fingerprint(root)
         review_payload = {
@@ -3057,8 +3051,7 @@ class GraphGateway:
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
         normalized_decision = decision.strip().lower()
-        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
-        if normalized_decision not in allowed:
+        if normalized_decision not in TERMINAL_FAILURE_REVIEW_ACTION_NAMES:
             raise ValueError(
                 "Terminal failure decision must be retry_execution, repair_code, revise_spec, "
                 "request_new_input, skip_dataset, or continue_other_datasets."
@@ -3119,8 +3112,7 @@ class GraphGateway:
         _assert_resume_command_matches_open_interrupt(graph_state, command)
         if command.interrupt != "terminal_failure":
             raise ValueError("Terminal failure review command must target terminal_failure.")
-        allowed = {item["action"] for item in TERMINAL_FAILURE_REVIEW_ACTIONS}
-        if command.action not in allowed:
+        if command.action not in TERMINAL_FAILURE_REVIEW_ACTION_NAMES:
             raise ValueError("Terminal failure review command action is not supported.")
         return self.review_terminal_failure(
             study_dir=root,

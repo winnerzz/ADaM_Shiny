@@ -6500,3 +6500,38 @@ Exited 0; CRLF warnings only.
 python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
 Ran 296 tests in 28.761s - OK (skipped=2)
 ```
+
+### 2026-06-01 - LG2.1 Native Terminal-Failure 加固切片
+
+已完成：
+
+- 处理上一轮子 agent 审查给出的非阻断加固建议。
+- 将 terminal-failure 人工动作合同移到
+  `src/adam_agent/graph/terminal_failure_actions.py`，让 DatasetGraph native
+  interrupt 和 GraphGateway 校验共用同一组 action names。
+- 增加 internal pilot 启动路径的 fail-closed 回归测试：
+  - 如果 `start_native_terminal_failure_review()` 调用 DatasetGraph 后，图没有停在
+    native `terminal_failure` interrupt，gateway 会在读取 native snapshot 前报错；
+  - canonical `graph_state.json` 不会被污染为 terminal-failure triage 或 native
+    interrupt metadata。
+
+当前边界：
+
+- 抽出 action contract 不代表 DatasetGraph 成为产品状态写入者。失败执行记录和正式
+  triage 仍由 GraphGateway 写入 canonical state。
+- 这仍是 internal pilot guard，不是公开 UI/API 行为变更。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_start_fails_closed_without_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_requires_canonical_terminal_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_resume_rejects_study_interrupt_before_native_resume tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_native_terminal_failure_review_interrupt_can_resume -v
+Ran 5 tests in 0.452s - OK
+
+python -B -m compileall -q src tests
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 297 tests in 28.550s - OK (skipped=2)
+
+git diff --check
+Exited 0; CRLF warnings only.
+```
