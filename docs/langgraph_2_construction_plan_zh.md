@@ -5679,3 +5679,44 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.8 当前 API Contract Split-Flow 文档切片
+
+已完成：
+
+- 重写 `docs/phase8_1_api_contract.md`，让它围绕当前真实产品流组织：
+  workspace/input upload -> graph-owned dependency planning -> 必要时
+  dependency review -> dataset finalize/draft-spec/code-review/execute gates
+  -> progress/review/compare/download read models。
+- 在 API contract 中明确 `GraphGateway` 的状态归属：
+  `graph_state.json` 是产品事实来源，`workflow_state.json` 是当前 UI/API
+  read path 使用的 compatibility projection。
+- 补充上传失效说明：上传后通过 `GraphGateway` 标记受影响 run，并返回
+  `touched_graph_runs`、`touched_runs`、`skipped_graph_runs`。
+- 将 `POST /runs` 移到 Legacy Compatibility 小节，并保留
+  `graph_state_path: null` 的解释，避免调用方把 legacy smoke output 误认为
+  graph-owned product state。
+- 补齐当前端点说明：`/product-workspace`、`/studies/files`、
+  `/runs/prepare`、`/dependency-review`、dataset split-flow endpoints、
+  `/progress`、`/graph-state`、`/review-summary`、table preview、compare、
+  download、artifact read 和 LLM connection testing。
+
+当前边界：
+
+- 这是文档对齐，不改变业务行为。
+- 不改变 FastAPI 行为、GraphGateway 状态跳转、provider calls、static rules、
+  R execution、compare、UI behavior 或 legacy `/runs` behavior。
+- 文档有意不宣称已经具备 production-grade CDISC/P21 规则或强化沙盒。
+
+审查：
+
+- 子 agent 审查返回 GO。
+- 非阻断建议是补充仍存在的 compatibility artifact read endpoints；已接受，并新增
+  一个短小的 compatibility read 小节。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+git diff --check -- docs/phase8_1_api_contract.md docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```

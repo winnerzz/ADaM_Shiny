@@ -6148,3 +6148,47 @@ python -B -m unittest tests.test_graph_gateway -v
 python -B -m compileall -q src tests
 git diff --check
 ```
+
+### 2026-06-01 - LG2.8 Current API Contract Split-Flow Documentation Slice
+
+Completed:
+
+- Rewrote `docs/phase8_1_api_contract.md` around the current product flow:
+  workspace/input upload -> graph-owned dependency planning -> dependency
+  review when needed -> dataset finalize/draft-spec/code-review/execute gates
+  -> progress/review/compare/download read models.
+- Made `GraphGateway` state ownership explicit in the API contract:
+  `graph_state.json` is the product source of truth, while
+  `workflow_state.json` is a compatibility projection for current UI/API read
+  paths.
+- Documented upload invalidation through `GraphGateway`, including
+  `touched_graph_runs`, `touched_runs`, and `skipped_graph_runs`.
+- Moved `POST /runs` into a dedicated Legacy Compatibility section and kept the
+  `graph_state_path: null` explanation so callers do not mistake legacy smoke
+  output for graph-owned product state.
+- Added current endpoint coverage for `/product-workspace`, `/studies/files`,
+  `/runs/prepare`, `/dependency-review`, dataset split-flow endpoints,
+  `/progress`, `/graph-state`, `/review-summary`, table preview, compare,
+  download, artifact read, and LLM connection testing.
+
+Current boundary:
+
+- This is documentation alignment only.
+- It does not change FastAPI behavior, GraphGateway state transitions,
+  provider calls, static rules, R execution, compare, UI behavior, or legacy
+  `/runs` behavior.
+- The contract intentionally does not claim production-grade CDISC/P21 rules or
+  hardened sandboxing.
+
+Review:
+
+- Subagent review returned GO.
+- The non-blocking suggestion to list still-existing compatibility artifact
+  read endpoints was accepted by adding a short compatibility read section.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_create_run_rejects_llm_run_to_completion tests.test_api_phase8.Phase8ApiTests.test_upload_endpoint_delegates_input_invalidation_to_gateway tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+git diff --check -- docs/phase8_1_api_contract.md docs/langgraph_2_construction_plan.md docs/langgraph_2_construction_plan_zh.md
+```
