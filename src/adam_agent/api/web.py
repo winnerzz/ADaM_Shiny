@@ -3235,6 +3235,15 @@ INDEX_HTML = r"""<!doctype html>
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
     }
 
+    const TERMINAL_FAILURE_ACTIONS = [
+      {action: 'retry_execution', label: 'Retry Execution'},
+      {action: 'repair_code', label: 'Repair Code'},
+      {action: 'revise_spec', label: 'Revise Spec'},
+      {action: 'request_new_input', label: 'Request New Input'},
+      {action: 'skip_dataset', label: 'Skip Dataset'},
+      {action: 'continue_other_datasets', label: 'Continue Other Datasets'}
+    ];
+
     function hasReferenceAdamEvidence(dataset) {
       return Boolean((state.inputSummary?.reference_adam || []).find((item) => item.dataset === dataset));
     }
@@ -3489,13 +3498,10 @@ INDEX_HTML = r"""<!doctype html>
       return `
         <div class="card terminal-failure-panel">
           <h3>Terminal Failure Triage</h3>
-          <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, or spec revision.</p>
+          <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, spec revision, new input request, or batch continuation.</p>
           ${reviewedNote}
           <div class="button-row">
-            <button class="secondary" data-terminal-action="retry_execution" data-terminal-dataset="${escapeHtml(target)}">Retry Execution</button>
-            <button class="secondary" data-terminal-action="repair_code" data-terminal-dataset="${escapeHtml(target)}">Repair Code</button>
-            <button class="secondary" data-terminal-action="revise_spec" data-terminal-dataset="${escapeHtml(target)}">Revise Spec</button>
-            <button class="secondary" data-terminal-action="skip_dataset" data-terminal-dataset="${escapeHtml(target)}">Skip Dataset</button>
+            ${TERMINAL_FAILURE_ACTIONS.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label)}</button>`).join('')}
           </div>
         </div>
       `;

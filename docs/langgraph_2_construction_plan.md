@@ -5706,7 +5706,9 @@ Completed:
   - `retry_execution`
   - `repair_code`
   - `revise_spec`
+  - `request_new_input`
   - `skip_dataset`
+  - `continue_other_datasets`
 - Wired those actions to the existing
   `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint.
 - After recording the decision, the UI refreshes canonical graph read models
@@ -5721,8 +5723,8 @@ Current boundary:
   terminal-failure semantics, repair behavior, R execution, static rules,
   compare, dependency planning, or Reference ADaM authority.
 - The action remains a human-controlled graph gate. The UI records the choice;
-  it does not automatically retry, repair, revise specs, or skip downstream
-  datasets on its own.
+  it does not automatically retry, repair, revise specs, request inputs, skip,
+  or continue downstream datasets on its own.
 
 Verification:
 

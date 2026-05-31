@@ -5260,7 +5260,9 @@ python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_ba
   - `retry_execution`
   - `repair_code`
   - `revise_spec`
+  - `request_new_input`
   - `skip_dataset`
+  - `continue_other_datasets`
 - 这些动作会调用已有
   `/runs/{run_id}/datasets/{dataset}/terminal-failure-review` endpoint。
 - 决策记录后，UI 会刷新 canonical graph read models，并显示 graph-owned next
@@ -5274,7 +5276,7 @@ python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_ba
   behavior、R execution、static rules、compare、dependency planning 或 Reference
   ADaM authority。
 - 该动作仍是 human-controlled graph gate。UI 只记录选择，不会自动 retry、repair、
-  revise spec，也不会自行跳过下游 datasets。
+  revise spec、request inputs、skip，也不会自行继续下游 datasets。
 
 验证：
 
