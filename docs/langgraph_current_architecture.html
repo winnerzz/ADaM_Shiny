@@ -119,6 +119,24 @@
       overflow-x: auto;
       padding: 4px 0;
     }
+    .overview-figure {
+      margin: 4px 0 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+    .overview-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+    }
+    .caption {
+      margin: 8px 2px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
     .flow {
       display: flex;
       align-items: stretch;
@@ -201,12 +219,14 @@
   <header>
     <h1>ADaM LangGraph 当前系统架构报告</h1>
     <p class="lede">
-      本文件说明当前 <code>LangGraph</code> 分支的真实实现状态：浏览器 UI 如何收集输入，后端 API 如何设置人工审核闸门，
+      本文件说明当前 <code>LangGraph-v2</code> 分支的真实实现状态：浏览器 UI 如何收集输入，后端 API 如何设置人工审核闸门，
       LangGraph 如何做 study 级编排和 dataset 级执行，PSY201 demo 如何在只有 sas7bdat 数据和 SAS 程序时流转，以及 LLM、R 沙盒、审计文件之间的关系。
-      本版根据当前代码库重新扫描更新，重点补充 FastAPI UI、service gate、workflow state 和 LangGraph 实际接入边界。
+      本版根据当前代码库重新扫描更新，重点补充 <code>GraphGateway</code>、canonical <code>graph_state.json</code>、
+      <code>workflow_state</code> projection、DatasetGraph product nodes 和旧 stub 兼容路径的边界。
     </p>
     <div class="badge-row">
-      <span class="badge good">当前分支：LangGraph</span>
+      <span class="badge good">当前分支：LangGraph-v2</span>
+      <span class="badge good">GraphGateway 已接入产品路径</span>
       <span class="badge good">本地 UI：FastAPI + 单页 HTML</span>
       <span class="badge warn">draft spec 需要人工批准</span>
       <span class="badge warn">真实 LLM 不能绕过审核一键跑完</span>
@@ -221,8 +241,8 @@
       <a href="#summary">1. 一句话总览</a>
       <a href="#product-flow">2. 用户看到的产品流程</a>
       <a href="#fastapi-ui">3. FastAPI UI 当前真实状态</a>
-      <a href="#service-gate">4. FastAPI Service Gate</a>
-      <a href="#architecture">5. 系统分层架构</a>
+      <a href="#service-gate">4. GraphGateway 与 Service Gate</a>
+      <a href="#architecture">5. 全局概览与系统分层</a>
       <a href="#langgraph">6. LangGraph 图结构</a>
       <a href="#spec-gate">7. Spec 闸门</a>
       <a href="#dependency">8. 依赖关系如何决定</a>
@@ -260,10 +280,12 @@
             <code>finalize-inputs → draft spec review → generate-code → code-review → execute-approved-code</code>。
             <code>POST /runs</code> 对真实 LLM/R 生成已经被封住，避免绕过审核闸门。
           </div>
-          <div class="lane warn">
+          <div class="lane blue">
             <strong>当前架构边界：</strong>
-            LangGraph 已经存在 StudyGraph/DatasetGraph，但 UI 里的人工审核主路径还没有完全并入 LangGraph interrupt + checkpointer。
-            现在真正保护用户不绕过审核的，是 FastAPI service 层的分步接口和 <code>workflow_state.json</code> sidecar 状态。
+            现在已经不是单纯依赖 FastAPI service sidecar。产品路径通过 <code>GraphGateway</code> 写入 canonical
+            <code>graph_state.json</code> 和 <code>graph_checkpoints.sqlite</code>，再投影成旧 UI 仍需要的
+            <code>workflow_state.json</code>。不过，人工审核仍主要由显式 API step 驱动，还没有完全变成 LangGraph 原生
+            interrupt/resume UI。
           </div>
         </div>
       </section>
@@ -358,10 +380,12 @@
       </section>
 
       <section id="service-gate">
-        <div class="section-head"><h2>4. FastAPI Service Gate</h2></div>
+        <div class="section-head"><h2>4. GraphGateway 与 Service Gate</h2></div>
         <div class="section-body">
           <p>
-            目前产品安全边界的核心在 <code>src/adam_agent/api/service.py</code>。它把“生成”和“执行”拆开，防止真实 LLM/R 一次性绕过人工审核。
+            目前产品安全边界由两层共同完成：<code>src/adam_agent/api/service.py</code> 负责把 UI 操作拆成显式步骤，
+            <code>src/adam_agent/graph/gateway.py</code> 负责把这些步骤写回 canonical graph state，并生成旧 UI 可读的 workflow projection。
+            因此它已经比早期单纯的 <code>workflow_state.json</code> 侧车更接近 LangGraph-v2 的产品化路径。
           </p>
           <div class="diagram">
             <div class="flow">
@@ -381,6 +405,31 @@
             </div>
           </div>
           <table>
+            <thead><tr><th>GraphGateway 动作</th><th>当前作用</th><th>写入/校验内容</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>start_dependency_plan</code></td>
+                <td>启动或刷新 study-level dependency plan，并合并已有 dataset 进度。</td>
+                <td><code>graph_state.json</code>、<code>graph_checkpoints.sqlite</code>、<code>workflow_state.json</code> projection。</td>
+              </tr>
+              <tr>
+                <td><code>record_draft_spec_generation</code> / <code>record_draft_spec_review</code></td>
+                <td>记录 draft spec 生成和人工审批状态。</td>
+                <td>绑定 input fingerprint、draft spec hash、review decision、当前 interrupt。</td>
+              </tr>
+              <tr>
+                <td><code>record_code_generation</code> / <code>record_code_review</code></td>
+                <td>记录 LLM code artifact 和人工 code review。</td>
+                <td>绑定 code hash、static check hash、spec hash、dependency artifact hash。</td>
+              </tr>
+              <tr>
+                <td><code>validate_code_review</code> / <code>record_execution</code></td>
+                <td>执行前复核审批是否仍匹配当前输入和 artifact，执行后记录成功、失败或 terminal failure。</td>
+                <td>校验 fingerprint/hash，不匹配就阻断；执行结果写回 dataset state。</td>
+              </tr>
+            </tbody>
+          </table>
+          <table>
             <thead><tr><th>保护点</th><th>当前代码行为</th><th>为什么重要</th></tr></thead>
             <tbody>
               <tr>
@@ -395,7 +444,7 @@
               </tr>
               <tr>
                 <td>code approval 防过期</td>
-                <td>执行前检查 code review 中的 input fingerprint、code hash、static check hash。</td>
+                <td>执行前检查 code review 中的 input fingerprint、code hash、static check hash、spec hash 和 dependency artifact hash。</td>
                 <td>避免用户批准后代码或输入又变了，但系统仍执行旧审批。</td>
               </tr>
               <tr>
@@ -412,15 +461,22 @@
           </table>
           <div class="lane warn">
             <strong>重要边界：</strong>
-            这个 service gate 目前比 LangGraph interrupt 更“真实”。也就是说，人工审核状态已经持久化到 run 目录和 workflow sidecar，
-            但还没有完全迁移成 LangGraph 原生 checkpointer/interrupt 驱动的统一状态机。
+            当前产品路径已经有 graph-owned state，但人工审核仍是 FastAPI 分步接口驱动，而不是浏览器直接操作 LangGraph 原生 interrupt/resume。
+            这说明 LangGraph-v2 地基已经形成，但离完整的 graph-native multi-agent product 还有一段迁移工作。
           </div>
         </div>
       </section>
 
       <section id="architecture">
-        <div class="section-head"><h2>5. 系统分层架构</h2></div>
+        <div class="section-head"><h2>5. 全局概览与系统分层</h2></div>
         <div class="section-body">
+          <figure class="overview-figure">
+            <img src="assets/langgraph-v2-current-system-overview.png" alt="ADaM Agent Studio LangGraph-v2 system architecture overview">
+            <figcaption class="caption">
+              当前系统概览：Browser UI/FastAPI 进入 <code>GraphGateway</code>，由 StudyGraph 做依赖计划，DatasetGraph product path 处理 context、draft spec、code generation、code review 和本地 Rscript 执行；下方 run artifact store 保存 canonical graph state、workflow projection、LLM 上下文、代码、静态检查占位和 validation/diagnostics。
+              图中的 review gate 表示当前由 FastAPI/GraphGateway 记录的人类审核点；它们还不是浏览器直接操作的 LangGraph 原生 interrupt/resume。
+            </figcaption>
+          </figure>
           <div class="diagram">
             <div class="flow">
               <div class="node"><strong>Browser UI</strong><span class="muted">单页 HTML/JS，负责上传、选择 target、审核 draft spec 和代码、查看输出。</span></div>
@@ -429,7 +485,9 @@
               <div class="arrow">→</div>
               <div class="node"><strong>Service Layer</strong><span class="muted">业务闸门：workspace、输入扫描、spec gate、code gate、execute gate。</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>LangGraph</strong><span class="muted">study graph 和 dataset graph，做依赖编排、批次执行、失败路由。</span></div>
+              <div class="node"><strong>GraphGateway</strong><span class="muted">产品路径的图状态入口，写 canonical graph state 并投影 workflow state。</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>LangGraph</strong><span class="muted">StudyGraph 和 DatasetGraph product nodes，做依赖编排、生成、执行和失败状态记录。</span></div>
               <div class="arrow">→</div>
               <div class="node"><strong>Tools</strong><span class="muted">LLM client、R runner、SDTM reader、dependency scanner、artifact writer。</span></div>
             </div>
@@ -443,7 +501,7 @@
             <div class="card">
               <h3>边界隔离</h3>
               <p>LLM provider、R execution、input scanning、dependency planning 都有独立模块。以后替换 LLM 或增强 R 沙盒，不应改 UI 主流程。</p>
-              <p>当前 workflow state 以 <code>workflow_state.json</code> 和 SQLite checkpoint sidecar 形式持久化，记录输入 fingerprint、当前 interrupt、dataset 状态和审批结果。</p>
+              <p>当前 canonical 状态以 <code>graph_state.json</code> 和 <code>graph_checkpoints.sqlite</code> 持久化；<code>workflow_state.json</code> 是给旧 UI/API 查询使用的 projection。</p>
             </div>
           </div>
           <div class="grid2">
@@ -453,7 +511,7 @@
             </div>
             <div class="card warn">
               <h3>Graph 层</h3>
-              <p><code>study_graph.py</code> 和 <code>dataset_graph.py</code> 已经存在，但 UI 主流程没有直接调用图节点做人工中断。当前是 API service 调用图的依赖规划逻辑和工具模块。</p>
+              <p><code>GraphGateway</code> 已把产品路径接到 graph-owned state；<code>dataset_graph.py</code> 也已有 <code>prepare_product_context</code>、<code>draft_spec_agent</code>、<code>generate_r_code_agent</code>、<code>execute_approved_code</code> 等产品节点。仍未完成的是把浏览器审核体验完全迁移成 LangGraph 原生 interrupt/resume。</p>
             </div>
           </div>
         </div>
@@ -482,23 +540,23 @@
             <div class="flow">
               <div class="node"><strong>prepare_dataset</strong><span class="muted">按 execution_mode 分流</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>draft_lineage_stub</strong><span class="muted">早期骨架节点，目前真实流程多由 service 接管</span></div>
+              <div class="node"><strong>prepare_product_context</strong><span class="muted">整理正式 spec / approved draft spec、输入 profile、依赖 artifact</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>draft_spec_stub</strong><span class="muted">图内 stub；UI 流程用真实 draft-spec API</span></div>
+              <div class="node"><strong>draft_spec_agent</strong><span class="muted">缺正式 spec 时生成 review-required draft spec</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>route_risk</strong><span class="muted">决定是否需要 human review</span></div>
+              <div class="node"><strong>generate_r_code_agent</strong><span class="muted">根据 approved spec/context 生成 R code 和 static check placeholder</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>generate_code / run_sandbox</strong><span class="muted">stub 或 LLM downstream / R sandbox</span></div>
+              <div class="node"><strong>execute_approved_code</strong><span class="muted">校验审核 hash 后本地 Rscript 执行</span></div>
               <div class="arrow">→</div>
-              <div class="node"><strong>repair / revise / summarize</strong><span class="muted">失败诊断、修复、最终 summary</span></div>
+              <div class="node"><strong>stub compatibility lane</strong><span class="muted">旧 stub repair/revise/summarize 仍保留给兼容和测试</span></div>
             </div>
           </div>
 
-          <div class="lane warn">
+          <div class="lane blue">
             <strong>容易误解的一点：</strong>
-            现在 UI 的 draft spec 审核和 R code 审核是 FastAPI service 层的显式接口，不是完全嵌在 DatasetGraph 节点里的自动 interrupt。
-            LangGraph 负责批处理编排和失败路由骨架；产品交互层负责人工闸门。为了避免双轨路径造成静默错误，真实 LLM/R 的
-            <code>POST /runs</code> 一键执行路径已经被阻断，用户必须走 UI/API 的分步审核流程。
+            现在 DatasetGraph 里已经有真实 product nodes，不再只是 stub skeleton；同时旧 stub chain 仍在图内作为兼容路径。
+            浏览器里的人工审核仍通过 FastAPI 显式接口触发，再由 <code>GraphGateway</code> 记录为 graph state。
+            因此当前状态应理解为“产品路径已图状态化，但 HITL 交互尚未完全原生 interrupt 化”。
           </div>
           <table>
             <thead><tr><th>图/节点</th><th>当前实现</th><th>当前产品真实使用方式</th></tr></thead>
@@ -510,13 +568,18 @@
               </tr>
               <tr>
                 <td><code>DatasetGraph.prepare_dataset</code></td>
-                <td>根据 <code>execution_mode</code> 分流：统一 LLM downstream stub/provider/R sandbox 或普通 stub。<code>real_adsl_minimal</code> 已从 DatasetGraph 退休。</td>
-                <td>真实 UI split flow 不通过 ADSL template；ADSL 和 ADAE/ADCM/ADLB 一样，走 spec/code-review/execute gate。</td>
+                <td>根据 <code>execution_mode</code> 分流到 product prepare/generate/execute、LLM downstream 或旧 stub。<code>real_adsl_minimal</code> 已从 DatasetGraph 退休。</td>
+                <td>真实 UI split flow 不通过固定 ADSL template；ADSL 和 ADAE/ADCM/ADLB 一样，走 spec/code-review/execute gate。</td>
               </tr>
               <tr>
-                <td><code>draft_lineage_stub</code> / <code>draft_spec_stub</code></td>
-                <td>仍是早期骨架节点；LLM downstream 模式下多为 no-op。</td>
-                <td>真实 draft spec 由 <code>/finalize-inputs</code> 和 <code>/draft-spec</code> 生成。</td>
+                <td><code>prepare_product_context</code> / <code>draft_spec_agent</code></td>
+                <td>整理 context，缺正式 spec 时生成 draft spec artifact，并把 review-required 状态交给 gateway 记录。</td>
+                <td><code>/finalize-inputs</code> 和 <code>/draft-spec</code> 走这条产品节点路径。</td>
+              </tr>
+              <tr>
+                <td><code>generate_r_code_agent</code> / <code>execute_approved_code</code></td>
+                <td>生成 R code、LLM response、parsed response、static check placeholder；执行前检查 review/hash/fingerprint/dependency artifact。</td>
+                <td><code>/generate-code</code>、<code>/code-review</code> 和 <code>/execute-approved-code</code> 使用这条产品路径。</td>
               </tr>
               <tr>
                 <td><code>repair_code_stub</code> / <code>revise_spec_stub</code></td>
@@ -526,7 +589,7 @@
               <tr>
                 <td><code>compile_study_graph(checkpointer=None)</code></td>
                 <td>接受可选 checkpointer 参数。</td>
-                <td>当前 UI 没有把 HITL 状态完全放入 LangGraph checkpointer；使用 sidecar JSON/SQLite 记录。</td>
+                <td>GraphGateway 当前用 LangGraph checkpointer 编译 StudyGraph，同时另写 <code>graph_state.json</code>/<code>graph_checkpoints.sqlite</code> 做产品级持久化。</td>
               </tr>
             </tbody>
           </table>
@@ -791,8 +854,10 @@
     compare/           # generated vs reference 对比报告
     planning/          # dependency plan 和 review
     audit/             # study-level manifest
-    workflow_state.json
-    workflow_checkpoints.sqlite</div>
+    graph_state.json             # GraphGateway canonical state
+    graph_checkpoints.sqlite     # graph state checkpoint ledger
+    workflow_state.json          # UI/API projection
+    workflow_checkpoints.sqlite  # projection checkpoint ledger</div>
           <table>
             <thead><tr><th>产物</th><th>作用</th><th>是否给用户看</th></tr></thead>
             <tbody>
@@ -801,15 +866,17 @@
               <tr><td><code>build_*.R</code></td><td>LLM 生成的 R 程序。</td><td>是，代码审核页展示。</td></tr>
               <tr><td><code>*.csv</code></td><td>R 沙盒生成的 ADaM 输出。</td><td>只有最近 validation 通过时，才表格预览和下载。</td></tr>
               <tr><td><code>*_compare_report.json</code></td><td>与 reference ADaM 的结构/单元格差异。</td><td>是，compare 页展示。</td></tr>
-              <tr><td><code>workflow_state.json</code></td><td>当前 run 的状态、fingerprint、interrupt、dataset 状态。</td><td>高级视图/调试。</td></tr>
-              <tr><td><code>workflow_checkpoints.sqlite</code></td><td>每次 service gate 更新时写入一份状态快照。</td><td>调试/恢复依据；不是完整 LangGraph checkpointer 集成。</td></tr>
+              <tr><td><code>graph_state.json</code></td><td>GraphGateway 持久化的 canonical graph state，包含 study/dataset 状态、interrupt、review、hash/fingerprint。</td><td>高级视图/调试；<code>GET /runs/{run}/graph-state</code> 可读。</td></tr>
+              <tr><td><code>graph_checkpoints.sqlite</code></td><td>GraphGateway 每次关键节点更新时写入的 graph state checkpoint ledger。</td><td>调试/恢复依据；当前仍是产品级 ledger，不等同于完整浏览器原生 interrupt UI。</td></tr>
+              <tr><td><code>workflow_state.json</code></td><td>由 canonical graph state 投影出的旧 UI/API 查询状态。</td><td>高级视图/调试。</td></tr>
+              <tr><td><code>workflow_checkpoints.sqlite</code></td><td>workflow projection 的历史快照。</td><td>兼容和调试。</td></tr>
               <tr><td><code>manifest.json</code></td><td>study-level 审计索引。</td><td>高级视图/下载。</td></tr>
             </tbody>
           </table>
           <div class="lane blue">
-            <strong>workflow state 怎么理解：</strong>
-            <code>workflow_state.json</code> 是给当前 UI/API 流程看的“状态侧车”。里面记录最后一个节点、当前 interrupt、输入 fingerprint、plan 是否 stale、每个 dataset 的 spec/code/execution 状态。
-            SQLite 文件则保留多次状态更新的历史快照。它们让进程重启后可以追踪状态，但目前还不是 LangGraph 原生 interrupt 持久化的唯一状态源。
+            <strong>graph state 和 workflow state 怎么理解：</strong>
+            <code>graph_state.json</code> 是当前 LangGraph-v2 产品路径的主状态；<code>workflow_state.json</code> 是为了现有 UI 和旧接口继续工作而生成的 materialized projection。
+            两套 SQLite ledger 记录历史快照。它们让进程重启后可以追踪状态，但浏览器人工审核体验仍没有完全变成 LangGraph 原生 interrupt/resume。
           </div>
         </div>
       </section>
@@ -825,9 +892,13 @@
                 <li>CSV 和 sas7bdat 输入扫描；sas7bdat 可通过 R/haven 读取。</li>
                 <li>上传后自动更新 input fingerprint，并将已有 run 标为 inputs changed/stale。</li>
                 <li>dependency plan：从 input_spec、legacy SAS、define 推断上游 ADaM。</li>
+                <li><code>GraphGateway</code> 已把 prepare、draft spec、code generation、code review、execution 记录到 canonical graph state。</li>
+                <li><code>graph_state.json</code>、<code>graph_checkpoints.sqlite</code> 和 <code>workflow_state</code> projection 已形成产品级状态持久化路径。</li>
+                <li>DatasetGraph 已有 <code>prepare_product_context</code>、<code>draft_spec_agent</code>、<code>generate_r_code_agent</code>、<code>execute_approved_code</code> 产品节点。</li>
                 <li>PSY201 形态输入：SDTM sas7bdat、reference ADaM sas7bdat、legacy SAS 程序。</li>
                 <li>无 spec 时生成 draft spec，并强制人工批准。</li>
                 <li>draft spec/code approval 绑定当前输入 fingerprint；代码审批绑定 code hash。</li>
+                <li>执行前还会检查 static check hash、spec hash 和 dependency artifact hash。</li>
                 <li>真实 LLM API 接口和自定义 OpenAI-compatible base URL。</li>
                 <li>生成 R code 后必须人工批准再执行。</li>
                 <li>本地 Rscript 执行、输出预览、下载、reference compare。</li>
@@ -845,9 +916,11 @@
                 <li>下游 ADaM 的真实质量主要依赖正式 spec 和 LLM 代码质量。</li>
                 <li>UI 当前仍是 single active target，不是完整多 target 批处理工作台。</li>
                 <li>UI 的 study graph 和手动单 target 流程还没有完全合并成一个无缝多 target 产品。</li>
-                <li>DatasetGraph 内还有早期 stub 节点，真实 UI 流程目前更多通过 API service gate 执行。</li>
+                <li>DatasetGraph 内还有早期 stub 节点，产品路径和兼容路径仍并存。</li>
+                <li>人工审核还没有完全变成 LangGraph 原生 interrupt/resume UI。</li>
                 <li>static ADaM/CDISC 检查只是 placeholder，不是规则引擎。</li>
                 <li>compare 还是初版 CSV 结构/单元格比较；sas7bdat 表格浏览和完整临床统计验证仍有限。</li>
+                <li>本地 SQLite checkpoint 写入依赖当前 workspace 的 SQLite 写能力；若工作盘环境不支持，会影响 gateway/workflow checkpoint 测试。</li>
               </ul>
             </div>
           </div>
@@ -869,9 +942,12 @@
               <tr><td><code>src/adam_agent/api/web.py</code></td><td>浏览器 UI，上传、选择 target、finalize、approve、generate、run、preview。</td></tr>
               <tr><td><code>src/adam_agent/api/app.py</code></td><td>FastAPI 路由定义。</td></tr>
               <tr><td><code>src/adam_agent/api/service.py</code></td><td>核心 service gate：workspace、upload、plan、finalize inputs、draft spec、generate code、execute。</td></tr>
-              <tr><td><code>src/adam_agent/graph/workflow_state.py</code></td><td>持久化 run 状态、输入 fingerprint、stale plan、checkpoint sidecar。</td></tr>
+              <tr><td><code>src/adam_agent/graph/gateway.py</code></td><td>GraphGateway：产品路径的 graph state 入口，记录 dependency plan、draft spec、code review、execution，并维护 graph checkpoint ledger。</td></tr>
+              <tr><td><code>src/adam_agent/schemas/graph_state.py</code></td><td>StudyRunState、DatasetRunState、InterruptState、HumanCommand 等 canonical graph state schema。</td></tr>
+              <tr><td><code>src/adam_agent/graph/workflow_state.py</code></td><td>把 canonical graph state 投影成旧 UI/API 使用的 workflow_state，并维护 projection checkpoint ledger。</td></tr>
               <tr><td><code>src/adam_agent/graph/study_graph.py</code></td><td>StudyGraph：依赖计划、批次执行、结果聚合、审计 manifest。</td></tr>
-              <tr><td><code>src/adam_agent/graph/dataset_graph.py</code></td><td>DatasetGraph：单 dataset 执行、失败路由、repair/revise/summarize 骨架。</td></tr>
+              <tr><td><code>src/adam_agent/graph/dataset_graph.py</code></td><td>DatasetGraph：product context、draft spec agent、R code agent、approved-code execution，以及旧 stub 兼容链路。</td></tr>
+              <tr><td><code>src/adam_agent/graph/execution.py</code></td><td>执行前校验 review artifact、graph_state、fingerprint、code/static/spec/dependency hashes。</td></tr>
               <tr><td><code>src/adam_agent/graph/dependencies.py</code></td><td>从 spec/SAS/define 提取 ADaM 依赖。</td></tr>
               <tr><td><code>src/adam_agent/graph/dependency_resolution.py</code></td><td>判断依赖数据集是否已有 reference/run output，是否需要用户动作。</td></tr>
               <tr><td><code>src/adam_agent/llm/context.py</code></td><td>构造 LLM 上下文，读取 CSV/sas7bdat profile，整理 target spec 和依赖。</td></tr>
