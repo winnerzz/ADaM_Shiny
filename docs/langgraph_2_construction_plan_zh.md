@@ -4539,3 +4539,36 @@ python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dat
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_execution_agent_io tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_terminal_failure_agent_io -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Audit Agent IO Migration 切片
+
+已完成：
+
+- 将 StudyGraph `write_audit_manifest` 的 audit-summary 步骤迁到
+  `audit_agent` typed IO packages。
+- audit-agent input 现在记录 study status、target datasets、dataset-result
+  数量、agent-decision 数量、risk-flag 数量，以及上游 audit artifact ids。
+- audit-agent output 现在包住一条新的 study-level
+  `agent_audit_summary_written` decision，并记录 agent-summary artifact id、
+  summary type、decision count、dataset count。
+- 最终 study manifest metadata 现在包含 audit-agent IO package 和
+  audit-agent decision，同时保留之前 dataset-node IO packages。
+- 增加 StudyGraph smoke assertion，证明 audit-agent IO package 会出现在最终
+  graph result 和 audit manifest metadata 中。
+
+当前边界：
+
+- 本切片只改变最终 audit packaging。
+- 不改变 dependency planning、dataset dispatch、dataset generation、human
+  gates、provider calls、R execution、compare、repair、static rules 或 UI。
+- agent summary 仍然只是 derived read model，不成为 workflow truth，也不改变
+  dataset state。
+- audit-agent decision 会在 summary 写出后追加，所以 summary 不会把自己算进
+  统计里。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

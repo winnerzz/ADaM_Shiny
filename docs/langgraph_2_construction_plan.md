@@ -4949,3 +4949,36 @@ Verification:
 python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_execution_agent_io tests.test_graph_smoke.GraphSmokeTests.test_dataset_graph_product_execute_records_terminal_failure_agent_io -v
 python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/dataset_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
 ```
+
+### 2026-05-31 - LG2.4 Audit Agent IO Migration Slice
+
+Completed:
+
+- Migrated the StudyGraph `write_audit_manifest` audit-summary step to emit
+  typed IO packages for `audit_agent`.
+- The audit-agent input records study status, target datasets, dataset-result
+  count, agent-decision count, risk-flag count, and upstream audit artifact ids.
+- The audit-agent output wraps a new study-level
+  `agent_audit_summary_written` decision and records the agent-summary artifact
+  id, summary type, decision count, and dataset count.
+- The final study manifest metadata now includes the audit-agent IO package and
+  audit-agent decision alongside prior dataset-node IO packages.
+- Added a StudyGraph smoke assertion proving the audit-agent IO package appears
+  in the final graph result and audit manifest metadata.
+
+Current boundary:
+
+- This slice changes only final audit packaging.
+- It does not change dependency planning, dataset dispatch, dataset generation,
+  human gates, provider calls, R execution, compare, repair, static rules, or UI.
+- The agent summary remains a derived read model. It does not become workflow
+  truth and does not change dataset state.
+- The audit-agent decision is appended after the summary is written, so the
+  summary does not count itself.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_smoke.GraphSmokeTests.test_study_graph_batch_path_preserves_agent_decisions -v
+python -B -c "import ast, pathlib; files=[pathlib.Path('src/adam_agent/graph/study_graph.py'), pathlib.Path('tests/test_graph_smoke.py')]; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print('AST OK')"
+```

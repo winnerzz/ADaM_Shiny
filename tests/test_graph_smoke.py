@@ -1016,6 +1016,14 @@ class GraphSmokeTests(unittest.TestCase):
         self.assertIn("static_check_limited_scope", result["risk_flags"])
         self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][0]["agent"], "evidence_agent")
         self.assertEqual(result["audit_manifest"].metadata["agent_node_outputs"][0]["agent"], "evidence_agent")
+        audit_outputs = [item for item in result["agent_node_outputs"] if item["agent"] == "audit_agent"]
+        self.assertEqual(len(audit_outputs), 1)
+        self.assertEqual(audit_outputs[0]["decision"], "agent_audit_summary_written")
+        self.assertEqual(result["agent_decisions"][-1], audit_outputs[0]["agent_decisions"][0])
+        self.assertEqual(result["audit_manifest"].metadata["agent_node_outputs"][-1]["agent"], "audit_agent")
+        self.assertEqual(result["audit_manifest"].metadata["agent_decisions"][-1]["agent"], "audit_agent")
+        self.assertEqual(audit_outputs[0]["outputs"]["decision_count"], result["agent_audit_summary"]["decision_count"])
+        self.assertEqual(result["agent_audit_summary"]["decision_count"], len(result["agent_decisions"]) - 1)
         self.assertEqual(result["agent_audit_summary"]["summary_writer"]["agent"], "audit_agent")
         self.assertIn("ADAE", result["agent_audit_summary"]["datasets"])
         self.assertIn(

@@ -9,7 +9,12 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from adam_agent.agents import build_agent_audit_summary, write_agent_audit_summary
+from adam_agent.agents import (
+    build_agent_audit_summary,
+    build_agent_node_input,
+    build_agent_node_output,
+    write_agent_audit_summary,
+)
 from adam_agent.graph.dataset_graph import compile_dataset_graph, compile_legacy_stub_dataset_graph
 from adam_agent.graph.execution_modes import LEGACY_STUB_MODE, STUDY_GRAPH_EXECUTION_MODES, format_execution_modes
 from adam_agent.graph.output_quality import dataset_output_quality
@@ -313,8 +318,19 @@ def write_audit_manifest(state: StudyGraphState) -> StudyGraphState:
 
     planning_artifacts = _write_dependency_planning_artifacts(state)
     agent_summary, agent_summary_artifact = _write_agent_audit_summary(state)
+    audit_input = _audit_agent_input(state)
+    audit_output = _audit_agent_output(state, agent_summary_artifact, agent_summary)
+    agent_node_inputs = state.get("agent_node_inputs", []) + [audit_input]
+    agent_node_outputs = state.get("agent_node_outputs", []) + [audit_output]
+    agent_decisions = state.get("agent_decisions", []) + list(audit_output["agent_decisions"])
+    manifest_state = {
+        **state,
+        "agent_decisions": agent_decisions,
+        "agent_node_inputs": agent_node_inputs,
+        "agent_node_outputs": agent_node_outputs,
+    }
     artifact = _write_study_audit_manifest(
-        state,
+        manifest_state,
         planning_artifacts=planning_artifacts,
         audit_artifacts=state.get("audit_artifacts", [])
         + [planning_artifacts["plan_artifact"], planning_artifacts["review_artifact"], agent_summary_artifact],
@@ -332,6 +348,9 @@ def write_audit_manifest(state: StudyGraphState) -> StudyGraphState:
         "dependency_plan_artifact": planning_artifacts["plan_artifact"],
         "dependency_review_artifact": planning_artifacts["review_artifact"],
         "agent_audit_summary": agent_summary,
+        "agent_node_inputs": [audit_input],
+        "agent_node_outputs": [audit_output],
+        "agent_decisions": list(audit_output["agent_decisions"]),
     }
 
 
@@ -451,6 +470,49 @@ def _write_agent_audit_summary(state: StudyGraphState) -> tuple[dict[str, Any], 
             },
         )
     return summary, artifact
+
+
+def _audit_agent_input(state: StudyGraphState) -> dict[str, object]:
+    return build_agent_node_input(
+        agent="audit_agent",
+        node="write_audit_manifest",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        task="Summarize study-level agent decisions, dataset statuses, risk flags, and audit artifacts.",
+        inputs={
+            "status": state.get("status", "unknown"),
+            "target_datasets": state.get("target_datasets", []),
+            "dataset_result_count": len(state.get("dataset_results", [])),
+            "agent_decision_count": len(state.get("agent_decisions", [])),
+            "risk_flag_count": len(state.get("risk_flags", [])),
+        },
+        artifact_ids=[artifact.artifact_id for artifact in state.get("audit_artifacts", [])],
+        risk_flags=list(state.get("risk_flags", [])),
+    )
+
+
+def _audit_agent_output(
+    state: StudyGraphState,
+    artifact: ArtifactRef,
+    summary: dict[str, Any],
+) -> dict[str, object]:
+    return build_agent_node_output(
+        agent="audit_agent",
+        node="write_audit_manifest",
+        study_id=state["study_id"],
+        run_id=state["run_id"],
+        status="completed",
+        decision="agent_audit_summary_written",
+        reason="Wrote the study-level agent audit summary from graph state.",
+        outputs={
+            "summary_artifact_id": artifact.artifact_id,
+            "summary_type": summary.get("summary_type"),
+            "decision_count": summary.get("decision_count"),
+            "dataset_count": len(summary.get("datasets", {})) if isinstance(summary.get("datasets"), dict) else 0,
+        },
+        artifact_ids=[artifact.artifact_id],
+        risk_flags=[],
+    )
 
 
 def _artifacts_for_dataset(artifacts: list[ArtifactRef], dataset: str) -> list[dict[str, Any]]:
