@@ -5522,3 +5522,36 @@ Verification:
 python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_agents_contract -v
 ```
+
+### 2026-05-31 - LG2.4 Gateway Fallback Agent IO Slice
+
+Completed:
+
+- Added default typed `AgentNodeInput` / `AgentNodeOutput` packages for
+  Gateway fallback recorder paths when the caller does not provide DatasetGraph
+  product-node IO.
+- Covered fallback IO for:
+  - draft spec recording
+  - input spec readiness
+  - approved draft spec readiness
+  - generated code and limited static-check recording
+  - execution result recording
+- Kept the existing fallback `AgentDecision` payloads and bound those exact
+  decisions into each typed output package.
+- Added focused gateway assertions proving direct Gateway recorder calls now
+  leave typed IO in dataset state and study-level rollups.
+
+Current boundary:
+
+- This slice only closes an audit packaging gap in fallback recorder paths.
+- It does not change DatasetGraph product-node IO, dependency planning,
+  provider calls, static rules, R execution, compare, repair, or UI behavior.
+- The fallback IO is a compatibility/audit safety net. Normal product flow
+  still prefers the richer IO emitted by DatasetGraph product nodes.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_agents_contract -v
+```

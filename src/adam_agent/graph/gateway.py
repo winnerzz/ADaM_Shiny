@@ -668,6 +668,16 @@ class GraphGateway:
             _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_prompt", "audit", prompt_path, kind="llm_prompt"))
         if response_path:
             _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_response", "audit", response_path, kind="llm_response"))
+        if not agent_decisions and not agent_node_inputs and not agent_node_outputs:
+            agent_decisions, agent_node_inputs, agent_node_outputs = _default_draft_spec_agent_io(
+                study_id=study_id,
+                run_id=run_id,
+                target=target,
+                draft_path=draft_path,
+                prompt_path=Path(prompt_path) if prompt_path else None,
+                response_path=Path(response_path) if response_path else None,
+                variable_count=len(variables or []),
+            )
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -748,6 +758,13 @@ class GraphGateway:
         dataset_state.status = "pending"
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "input_spec", "source", spec_path, kind="input_spec"))
+        if not agent_decisions and not agent_node_inputs and not agent_node_outputs:
+            agent_decisions, agent_node_inputs, agent_node_outputs = _default_input_spec_agent_io(
+                study_id=study_id,
+                run_id=run_id,
+                target=target,
+                spec_path=spec_path,
+            )
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -827,6 +844,13 @@ class GraphGateway:
             dataset_state,
             _artifact_ref(target, "approved_draft_spec", "source", spec_path, kind="input_spec"),
         )
+        if not agent_decisions and not agent_node_inputs and not agent_node_outputs:
+            agent_decisions, agent_node_inputs, agent_node_outputs = _default_approved_draft_spec_agent_io(
+                study_id=study_id,
+                run_id=run_id,
+                target=target,
+                approved_spec_path=spec_path,
+            )
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -1491,6 +1515,15 @@ class GraphGateway:
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "generated_code", "output", code_path, kind="generated_code"))
         _upsert_artifact(dataset_state, _artifact_ref(target, "static_check", "audit", resolved_static_check, kind="tool_log"))
+        if not agent_decisions and not agent_node_inputs and not agent_node_outputs:
+            agent_decisions, agent_node_inputs, agent_node_outputs = _default_code_generation_agent_io(
+                study_id=study_id,
+                run_id=run_id,
+                target=target,
+                code_path=code_path,
+                static_check_path=static_check_path,
+                spec_source=spec_source,
+            )
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -1676,6 +1709,16 @@ class GraphGateway:
             _upsert_artifact(dataset_state, artifact)
         if failures:
             dataset_state.failures = list(failures)
+        if not agent_decisions and not agent_node_inputs and not agent_node_outputs:
+            agent_decisions, agent_node_inputs, agent_node_outputs = _default_execution_agent_io(
+                study_id=study_id,
+                run_id=run_id,
+                target=target,
+                execution_state=execution_state,
+                validation_summary=validation_summary,
+                terminal_failure=terminal_failure,
+                artifacts=artifacts,
+            )
         _append_agent_decisions(
             dataset_state,
             agent_decisions
@@ -3471,6 +3514,271 @@ def _artifact_ref(dataset: str, artifact_id: str, role: str, path: str | Path, *
     )
 
 
+def _default_draft_spec_agent_io(
+    *,
+    study_id: str,
+    run_id: str,
+    target: str,
+    draft_path: str | Path,
+    prompt_path: str | Path | None,
+    response_path: str | Path | None,
+    variable_count: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    output_payload = {
+        "record_source": "graph_gateway_default",
+        "draft_spec_path": str(Path(draft_path).as_posix()),
+        "variable_count": variable_count,
+    }
+    artifact_ids = [f"draft_spec_{target.lower()}"]
+    input_artifact_ids: list[str] = []
+    if prompt_path:
+        prompt_artifact_id = f"draft_spec_prompt_{target.lower()}"
+        artifact_ids.append(prompt_artifact_id)
+        input_artifact_ids.append(prompt_artifact_id)
+    if response_path:
+        response_artifact_id = f"draft_spec_response_{target.lower()}"
+        artifact_ids.append(response_artifact_id)
+        input_artifact_ids.append(response_artifact_id)
+    decision = record_agent_decision(
+        agent="spec_agent",
+        node="draft_spec_generation",
+        decision="draft_spec_generated",
+        dataset=target,
+        status="needs_review",
+        reason="Generated draft spec was recorded and routed to human review.",
+        outputs=output_payload,
+        risk_flags=["draft_spec_requires_human_review"],
+        artifact_ids=artifact_ids,
+    )
+    node_input = build_agent_node_input(
+        agent="spec_agent",
+        node="draft_spec_generation",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        task="Record a generated draft ADaM spec and route it to human review.",
+        inputs={
+            "spec_source": "draft_spec",
+            "prompt_path": str(Path(prompt_path).as_posix()) if prompt_path else None,
+            "response_path": str(Path(response_path).as_posix()) if response_path else None,
+        },
+        artifact_ids=input_artifact_ids,
+        risk_flags=["draft_spec_requires_human_review"],
+    )
+    node_output = build_agent_node_output(
+        agent="spec_agent",
+        node="draft_spec_generation",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="needs_review",
+        decision="draft_spec_generated",
+        reason=decision["reason"],
+        outputs=output_payload,
+        risk_flags=["draft_spec_requires_human_review"],
+        artifact_ids=artifact_ids,
+        agent_decisions=[decision],
+    )
+    return [decision], [node_input], [node_output]
+
+
+def _default_input_spec_agent_io(
+    *,
+    study_id: str,
+    run_id: str,
+    target: str,
+    spec_path: str | Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    output_payload = {
+        "record_source": "graph_gateway_default",
+        "input_spec_path": str(Path(spec_path).as_posix()),
+        "next_action": "generate_code",
+    }
+    decision = record_agent_decision(
+        agent="evidence_agent",
+        node="input_spec_ready",
+        decision="input_spec_ready",
+        dataset=target,
+        status="pending",
+        reason="User-supplied input_spec was accepted as the authoritative spec source.",
+        outputs=output_payload,
+        artifact_ids=[f"input_spec_{target.lower()}"],
+    )
+    node_input = build_agent_node_input(
+        agent="evidence_agent",
+        node="input_spec_ready",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        task="Record a user-supplied input spec as the authoritative derivation source.",
+        inputs={"spec_source": "input_spec", "input_spec_path": str(Path(spec_path).as_posix())},
+        artifact_ids=[f"input_spec_{target.lower()}"],
+    )
+    node_output = build_agent_node_output(
+        agent="evidence_agent",
+        node="input_spec_ready",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="pending",
+        decision="input_spec_ready",
+        reason=decision["reason"],
+        outputs=output_payload,
+        artifact_ids=[f"input_spec_{target.lower()}"],
+        agent_decisions=[decision],
+    )
+    return [decision], [node_input], [node_output]
+
+
+def _default_approved_draft_spec_agent_io(
+    *,
+    study_id: str,
+    run_id: str,
+    target: str,
+    approved_spec_path: str | Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    output_payload = {
+        "record_source": "graph_gateway_default",
+        "approved_spec_path": str(Path(approved_spec_path).as_posix()),
+        "next_action": "generate_code",
+    }
+    decision = record_agent_decision(
+        agent="evidence_agent",
+        node="approved_draft_spec_ready",
+        decision="approved_draft_spec_ready",
+        dataset=target,
+        status="pending",
+        reason="Current graph-approved draft spec was accepted as the code-generation spec source.",
+        outputs=output_payload,
+        risk_flags=["uses_approved_draft_spec"],
+        artifact_ids=[f"approved_draft_spec_{target.lower()}"],
+    )
+    node_input = build_agent_node_input(
+        agent="evidence_agent",
+        node="approved_draft_spec_ready",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        task="Record a current graph-approved draft spec as the code-generation spec source.",
+        inputs={"spec_source": "approved_draft_spec", "approved_spec_path": str(Path(approved_spec_path).as_posix())},
+        artifact_ids=[f"approved_draft_spec_{target.lower()}"],
+        risk_flags=["uses_approved_draft_spec"],
+    )
+    node_output = build_agent_node_output(
+        agent="evidence_agent",
+        node="approved_draft_spec_ready",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="pending",
+        decision="approved_draft_spec_ready",
+        reason=decision["reason"],
+        outputs=output_payload,
+        risk_flags=["uses_approved_draft_spec"],
+        artifact_ids=[f"approved_draft_spec_{target.lower()}"],
+        agent_decisions=[decision],
+    )
+    return [decision], [node_input], [node_output]
+
+
+def _default_code_generation_agent_io(
+    *,
+    study_id: str,
+    run_id: str,
+    target: str,
+    code_path: str | Path,
+    static_check_path: str | Path | None,
+    spec_source: str | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    code_payload = {
+        "record_source": "graph_gateway_default",
+        "code_path": str(Path(code_path).as_posix()),
+        "spec_source": spec_source,
+        "next_action": "review_code",
+    }
+    code_decision = record_agent_decision(
+        agent="code_agent",
+        node="code_generation",
+        decision="r_code_generated",
+        dataset=target,
+        status="needs_review",
+        reason="Generated R code was recorded and routed to human code review.",
+        outputs=code_payload,
+        artifact_ids=[f"generated_code_{target.lower()}"],
+    )
+    code_input = build_agent_node_input(
+        agent="code_agent",
+        node="code_generation",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        task="Record generated R code from an approved ADaM spec and route it to human code review.",
+        inputs={"spec_source": spec_source},
+        artifact_ids=[],
+    )
+    code_output = build_agent_node_output(
+        agent="code_agent",
+        node="code_generation",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="needs_review",
+        decision="r_code_generated",
+        reason=code_decision["reason"],
+        outputs=code_payload,
+        artifact_ids=[f"generated_code_{target.lower()}"],
+        agent_decisions=[code_decision],
+    )
+    decisions = [code_decision]
+    inputs = [code_input]
+    outputs = [code_output]
+    if static_check_path:
+        static_payload = {
+            "record_source": "graph_gateway_default",
+            "static_check_path": str(Path(static_check_path).as_posix()),
+        }
+        static_decision = record_agent_decision(
+            agent="static_review_agent",
+            node="code_generation",
+            decision="static_check_recorded",
+            dataset=target,
+            status="warning",
+            reason="A limited deterministic static-check artifact was recorded before human code review.",
+            outputs=static_payload,
+            risk_flags=["static_check_limited_scope"],
+            artifact_ids=[f"static_check_{target.lower()}"],
+        )
+        static_input = build_agent_node_input(
+            agent="static_review_agent",
+            node="code_generation",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            task="Record limited deterministic static checks before human code review.",
+            inputs={"code_path": str(Path(code_path).as_posix())},
+            artifact_ids=[f"generated_code_{target.lower()}"],
+            risk_flags=["static_check_limited_scope"],
+        )
+        static_output = build_agent_node_output(
+            agent="static_review_agent",
+            node="code_generation",
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            status="warning",
+            decision="static_check_recorded",
+            reason=static_decision["reason"],
+            outputs=static_payload,
+            risk_flags=["static_check_limited_scope"],
+            artifact_ids=[f"static_check_{target.lower()}"],
+            agent_decisions=[static_decision],
+        )
+        decisions.append(static_decision)
+        inputs.append(static_input)
+        outputs.append(static_output)
+    return decisions, inputs, outputs
+
+
 def _default_code_generation_agent_decisions(
     *,
     target: str,
@@ -3511,6 +3819,69 @@ def _default_code_generation_agent_decisions(
             )
         )
     return decisions
+
+
+def _default_execution_agent_io(
+    *,
+    study_id: str,
+    run_id: str,
+    target: str,
+    execution_state: dict[str, Any],
+    validation_summary: dict[str, Any],
+    terminal_failure: bool,
+    artifacts: list[ArtifactRef],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    status = "terminal_failure" if terminal_failure else "completed"
+    decision_name = "r_execution_terminal_failure" if terminal_failure else "r_execution_completed"
+    risk_flags = ["terminal_failure"] if terminal_failure else []
+    artifact_ids = [artifact.artifact_id for artifact in artifacts]
+    output_payload = {
+        "record_source": "graph_gateway_default",
+        "terminal_failure": terminal_failure,
+        "validation_status": validation_summary.get("status"),
+        "output_path": execution_state.get("output_path"),
+    }
+    decision = record_agent_decision(
+        agent="execution_agent",
+        node="execute_approved_code",
+        decision=decision_name,
+        dataset=target,
+        status=status,
+        reason="Approved generated R code was executed through the graph-owned boundary.",
+        outputs=output_payload,
+        risk_flags=risk_flags,
+        artifact_ids=artifact_ids,
+    )
+    node_input = build_agent_node_input(
+        agent="execution_agent",
+        node="execute_approved_code",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        task="Record approved generated R code execution through the configured execution boundary.",
+        inputs={
+            "code_path": execution_state.get("code_path"),
+            "static_check_path": execution_state.get("static_check_path"),
+            "expected_output_path": execution_state.get("expected_output_path"),
+        },
+        artifact_ids=[],
+        risk_flags=risk_flags,
+    )
+    node_output = build_agent_node_output(
+        agent="execution_agent",
+        node="execute_approved_code",
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status=status,
+        decision=decision_name,
+        reason=decision["reason"],
+        outputs=output_payload,
+        risk_flags=risk_flags,
+        artifact_ids=artifact_ids,
+        agent_decisions=[decision],
+    )
+    return [decision], [node_input], [node_output]
 
 
 def _append_agent_decisions(dataset_state: DatasetRunState, decisions: list[dict[str, Any]]) -> None:

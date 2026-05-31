@@ -5092,3 +5092,36 @@ python -B -c "import ast, pathlib; files=[p for p in pathlib.Path('src').rglob('
 python -B -m unittest tests.test_graph_gateway -v
 python -B -m unittest tests.test_agents_contract -v
 ```
+
+### 2026-05-31 - LG2.4 Gateway Fallback Agent IO 切片
+
+已完成：
+
+- 为 Gateway fallback recorder 路径补充默认 typed `AgentNodeInput` /
+  `AgentNodeOutput`。当调用方没有提供 DatasetGraph product-node IO 时，低层
+  recorder 也不会只留下 agent decision。
+- 覆盖以下 fallback IO：
+  - draft spec recording
+  - input spec readiness
+  - approved draft spec readiness
+  - generated code 与 limited static-check recording
+  - execution result recording
+- 保留原有 fallback `AgentDecision` payload，并把同一条 decision 绑定进 typed
+  output package。
+- 增加 focused gateway assertions，证明直接调用 Gateway recorder 时，dataset
+  state 和 study-level rollup 都会留下 typed IO。
+
+当前边界：
+
+- 本切片只收口 fallback recorder path 的 audit packaging 缺口。
+- 不改变 DatasetGraph product-node IO、dependency planning、provider calls、
+  static rules、R execution、compare、repair 或 UI 行为。
+- fallback IO 是兼容/审计安全网。正常产品流仍然优先使用 DatasetGraph product
+  nodes 输出的更丰富 IO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+python -B -m unittest tests.test_agents_contract -v
+```

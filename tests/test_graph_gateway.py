@@ -532,6 +532,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("code_agent", generated_agents)
         self.assertIn("static_review_agent", generated_agents)
         self.assertEqual(generated_dataset.agent_decisions[0]["outputs"]["record_source"], "graph_gateway_default")
+        self.assertEqual([item["agent"] for item in generated_dataset.agent_node_inputs], ["code_agent", "static_review_agent"])
+        self.assertEqual([item["agent"] for item in generated_dataset.agent_node_outputs], ["code_agent", "static_review_agent"])
+        self.assertEqual(generated_dataset.agent_node_outputs[0]["agent_decisions"][0], generated_dataset.agent_decisions[0])
+        self.assertEqual(generated_dataset.agent_node_outputs[1]["agent_decisions"][0], generated_dataset.agent_decisions[1])
         self.assertIn("static_check_limited_scope", generated_dataset.risk_flags)
 
         result = gateway.record_code_review(
@@ -688,7 +692,12 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
         self.assertEqual(dataset_state.agent_decisions[0]["agent"], "spec_agent")
         self.assertEqual(dataset_state.agent_decisions[0]["decision"], "draft_spec_generated")
+        self.assertEqual(dataset_state.agent_node_inputs[0]["agent"], "spec_agent")
+        self.assertEqual(dataset_state.agent_node_inputs[0]["node"], "draft_spec_generation")
+        self.assertEqual(dataset_state.agent_node_outputs[0]["decision"], "draft_spec_generated")
+        self.assertEqual(dataset_state.agent_node_outputs[0]["agent_decisions"][0], dataset_state.agent_decisions[0])
         self.assertEqual(generated.graph_state.agent_decisions[-1]["agent"], "spec_agent")
+        self.assertIn("spec_agent", [item["agent"] for item in generated.graph_state.agent_node_outputs])
         self.assertEqual(generated.workflow_projection["datasets"]["ADAE"]["spec_state"]["status"], "draft_generated")
         self.assertEqual(generated.workflow_projection["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "spec_agent")
         approved_path = approved_dir / "adae_approved_spec.json"
@@ -1040,7 +1049,7 @@ class GraphGatewayTests(unittest.TestCase):
             run_id="run_lg2_mark_inputs_changed",
             target_datasets=["ADAE"],
         )
-        gateway.record_input_spec_ready(
+        input_ready = gateway.record_input_spec_ready(
             study_dir=study_dir,
             study_id="PSY201",
             run_id="run_lg2_mark_inputs_changed",
@@ -1048,6 +1057,9 @@ class GraphGatewayTests(unittest.TestCase):
             input_spec_path=spec_dir / "adae.json",
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
+        input_ready_state = input_ready.graph_state.datasets["ADAE"]
+        self.assertEqual(input_ready_state.agent_node_inputs[0]["agent"], "evidence_agent")
+        self.assertEqual(input_ready_state.agent_node_outputs[0]["decision"], "input_spec_ready")
         (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
 
         result = gateway.mark_inputs_changed(study_dir=study_dir, run_id="run_lg2_mark_inputs_changed")
@@ -1259,7 +1271,11 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.status, "completed")
         self.assertEqual(dataset_state.agent_decisions[0]["agent"], "execution_agent")
         self.assertEqual(dataset_state.agent_decisions[0]["decision"], "r_execution_completed")
+        self.assertEqual(dataset_state.agent_node_inputs[0]["agent"], "execution_agent")
+        self.assertEqual(dataset_state.agent_node_outputs[0]["decision"], "r_execution_completed")
+        self.assertEqual(dataset_state.agent_node_outputs[0]["agent_decisions"][0], dataset_state.agent_decisions[0])
         self.assertEqual(result.graph_state.agent_decisions[-1]["agent"], "execution_agent")
+        self.assertIn("execution_agent", [item["agent"] for item in result.graph_state.agent_node_outputs])
         self.assertEqual(result.graph_state.agent_audit_summary["datasets"]["ADAE"]["status"], "completed")
         self.assertEqual(dataset_state.agent_audit_summary["agent_counts"]["execution_agent"], 1)
         self.assertEqual(workflow_state["datasets"]["ADAE"]["agent_decisions"][0]["agent"], "execution_agent")
