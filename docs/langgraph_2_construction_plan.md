@@ -7248,6 +7248,58 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Checkpointer Backend Fail-Closed API Slice
+
+Completed:
+
+- Added API-level regression coverage for explicit service checkpointer backend
+  configuration failures.
+- When `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=sqlite` and the optional
+  `langgraph.checkpoint.sqlite` package is unavailable, `POST /runs/prepare`
+  now has a test proving it fails with HTTP 400 before any graph state or
+  workflow projection is written.
+- When `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=postgres` and the optional
+  `langgraph.checkpoint.postgres` package is unavailable, `POST /runs/prepare`
+  now has the same fail-closed API coverage.
+- The tests assert that no partial product state is created:
+  - no `graph_state.json`;
+  - no `workflow_state.json`;
+  - no `langgraph_checkpoints.sqlite`.
+- The dependency probe mock is scoped to only the relevant optional
+  checkpointer package names, so it does not hide unrelated imports.
+
+Current boundary:
+
+- This slice does not add SQLite/Postgres support to the current environment.
+- It does not claim persistent native resume is available by default.
+- It only locks down the API behavior when an operator explicitly enables a
+  checkpointer backend that is not available: fail early, explain the missing
+  dependency, and leave no half-created product run.
+
+Subagent review:
+
+- 2026-06-01, Fermat, `gpt-5.5`, read-only review: GO.
+- Confirmed the tests exercise the real `/runs/prepare` route through
+  `prepare_run_plan()`, `_open_graph_gateway()`, `_new_graph_gateway()`, and
+  `GraphGateway(... checkpointer_backend=...)`.
+- Confirmed no production-code change is required for this slice.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend -v
+Ran 4 tests in 0.079s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable -v
+Ran 2 tests in 0.075s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 126 tests in 16.288s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.1 Service Gateway Lifecycle Boundary Slice
 
 Completed:

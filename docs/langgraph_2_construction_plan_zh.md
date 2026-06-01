@@ -6703,6 +6703,54 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Checkpointer Backend Fail-Closed API 切片
+
+已完成：
+
+- 为显式 service checkpointer backend 配置失败增加 API 层回归测试。
+- 当 `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=sqlite`，但可选
+  `langgraph.checkpoint.sqlite` 包不可用时，新增测试证明 `POST /runs/prepare`
+  会在写入任何 graph state 或 workflow projection 前以 HTTP 400 失败。
+- 当 `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=postgres`，但可选
+  `langgraph.checkpoint.postgres` 包不可用时，新增同等 fail-closed API 覆盖。
+- 测试断言不会留下半截产品状态：
+  - 没有 `graph_state.json`；
+  - 没有 `workflow_state.json`；
+  - 没有 `langgraph_checkpoints.sqlite`。
+- optional dependency probe 的 mock 只针对对应 checkpointer package name，
+  不屏蔽其他 import。
+
+当前边界：
+
+- 本切片不为当前环境新增 SQLite/Postgres 支持。
+- 本切片不宣称默认已经支持 persistent native resume。
+- 它只锁定一种产品安全行为：如果 operator 显式启用了不可用的 checkpointer
+  backend，API 必须尽早失败、说明缺失依赖，并且不留下半创建的 product run。
+
+子 agent 审查：
+
+- 2026-06-01，Fermat，`gpt-5.5`，只读审查结论：GO。
+- 它确认测试走的是真实 `/runs/prepare` route，并经过
+  `prepare_run_plan()`、`_open_graph_gateway()`、`_new_graph_gateway()` 和
+  `GraphGateway(... checkpointer_backend=...)`。
+- 它确认本切片不需要修改 production code。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend -v
+Ran 4 tests in 0.079s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable -v
+Ran 2 tests in 0.075s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 126 tests in 16.288s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.1 Service Gateway Lifecycle Boundary 切片
 
 已完成：

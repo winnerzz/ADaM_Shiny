@@ -300,6 +300,70 @@ class Phase8ApiTests(unittest.TestCase):
             with self.assertRaisesRegex(service.ApiServiceError, "Unsupported service GraphGateway checkpointer backend"):
                 service._new_graph_gateway(study_dir="D:/tmp/study", run_id="run_unknown_backend")
 
+    def test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable(self) -> None:
+        study_dir = _workspace_dir("phase8_service_gateway_sqlite_api_unavailable") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        client = TestClient(create_app())
+        env = {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite"}
+        original_find_spec = __import__("importlib").util.find_spec
+
+        def find_spec_without_sqlite(name: str) -> Any:
+            if name == "langgraph.checkpoint.sqlite":
+                return None
+            return original_find_spec(name)
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("adam_agent.graph.checkpointing.importlib.util.find_spec", side_effect=find_spec_without_sqlite),
+        ):
+            response = client.post(
+                "/runs/prepare",
+                json={
+                    "study_dir": str(study_dir),
+                    "study_id": "MY_STUDY",
+                    "run_id": "run_sqlite_unavailable",
+                    "target_datasets": ["ADAE"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("SQLite LangGraph checkpointer is not installed", response.json()["detail"])
+        self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "graph_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "workflow_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "langgraph_checkpoints.sqlite").exists())
+
+    def test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable(self) -> None:
+        study_dir = _workspace_dir("phase8_service_gateway_postgres_api_unavailable") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        client = TestClient(create_app())
+        env = {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "postgres"}
+        original_find_spec = __import__("importlib").util.find_spec
+
+        def find_spec_without_postgres(name: str) -> Any:
+            if name == "langgraph.checkpoint.postgres":
+                return None
+            return original_find_spec(name)
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("adam_agent.graph.checkpointing.importlib.util.find_spec", side_effect=find_spec_without_postgres),
+        ):
+            response = client.post(
+                "/runs/prepare",
+                json={
+                    "study_dir": str(study_dir),
+                    "study_id": "MY_STUDY",
+                    "run_id": "run_postgres_unavailable",
+                    "target_datasets": ["ADAE"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Postgres LangGraph checkpointer is not installed", response.json()["detail"])
+        self.assertFalse((study_dir / "runs" / "run_postgres_unavailable" / "graph_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_postgres_unavailable" / "workflow_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_postgres_unavailable" / "langgraph_checkpoints.sqlite").exists())
+
     def test_service_layer_reads_graph_state_only_for_explicit_read_models(self) -> None:
         from adam_agent.api import service
 
