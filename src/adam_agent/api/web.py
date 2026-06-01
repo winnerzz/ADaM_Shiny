@@ -3716,15 +3716,6 @@ INDEX_HTML = r"""<!doctype html>
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
     }
 
-    const TERMINAL_FAILURE_ACTIONS = [
-      {action: 'retry_execution', label: 'Retry Execution'},
-      {action: 'repair_code', label: 'Repair Code'},
-      {action: 'revise_spec', label: 'Revise Spec'},
-      {action: 'request_new_input', label: 'Request New Input'},
-      {action: 'skip_dataset', label: 'Skip Dataset'},
-      {action: 'continue_other_datasets', label: 'Continue Other Datasets'}
-    ];
-
     function hasReferenceAdamEvidence(dataset) {
       return Boolean((state.inputSummary?.reference_adam || []).find((item) => item.dataset === dataset));
     }
@@ -4074,29 +4065,28 @@ INDEX_HTML = r"""<!doctype html>
       const execution = executionFor(target);
       const datasetProgress = datasetProgressFor(target);
       const review = terminalFailureReviewFor(target);
-      const graphActions = datasetProgress?.available_actions || [];
-      const hasGraphActionList = datasetProgress && Array.isArray(datasetProgress.available_actions);
-      const graphGateOpen = datasetProgress
-        ? datasetProgress.next_action === 'review_terminal_failure'
-        : (execution?.status === 'terminal_failure' && !review);
+      const graphActions = Array.isArray(datasetProgress?.available_actions) ? datasetProgress.available_actions : [];
+      const graphGateOpen = Boolean(datasetProgress && datasetProgress.next_action === 'review_terminal_failure');
       const progressTerminalFailure = datasetProgress?.status === 'terminal_failure' || datasetProgress?.execution_status === 'terminal_failure';
       const executionTerminalFailure = execution?.status === 'terminal_failure';
       if (!target || (!executionTerminalFailure && !progressTerminalFailure) || !graphGateOpen) return '';
-      const diagnostics = execution.diagnostics_path
+      const diagnostics = execution?.diagnostics_path
         ? ' Diagnostics were recorded in the run audit artifacts.'
         : ' Diagnostics were not linked in the current read model.';
       const reviewed = review?.action || review?.decision;
       const reviewedNote = reviewed
         ? `<p class="note strong">Last failure decision: ${escapeHtml(titleFromToken(reviewed))}. Continue with the matching next action from the graph.</p>`
         : '';
-      const actions = graphActions.length ? graphActions : (hasGraphActionList ? [] : TERMINAL_FAILURE_ACTIONS);
+      const actionControls = graphActions.length
+        ? graphActions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label || titleFromToken(item.action))}</button>`).join('')
+        : '<p class="note">Waiting for graph-owned terminal-failure actions to load. Refresh progress before choosing a follow-up.</p>';
       return `
         <div class="card terminal-failure-panel">
           <h3>Terminal Failure Triage</h3>
           <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, spec revision, new input request, or batch continuation.</p>
           ${reviewedNote}
           <div class="button-row">
-            ${actions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label || titleFromToken(item.action))}</button>`).join('')}
+            ${actionControls}
           </div>
         </div>
       `;

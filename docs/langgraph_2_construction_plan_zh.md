@@ -6703,6 +6703,45 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
+
+已完成：
+
+- 收紧本地 UI 的 terminal-failure triage panel：后续动作按钮只从 graph-owned
+  `available_actions` 渲染。
+- 移除 `terminalFailurePanel()` 里的浏览器本地默认 action fallback。现在即使浏览器
+  里还有旧的 execution failure cache，只要 graph progress 不可用，就不能自己打开
+  retry / repair / revise / skip 等按钮。
+- 如果 graph progress 表明 dataset 正在等待 `review_terminal_failure`，但
+  `available_actions` 还没有加载，panel 只显示刷新/read-model 提示，不创建本地动作按钮。
+- 后端 `GraphGateway` 的 terminal-failure action contract 仍是唯一动作来源。
+
+边界：
+
+- 本切片只改变 UI read-model gate 和测试。
+- 不改变 terminal-failure 后端路由、repair/spec-revision 行为、native resume 或
+  本地 R 执行。
+- 自动 repair/spec-revision 闭环仍是后续工作。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认浏览器本地 terminal-failure cache 不再打开动作按钮，graph-owned
+  `available_actions` 是唯一动作来源，human review queue 对这些动作仍只是展示。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_index_terminal_failure_panel_requires_graph_owned_actions -v
+Ran 2 tests in 0.122s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 137 tests in 17.296s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.3 Native Study Loop 保留进度解释切片
 
 已完成：

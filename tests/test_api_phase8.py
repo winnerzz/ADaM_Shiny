@@ -1275,23 +1275,97 @@ console.log(JSON.stringify({
         html = response.text
         self.assertIn("terminalFailureReviewByDataset", html)
         self.assertIn("function terminalFailurePanel(dataset)", html)
-        self.assertIn("TERMINAL_FAILURE_ACTIONS", html)
         self.assertIn("const datasetProgress = datasetProgressFor(target);", html)
-        self.assertIn("const graphActions = datasetProgress?.available_actions || [];", html)
-        self.assertIn("const hasGraphActionList = datasetProgress && Array.isArray(datasetProgress.available_actions);", html)
-        self.assertIn("const graphGateOpen = datasetProgress", html)
-        self.assertIn("const actions = graphActions.length ? graphActions : (hasGraphActionList ? [] : TERMINAL_FAILURE_ACTIONS)", html)
+        self.assertIn("const graphActions = Array.isArray(datasetProgress?.available_actions) ? datasetProgress.available_actions : [];", html)
+        self.assertIn("const graphGateOpen = Boolean(datasetProgress", html)
+        self.assertIn("const actionControls = graphActions.length", html)
+        self.assertIn("Waiting for graph-owned terminal-failure actions to load.", html)
         self.assertIn("data-terminal-action=\"${escapeHtml(item.action)}\"", html)
-        self.assertIn("action: 'retry_execution'", html)
-        self.assertIn("action: 'repair_code'", html)
-        self.assertIn("action: 'revise_spec'", html)
-        self.assertIn("action: 'request_new_input'", html)
-        self.assertIn("action: 'skip_dataset'", html)
-        self.assertIn("action: 'continue_other_datasets'", html)
         self.assertIn("function submitTerminalFailureReview(dataset, action)", html)
         self.assertIn("/terminal-failure-review", html)
         self.assertIn("await refreshGraphReadModels()", html)
         self.assertIn("Choose one controlled next step; the graph will record the decision", html)
+
+    def test_index_terminal_failure_panel_requires_graph_owned_actions(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_terminal_failure_ui' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.selectedTarget = 'ADAE';
+state.executionByDataset = {ADAE: {dataset: 'ADAE', status: 'terminal_failure'}};
+state.runProgress = null;
+const localOnly = terminalFailurePanel('ADAE');
+state.runProgress = {datasets: [{
+  dataset: 'ADAE',
+  status: 'terminal_failure',
+  execution_status: 'terminal_failure',
+  next_action: 'review_terminal_failure',
+  available_actions: [
+    {action: 'repair_code', label: 'Repair Code'},
+    {action: 'revise_spec', label: 'Revise Spec'}
+  ]
+}]};
+const graphOwned = terminalFailurePanel('ADAE');
+state.runProgress = {datasets: [{
+  dataset: 'ADAE',
+  status: 'terminal_failure',
+  execution_status: 'terminal_failure',
+  next_action: 'review_terminal_failure',
+  available_actions: []
+}]};
+const graphGateWithoutActions = terminalFailurePanel('ADAE');
+console.log(JSON.stringify({
+  localOnlyHasAction: localOnly.includes('data-terminal-action='),
+  localOnlyVisible: localOnly.includes('Terminal Failure Triage'),
+  graphOwnedHasRepair: graphOwned.includes('data-terminal-action="repair_code"'),
+  graphOwnedHasRevise: graphOwned.includes('data-terminal-action="revise_spec"'),
+  graphGateWithoutActionsHasAction: graphGateWithoutActions.includes('data-terminal-action='),
+  graphGateWithoutActionsMessage: graphGateWithoutActions.includes('Waiting for graph-owned terminal-failure actions to load.')
+}));
+"""
+        script_path = TMP_ROOT / "ui_terminal_failure_graph_actions.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertFalse(result["localOnlyVisible"])
+        self.assertFalse(result["localOnlyHasAction"])
+        self.assertTrue(result["graphOwnedHasRepair"])
+        self.assertTrue(result["graphOwnedHasRevise"])
+        self.assertFalse(result["graphGateWithoutActionsHasAction"])
+        self.assertTrue(result["graphGateWithoutActionsMessage"])
 
     def test_index_hides_technical_paths_outside_advanced_artifact_view(self) -> None:
         client = TestClient(create_app())

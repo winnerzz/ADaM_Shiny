@@ -7248,6 +7248,48 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
+
+Completed:
+
+- Tightened the local UI terminal-failure triage panel so follow-up buttons are
+  rendered only from graph-owned `available_actions`.
+- Removed the browser-local fallback action list from `terminalFailurePanel()`.
+  A stale local execution cache can no longer open retry/repair/revise/skip
+  controls when graph progress is unavailable.
+- If graph progress says the dataset is waiting at `review_terminal_failure`
+  but actions have not loaded yet, the panel shows a refresh/read-model message
+  instead of creating local action buttons.
+- Kept the existing backend `GraphGateway` terminal-failure action contract as
+  the single source of available actions.
+
+Boundary:
+
+- This slice changes only UI read-model gating and tests.
+- It does not change terminal-failure backend routing, repair/spec-revision
+  behavior, native resume, or local R execution.
+- Full automatic repair/spec-revision loops remain future work.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed that browser-local terminal-failure cache no longer opens action
+  buttons, graph-owned `available_actions` is the only action source, and the
+  human review queue remains display-only for these actions.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions tests.test_api_phase8.Phase8ApiTests.test_index_terminal_failure_panel_requires_graph_owned_actions -v
+Ran 2 tests in 0.122s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 137 tests in 17.296s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.3 Native Study Loop Preserved Progress Explanation Slice
 
 Done:
