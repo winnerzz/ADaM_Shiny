@@ -5104,6 +5104,7 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(by_dataset["ADAE"]["action_label"], "Review generated R code.")
         self.assertTrue(by_dataset["ADAE"]["blocked"])
         self.assertIn("Study-level dependency review", by_dataset["ADAE"]["blocked_reason"])
+        self.assertEqual(by_dataset["ADAE"]["available_actions"], [])
         self.assertEqual(by_dataset["ADCM"]["next_action"], "blocked")
         self.assertIn("Study-level dependency review", by_dataset["ADCM"]["blocked_reason"])
         review_items = {(item["scope"], item["dataset"], item["name"], item["source"]) for item in progress["review_queue"]}
@@ -5112,6 +5113,119 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("Review dependency plan.", {item["action_label"] for item in progress["review_queue"]})
         self.assertTrue(Path(progress["graph_state_path"]).exists())
         self.assertTrue(Path(progress["workflow_state_path"]).exists())
+
+    def test_gateway_progress_summary_exposes_review_gate_actions_when_unblocked(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_review_gate_actions") / "PSY201"
+        input_spec = study_dir / "input_spec"
+        input_spec.mkdir(parents=True)
+        (input_spec / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_review_gate_actions",
+            target_datasets=["ADAE"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_review_gate_actions",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.dependency_review_status = "accepted"
+        gateway._persist_graph_state(study_dir, state, node="test_accept_dependency_for_review_actions")
+        code_path = study_dir / "runs" / "run_lg2_progress_review_gate_actions" / "code" / "build_adae.R"
+        code_path.parent.mkdir(parents=True)
+        code_path.write_text("write.csv(data.frame(ID='01'), 'outputs/adae.csv', row.names=FALSE)\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(
+            study_dir,
+            "run_lg2_progress_review_gate_actions",
+            "ADAE",
+            code_path,
+        )
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_review_gate_actions",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+        )
+
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_review_gate_actions",
+        )
+
+        adae_progress = {item["dataset"]: item for item in progress["datasets"]}["ADAE"]
+        self.assertEqual(adae_progress["next_action"], "review_code")
+        self.assertEqual(
+            adae_progress["available_actions"],
+            [
+                {"action": "approve", "label": "Approve Code"},
+                {"action": "reject", "label": "Reject Code"},
+            ],
+        )
+        queue_by_name = {(item["dataset"], item["name"]): item for item in progress["review_queue"]}
+        self.assertEqual(
+            queue_by_name[("ADAE", "code_review")]["available_actions"],
+            [
+                {"action": "approve", "label": "Approve Code"},
+                {"action": "reject", "label": "Reject Code"},
+            ],
+        )
+
+    def test_gateway_progress_summary_exposes_draft_spec_review_actions(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_progress_draft_spec_actions") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_progress_draft_spec_actions",
+            target_datasets=["ADCM"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_draft_spec_actions",
+        ).model_copy(deep=True)
+        state.current_interrupt = None
+        state.dependency_review_status = "accepted"
+        state.datasets["ADCM"].status = "needs_review"
+        state.datasets["ADCM"].spec_state = {"status": "draft_generated"}
+        state.datasets["ADCM"].current_interrupt = InterruptState(
+            name="draft_spec_review",
+            dataset="ADCM",
+            reason="Review the generated draft spec.",
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_draft_spec_review_actions")
+
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_progress_draft_spec_actions",
+        )
+
+        adcm_progress = {item["dataset"]: item for item in progress["datasets"]}["ADCM"]
+        self.assertEqual(adcm_progress["next_action"], "review_draft_spec")
+        self.assertEqual(
+            adcm_progress["available_actions"],
+            [
+                {"action": "approve", "label": "Approve Draft Spec"},
+                {"action": "reject", "label": "Reject Draft Spec"},
+            ],
+        )
+        queue_by_name = {(item["dataset"], item["name"]): item for item in progress["review_queue"]}
+        self.assertEqual(
+            queue_by_name[("ADCM", "draft_spec_review")]["available_actions"],
+            [
+                {"action": "approve", "label": "Approve Draft Spec"},
+                {"action": "reject", "label": "Reject Draft Spec"},
+            ],
+        )
 
     def test_gateway_progress_summary_reports_missing_workflow_projection_as_none(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_progress_no_workflow_projection") / "PSY201"

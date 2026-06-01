@@ -471,6 +471,12 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       line-height: 1.35;
     }
+    .review-queue-actions {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
     .study-loop-panel {
       margin: 0 0 12px;
       padding: 12px;
@@ -2903,7 +2909,8 @@ INDEX_HTML = r"""<!doctype html>
           name: item.name || item.interrupt || progressInterruptName(item.action),
           status: item.status || 'open',
           source: item.source || 'graph_progress',
-          reason: item.reason || item.action_label || ''
+          reason: item.reason || item.action_label || '',
+          availableActions: Array.isArray(item.available_actions) ? item.available_actions : []
         })).filter((item) => item.name);
       }
       const graph = state.graphState || {};
@@ -2919,7 +2926,8 @@ INDEX_HTML = r"""<!doctype html>
           scope: 'dataset',
           dataset: datasetProgress.dataset,
           status: datasetProgress.status,
-          reason: datasetProgress.action_label || datasetProgress.blocked_reason || ''
+          reason: datasetProgress.action_label || datasetProgress.blocked_reason || '',
+          availableActions: datasetProgress.available_actions || []
         });
         if (!datasetProgress.current_interrupt && ['review_code', 'review_draft_spec', 'review_terminal_failure', 'resolve_dependency'].includes(datasetProgress.next_action)) {
           addReviewQueueItem(items, seen, null, {
@@ -2928,7 +2936,8 @@ INDEX_HTML = r"""<!doctype html>
             status: datasetProgress.status,
             source: 'progress',
             interruptName: progressInterruptName(datasetProgress.next_action),
-            reason: datasetProgress.action_label || datasetProgress.blocked_reason || ''
+            reason: datasetProgress.action_label || datasetProgress.blocked_reason || '',
+            availableActions: datasetProgress.available_actions || []
           });
         }
       }
@@ -2977,7 +2986,8 @@ INDEX_HTML = r"""<!doctype html>
             name: interrupt,
             status: 'open',
             source: 'interrupt',
-            reason: context.reason || ''
+            reason: context.reason || '',
+            availableActions: context.availableActions || []
           };
         }
         const name = interrupt.name || interrupt.interrupt || '';
@@ -2989,7 +2999,8 @@ INDEX_HTML = r"""<!doctype html>
           name,
           status: interruptStatus,
           source: 'interrupt',
-          reason: interrupt.reason || context.reason || ''
+          reason: interrupt.reason || context.reason || '',
+          availableActions: context.availableActions || []
         };
       }
       if (context.interruptName) {
@@ -2999,7 +3010,8 @@ INDEX_HTML = r"""<!doctype html>
           name: context.interruptName,
           status: context.status || 'open',
           source: context.source || 'progress',
-          reason: context.reason || ''
+          reason: context.reason || '',
+          availableActions: context.availableActions || []
         };
       }
       const status = String(context.status || '').toLowerCase();
@@ -3010,7 +3022,8 @@ INDEX_HTML = r"""<!doctype html>
           name: status === 'terminal_failure' ? 'terminal_failure' : 'review_required',
           status,
           source: context.source || 'status',
-          reason: context.reason || ''
+          reason: context.reason || '',
+          availableActions: context.availableActions || []
         };
       }
       return null;
@@ -3039,9 +3052,20 @@ INDEX_HTML = r"""<!doctype html>
           <div>
             <div class="review-queue-action">${escapeHtml(reviewQueueActionText(item))}</div>
             <div class="review-queue-detail">${escapeHtml(reviewQueueDetailText(item))}</div>
+            ${reviewQueueActionHints(item)}
           </div>
         </div>
       `;
+    }
+
+    function reviewQueueActionHints(item) {
+      const actions = item.availableActions || item.available_actions || [];
+      if (!Array.isArray(actions) || !actions.length) return '';
+      const labels = actions
+        .map((action) => action.label || titleFromToken(action.action || 'review'))
+        .filter(Boolean)
+        .join(' / ');
+      return `<div class="review-queue-actions">Available graph actions: ${escapeHtml(labels)}</div>`;
     }
 
     function readableInterruptName(name) {

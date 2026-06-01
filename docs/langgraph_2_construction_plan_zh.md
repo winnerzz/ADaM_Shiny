@@ -6703,6 +6703,63 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Review Gate Action Read-Model 切片
+
+已完成：
+
+- `GraphGateway.progress_summary()` 现在会在 dataset progress 中暴露
+  graph-owned `available_actions`：
+  - `draft_spec_review`：`approve` / `reject`；
+  - `code_review`：`approve` / `reject`；
+  - `terminal_failure`：保留既有 triage actions。
+- `available_actions` 只是 read-model hint，不执行任何动作：
+  - draft spec 审核仍必须走现有 draft-spec review gateway flow；
+  - code review 仍必须走现有 code-review gateway flow；
+  - R execution 仍必须走显式 approved-code execution。
+- 当 dataset 被 dependency/stale/study-level gate block 时，
+  `available_actions` 会清空，避免 UI 暗示可以绕过上游 gate。
+- terminal failure 已经被人工 triage 后，不再继续暴露 terminal triage actions。
+- human review queue 现在把同一份 `available_actions` 投影给 UI，并只作为文本提示
+  展示“Available graph actions”，不是可点击命令。
+- 根据子 agent 非阻断建议，补充了 `draft_spec_review` action hints 的显式回归测试。
+
+当前边界：
+
+- 本切片不新增任何 approve/reject endpoint。
+- 本切片不改变 dependency planning、draft/code review 校验、LLM generation、
+  R execution、compare、repair/spec revision 或 native checkpointer 行为。
+- UI 展示的是 graph read model，不是新的浏览器端 workflow state machine。
+
+子 agent 审查：
+
+- 2026-06-01，Poincare，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - `available_actions` 仍停留在 read model，没有新增执行路径；
+  - blocked/stale/study-level dependency gate 场景会清空 dataset actions；
+  - terminal failure triage 后不会继续显示 triage actions；
+  - UI action hints 只是 escape 后的文本，不是按钮，也没有绑定 fetch/click handler；
+  - dataset progress 和 review queue 在已覆盖的 code-review 路径上保持一致。
+- 它提出的非阻断建议是补充 `draft_spec_review` action hints 覆盖；已在提交前完成。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_review_gate_actions_when_unblocked tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_draft_spec_review_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed -v
+Ran 3 tests in 0.161s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions -v
+Ran 2 tests in 0.078s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 236 tests in 25.074s - OK (skipped=2)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Stale Study Loop Result Guard 切片
 
 已完成：

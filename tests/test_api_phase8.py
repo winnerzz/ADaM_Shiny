@@ -547,8 +547,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("return progress.review_queue.map", queue_body)
         self.assertLess(queue_body.index("Array.isArray(progress.review_queue)"), queue_body.index("const graph = state.graphState || {};"))
         self.assertIn("source: item.source || 'graph_progress'", queue_body)
+        self.assertIn("availableActions: Array.isArray(item.available_actions) ? item.available_actions : []", queue_body)
         self.assertIn("progress.current_interrupt", queue_body)
         self.assertIn("datasetProgress.current_interrupt", queue_body)
+        self.assertIn("availableActions: datasetProgress.available_actions || []", queue_body)
         self.assertIn("progressInterruptName(datasetProgress.next_action)", queue_body)
         self.assertIn("state.graphState", queue_body)
         self.assertIn("graph.current_interrupt", queue_body)
@@ -558,6 +560,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Review dependency plan before product steps continue.", queue_body)
         self.assertIn("Review generated R code before local execution.", queue_body)
         self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
+        self.assertIn("function reviewQueueActionHints(item)", queue_body)
+        self.assertIn("Available graph actions:", queue_body)
         self.assertNotIn("JSON.stringify", queue_body)
 
     def test_index_exposes_native_study_loop_result_summary(self) -> None:

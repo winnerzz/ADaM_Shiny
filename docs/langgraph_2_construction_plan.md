@@ -7248,6 +7248,73 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Review Gate Action Read-Model Slice
+
+Completed:
+
+- `GraphGateway.progress_summary()` now exposes graph-owned
+  `available_actions` in dataset progress:
+  - `draft_spec_review`: `approve` / `reject`;
+  - `code_review`: `approve` / `reject`;
+  - `terminal_failure`: the existing triage actions.
+- `available_actions` is a read-model hint only:
+  - draft-spec approval still goes through the existing draft-spec review
+    Gateway flow;
+  - code approval still goes through the existing code-review Gateway flow;
+  - R execution still requires explicit approved-code execution.
+- Dataset `available_actions` is cleared when dependency, stale-plan, or
+  study-level gates block the dataset, so the UI does not imply a bypass.
+- Terminal-failure triage actions are no longer shown after a human triage
+  decision has already been recorded.
+- The human review queue now projects the same `available_actions` to the UI
+  and renders them as text-only "Available graph actions" hints, not clickable
+  commands.
+- A draft-spec review action-hint regression test was added after subagent
+  review noted the gap.
+
+Current boundary:
+
+- This slice adds no approve/reject endpoints.
+- It does not change dependency planning, draft/code review validation, LLM
+  generation, R execution, compare, repair/spec-revision, or native
+  checkpointer behavior.
+- The UI renders graph read-model state; it does not become a browser-side
+  workflow state machine.
+
+Subagent review:
+
+- 2026-06-01, Poincare, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - `available_actions` remains read-model data and does not add an execution
+    path;
+  - blocked/stale/study-level dependency gate cases clear dataset actions;
+  - terminal-failure triage actions are hidden after triage review;
+  - UI action hints are escaped text only, not buttons and not wired to fetch or
+    click handlers;
+  - dataset progress and review queue stay consistent for the covered
+    code-review path.
+- Non-blocking suggestion: add explicit `draft_spec_review` action-hint
+  coverage. This was implemented before commit.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_review_gate_actions_when_unblocked tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_draft_spec_review_actions tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_exposes_terminal_failure_actions_until_reviewed -v
+Ran 3 tests in 0.161s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_human_review_queue_from_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_exposes_terminal_failure_triage_actions -v
+Ran 2 tests in 0.078s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 236 tests in 25.074s - OK (skipped=2)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Stale Study Loop Result Guard Slice
 
 Completed:

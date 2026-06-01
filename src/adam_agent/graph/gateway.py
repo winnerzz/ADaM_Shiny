@@ -4667,7 +4667,7 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
         "compare_status": str(dataset_state.compare_summary.get("status") or ""),
         "output_quality": output_quality,
         "warnings": _dataset_progress_warnings(dataset_state),
-        "available_actions": _available_dataset_actions(dataset_state),
+        "available_actions": _available_dataset_actions(dataset_state, blocked_reason=block),
     }
 
 
@@ -4724,17 +4724,43 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
     return {"next_action": "finalize_inputs", "action_label": "Confirm uploaded evidence and prepare the spec gate."}
 
 
-def _available_dataset_actions(dataset_state: DatasetRunState) -> list[dict[str, str]]:
+REVIEW_GATE_ACTIONS_BY_INTERRUPT: dict[str, tuple[dict[str, str], ...]] = {
+    "dependency_review": (
+        {"action": "approve", "label": "Approve Plan"},
+        {"action": "reject", "label": "Reject Plan"},
+    ),
+    "draft_spec_review": (
+        {"action": "approve", "label": "Approve Draft Spec"},
+        {"action": "reject", "label": "Reject Draft Spec"},
+    ),
+    "code_review": (
+        {"action": "approve", "label": "Approve Code"},
+        {"action": "reject", "label": "Reject Code"},
+    ),
+}
+
+
+def _available_dataset_actions(dataset_state: DatasetRunState, *, blocked_reason: str = "") -> list[dict[str, str]]:
+    if blocked_reason:
+        return []
     interrupt = dataset_state.current_interrupt
     review = dataset_state.execution_state.get("terminal_failure_review")
     if (
         interrupt is not None
         and interrupt.name == "terminal_failure"
-        and interrupt.status == "open"
-        and not isinstance(review, dict)
     ):
-        return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
+        if interrupt.status == "open" and not isinstance(review, dict):
+            return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
+        return []
+    if interrupt is not None and interrupt.status == "open":
+        return _available_actions_for_interrupt(interrupt.name)
     return []
+
+
+def _available_actions_for_interrupt(name: str) -> list[dict[str, str]]:
+    if name == "terminal_failure":
+        return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
+    return [dict(item) for item in REVIEW_GATE_ACTIONS_BY_INTERRUPT.get(name, ())]
 
 
 def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4775,6 +4801,7 @@ def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any
             dataset=dataset,
             status=str(dataset_progress.get("status") or ""),
             reason=str(dataset_progress.get("action_label") or dataset_progress.get("blocked_reason") or ""),
+            available_actions=list(dataset_progress.get("available_actions") or []),
         )
         interrupt_name = _interrupt_name_for_next_action(str(dataset_progress.get("next_action") or ""))
         if current_interrupt is None and interrupt_name:
@@ -4788,6 +4815,7 @@ def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any
                 source="progress",
                 interrupt_name=interrupt_name,
                 reason=str(dataset_progress.get("action_label") or dataset_progress.get("blocked_reason") or ""),
+                available_actions=list(dataset_progress.get("available_actions") or []),
             )
     return items
 
@@ -4851,6 +4879,7 @@ def _add_human_review_queue_item(
     dataset: str = "",
     source: str = "interrupt",
     interrupt_name: str = "",
+    available_actions: list[dict[str, str]] | None = None,
 ) -> None:
     normalized_dataset = dataset.strip().upper()
     name = interrupt_name.strip()
@@ -4868,6 +4897,8 @@ def _add_human_review_queue_item(
         scope = "dataset" if normalized_dataset else scope
     if not name:
         return
+    action_source = _available_actions_for_interrupt(name) if available_actions is None else available_actions
+    actions = [dict(item) for item in action_source]
     key = (normalized_dataset or "study", name, item_source)
     if key in seen:
         return
@@ -4882,6 +4913,7 @@ def _add_human_review_queue_item(
             "reason": item_reason,
             "action": _action_for_interrupt(name),
             "action_label": _interrupt_label(name),
+            "available_actions": actions,
         }
     )
 
