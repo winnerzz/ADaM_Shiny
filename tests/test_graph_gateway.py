@@ -26,6 +26,7 @@ try:
         GraphGatewayFinalizeInputsResult,
         _generation_quality_from_dataset_result,
         _native_study_loop_dependency_outputs_available,
+        _resolve_run_artifact_path,
     )
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -47,6 +48,7 @@ except ModuleNotFoundError:
         GraphGatewayFinalizeInputsResult,
         _generation_quality_from_dataset_result,
         _native_study_loop_dependency_outputs_available,
+        _resolve_run_artifact_path,
     )
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -3579,6 +3581,50 @@ class GraphGatewayTests(unittest.TestCase):
         state.dependency_resolution[0]["artifact_path"] = str(good_output.as_posix())
         state.dependency_resolution[0]["artifact_sha256"] = good_sha
         self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
+
+    def test_resolve_run_artifact_path_normalizes_equivalent_run_scoped_paths(self) -> None:
+        run_dir = _workspace_dir("lg2_resolve_run_artifact_path") / "PSY201" / "runs" / "run_path_matrix"
+        output_path = run_dir / "outputs" / "adsl.csv"
+        output_path.parent.mkdir(parents=True)
+        output_path.write_text("USUBJID\n01\n", encoding="utf-8")
+
+        equivalent_inputs = [
+            "outputs/adsl.csv",
+            "outputs\\adsl.csv",
+            "runs/run_path_matrix/outputs/adsl.csv",
+            "runs\\run_path_matrix\\outputs\\adsl.csv",
+            str(output_path.as_posix()),
+        ]
+
+        for artifact_path in equivalent_inputs:
+            with self.subTest(artifact_path=artifact_path):
+                resolved = _resolve_run_artifact_path(run_dir, artifact_path)
+                self.assertIsNotNone(resolved)
+                self.assertEqual(
+                    resolved.resolve(strict=False).as_posix(),
+                    output_path.resolve(strict=False).as_posix(),
+                )
+
+    def test_resolve_run_artifact_path_rejects_empty_or_outside_run_paths(self) -> None:
+        study_root = _workspace_dir("lg2_resolve_run_artifact_path_escape") / "PSY201"
+        run_dir = study_root / "runs" / "run_path_escape"
+        outside_path = study_root / "outside" / "adsl.csv"
+        outside_path.parent.mkdir(parents=True)
+        outside_path.write_text("USUBJID\n99\n", encoding="utf-8")
+
+        rejected_inputs = [
+            "",
+            "   ",
+            "../outside/adsl.csv",
+            "outputs/../../outside/adsl.csv",
+            "prefix/runs/run_path_escape/outputs/adsl.csv",
+            "runs/run_other/outputs/adsl.csv",
+            str(outside_path.as_posix()),
+        ]
+
+        for artifact_path in rejected_inputs:
+            with self.subTest(artifact_path=artifact_path):
+                self.assertIsNone(_resolve_run_artifact_path(run_dir, artifact_path))
 
     def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"

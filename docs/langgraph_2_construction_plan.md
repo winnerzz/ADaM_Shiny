@@ -7660,6 +7660,54 @@ Subagent review:
   Windows slashes, run-relative paths, output-relative paths, absolute paths,
   and `..` escape attempts.
 
+### 2026-06-01 - LG2.3 Run Artifact Path Helper Matrix Slice
+
+Completed:
+
+- Added focused helper-level tests for `_resolve_run_artifact_path()` instead of
+  relying only on native study-loop integration tests.
+- Covered equivalent current-run artifact paths:
+  - `outputs/adsl.csv`;
+  - Windows-style `outputs\adsl.csv`;
+  - `runs/{run_id}/outputs/adsl.csv`;
+  - Windows-style `runs\{run_id}\outputs\adsl.csv`;
+  - absolute paths inside the graph-owned run directory.
+- Covered rejected paths:
+  - empty values;
+  - `..` escape attempts;
+  - absolute paths outside the graph-owned run directory;
+  - explicit `runs/{other_run_id}/...` paths;
+  - prefixed `.../runs/{run_id}/...` paths.
+- The new matrix exposed one semantic ambiguity: `runs/{other_run_id}/...`
+  previously resolved as a normal relative path under the current run
+  directory. `_resolve_run_artifact_path()` now fails closed whenever a
+  relative artifact path contains a `runs/...` marker whose run id does not
+  match the current graph run directory, or when the `runs/...` marker is not
+  the first path segment.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_resolve_run_artifact_path_normalizes_equivalent_run_scoped_paths tests.test_graph_gateway.GraphGatewayTests.test_resolve_run_artifact_path_rejects_empty_or_outside_run_paths tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 4 tests in 0.019s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK, with expected CRLF working-copy warnings only
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 277 tests in 30.106s - OK (skipped=3)
+```
+
+Subagent review:
+
+- GO.
+- Non-blocking suggestion absorbed before commit: prefixed
+  `.../runs/{run_id}/...` paths now fail closed instead of being trimmed to the
+  inner run marker.
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
 
 Completed:

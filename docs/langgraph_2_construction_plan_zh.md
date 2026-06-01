@@ -7086,6 +7086,51 @@ Ran 275 tests in 30.141s - OK (skipped=3)
   containment 行为拆成一个独立 helper 单测矩阵，覆盖 Windows 反斜杠、
   run-relative path、output-relative path、absolute path 和 `..` 逃逸尝试。
 
+### 2026-06-01 - LG2.3 Run Artifact Path Helper Matrix 切片
+
+已完成：
+
+- 为 `_resolve_run_artifact_path()` 增加 helper 级 focused tests，不再只依赖
+  native study-loop 集成测试兜底。
+- 覆盖等价的当前 run artifact path：
+  - `outputs/adsl.csv`；
+  - Windows 风格 `outputs\adsl.csv`；
+  - `runs/{run_id}/outputs/adsl.csv`；
+  - Windows 风格 `runs\{run_id}\outputs\adsl.csv`；
+  - graph-owned run directory 内部的 absolute path。
+- 覆盖应拒绝的路径：
+  - 空值；
+  - `..` 逃逸尝试；
+  - graph-owned run directory 外部的 absolute path；
+  - 显式 `runs/{other_run_id}/...` path；
+  - 带前缀的 `.../runs/{run_id}/...` path。
+- 新测试矩阵暴露了一个语义边界：`runs/{other_run_id}/...` 之前会被当成当前
+  run directory 下的普通相对路径。`_resolve_run_artifact_path()` 现在 fail
+  closed：只要相对 artifact path 显式包含 `runs/...` marker，该 run id 必须
+  等于当前 graph run directory，并且 `runs/...` marker 必须是路径的第一段。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_resolve_run_artifact_path_normalizes_equivalent_run_scoped_paths tests.test_graph_gateway.GraphGatewayTests.test_resolve_run_artifact_path_rejects_empty_or_outside_run_paths tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 4 tests in 0.019s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK，仅有预期内 CRLF working-copy warnings
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 277 tests in 30.106s - OK (skipped=3)
+```
+
+子 agent 审查：
+
+- GO。
+- 提交前吸收非阻断建议：带前缀的 `.../runs/{run_id}/...` path 现在 fail
+  closed，不再裁剪到内部 run marker。
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
 
 已完成：

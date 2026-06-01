@@ -5615,9 +5615,14 @@ def _resolve_run_artifact_path(run_dir: Path, artifact_path: str) -> Path | None
     parts = normalized.parts
     run_marker_index = None
     for index in range(len(parts) - 1):
-        if parts[index].lower() == "runs" and parts[index + 1] == run_dir.name:
-            run_marker_index = index + 2
-            break
+        if parts[index].lower() != "runs":
+            continue
+        if index != 0:
+            return None
+        if parts[index + 1] != run_dir.name:
+            return None
+        run_marker_index = index + 2
+        break
     if run_marker_index is not None:
         candidate = run_dir.joinpath(*parts[run_marker_index:])
     else:
