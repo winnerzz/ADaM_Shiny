@@ -4828,12 +4828,17 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
         return {}
     started = _normalize_dataset_list([str(dataset) for dataset in loop.get("started_datasets", [])])
     blocked = list(loop.get("blocked_datasets") or state.blocked_datasets)
+    native_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
+    resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
     return {
         "source": "graph_progress",
         "boundary": loop.get("boundary", "study_product_loop_pilot_only"),
         "started_datasets": started,
         "blocked_datasets": blocked,
         "review_queue": list(review_queue),
+        "native_resume_available": native_resume_available,
+        "native_resume_scope": resume_scope,
+        "resume_boundary": "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only",
         "message": _study_loop_progress_message(started=started, blocked=blocked, review_queue=review_queue),
     }
 

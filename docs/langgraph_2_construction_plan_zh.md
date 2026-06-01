@@ -7223,6 +7223,67 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Boundary Read-Model 切片
+
+已完成：
+
+- 在 graph-owned progress 的 `study_loop_result` 中增加 native resume 边界字段：
+  - `native_resume_available`
+  - `native_resume_scope`
+  - `resume_boundary`
+- 字段只从 `runtime_persistence` 投影，不参与 dependency planning、dataset
+  dispatch、draft/code review、LLM generation 或 R execution。
+- 默认 memory checkpointer 下，`study_loop_result` 会明确报告：
+  - `native_resume_available == false`
+  - `native_resume_scope == "none"`
+  - `resume_boundary == "graph_state_projection_only"`
+- UI 的 Study Loop Result 说明现在会告诉用户：
+  - 默认恢复依赖保存的 graph state；
+  - 该 run 没有启用 durable LangGraph checkpoint resume；
+  - Start Runnable Datasets 仍然不会 approve draft spec、approve code 或 run R。
+- 根据子 agent 的非阻断建议，UI 不再把 `native_pilot_interrupts_only`
+  这类内部枚举直接展示给用户，而是映射成普通文字
+  “pilot graph interrupts only”。
+
+当前边界：
+
+- 本切片是 read-model/UX 边界收口，不新增 approve/reject endpoint。
+- 本切片不把默认 product flow 声称为完整 native LangGraph
+  interrupt/checkpointer resume。
+- 公开 split-flow review/execute endpoints 仍然是当前默认产品路径；native
+  study loop 仍是 dispatch 到 review gate 的 pilot。
+
+子 agent 审查：
+
+- 2026-06-01，Hubble，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 新字段准确来自 `runtime_persistence`；
+  - 没有新增 workflow state machine、approve/reject path、service 状态分叉或
+    execution-path change；
+  - UI 默认路径文案清楚说明是 saved graph state recovery，不是 durable
+    LangGraph checkpoint resume；
+  - API progress 和 UI contract 测试覆盖了关键边界。
+- 非阻断建议：不要在 true-case UI 文案中直接展示内部 scope 枚举；已吸收。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 5 tests in 0.717s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 120 tests in 9.482s - OK (skipped=2)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 126 tests in 17.299s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.3 Native Study Product Loop API/UI 接线切片
 
 已完成：

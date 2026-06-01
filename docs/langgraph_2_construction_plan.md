@@ -7789,3 +7789,70 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.7 Native Resume Boundary Read-Model Slice
+
+Completed:
+
+- Added native resume boundary fields to graph-owned
+  `study_loop_result` progress:
+  - `native_resume_available`
+  - `native_resume_scope`
+  - `resume_boundary`
+- These fields are projected only from `runtime_persistence`. They do not
+  participate in dependency planning, dataset dispatch, draft/code review, LLM
+  generation, or R execution.
+- With the default memory checkpointer, `study_loop_result` now explicitly
+  reports:
+  - `native_resume_available == false`
+  - `native_resume_scope == "none"`
+  - `resume_boundary == "graph_state_projection_only"`
+- The UI Study Loop Result detail now tells users:
+  - default recovery uses saved graph state;
+  - durable LangGraph checkpoint resume is not enabled for the run;
+  - Start Runnable Datasets still does not approve draft specs, approve code,
+    or run R.
+- After subagent review, the UI no longer displays internal scope values such
+  as `native_pilot_interrupts_only` directly. It maps that value to the
+  user-facing phrase “pilot graph interrupts only”.
+
+Current boundary:
+
+- This is a read-model/UX boundary slice. It adds no approve/reject endpoint.
+- It does not claim the default product flow is full native LangGraph
+  interrupt/checkpointer resume.
+- Public split-flow review/execute endpoints remain the current product path;
+  the native study loop is still a pilot that dispatches datasets to review
+  gates.
+
+Subagent review:
+
+- 2026-06-01, Hubble, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - the new fields accurately come from `runtime_persistence`;
+  - no new workflow state machine, approve/reject path, service state fork, or
+    execution-path change was introduced;
+  - the UI default-path wording clearly says this is saved graph state recovery,
+    not durable LangGraph checkpoint resume;
+  - API progress and UI contract tests cover the key boundary.
+- Non-blocking suggestion: avoid rendering internal scope enum values in the
+  true-case UI text. This was absorbed before commit.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 5 tests in 0.717s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 120 tests in 9.482s - OK (skipped=2)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 126 tests in 17.299s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

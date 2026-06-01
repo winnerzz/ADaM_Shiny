@@ -2800,6 +2800,9 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["study_loop_result"]["source"], "graph_progress")
         self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
         self.assertEqual(progress["study_loop_result"]["boundary"], "study_product_loop_pilot_only")
+        self.assertFalse(progress["study_loop_result"]["native_resume_available"])
+        self.assertEqual(progress["study_loop_result"]["native_resume_scope"], "none")
+        self.assertEqual(progress["study_loop_result"]["resume_boundary"], "graph_state_projection_only")
         self.assertIn("stopped at human review gates", progress["study_loop_result"]["message"])
         self.assertEqual(
             {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},

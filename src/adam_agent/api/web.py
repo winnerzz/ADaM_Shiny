@@ -3150,8 +3150,14 @@ INDEX_HTML = r"""<!doctype html>
         : result.source === 'command_response'
           ? 'Recorded from the latest Start Runnable Datasets command.'
           : '';
+      const resumeText = result.source === 'graph_progress'
+        ? result.native_resume_available
+          ? `Durable native resume is available for ${humanNativeResumeScope(result.native_resume_scope)}.`
+          : 'Default recovery uses saved graph state; durable LangGraph checkpoint resume is not enabled for this run.'
+        : '';
       byId('studyLoopResultDetail').textContent = [
         sourceText,
+        resumeText,
         result.recorded_at ? `Last start: ${result.recorded_at}.` : '',
         result.message || '',
         'This does not approve draft specs, approve code, or run R.'
@@ -3165,6 +3171,13 @@ INDEX_HTML = r"""<!doctype html>
       list.innerHTML = rows.length
         ? rows.join('')
         : '<div class="muted">No new dataset needed a start action. Existing graph progress was preserved.</div>';
+    }
+
+    function humanNativeResumeScope(scope) {
+      const normalized = String(scope || '').trim();
+      if (normalized === 'native_pilot_interrupts_only') return 'pilot graph interrupts only';
+      if (!normalized || normalized === 'none') return 'configured graph interrupts';
+      return titleFromToken(normalized);
     }
 
     function studyLoopStartedRows(result) {
