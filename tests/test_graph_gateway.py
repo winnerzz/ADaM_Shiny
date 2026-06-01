@@ -3577,6 +3577,99 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "draft_spec_review")
         self.assertFalse((study_dir / "runs" / "run_lg3_native_full_run_draft_missing_llm" / "code").exists())
 
+    def test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_terminal_failure") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_terminal_failure_adae",
+            kind="validation_report",
+            path="runs/run_lg3_native_full_run_terminal_failure/validation/adae_validation_report.json",
+            sha256=f"sha256:{'c' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        failure = FailureRecord(
+            failure_id="failure_lg3_adae_terminal",
+            dataset="ADAE",
+            node="execute_approved_code",
+            failure_type="sandbox_error",
+            message="R execution failed.",
+            root_cause="r_runtime_error",
+            recommended_route="repair_code",
+        )
+        fake_execution = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg3_native_full_run_terminal_failure/validation/adae_validation_report.json",
+            diagnostics_path="runs/run_lg3_native_full_run_terminal_failure/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": []},
+            failure_records=[failure],
+            artifacts={"validation_report": validation_artifact},
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_terminal_failure",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_execution):
+            failed = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id="run_lg3_native_full_run_terminal_failure",
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+                notes="Approve code and reach terminal failure through LG3 full-run.",
+            )
+
+        failed_contract = failed.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(failed.phase, "terminal_failure")
+        self.assertTrue(failed.execution.terminal_failure)
+        self.assertEqual(failed.current_interrupt, "terminal_failure")
+        self.assertEqual(failed_contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(failed_contract["phase"], "terminal_failure")
+        self.assertTrue(failed_contract["terminal_failure"])
+        self.assertTrue(failed_contract["executed_after_approval"])
+
+        triaged = gateway.review_terminal_failure(
+            study_dir=study_dir,
+            run_id="run_lg3_native_full_run_terminal_failure",
+            dataset="ADAE",
+            decision="repair_code",
+            reviewer="tester",
+            notes="Route failed LG3 full-run to repair code through the formal terminal-failure review.",
+        )
+
+        dataset_state = triaged.graph_state.datasets["ADAE"]
+        triage_contract = triaged.graph_state.runtime_persistence.get("native_dataset_full_run", {})
+        self.assertEqual(triaged.decision, "repair_code")
+        self.assertEqual(triaged.current_interrupt, "terminal_failure")
+        self.assertEqual(triaged.next_action, "repair_generated_code")
+        self.assertEqual(dataset_state.execution_state["terminal_failure_review"]["action"], "repair_code")
+        self.assertEqual(triage_contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(triage_contract["phase"], "terminal_failure_triaged")
+        self.assertEqual(triage_contract["last_interrupt"], "terminal_failure")
+        self.assertEqual(triage_contract["decision"], "repair_code")
+        self.assertEqual(triage_contract["next_action"], "repair_generated_code")
+        self.assertTrue(triage_contract["terminal_failure"])
+
     def test_gateway_native_study_product_loop_starts_multiple_runnable_datasets(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_multi") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
@@ -5954,6 +6047,7 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.agent_node_outputs[-1]["agent"], "diagnosis_repair_agent")
         self.assertEqual(dataset_state.agent_node_outputs[-1]["outputs"]["next_action"], "retry_approved_execution")
         self.assertFalse(dataset_state.agent_node_outputs[-1]["outputs"]["interrupt_open"])
+        self.assertNotIn("native_dataset_full_run", result.graph_state.runtime_persistence)
 
     def test_gateway_review_terminal_failure_from_command_bridges_to_triage_flow(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_terminal_failure_command_bridge") / "PSY201"

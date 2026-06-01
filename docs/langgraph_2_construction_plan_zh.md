@@ -8808,3 +8808,53 @@ OK
     LLM config；
   - provider audit redaction 现在覆盖常见 key/token/secret 字段，不只处理
     `api_key`。
+
+### 2026-06-01 - LG3.0 Full-Run Terminal-Failure 边界切片
+
+已完成：
+
+- 扩展 `resume_native_dataset_full_run()` 的 code-review approval 路径：如果批准后
+  R 执行返回 terminal failure，LG3 full-run result 和
+  `native_dataset_full_run` metadata 都记录 phase=`terminal_failure`。
+- 当 terminal failure review 被正式 triage 后，`review_terminal_failure()` 会保留
+  LG3 full-run contract metadata，并把 phase 更新为
+  `terminal_failure_triaged`。
+- triage metadata 会记录：
+  - `boundary=lg3_backend_contract`；
+  - `last_interrupt=terminal_failure`；
+  - 人工 decision，例如 `repair_code`；
+  - 下一步受控动作，例如 `repair_generated_code`；
+  - `terminal_failure=true`。
+- 新增聚焦测试覆盖从 LG3 full-run code approval 到 R terminal failure，再到正式
+  terminal-failure review 的完整 metadata 边界。
+
+边界：
+
+- 这不是 native terminal-failure durable resume，也不是 repair loop。
+- LG3 full-run execution failure 当前仍通过 Gateway-owned terminal-failure review
+  记录正式人工 triage。
+- 后续若要实现真正闭环，需要继续做 repair-code / revise-spec 的 native loop。
+- 没有新增 UI/API surface。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary -v
+Ran 1 test in 0.276s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 10 tests in 1.801s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，只读审查结论：GO。
+- 它确认：
+  - LG3 terminal-failure metadata 受 `_has_native_dataset_full_run_contract()`
+    限制，不污染普通 native dataset loop；
+  - formal triage 仍先通过既有 `record_terminal_failure_review()` 路径写入，
+    LG3 metadata 只是保留/更新 full-run contract 审计信息；
+  - 文档没有把本切片说成 repair loop 或 native terminal-failure durable
+    resume。
+- 已吸收它的非阻断建议：普通非 LG3 `review_terminal_failure()` 回归测试现在断言
+  不会创建 `native_dataset_full_run` metadata。

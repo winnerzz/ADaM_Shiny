@@ -1414,6 +1414,8 @@ class GraphGateway:
                 dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
             )
             phase = "executed" if resumed.execution is not None else "reviewed"
+            if resumed.execution is not None and resumed.execution.terminal_failure:
+                phase = "terminal_failure"
             approved = resumed.approved
             final_decision = resumed.decision
             execution = resumed.execution
@@ -1421,7 +1423,7 @@ class GraphGateway:
             code_generation_continued = False
         else:
             raise ValueError(f"Unsupported LG3 native full-run interrupt for {target}: {interrupt.name}.")
-        if current_interrupt:
+        if current_interrupt and phase != "terminal_failure":
             phase = "waiting_for_human_gate"
         graph_state = graph_state.model_copy(deep=True)
         runtime_extra = _runtime_persistence_extras(graph_state)
@@ -1436,6 +1438,7 @@ class GraphGateway:
             "approved": approved,
             "code_generation_continued": code_generation_continued,
             "executed_after_approval": execution is not None,
+            "terminal_failure": bool(execution.terminal_failure) if execution is not None else False,
             "durable_resume_available": self.native_interrupt_resume_available(),
         }
         if llm_provider is not None:
@@ -3826,9 +3829,41 @@ class GraphGateway:
         current_interrupt = None
         if reviewed_dataset.current_interrupt is not None and reviewed_dataset.current_interrupt.status == "open":
             current_interrupt = reviewed_dataset.current_interrupt.name
+        graph_result = result
+        if _has_native_dataset_full_run_contract(graph_state, target):
+            next_state = result.graph_state.model_copy(deep=True)
+            runtime_extra = _runtime_persistence_extras(next_state)
+            previous = dict(graph_state.runtime_persistence.get("native_dataset_full_run") or {})
+            previous.update(
+                {
+                    "dataset": target,
+                    "phase": "terminal_failure_triaged",
+                    "current_interrupt": current_interrupt,
+                    "contract": "single_dataset_spec_code_review_execute",
+                    "boundary": "lg3_backend_contract",
+                    "last_interrupt": "terminal_failure",
+                    "decision": normalized_decision,
+                    "terminal_failure": True,
+                    "next_action": str(reviewed_dataset.execution_state.get("next_action") or ""),
+                    "durable_resume_available": self.native_interrupt_resume_available(),
+                }
+            )
+            runtime_extra["native_dataset_full_run"] = previous
+            self._persist_graph_state(
+                root,
+                next_state,
+                node="native_dataset_full_run_terminal_failure_review",
+                runtime_persistence_extra=runtime_extra,
+            )
+            projection = project_graph_state_to_workflow(
+                root,
+                next_state,
+                node="graph_gateway_native_dataset_full_run_terminal_failure_review",
+            )
+            graph_result = GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
         return GraphGatewayTerminalFailureReviewResult(
-            graph_state=result.graph_state,
-            workflow_projection=result.workflow_projection,
+            graph_state=graph_result.graph_state,
+            workflow_projection=graph_result.workflow_projection,
             decision=normalized_decision,
             current_interrupt=current_interrupt,
             next_action=str(reviewed_dataset.execution_state.get("next_action") or ""),

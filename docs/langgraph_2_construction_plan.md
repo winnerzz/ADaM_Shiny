@@ -9428,3 +9428,58 @@ Subagent review:
     resolving LLM config;
   - provider audit redaction now covers common key/token/secret field names,
     not only `api_key`.
+
+### 2026-06-01 - LG3.0 Full-Run Terminal-Failure Boundary Slice
+
+Completed:
+
+- Extended the code-review approval path in `resume_native_dataset_full_run()`:
+  when approved R execution returns a terminal failure, the LG3 full-run result
+  and `native_dataset_full_run` metadata now record phase `terminal_failure`.
+- After formal terminal-failure triage, `review_terminal_failure()` preserves
+  the LG3 full-run contract metadata and updates phase to
+  `terminal_failure_triaged`.
+- Triage metadata records:
+  - `boundary=lg3_backend_contract`;
+  - `last_interrupt=terminal_failure`;
+  - the human decision, for example `repair_code`;
+  - the next controlled action, for example `repair_generated_code`;
+  - `terminal_failure=true`.
+- Added a focused test covering the full metadata boundary from LG3 full-run
+  code approval to R terminal failure and then formal terminal-failure review.
+
+Boundary:
+
+- This is not native terminal-failure durable resume, and it is not a repair
+  loop.
+- LG3 full-run execution failure currently still uses the Gateway-owned
+  terminal-failure review to record formal human triage.
+- A real closed loop still requires follow-up work for repair-code /
+  revise-spec native loop behavior.
+- No UI/API surface was added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary -v
+Ran 1 test in 0.276s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 10 tests in 1.801s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, read-only review: GO.
+- Confirmed:
+  - LG3 terminal-failure metadata is gated by
+    `_has_native_dataset_full_run_contract()`, so ordinary native dataset-loop
+    terminal-failure handling is not polluted;
+  - formal triage still writes through the existing
+    `record_terminal_failure_review()` path first, while the LG3 update only
+    preserves/updates full-run contract audit metadata;
+  - documentation does not claim this is a repair loop or native
+    terminal-failure durable resume.
+- Follow-up applied from the non-blocking suggestion:
+  - the ordinary non-LG3 `review_terminal_failure()` regression now asserts it
+    does not create `native_dataset_full_run` metadata.
