@@ -17,6 +17,28 @@ DEPENDENCY_SOURCE_PRIORITY = {
     "define_xml_dependency": 2,
 }
 _NON_DATASET_AD_TOKENS = {"ADDATA", "ADAM", "ADAMS", "ADAMDATA", "ADSLIB"}
+INPUT_SPEC_GAP_WARNING_CODE = "input_spec_gap_no_default_dependency"
+DEPENDENCY_CONFLICT_WARNING_CODE = "dependency_conflict"
+DEPENDENCY_SCAN_WARNING_CODE = "dependency_scan_warning"
+DEPENDENCY_CYCLE_WARNING_CODE = "dependency_cycle_or_unresolved"
+
+
+@dataclass(frozen=True)
+class DependencyPlanningWarning:
+    """Structured warning emitted by the dependency planner."""
+
+    code: str
+    dataset: str | None
+    message: str
+    severity: str = "warning"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "code": self.code,
+            "dataset": self.dataset,
+            "message": self.message,
+            "severity": self.severity,
+        }
 
 
 @dataclass(frozen=True)
@@ -82,6 +104,7 @@ class DatasetDependencyPlan:
     evidence: str
     evidence_records: list[DependencyEvidence]
     planning_warnings: list[str]
+    planning_warning_records: list[DependencyPlanningWarning]
 
 
 def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir: str | Path | None = None) -> DatasetDependencyPlan:
@@ -94,6 +117,7 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
 
     requested = _normalize_datasets(requested_datasets or ["ADSL", "ADAE"])
     evidence_records, planning_warnings = collect_dependency_evidence(study_dir)
+    planning_warning_records = list(_warning_records_from_messages(planning_warnings))
     evidence_by_dataset = _evidence_by_dataset(evidence_records)
     input_spec_present = _input_spec_present(study_dir)
     auto_added: list[str] = []
@@ -115,9 +139,20 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
     supported_targets = [dataset for dataset in targets if dataset not in unsupported]
     ordered_supported, execution_batches, cycle_warnings = _topological_order(supported_targets, evidence_by_dataset, study_dir=study_dir)
     planning_warnings.extend(cycle_warnings)
+    planning_warning_records.extend(
+        DependencyPlanningWarning(
+            code=DEPENDENCY_CYCLE_WARNING_CODE,
+            dataset=None,
+            message=warning,
+            severity="error",
+        )
+        for warning in cycle_warnings
+    )
     ordered_targets = ordered_supported + [dataset for dataset in targets if dataset in unsupported]
     if input_spec_present:
-        planning_warnings.extend(_input_spec_gap_warnings(ordered_supported, evidence_by_dataset, study_dir=study_dir))
+        spec_gap_warnings = _input_spec_gap_warnings(ordered_supported, evidence_by_dataset, study_dir=study_dir)
+        planning_warnings.extend(warning.message for warning in spec_gap_warnings)
+        planning_warning_records.extend(spec_gap_warnings)
 
     decisions = [
         _dependency_decision(dataset, evidence_by_dataset, is_auto_added=dataset in auto_added, study_dir=study_dir)
@@ -144,6 +179,7 @@ def plan_dataset_dependencies(requested_datasets: list[str] | None, *, study_dir
         evidence=evidence_summary,
         evidence_records=evidence_records,
         planning_warnings=planning_warnings,
+        planning_warning_records=planning_warning_records,
     )
 
 
@@ -314,14 +350,21 @@ def _input_spec_gap_warnings(
     evidence_by_dataset: dict[str, list[DependencyEvidence]],
     *,
     study_dir: str | Path | None = None,
-) -> list[str]:
-    warnings: list[str] = []
+) -> list[DependencyPlanningWarning]:
+    warnings: list[DependencyPlanningWarning] = []
     for dataset in supported_targets:
         if dataset == "ADSL" or dataset in evidence_by_dataset or _target_input_spec_present(study_dir, dataset):
             continue
         warnings.append(
-            f"Input spec is present, but no dependency evidence was extracted for {dataset}; "
-            "not imposing a default ADSL dependency. Draft spec/code review must verify whether upstream ADaM inputs are required."
+            DependencyPlanningWarning(
+                code=INPUT_SPEC_GAP_WARNING_CODE,
+                dataset=dataset,
+                message=(
+                    f"Input spec is present, but no dependency evidence was extracted for {dataset}; "
+                    "not imposing a default ADSL dependency. Draft spec/code review must verify whether upstream ADaM inputs are required."
+                ),
+                severity="review",
+            )
         )
     return warnings
 
@@ -351,6 +394,38 @@ def _dependency_conflict_warnings(
                 f"{record.dependency}, but {record.source} evidence {record.evidence_id} references it."
             )
     return warnings
+
+
+def _warning_records_from_messages(messages: list[str]) -> list[DependencyPlanningWarning]:
+    records: list[DependencyPlanningWarning] = []
+    for message in messages:
+        text = str(message)
+        if text.startswith("Dependency conflict:"):
+            records.append(
+                DependencyPlanningWarning(
+                    code=DEPENDENCY_CONFLICT_WARNING_CODE,
+                    dataset=_dataset_from_dependency_conflict_warning(text),
+                    message=text,
+                    severity="warning",
+                )
+            )
+        else:
+            records.append(
+                DependencyPlanningWarning(
+                    code=DEPENDENCY_SCAN_WARNING_CODE,
+                    dataset=None,
+                    message=text,
+                    severity="warning",
+                )
+            )
+    return records
+
+
+def _dataset_from_dependency_conflict_warning(message: str) -> str | None:
+    match = re.search(r"input_spec for (?P<dataset>AD[A-Z0-9]{1,}) does not include", message.upper())
+    if not match:
+        return None
+    return _normalize_dataset_token(match.group("dataset"))
 
 
 def _evidence_dependencies_for_dataset(

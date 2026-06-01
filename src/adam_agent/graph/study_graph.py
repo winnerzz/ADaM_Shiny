@@ -150,6 +150,7 @@ def plan_datasets(state: StudyGraphState) -> StudyGraphState:
         "dependency_evidence": plan.evidence,
         "dependency_evidence_records": [record.as_dict() for record in plan.evidence_records],
         "dependency_planning_warnings": plan.planning_warnings,
+        "dependency_planning_warning_records": [warning.as_dict() for warning in plan.planning_warning_records],
         "execution_batches": _filter_execution_batches(plan.execution_batches, runnable_datasets),
         "satisfied_dependency_datasets": satisfied_dependency_datasets,
         "dataset_tasks": foundation_tasks + downstream_tasks,
@@ -438,6 +439,7 @@ def _write_study_audit_manifest(
         "dependency_evidence": state.get("dependency_evidence", ""),
         "dependency_evidence_records": state.get("dependency_evidence_records", []),
         "dependency_planning_warnings": state.get("dependency_planning_warnings", []),
+        "dependency_planning_warning_records": state.get("dependency_planning_warning_records", []),
         "execution_batches": state.get("execution_batches", []),
         "blocked_datasets": state.get("blocked_datasets", []),
         "dependency_review_status": planning_artifacts["review_status"],
@@ -734,6 +736,17 @@ def _dependency_review_markdown(state: StudyGraphState, review_status: str) -> s
             lines.append(f"- {warning}")
     else:
         lines.append("- None")
+
+    warning_records = state.get("dependency_planning_warning_records", [])
+    if warning_records:
+        lines.extend(["", "## Warning Codes"])
+        for record in warning_records:
+            if not isinstance(record, dict):
+                continue
+            code = record.get("code", "unknown")
+            dataset = record.get("dataset") or "STUDY"
+            severity = record.get("severity", "warning")
+            lines.append(f"- {dataset}: code={code}; severity={severity}")
 
     lines.extend(["", "## Unsupported Datasets"])
     unsupported = state.get("unsupported_datasets", [])

@@ -292,6 +292,8 @@ class GraphSmokeTests(unittest.TestCase):
                 for warning in plan.planning_warnings
             )
         )
+        self.assertEqual(plan.planning_warning_records[0].code, "input_spec_gap_no_default_dependency")
+        self.assertEqual(plan.planning_warning_records[0].dataset, "ADAE")
 
     def test_dependency_plan_uses_legacy_sas_dependency_evidence(self) -> None:
         study_dir = _workspace_dir("phase7_sas_dependency") / "PSY201"

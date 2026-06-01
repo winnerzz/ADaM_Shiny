@@ -30,6 +30,7 @@ from adam_agent.graph.execution_modes import (
     GRAPH_PRODUCT_GENERATE_CODE_MODE,
     GRAPH_PRODUCT_PREPARE_MODE,
 )
+from adam_agent.graph.dependencies import INPUT_SPEC_GAP_WARNING_CODE
 from adam_agent.graph.output_quality import dataset_output_quality, study_output_quality_rollup
 from adam_agent.graph.study_graph import compile_study_graph
 from adam_agent.graph.terminal_failure_actions import (
@@ -124,6 +125,16 @@ class GraphGatewayNativeDatasetLoopDraftResult(GraphGatewayResult):
 
     draft_review: GraphGatewayDraftSpecReviewResult
     code_generation: GraphGatewayCodeGenerationResult | None = None
+
+
+@dataclass(frozen=True)
+class GraphGatewayNativeStudyLoopResult(GraphGatewayResult):
+    """Internal native study-loop pilot result for starting multiple datasets."""
+
+    dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult]
+    blocked_datasets: list[dict[str, Any]]
+    started_datasets: list[str]
+    review_queue: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -884,6 +895,101 @@ class GraphGateway:
                     boundary="dataset_product_loop_pilot_only",
                 )
             },
+        )
+
+    def start_native_study_product_loop(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        target_datasets: list[str],
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        approved_dependency_datasets: list[str] | None = None,
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayNativeStudyLoopResult:
+        """Start the internal native multi-dataset product-loop pilot.
+
+        This dispatch boundary refreshes the dependency plan, starts each
+        currently runnable dataset through the same native dataset-loop gate,
+        and stops at draft-spec or code review. It never approves or executes a
+        dataset on the user's behalf.
+        """
+
+        root = Path(study_dir).expanduser()
+        if not root.exists() or not root.is_dir():
+            raise ValueError(f"study_dir does not exist or is not a directory: {root}")
+        normalized_targets = _normalize_dataset_list(target_datasets)
+        if not normalized_targets:
+            raise ValueError("target_datasets must not be empty")
+        plan_result = self.start_dependency_plan(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            target_datasets=normalized_targets,
+            approved_dependency_datasets=approved_dependency_datasets,
+        )
+        plan_state = plan_result.graph_state
+        if _native_study_loop_dependency_review_blocks_dispatch(plan_state):
+            return self._native_study_loop_result(
+                root=root,
+                state=plan_state,
+                dataset_results={},
+                started_datasets=[],
+                node="native_study_product_loop_dependency_review",
+            )
+        _handoff_spec_gap_dependency_warning_for_native_study_loop(self, root, plan_state)
+
+        dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult] = {}
+        started_datasets: list[str] = []
+        for dataset in _native_study_loop_dispatch_order(plan_state):
+            try:
+                result = self.start_native_dataset_product_loop(
+                    study_dir=root,
+                    study_id=study_id,
+                    run_id=run_id,
+                    dataset=dataset,
+                    llm_provider=llm_provider,
+                    llm_exposure=llm_exposure,
+                    llm_client_builder=llm_client_builder,
+                    target_context_builder=target_context_builder,
+                    rscript_path=rscript_path,
+                )
+            except ValueError as exc:
+                graph_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
+                _record_native_study_dataset_start_failure(graph_state, dataset=dataset, message=str(exc))
+                self._persist_graph_state(
+                    root,
+                    graph_state,
+                    node="native_study_product_loop_dataset_start_failed",
+                    runtime_persistence_extra={
+                        "native_study_product_loop": {
+                            "started_datasets": started_datasets,
+                            "failed_dataset": dataset,
+                            "failed_reason": str(exc),
+                            "boundary": "study_product_loop_pilot_only",
+                        }
+                    },
+                )
+                project_graph_state_to_workflow(
+                    root,
+                    graph_state,
+                    node="graph_gateway_native_study_product_loop_dataset_start_failed",
+                )
+                raise
+            dataset_results[dataset] = result
+            started_datasets.append(dataset)
+
+        final_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        return self._native_study_loop_result(
+            root=root,
+            state=final_state,
+            dataset_results=dataset_results,
+            started_datasets=started_datasets,
+            node="native_study_product_loop_started",
         )
 
     def resume_native_dataset_product_loop_draft_spec(
@@ -3641,6 +3747,7 @@ class GraphGateway:
                     "dependency_review_status": dependency_review_status,
                     "blocked_datasets": plan_state.get("blocked_datasets", []),
                     "dependency_warnings": plan_state.get("dependency_planning_warnings", []),
+                    "dependency_warning_records": plan_state.get("dependency_planning_warning_records", []),
                 },
             )
         datasets = {
@@ -3677,6 +3784,7 @@ class GraphGateway:
             "dependency_evidence": plan_state.get("dependency_evidence", ""),
             "dependency_evidence_records": plan_state.get("dependency_evidence_records", []),
             "dependency_planning_warnings": plan_state.get("dependency_planning_warnings", []),
+            "dependency_planning_warning_records": plan_state.get("dependency_planning_warning_records", []),
         }
         status = "needs_review" if current_interrupt else "pending"
         dependency_decision = record_agent_decision(
@@ -3872,6 +3980,7 @@ class GraphGateway:
         preferred_interrupt: InterruptState | None = None,
     ) -> dict[str, Any]:
         _clear_nonblocking_dependency_review_interrupt(state, gate)
+        _clear_spec_gap_dependency_warning_interrupt(state, gate)
         _roll_up_study_state(state, preferred_interrupt=preferred_interrupt)
         _sync_study_agent_decisions(state)
         self._persist_graph_state(root, state, node="dependency_gate_product_handoff")
@@ -3879,6 +3988,39 @@ class GraphGateway:
             root,
             state,
             node="graph_gateway_dependency_gate_product_handoff",
+        )
+
+    def _native_study_loop_result(
+        self,
+        *,
+        root: Path,
+        state: StudyRunState,
+        dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult],
+        started_datasets: list[str],
+        node: str,
+    ) -> GraphGatewayNativeStudyLoopResult:
+        _roll_up_study_state(state)
+        self._persist_graph_state(
+            root,
+            state,
+            node=node,
+            runtime_persistence_extra={
+                "native_study_product_loop": {
+                    "started_datasets": list(started_datasets),
+                    "blocked_datasets": list(state.blocked_datasets),
+                    "boundary": "study_product_loop_pilot_only",
+                }
+            },
+        )
+        projection = project_graph_state_to_workflow(root, state, node=f"graph_gateway_{node}")
+        progress = self.progress_summary(study_dir=root, run_id=state.run_id)
+        return GraphGatewayNativeStudyLoopResult(
+            graph_state=state,
+            workflow_projection=projection,
+            dataset_results=dataset_results,
+            blocked_datasets=list(state.blocked_datasets),
+            started_datasets=list(started_datasets),
+            review_queue=list(progress.get("review_queue", [])),
         )
 
 
@@ -3968,10 +4110,11 @@ def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target:
             f"{dataset} is not runnable in the current dependency plan. "
             "Review the dependency plan before finalizing inputs or generating code."
         )
-    if gate.dependency_review_status == "warning" or gate.dependency_warnings:
+    blocking_warnings = _blocking_dependency_warnings(gate)
+    if gate.dependency_review_status == "warning" and blocking_warnings:
         raise ValueError(
             f"{dataset} dependency plan has warnings that require review before this step. "
-            f"Warnings: {'; '.join(gate.dependency_warnings)}"
+            f"Warnings: {'; '.join(blocking_warnings)}"
         )
     blocking_decisions = [
         decision
@@ -4011,6 +4154,27 @@ def _clear_nonblocking_dependency_review_interrupt(state: StudyRunState, gate: G
     )
 
 
+def _clear_spec_gap_dependency_warning_interrupt(state: StudyRunState, gate: GraphGatewayDependencyGateResult) -> bool:
+    """Clear a study warning when all warnings are dataset spec-gap handoffs."""
+
+    interrupt = state.current_interrupt
+    if interrupt is None or interrupt.name != "dependency_review" or interrupt.status != "open":
+        return False
+    if state.dependency_review_status != "warning":
+        return False
+    if gate.blocked_datasets:
+        return False
+    if _blocking_dependency_warnings(gate):
+        return False
+    state.current_interrupt = None
+    state.dependency_review_status = "accepted"
+    state.dependency_plan["dependency_review_status_before_product_step"] = "warning"
+    state.dependency_plan["dependency_review_auto_accepted_reason"] = (
+        "Only input_spec_gap_no_default_dependency warnings remained; dataset draft/code review now carries that risk."
+    )
+    return True
+
+
 def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
     target_dataset = target.strip().upper()
     artifacts: list[dict[str, Any]] = []
@@ -4034,6 +4198,140 @@ def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]
             }
         )
     return artifacts
+
+
+def _native_study_loop_dispatch_order(state: StudyRunState) -> list[str]:
+    runnable = {dataset.strip().upper() for dataset in state.runnable_datasets}
+    blocked = _blocked_dataset_names(state.blocked_datasets)
+    ordered: list[str] = []
+    execution_batches = state.dependency_plan.get("execution_batches", [])
+    if isinstance(execution_batches, list):
+        for batch in execution_batches:
+            if not isinstance(batch, list):
+                continue
+            for dataset in batch:
+                target = str(dataset).strip().upper()
+                if _native_study_loop_can_start_dataset(state, target, runnable=runnable, blocked=blocked, ordered=ordered):
+                    ordered.append(target)
+    for dataset in state.target_datasets:
+        target = dataset.strip().upper()
+        if _native_study_loop_can_start_dataset(state, target, runnable=runnable, blocked=blocked, ordered=ordered):
+            ordered.append(target)
+    return ordered
+
+
+def _native_study_loop_can_start_dataset(
+    state: StudyRunState,
+    target: str,
+    *,
+    runnable: set[str],
+    blocked: set[str],
+    ordered: list[str],
+) -> bool:
+    if not target or target not in runnable or target in blocked or target in ordered:
+        return False
+    return not _has_dataset_product_progress(state.datasets.get(target))
+
+
+def _native_study_loop_dependency_review_blocks_dispatch(state: StudyRunState) -> bool:
+    if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
+        return True
+    if state.dependency_review_status in {"blocked", "warning", "rejected"}:
+        return not _native_study_loop_warnings_are_dataset_spec_gaps(state)
+    if state.blocked_datasets:
+        return True
+    for dataset in state.runnable_datasets:
+        if _blocking_review_required_sources(state.dependency_decisions, dataset):
+            return True
+    return False
+
+
+def _native_study_loop_warnings_are_dataset_spec_gaps(state: StudyRunState) -> bool:
+    warnings = state.dependency_plan.get("dependency_planning_warnings", [])
+    records = state.dependency_plan.get("dependency_planning_warning_records", [])
+    if not isinstance(warnings, list) or not isinstance(records, list):
+        return False
+    if not warnings or not records or len(warnings) != len(records):
+        return False
+    runnable = {dataset.strip().upper() for dataset in state.runnable_datasets}
+    if not runnable:
+        return False
+    for record in records:
+        if not isinstance(record, dict):
+            return False
+        if record.get("code") != INPUT_SPEC_GAP_WARNING_CODE:
+            return False
+        dataset = str(record.get("dataset") or "").strip().upper()
+        if dataset not in runnable:
+            return False
+    return True
+
+
+def _blocking_dependency_warnings(gate: GraphGatewayDependencyGateResult) -> list[str]:
+    warnings = list(gate.dependency_warnings)
+    blocking: list[str] = []
+    records = gate.dependency_plan.get("dependency_planning_warning_records", [])
+    if not warnings and isinstance(records, list) and records:
+        return ["Dependency warning records exist without dependency warning messages."]
+    if warnings and (not isinstance(records, list) or not records or len(records) != len(warnings)):
+        return warnings
+    if not isinstance(records, list):
+        return warnings
+    for record in records:
+        if not isinstance(record, dict):
+            return warnings or ["Unstructured dependency warning record."]
+        if record.get("code") == INPUT_SPEC_GAP_WARNING_CODE:
+            dataset = str(record.get("dataset") or "").strip().upper()
+            if dataset:
+                continue
+            return warnings or [str(record.get("message") or "Input spec gap warning is missing a dataset.")]
+        message = str(record.get("message") or record.get("code") or "dependency warning")
+        blocking.append(message)
+    return blocking
+
+
+def _handoff_spec_gap_dependency_warning_for_native_study_loop(
+    gateway: GraphGateway,
+    root: Path,
+    state: StudyRunState,
+) -> None:
+    gate = _dependency_gate_result(root, state)
+    if not _clear_spec_gap_dependency_warning_interrupt(state, gate):
+        return
+    _roll_up_study_state(state)
+    _sync_study_agent_decisions(state)
+    gateway._persist_graph_state(root, state, node="native_study_product_loop_spec_gap_handoff")
+    project_graph_state_to_workflow(root, state, node="graph_gateway_native_study_product_loop_spec_gap_handoff")
+
+
+def _record_native_study_dataset_start_failure(
+    state: StudyRunState,
+    *,
+    dataset: str,
+    message: str,
+) -> None:
+    target = dataset.strip().upper()
+    dataset_state = state.datasets.get(target) or DatasetRunState(
+        study_id=state.study_id,
+        run_id=state.run_id,
+        dataset=target,
+        input_fingerprint=state.input_fingerprint,
+        result_summary=DatasetResultSummary(dataset=target, status="failed"),
+    )
+    dataset_state.status = "failed"
+    dataset_state.current_interrupt = None
+    dataset_state.failures.append(
+        FailureRecord(
+            failure_id=f"native_study_product_loop_start_failed_{target.lower()}",
+            dataset=target,
+            node="native_study_product_loop",
+            failure_type="input_error",
+            message=message,
+        )
+    )
+    dataset_state.updated_at = utc_now()
+    state.datasets[target] = dataset_state
+    _roll_up_study_state(state)
 
 
 def _generation_quality_from_dataset_result(result: dict[str, Any], *, llm_provider: dict[str, Any] | None = None) -> dict[str, Any]:

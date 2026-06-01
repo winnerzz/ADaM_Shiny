@@ -6634,3 +6634,71 @@ Ran 2 tests in 0.413s - OK
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code -v
 Ran 4 tests in 1.550s - OK
 ```
+
+### 2026-06-01 - LG2.3 Native Study Product Loop 分发试点切片
+
+已完成：
+
+- 新增内部 `GraphGateway.start_native_study_product_loop()`：
+  - 先刷新 graph-owned dependency plan；
+  - 只分发当前 dependency gate 允许继续的 runnable datasets；
+  - 每个 dataset 仍调用现有 `start_native_dataset_product_loop()`，所以 draft-spec
+    review、code review、artifact/hash 校验和状态写入仍走同一条 Gateway 边界；
+  - 不自动批准 draft spec，不自动批准 code，也不自动执行 R。
+- 新增 `GraphGatewayNativeStudyLoopResult`，返回：
+  - `started_datasets`
+  - per-dataset loop result
+  - `blocked_datasets`
+  - graph-owned `review_queue`
+- 重复启动时会跳过已有产品进度的 dataset，避免覆盖已经打开的 draft/code review。
+- 收紧 dependency warning 分流：
+  - 真正的 dependency conflict/warning 仍会阻断 product step；
+  - “某 dataset 缺少 input_spec，需要后续 draft-spec/code review 验证”的 spec-gap
+    warning 不再挡住其他 dataset，也不挡住该 dataset 进入 draft-spec review。
+  - spec-gap warning 现在有结构化 code：`input_spec_gap_no_default_dependency`，
+    Gateway 只按 code/dataset 判定，不再靠英文文案片段决定安全行为。
+- 根据子 agent NO-GO 审查补强：
+  - spec-gap warning 被转交给 dataset review gate 后，会清掉 study-level
+    dependency-review interrupt，避免后续 code/draft review 被 study interrupt 卡住；
+  - 新增测试验证 mixed spec-gap 场景下，启动后可以继续 resume `code_review` 和
+    `draft_spec_review`；
+  - 补充 restart/re-entry 测试：当同一个 run 已经有 draft/code review 进度时，
+    重新启动 study loop 不会重新留下 study-level dependency interrupt；
+  - warning 分流改为 fail closed：只要 warning 缺少结构化 record、record 数量不一致、
+    code 未知或 spec-gap record 缺 dataset，就继续阻断，不静默进入产品步骤；
+  - 真正 dependency warning/conflict 仍由现有测试证明会阻断 product step。
+- 第二轮子 agent 审查结论为 GO；它提出的 message/record 文案一致性、更细的
+  unknown-code 参数化测试属于后续加固项，不阻塞该 internal pilot 切片。
+
+当前边界：
+
+- 这是 internal pilot，还没有暴露为公开 FastAPI/UI 主入口。
+- 多 dataset 现在可以被一次启动到各自的 review gate，但后续审核和执行仍通过现有
+  per-dataset resume/execute 路径推进。
+- 依赖缺失仍 fail closed：如果下游需要未提供/未批准生成的上游 ADaM，study loop
+  不会静默启动目标 dataset。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_preserves_mixed_spec_gates tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_does_not_start_dependency_blocked_targets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart -v
+Ran 4 tests in 0.705s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_preserves_mixed_spec_gates tests.test_graph_smoke.GraphSmokeTests.test_input_spec_present_but_missing_target_spec_warns_without_adsl_fallback tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_dependency_warning -v
+Ran 3 tests in 0.489s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_finalize_inputs_blocks_dependency_warning tests.test_graph_gateway.GraphGatewayTests.test_gateway_finalize_inputs_records_review_required_draft_spec -v
+Ran 2 tests in 0.192s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_input_spec_executes_after_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_missing_spec_stops_at_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review -v
+Ran 3 tests in 0.605s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 310 tests in 32.907s - OK (skipped=2)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
