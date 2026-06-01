@@ -131,6 +131,9 @@ class NativeDatasetResumeRequest(StrictBaseModel):
     notes: str = ""
     execute_after_approval: bool = False
     rscript_path: str | None = None
+    config_path: str | None = None
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
 
 
 class NativeDatasetResumeResponse(StrictBaseModel):

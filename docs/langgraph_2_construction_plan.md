@@ -9370,3 +9370,61 @@ Subagent review:
   - `execute_after_approval=false` still avoids R execution and records
     phase `reviewed`;
   - documentation does not overstate durable resume or UI/API exposure.
+
+### 2026-06-01 - LG3.0 Full-Run Draft-Spec Continuation Slice
+
+Completed:
+
+- Extended `resume_native_dataset_full_run()` so the LG3 single-dataset contract
+  can resume from either `draft_spec_review` or `code_review`.
+- When the first gate is `draft_spec_review`, approval now records the formal
+  draft-spec review artifact, continues through the dataset product loop, and
+  stops at the next `code_review` interrupt.
+- Rejection at draft-spec review still stays at the draft-spec gate and does
+  not generate R code.
+- The native resume API request can now carry the same LLM provider and exposure
+  overrides used by native study-loop starts, so a future durable resume can
+  continue draft approval into code generation without service-local workflow
+  decisions.
+- LG3 full-run metadata records only an audit-safe LLM provider payload. It
+  records whether an API key was present, but does not persist the key.
+
+Boundary:
+
+- This still does not enable native resume under the default memory
+  checkpointer. The fail-closed gate remains unchanged.
+- This is backend/API contract work only. No UI flow was changed.
+- The implementation does not claim durable restart recovery unless a persistent
+  LangGraph checkpointer is configured.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 9 tests in 1.604s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer -v
+Ran 2 tests in 0.208s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - memory checkpointer mode still fails closed before native resume dispatch;
+  - draft-spec continuation still uses the formal draft-spec review artifact,
+    hash, and input-fingerprint checks before code generation;
+  - `native_dataset_full_run` metadata is preserved across draft-to-code and
+    code-review resumes;
+  - provider metadata persists only redacted secret-presence fields, not raw
+    API keys;
+  - documentation does not claim durable resume without a persistent
+    checkpointer.
+- Follow-up applied from the review:
+  - service native-resume now checks the gateway native-resume capability before
+    resolving LLM config;
+  - provider audit redaction now covers common key/token/secret field names,
+    not only `api_key`.

@@ -520,16 +520,41 @@ def resume_native_dataset_interrupt(run_id: str, dataset: str, request: Any) -> 
     target = dataset.strip().upper()
     try:
         with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
-            result = gateway.resume_native_dataset_interrupt(
-                study_dir=study_dir,
-                run_id=run_id,
-                dataset=target,
-                decision=request.decision,
-                reviewer=request.reviewer,
-                notes=request.notes,
-                execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
-                rscript_path=getattr(request, "rscript_path", None) or "",
-            )
+            if not gateway.native_interrupt_resume_available():
+                result = gateway.resume_native_dataset_interrupt(
+                    study_dir=study_dir,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=request.decision,
+                    reviewer=request.reviewer,
+                    notes=request.notes,
+                    execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
+                    rscript_path=getattr(request, "rscript_path", None) or "",
+                )
+            else:
+                config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_dir.name, run_id=run_id)
+                provider_config = _provider_config_from_override(
+                    getattr(request, "llm_provider_override", None),
+                    fallback=config.llm_provider,
+                )
+                exposure = _exposure_config_from_override(
+                    getattr(request, "llm_exposure_override", None),
+                    fallback=config.llm_exposure,
+                )
+                result = gateway.resume_native_dataset_interrupt(
+                    study_dir=study_dir,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=request.decision,
+                    reviewer=request.reviewer,
+                    notes=request.notes,
+                    execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
+                    llm_provider=provider_config.__dict__,
+                    llm_exposure=exposure.model_dump(mode="json"),
+                    llm_client_builder=build_llm_client,
+                    target_context_builder=build_target_llm_context,
+                    rscript_path=getattr(request, "rscript_path", None) or "",
+                )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     dataset_state = result.graph_state.datasets.get(target)

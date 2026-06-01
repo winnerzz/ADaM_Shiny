@@ -3460,6 +3460,123 @@ class GraphGatewayTests(unittest.TestCase):
             ).exists()
         )
 
+    def test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_draft_to_code") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+
+        started = gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_draft_to_code",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model", "api_key": "must-not-persist"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(started.current_interrupt, "draft_spec_review")
+        started_contract = started.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(started_contract["boundary"], "lg3_backend_contract")
+        self.assertTrue(started_contract["llm_provider"]["api_key_present"])
+        self.assertNotIn("api_key", started_contract["llm_provider"])
+
+        result = gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id="run_lg3_native_full_run_draft_to_code",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve draft spec and continue LG3 full-run to code review.",
+            llm_provider={"provider": "mock", "model": "mock-model", "api_key": "must-not-persist"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "waiting_for_human_gate")
+        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertEqual(result.decision, "approve")
+        self.assertTrue(result.approved)
+        self.assertIsNone(result.execution)
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["spec_source"], "approved_draft_spec")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "waiting_for_human_gate")
+        self.assertEqual(contract["last_interrupt"], "draft_spec_review")
+        self.assertTrue(contract["code_generation_continued"])
+        self.assertFalse(contract["executed_after_approval"])
+        self.assertTrue(contract["llm_provider"]["api_key_present"])
+        self.assertNotIn("api_key", contract["llm_provider"])
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_draft_to_code"
+                / "approved_specs"
+                / "adae_approved_spec.json"
+            ).exists()
+        )
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_draft_to_code"
+                / "code"
+                / "build_adae.R"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_draft_to_code"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
+    def test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_draft_missing_llm") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_draft_missing_llm",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires llm_provider and llm_exposure"):
+            gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id="run_lg3_native_full_run_draft_missing_llm",
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+                notes="Do not continue without explicit LLM settings.",
+            )
+
+        reloaded = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg3_native_full_run_draft_missing_llm",
+        )
+        self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "draft_spec_review")
+        self.assertFalse((study_dir / "runs" / "run_lg3_native_full_run_draft_missing_llm" / "code").exists())
+
     def test_gateway_native_study_product_loop_starts_multiple_runnable_datasets(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_multi") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

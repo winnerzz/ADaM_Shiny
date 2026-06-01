@@ -8755,3 +8755,56 @@ Ran 7 tests in 1.158s - OK
   - full-run result 增加 `decision` 字段与 native resume response shape 兼容；
   - `execute_after_approval=false` 仍然不会执行 R，并记录 phase=`reviewed`；
   - 文档没有夸大 durable resume 或 UI/API 暴露。
+
+### 2026-06-01 - LG3.0 Full-Run Draft-Spec 续跑切片
+
+已完成：
+
+- 扩展 `resume_native_dataset_full_run()`，让 LG3 单 dataset contract 可以从
+  `draft_spec_review` 或 `code_review` 两种 gate 继续。
+- 当第一站是 `draft_spec_review` 时，批准后会先写入正式 draft-spec review
+  artifact，再继续 dataset product loop，并停在下一站 `code_review` interrupt。
+- draft-spec review 被拒绝时仍停在 draft-spec gate，不生成 R 代码。
+- native resume API request 现在可以携带和 native study-loop start 相同的 LLM
+  provider/exposure overrides，方便后续 durable resume 在 draft approval 后继续
+  code generation，而不是让 service 层自己决定 workflow。
+- LG3 full-run metadata 只保存可审计且不含密钥的 LLM provider payload。它会记录
+  是否提供过 API key，但不会把 key 写入 `graph_state.json`。
+
+边界：
+
+- 这仍然不会在默认 memory checkpointer 下启用 native resume。fail-closed gate
+  保持不变。
+- 这是 backend/API contract 工作，没有修改 UI flow。
+- 除非显式配置 persistent LangGraph checkpointer，否则不宣称 durable restart
+  recovery。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 9 tests in 1.604s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer -v
+Ran 2 tests in 0.208s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - memory checkpointer 模式仍会在 native resume dispatch 之前 fail closed；
+  - draft-spec 续跑仍然经过正式 draft-spec review artifact、hash 和
+    input-fingerprint 检查，然后才生成代码；
+  - `native_dataset_full_run` metadata 会跨 draft-to-code 和 code-review resume
+    保留；
+  - provider metadata 只持久化脱敏后的 secret-presence 字段，不写 raw API key；
+  - 文档没有在缺少 persistent checkpointer 时宣称 durable resume。
+- 根据审查建议已补两点：
+  - service native-resume 现在会先检查 gateway native-resume capability，再解析
+    LLM config；
+  - provider audit redaction 现在覆盖常见 key/token/secret 字段，不只处理
+    `api_key`。

@@ -983,6 +983,8 @@ class GraphGateway:
             "boundary": "lg3_backend_contract",
             "execution_requires_explicit_resume": True,
             "durable_resume_available": self.native_interrupt_resume_available(),
+            "llm_provider": _llm_provider_audit_payload(llm_provider),
+            "llm_exposure": dict(llm_exposure),
         }
         root = Path(study_dir).expanduser()
         self._persist_graph_state(
@@ -1346,29 +1348,82 @@ class GraphGateway:
         reviewer: str,
         notes: str = "",
         execute_after_approval: bool = True,
+        llm_provider: dict[str, Any] | None = None,
+        llm_exposure: dict[str, Any] | None = None,
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
         rscript_path: str | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
     ) -> GraphGatewayNativeDatasetFullRunResult:
         """Resume the LG3 single-dataset native full-run contract."""
 
         target = dataset.strip().upper()
-        resumed = self.resume_native_dataset_product_loop(
-            study_dir=study_dir,
-            run_id=run_id,
-            dataset=target,
-            decision=decision,
-            reviewer=reviewer,
-            notes=notes,
-            execute_after_approval=execute_after_approval,
-            rscript_path=rscript_path,
-            input_fingerprint_payload=input_fingerprint_payload,
-        )
-        dataset_state = resumed.graph_state.datasets.get(target)
-        current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
-        phase = "executed" if resumed.execution is not None else "reviewed"
+        root = Path(study_dir).expanduser()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        dataset_state = graph_state.datasets.get(target)
+        interrupt = dataset_state.current_interrupt if dataset_state is not None else None
+        if interrupt is None or interrupt.status != "open":
+            raise ValueError(f"No open LG3 native full-run interrupt exists for {target}.")
+        if interrupt.name == "draft_spec_review":
+            if decision.strip().lower() == "approve" and (llm_provider is None or llm_exposure is None):
+                raise ValueError(
+                    "LG3 draft-spec approval requires llm_provider and llm_exposure so code generation can continue."
+                )
+            draft_resumed = self.resume_native_dataset_product_loop_draft_spec(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=reviewer,
+                notes=notes,
+                llm_provider=llm_provider or {},
+                llm_exposure=llm_exposure or {},
+                llm_client_builder=llm_client_builder,
+                target_context_builder=target_context_builder,
+                rscript_path=rscript_path,
+                input_fingerprint_payload=input_fingerprint_payload,
+            )
+            graph_state = draft_resumed.graph_state
+            projection = draft_resumed.workflow_projection
+            dataset_state = graph_state.datasets.get(target)
+            current_interrupt = (
+                dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
+            )
+            phase = "waiting_for_human_gate" if current_interrupt else "reviewed"
+            approved = draft_resumed.draft_review.approved
+            final_decision = draft_resumed.draft_review.decision
+            execution = None
+            last_interrupt = "draft_spec_review"
+            code_generation_continued = draft_resumed.code_generation is not None
+        elif interrupt.name == "code_review":
+            resumed = self.resume_native_dataset_product_loop(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=reviewer,
+                notes=notes,
+                execute_after_approval=execute_after_approval,
+                rscript_path=rscript_path,
+                input_fingerprint_payload=input_fingerprint_payload,
+            )
+            graph_state = resumed.graph_state
+            projection = resumed.workflow_projection
+            dataset_state = graph_state.datasets.get(target)
+            current_interrupt = (
+                dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
+            )
+            phase = "executed" if resumed.execution is not None else "reviewed"
+            approved = resumed.approved
+            final_decision = resumed.decision
+            execution = resumed.execution
+            last_interrupt = "code_review"
+            code_generation_continued = False
+        else:
+            raise ValueError(f"Unsupported LG3 native full-run interrupt for {target}: {interrupt.name}.")
         if current_interrupt:
             phase = "waiting_for_human_gate"
-        graph_state = resumed.graph_state.model_copy(deep=True)
+        graph_state = graph_state.model_copy(deep=True)
         runtime_extra = _runtime_persistence_extras(graph_state)
         runtime_extra["native_dataset_full_run"] = {
             "dataset": target,
@@ -1376,11 +1431,17 @@ class GraphGateway:
             "current_interrupt": current_interrupt,
             "contract": "single_dataset_spec_code_review_execute",
             "boundary": "lg3_backend_contract",
-            "approved": resumed.approved,
-            "executed_after_approval": resumed.execution is not None,
+            "last_interrupt": last_interrupt,
+            "decision": decision.strip().lower(),
+            "approved": approved,
+            "code_generation_continued": code_generation_continued,
+            "executed_after_approval": execution is not None,
             "durable_resume_available": self.native_interrupt_resume_available(),
         }
-        root = Path(study_dir).expanduser()
+        if llm_provider is not None:
+            runtime_extra["native_dataset_full_run"]["llm_provider"] = _llm_provider_audit_payload(llm_provider)
+        if llm_exposure is not None:
+            runtime_extra["native_dataset_full_run"]["llm_exposure"] = dict(llm_exposure)
         self._persist_graph_state(
             root,
             graph_state,
@@ -1398,9 +1459,9 @@ class GraphGateway:
             dataset=target,
             phase=phase,
             current_interrupt=current_interrupt,
-            decision=resumed.decision,
-            approved=resumed.approved,
-            execution=resumed.execution,
+            decision=final_decision,
+            approved=approved,
+            execution=execution,
         )
 
     def resume_native_dataset_interrupt(
@@ -1413,6 +1474,10 @@ class GraphGateway:
         reviewer: str,
         notes: str = "",
         execute_after_approval: bool = False,
+        llm_provider: dict[str, Any] | None = None,
+        llm_exposure: dict[str, Any] | None = None,
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
         rscript_path: str | None = None,
     ) -> GraphGatewayNativeDatasetResumeResult:
         """Resume a native dataset interrupt only when durable checkpointing is active."""
@@ -1430,14 +1495,30 @@ class GraphGateway:
         if interrupt is None or interrupt.status != "open":
             raise ValueError(f"No open native dataset interrupt exists for {target}.")
         if interrupt.name == "draft_spec_review":
-            draft_result = self.resume_native_draft_spec_review(
-                study_dir=root,
-                run_id=run_id,
-                dataset=target,
-                decision=decision,
-                reviewer=reviewer,
-                notes=notes,
-            )
+            if _has_native_dataset_full_run_contract(graph_state, target):
+                draft_result = self.resume_native_dataset_full_run(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=decision,
+                    reviewer=reviewer,
+                    notes=notes,
+                    execute_after_approval=execute_after_approval,
+                    llm_provider=llm_provider,
+                    llm_exposure=llm_exposure,
+                    llm_client_builder=llm_client_builder,
+                    target_context_builder=target_context_builder,
+                    rscript_path=rscript_path,
+                )
+            else:
+                draft_result = self.resume_native_draft_spec_review(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=decision,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
             return GraphGatewayNativeDatasetResumeResult(
                 graph_state=draft_result.graph_state,
                 workflow_projection=draft_result.workflow_projection,
@@ -5401,6 +5482,28 @@ def _has_native_dataset_full_run_contract(state: StudyRunState, dataset: str) ->
     if str(payload.get("boundary") or "") != "lg3_backend_contract":
         return False
     return str(payload.get("dataset") or "").strip().upper() == dataset.strip().upper()
+
+
+def _llm_provider_audit_payload(provider: dict[str, Any]) -> dict[str, Any]:
+    """Return provider settings safe to persist in graph state."""
+
+    redacted: dict[str, Any] = {}
+    sensitive_keys = {
+        "api_key",
+        "access_token",
+        "auth_token",
+        "bearer_token",
+        "client_secret",
+        "password",
+        "secret",
+    }
+    for key, value in provider.items():
+        normalized = key.strip().lower()
+        if normalized in sensitive_keys or normalized.endswith("_secret") or normalized.endswith("_token"):
+            redacted[f"{key}_present"] = bool(value)
+            continue
+        redacted[key] = value
+    return redacted
 
 
 def _study_loop_progress_message(

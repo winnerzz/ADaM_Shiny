@@ -5085,6 +5085,110 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             ).exists()
         )
 
+    def test_native_resume_endpoint_passes_llm_config_for_draft_continuation(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_native_resume_llm_config") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        dataset_state = SimpleNamespace(status="needs_review", current_interrupt=None)
+        gateway_result = SimpleNamespace(
+            graph_state=SimpleNamespace(
+                study_id="MY_STUDY",
+                datasets={"ADAE": dataset_state},
+            ),
+            workflow_projection={
+                "workflow_control": "graph_gateway_compatibility_shim",
+                "graph_state_path": str((study_dir / "runs" / "run_native_resume_llm_config" / "graph_state.json").as_posix()),
+                "workflow_state_path": str((study_dir / "runs" / "run_native_resume_llm_config" / "workflow_state.json").as_posix()),
+            },
+            interrupt="draft_spec_review",
+            decision="approve",
+            execution=None,
+        )
+        captured: dict[str, Any] = {}
+
+        class FakeGateway:
+            def close(self) -> None:
+                return None
+
+            def native_interrupt_resume_available(self) -> bool:
+                return True
+
+            def resume_native_dataset_interrupt(self, **kwargs: Any) -> Any:
+                captured.update(kwargs)
+                return gateway_result
+
+        request = SimpleNamespace(
+            study_dir=str(study_dir),
+            reviewer="tester",
+            decision="approve",
+            notes="Continue from draft spec to code review.",
+            execute_after_approval=False,
+            rscript_path="",
+            config_path=None,
+            llm_provider_override=SimpleNamespace(
+                model_dump=lambda exclude_none=True: {
+                    "provider": "mock",
+                    "model": "mock-model",
+                    "api_key": "test-key",
+                    "timeout_seconds": 123.0,
+                }
+            ),
+            llm_exposure_override=SimpleNamespace(
+                model_dump=lambda exclude_none=True: {
+                    "mode": "metadata_only",
+                    "data_classification": "unknown",
+                    "external_api_allowed": False,
+                }
+            ),
+        )
+
+        with patch("adam_agent.api.service._new_graph_gateway", return_value=FakeGateway()):
+            response = service.resume_native_dataset_interrupt("run_native_resume_llm_config", "ADAE", request)
+
+        self.assertEqual(response.interrupt, "draft_spec_review")
+        self.assertEqual(captured["dataset"], "ADAE")
+        self.assertEqual(captured["decision"], "approve")
+        self.assertEqual(captured["llm_provider"]["provider"], "mock")
+        self.assertEqual(captured["llm_provider"]["model"], "mock-model")
+        self.assertEqual(captured["llm_provider"]["api_key"], "test-key")
+        self.assertEqual(captured["llm_provider"]["timeout_seconds"], 123.0)
+        self.assertEqual(captured["llm_exposure"]["mode"], "metadata_only")
+        self.assertIs(captured["llm_client_builder"], service.build_llm_client)
+        self.assertIs(captured["target_context_builder"], service.build_target_llm_context)
+
+    def test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_native_resume_memory_before_llm") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+
+        class FakeGateway:
+            def close(self) -> None:
+                return None
+
+            def native_interrupt_resume_available(self) -> bool:
+                return False
+
+            def resume_native_dataset_interrupt(self, **kwargs: Any) -> Any:
+                raise ValueError("Native LangGraph interrupt resume is not enabled for this run.")
+
+        request = SimpleNamespace(
+            study_dir=str(study_dir),
+            reviewer="tester",
+            decision="approve",
+            notes="Should fail closed before LLM config resolution.",
+            execute_after_approval=False,
+            rscript_path="",
+            config_path="D:/does/not/exist.json",
+            llm_provider_override=None,
+            llm_exposure_override=None,
+        )
+
+        with patch("adam_agent.api.service._new_graph_gateway", return_value=FakeGateway()):
+            with self.assertRaisesRegex(service.ApiServiceError, "Native LangGraph interrupt resume is not enabled"):
+                service.resume_native_dataset_interrupt("run_memory_before_llm", "ADAE", request)
+
     def test_native_study_loop_endpoint_reports_preserved_progress_on_restart(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_study_loop_restart_skip")
         client = TestClient(create_app())
