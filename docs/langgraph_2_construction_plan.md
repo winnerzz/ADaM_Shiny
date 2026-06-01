@@ -7302,6 +7302,66 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Durable Native Resume Queue Message And Coverage Slice
+
+Done:
+
+- Tightened the durable-native-resume-available but empty-queue read-model
+  message:
+  - the old message only said that no dataset gate was waiting;
+  - the new message says no actionable dataset gate is waiting and tells the
+    user to resolve any visible study-level or dependency gate first.
+- Added durable read-model regression coverage without requiring the optional
+  SQLite package:
+  - tests use `runtime_persistence_extra` to simulate
+    `native_interrupt_resume == true`;
+  - when a study-level `dependency_review` is open, `native_resume.available`
+    remains true but `interrupt_queue` is empty;
+  - when the dependency plan is stale, dataset `code_review` does not enter the
+    native resume queue and dataset available actions are empty;
+  - the message explicitly points users back to the study/dependency gate.
+
+Boundary:
+
+- This is only read-model wording and test coverage. It does not enable a real
+  SQLite/Postgres checkpointer, add UI buttons, change split-flow review
+  endpoints, or change LLM/R execution or repair/spec-revision behavior.
+- `runtime_persistence_extra` is used only to exercise the durable read-model
+  branch without making this boundary test depend on whether the local
+  environment has `langgraph-checkpoint-sqlite` installed.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - product code only changes the message for durable-available empty-queue
+    progress, and the new wording is more accurate;
+  - `runtime_persistence_extra` only validates projection from persisted graph
+    state and does not change service-level checkpointer construction;
+  - the default memory `/native-resume` endpoint does not become available;
+  - existing optional SQLite tests already cover a real durable checkpointer
+    making the queue resumable, so this slice should not depend on the optional
+    package.
+- Non-blocking suggestion: if UI starts relying on this wording directly, split
+  `available` and `actionable queue empty` into structured fields so frontend
+  code does not parse message text.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_study_level_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_blocked_dataset_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume -v
+Ran 5 tests in 0.225s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.980s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Queue Gate Alignment Slice
 
 Done:

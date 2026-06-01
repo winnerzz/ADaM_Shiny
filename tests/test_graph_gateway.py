@@ -752,6 +752,85 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["datasets"][0]["available_actions"], [])
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
 
+    def test_progress_durable_native_resume_queue_still_respects_study_gate(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_durable_study_gate") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_queue_durable_study_gate",
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            current_interrupt=InterruptState(name="dependency_review", reason="Review dependency plan first."),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_native_resume_queue_durable_study_gate",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_durable_native_resume_study_gate",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+            },
+        )
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_durable_study_gate")
+
+        self.assertTrue(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
+        self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+        self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
+
+    def test_progress_durable_native_resume_queue_still_respects_stale_plan(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_durable_stale_plan") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_queue_durable_stale_plan",
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            dependency_review_status="stale",
+            dependency_plan={"plan_stale": True},
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_native_resume_queue_durable_stale_plan",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_durable_native_resume_stale_plan",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+            },
+        )
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_durable_stale_plan")
+
+        self.assertTrue(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+        self.assertEqual(progress["datasets"][0]["available_actions"], [])
+        self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
+
     def test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_sqlite") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

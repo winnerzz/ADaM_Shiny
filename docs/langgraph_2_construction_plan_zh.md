@@ -6753,6 +6753,59 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Durable Native Resume Queue 文案与覆盖切片
+
+已完成：
+
+- 收紧 durable native resume 可用但 queue 为空时的 read-model 文案：
+  - 旧文案只说 “no dataset gate is waiting”；
+  - 新文案说明 “no actionable dataset gate is waiting”，并提示先处理 visible
+    study-level 或 dependency gate。
+- 新增不依赖可选 SQLite 包的 durable read-model 回归测试：
+  - 通过 `runtime_persistence_extra` 模拟 `native_interrupt_resume == true`；
+  - study-level `dependency_review` open 时，`native_resume.available == true`，
+    但 `interrupt_queue == []`；
+  - dependency plan stale 时，dataset `code_review` 不进入 `interrupt_queue`，
+    dataset available actions 为空；
+  - message 明确提醒先处理 study/dependency gate。
+
+边界：
+
+- 这是 read-model 文案和测试覆盖切片，不启用真实 SQLite/Postgres
+  checkpointer，不新增 UI 按钮，不改变 split-flow review endpoint，不改变 LLM/R
+  execution 或 repair/spec-revision。
+- `runtime_persistence_extra` 只用于测试 durable read-model 分支，避免本地环境是否安装
+  `langgraph-checkpoint-sqlite` 影响这个边界测试。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 产品代码只改 durable 可用但 queue 为空时的提示语，语义比旧文案更准确；
+  - `runtime_persistence_extra` 只验证已持久化 graph state 的 progress read-model
+    投影，不会改变 service 层真实 checkpointer 构造；
+  - 默认 memory 的 `/native-resume` endpoint 不会因此变可用；
+  - 现有 SQLite optional 测试已经覆盖真实 durable checkpointer 的 resumable queue
+    分支，本切片不需要依赖可选包。
+- 非阻断建议：未来如果 UI 直接消费该文案，可把 “available” 和 “actionable queue
+  empty” 拆成结构化字段，避免前端用 message 做判断。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_study_level_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_blocked_dataset_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume -v
+Ran 5 tests in 0.225s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.980s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard 切片
 
 已完成：

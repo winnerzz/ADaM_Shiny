@@ -5144,7 +5144,7 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
         else:
             message = (
                 "Durable native LangGraph interrupt resume is available for pilot graph interrupts, "
-                "but no dataset gate is waiting."
+                "but no actionable dataset gate is waiting. Resolve any visible study-level or dependency gate first."
             )
         recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "langgraph_checkpointer")
     else:
