@@ -9326,3 +9326,47 @@ Subagent review:
   - the approved-draft-spec test uses normal draft generation and review paths,
     including path/hash/fingerprint checks, before starting the LG3 contract;
   - documentation accurately frames the slice as test/documentation hardening.
+
+### 2026-06-01 - LG3.0 Native Resume Keeps Full-Run Contract Slice
+
+Completed:
+
+- Updated `GraphGateway.resume_native_dataset_interrupt()` so a code-review
+  interrupt that belongs to an LG3 full-run contract resumes through
+  `resume_native_dataset_full_run()`.
+- Non-LG3 native dataset-loop resumes still use the existing
+  `resume_native_dataset_product_loop()` path.
+- `GraphGatewayNativeDatasetFullRunResult` now carries the review `decision`,
+  so the explicit native-resume response can use the same response shape.
+- Added a focused test proving that the explicit native-resume entrypoint keeps
+  `native_dataset_full_run` metadata, records phase `reviewed`, preserves the
+  code approval, and does not execute R when `execute_after_approval=false`.
+
+Boundary:
+
+- This does not enable native resume under the default memory checkpointer. The
+  public fail-closed gate remains unchanged.
+- The test patches native-resume availability only to exercise the branch; it is
+  not a durable restart test.
+- No UI or FastAPI route was added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 7 tests in 1.158s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - memory mode still fails closed because the explicit resume method checks
+    `native_interrupt_resume_available()` before branch dispatch;
+  - LG3 dispatch is restricted to dict metadata with
+    `boundary=lg3_backend_contract` and matching dataset;
+  - adding `decision` to the full-run result is compatible with the native
+    resume response shape;
+  - `execute_after_approval=false` still avoids R execution and records
+    phase `reviewed`;
+  - documentation does not overstate durable resume or UI/API exposure.

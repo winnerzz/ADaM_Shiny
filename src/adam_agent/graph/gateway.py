@@ -128,6 +128,7 @@ class GraphGatewayNativeDatasetFullRunResult(GraphGatewayResult):
     dataset: str
     phase: str
     current_interrupt: str | None
+    decision: str
     approved: bool
     execution: GraphGatewayExecutionResult | None = None
 
@@ -1001,6 +1002,7 @@ class GraphGateway:
             dataset=target,
             phase="waiting_for_human_gate",
             current_interrupt=current_interrupt,
+            decision="",
             approved=False,
             execution=None,
         )
@@ -1396,6 +1398,7 @@ class GraphGateway:
             dataset=target,
             phase=phase,
             current_interrupt=current_interrupt,
+            decision=resumed.decision,
             approved=resumed.approved,
             execution=resumed.execution,
         )
@@ -1443,16 +1446,28 @@ class GraphGateway:
                 execution=None,
             )
         if interrupt.name == "code_review":
-            code_result = self.resume_native_dataset_product_loop(
-                study_dir=root,
-                run_id=run_id,
-                dataset=target,
-                decision=decision,
-                reviewer=reviewer,
-                notes=notes,
-                execute_after_approval=execute_after_approval,
-                rscript_path=rscript_path,
-            )
+            if _has_native_dataset_full_run_contract(graph_state, target):
+                code_result = self.resume_native_dataset_full_run(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=decision,
+                    reviewer=reviewer,
+                    notes=notes,
+                    execute_after_approval=execute_after_approval,
+                    rscript_path=rscript_path,
+                )
+            else:
+                code_result = self.resume_native_dataset_product_loop(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=decision,
+                    reviewer=reviewer,
+                    notes=notes,
+                    execute_after_approval=execute_after_approval,
+                    rscript_path=rscript_path,
+                )
             return GraphGatewayNativeDatasetResumeResult(
                 graph_state=code_result.graph_state,
                 workflow_projection=code_result.workflow_projection,
@@ -5375,6 +5390,17 @@ def _runtime_persistence_extras(state: StudyRunState) -> dict[str, Any]:
         if key.startswith("native_") and isinstance(value, dict):
             extras[key] = dict(value)
     return extras
+
+
+def _has_native_dataset_full_run_contract(state: StudyRunState, dataset: str) -> bool:
+    """Return whether the run was started through the LG3 full-run contract."""
+
+    payload = state.runtime_persistence.get("native_dataset_full_run")
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("boundary") or "") != "lg3_backend_contract":
+        return False
+    return str(payload.get("dataset") or "").strip().upper() == dataset.strip().upper()
 
 
 def _study_loop_progress_message(

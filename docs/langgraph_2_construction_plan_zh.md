@@ -8714,3 +8714,44 @@ Ran 5 tests in 0.877s - OK
   - approved-draft-spec 测试先走正常 draft generation 和 review 路径，包括
     path/hash/fingerprint 校验，然后才启动 LG3 contract；
   - 文档准确描述这是测试/文档硬化切片。
+
+### 2026-06-01 - LG3.0 Native Resume 保留 Full-Run Contract 切片
+
+已完成：
+
+- 更新 `GraphGateway.resume_native_dataset_interrupt()`：当 code-review interrupt
+  属于 LG3 full-run contract 时，改走 `resume_native_dataset_full_run()`。
+- 非 LG3 的 native dataset-loop resume 仍然走原有
+  `resume_native_dataset_product_loop()` 路径。
+- `GraphGatewayNativeDatasetFullRunResult` 现在携带 review `decision`，因此
+  explicit native-resume response 可以保持同一套 response shape。
+- 新增聚焦测试，证明 explicit native-resume 入口会保留
+  `native_dataset_full_run` metadata，记录 phase=`reviewed`，保留 code approval，
+  并且在 `execute_after_approval=false` 时不会执行 R。
+
+边界：
+
+- 这不会在默认 memory checkpointer 下启用 native resume。公开 fail-closed gate
+  不变。
+- 测试里 patch native-resume availability 只是为了覆盖分支，不是 durable restart
+  测试。
+- 没有新增 UI 或 FastAPI route。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 7 tests in 1.158s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - explicit resume method 会先检查 `native_interrupt_resume_available()`，所以
+    memory mode 仍然 fail closed；
+  - LG3 dispatch 只接受 dict metadata、`boundary=lg3_backend_contract` 和
+    dataset 匹配；
+  - full-run result 增加 `decision` 字段与 native resume response shape 兼容；
+  - `execute_after_approval=false` 仍然不会执行 R，并记录 phase=`reviewed`；
+  - 文档没有夸大 durable resume 或 UI/API 暴露。
