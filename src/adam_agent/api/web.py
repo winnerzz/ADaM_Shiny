@@ -2239,7 +2239,7 @@ INDEX_HTML = r"""<!doctype html>
                   : blockedCount && !startable.length
                     ? 'All selected datasets are currently blocked by dependency decisions.'
                     : startable.length
-                      ? `Start ${startable.map((item) => item.dataset).join(', ')} and stop at draft/code review gates. R will not run.`
+                      ? `Start ${startable.map((item) => item.dataset).join(', ')} and stop at draft/code review gates. This is not dependency proof. R will not run.`
                       : 'No new runnable dataset needs to be started; existing graph progress is preserved.'
         },
         approveDraft: {
@@ -2488,7 +2488,7 @@ INDEX_HTML = r"""<!doctype html>
       const dependencies = decision.dependencies || [];
       if (!dependencies.length) {
         if (decision.source === 'no_dependency_evidence') {
-          return 'no upstream ADaM was detected; human review should confirm this is correct.';
+          return 'no upstream ADaM evidence was found; confirm this during spec or code review before trusting the run.';
         }
         if (decision.source === 'input_spec_no_adam_dependency') {
           return 'user spec did not show an upstream ADaM dependency.';
@@ -2557,7 +2557,7 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
         return;
       }
-      beginOperation('Starting runnable datasets', `Dispatching ${targets.join(', ')} to graph-owned draft/code review gates. R will not run.`);
+      beginOperation('Starting runnable datasets', `Dispatching ${targets.join(', ')} to graph-owned draft/code review gates. This is not dependency proof. R will not run.`);
       try {
         const payload = await api('/runs/native-study-loop', {
           method: 'POST',
@@ -3114,14 +3114,14 @@ INDEX_HTML = r"""<!doctype html>
     function dependencyDecisionSummary(target, decision, dependencies) {
       if (dependencies.length) return `${target} has upstream ADaM dependency: ${dependencies.join(', ')}.`;
       if (decision?.source === 'input_spec_no_adam_dependency') return `${target} input spec does not show an upstream ADaM dependency.`;
-      if (decision?.source === 'no_dependency_evidence') return `${target} has no upstream ADaM dependency evidence in the current uploaded materials.`;
+      if (decision?.source === 'no_dependency_evidence') return `${target} has no upstream ADaM dependency evidence in the current uploaded materials; this must be confirmed in spec/code review.`;
       return `${target} dependency plan has not recorded an upstream ADaM dependency.`;
     }
 
     function dependencyRuntimeSummary(target, status, isBlocked) {
       const quality = datasetOutputQualityStatus(target);
       if (isBlocked || status === 'blocked') return `${target} cannot generate until the dependency gate is resolved.`;
-      if (status === 'ready') return `${target} can move to spec/code review once required review gates are satisfied.`;
+      if (status === 'ready') return `${target} can move to spec/code review; review must still confirm that the dependency assumption is correct.`;
       if (quality === 'structural_stub') return `${target} has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.`;
       if (quality === 'not_real_derivation') return `${target} has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.`;
       if (quality === 'real_runtime_output' || status === 'completed') return `${target} has a completed local R runtime output for review.`;

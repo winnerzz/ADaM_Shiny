@@ -7247,3 +7247,41 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.7 Dependency Assumption UI Wording Slice
+
+Completed:
+
+- Tightened UI wording around `no_dependency_evidence` and Start Runnable
+  Datasets:
+  - entering a review gate is not described as dependency proof;
+  - missing upstream ADaM evidence is explicitly something to confirm during
+    spec/code review;
+  - both the action reason and transient operation message now say:
+    `This is not dependency proof. R will not run.`
+- This slice only changes user-facing copy and UI contract tests. It does not
+  change dependency planning, graph state, Gateway gates, review gates, or R
+  execution behavior.
+
+Subagent review:
+
+- 2026-06-01, Tesla, `gpt-5.5`, read-only review: GO.
+- Confirmed that the change is copy/test only and stays aligned with the
+  Reference ADaM policy and explicit per-dataset human-approved execution
+  boundary.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+Ran 3 tests in 0.119s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 111 tests in 15.240s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

@@ -6703,6 +6703,42 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Dependency Assumption UI Wording 切片
+
+已完成：
+
+- 收紧 `no_dependency_evidence` 和 Start Runnable Datasets 相关 UI 文案：
+  - “可以进入 review gate”不再被描述成依赖已经被证明；
+  - 明确提示没有上游 ADaM evidence 时，仍必须在 spec/code review 中确认；
+  - Start Runnable Datasets 的按钮说明和运行中提示都写明：
+    `This is not dependency proof. R will not run.`
+- 只改用户可见文案和 UI contract tests，不改 dependency planning、graph state、
+  Gateway gate、review gate 或 R execution 行为。
+- 补充 UI contract tests，锁住这些说明，防止后续 UI 文案重新把 review gate
+  误写成 dependency proof。
+
+子 agent 审查：
+
+- 2026-06-01，Tesla，`gpt-5.5`，只读审查结论：GO。
+- 它确认本切片没有改 graph/dependency/execution 逻辑，文案与 Reference ADaM
+  policy 和 per-dataset human approval 执行边界一致。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_marks_review_only_outputs_without_runtime_language tests.test_api_phase8.Phase8ApiTests.test_index_dependency_map_does_not_treat_reference_adam_as_runtime_dependency tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+Ran 3 tests in 0.119s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 111 tests in 15.240s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.3 Native Study Product Loop API/UI 接线切片
 
 已完成：

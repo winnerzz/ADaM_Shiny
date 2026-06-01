@@ -948,6 +948,14 @@ console.log(JSON.stringify(results));
             "Start Runnable Datasets moves all runnable targets to review gates; R execution stays per dataset after human approval.",
             html,
         )
+        self.assertIn(
+            "This is not dependency proof. R will not run.",
+            html,
+        )
+        self.assertIn(
+            "Dispatching ${targets.join(', ')} to graph-owned draft/code review gates. This is not dependency proof. R will not run.",
+            html,
+        )
         self.assertIn("function datasetPlanningContext(target, isPlanned, isActive, status)", html)
         self.assertIn("planned in this run", html)
         self.assertIn("view-only history/candidate", html)
@@ -1196,6 +1204,10 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn("has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.", runtime_body)
         self.assertIn("has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.", runtime_body)
         self.assertIn("has a completed local R runtime output for review.", runtime_body)
+        self.assertIn(
+            "review must still confirm that the dependency assumption is correct",
+            runtime_body,
+        )
         self.assertIn("const completedExecution = executionFor(target)?.status === 'completed' || datasetProgressFor(target)?.execution_status === 'completed';", action_body)
         self.assertIn("inspect this review-only/demo output. It cannot be used as runtime input for another dataset.", action_body)
         self.assertIn("const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);", board_body)
@@ -1240,6 +1252,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn("function dependencySourceEvidenceText(sdtm)", html)
         self.assertIn("function dependencyDecisionSummary(target, decision, dependencies)", html)
         self.assertIn("function dependencyRuntimeSummary(target, status, isBlocked)", html)
+        self.assertIn("no upstream ADaM evidence was found; confirm this during spec or code review before trusting the run.", html)
+        self.assertIn("this must be confirmed in spec/code review", html)
         self.assertIn("Reference ADaM is comparison/output-shape evidence only", dependency_body)
         self.assertIn("not derivation authority or a runtime dependency by itself", dependency_body)
         self.assertIn("Runtime input is available or planned", dependency_body)
