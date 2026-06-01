@@ -8446,3 +8446,45 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue Count Mirror 切片
+
+已完成：
+
+- 将 top-level native resume queue read-model 字段同步镜像到
+  `study_loop_result`：
+  - `native_resume_has_queue_items`
+  - `native_resume_queue_item_count`
+- 增加 gateway/API 覆盖，确保 native study loop 一次启动多个 runnable datasets
+  并停在 dataset review gates 时，`study_loop_result` 不会和 top-level
+  `native_resume` 摘要发生字段漂移。
+- 字段语义保持不变：
+  - `has_queue_items` / `queue_item_count` 只表示存在可见的 native-resume
+    queue entries；
+  - 它们不表示默认 memory checkpointer 下可以调用 native resume endpoint；
+  - 每个 queue item 上的 `can_resume` 仍然是“能否调用 resume”的判断字段。
+
+边界：
+
+- 这是 read-model consistency hardening，不新增 endpoint、不新增 UI action、不改变
+  LLM/R execution，也不改变默认 memory checkpointer fail-closed 边界。
+- 目标是让 UI 和自动化客户端从 `study_loop_result` 读取一致的 study loop
+  摘要，不需要自行重新计算 top-level native resume counts。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 3 tests in 0.579s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 字段来自同一次 `_native_resume_progress(state)` 结果镜像，不新增第二个事实源；
+  - 镜像字段只表示存在可见 queue entries；
+  - 能否调用 native resume 仍由 `native_resume_available` 和每个 queue item 的
+    `can_resume` / `resume_endpoint` 判断；
+  - 测试保留了默认 memory fail-closed 语义，也就是 queue 可见但 native resume
+    不可调用。

@@ -7488,6 +7488,51 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue Count Mirror Slice
+
+Completed:
+
+- Mirrored the top-level native resume queue read-model fields into
+  `study_loop_result`:
+  - `native_resume_has_queue_items`
+  - `native_resume_queue_item_count`
+- Added gateway/API coverage so `study_loop_result` cannot drift from the
+  top-level `native_resume` summary when a native study loop starts multiple
+  runnable datasets and stops at dataset review gates.
+- Kept field semantics unchanged:
+  - `has_queue_items` / `queue_item_count` mean visible native-resume queue
+    entries exist;
+  - they do not mean the default memory checkpointer can call the native
+    resume endpoint;
+  - `can_resume` on each queue item remains the callable-resume indicator.
+
+Current boundary:
+
+- This is read-model consistency work only.
+- It adds no new endpoint, no UI action, no LLM/R execution behavior, and no
+  change to the fail-closed default memory checkpointer boundary.
+- The goal is to make the UI and automation clients read one coherent study
+  loop result without recomputing top-level native resume counts.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary -v
+Ran 3 tests in 0.579s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- It confirmed:
+  - the fields are mirrored from the same `_native_resume_progress(state)`
+    result and do not create a second source of truth;
+  - the mirrored fields only indicate visible queue entries;
+  - callable native resume still depends on `native_resume_available` and each
+    queue item's `can_resume` / `resume_endpoint`;
+  - tests preserve the default memory fail-closed boundary where queue entries
+    can be visible while native resume is unavailable.
+
 ### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard Slice
 
 Completed:

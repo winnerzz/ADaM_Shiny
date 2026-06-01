@@ -5128,6 +5128,8 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
         "native_resume_scope": str(native_resume["scope"]),
         "resume_boundary": str(native_resume["boundary"]),
         "native_resume_interrupts": list(native_resume.get("interrupt_queue") or []),
+        "native_resume_has_queue_items": bool(native_resume.get("has_queue_items")),
+        "native_resume_queue_item_count": int(native_resume.get("queue_item_count") or 0),
         "message": _study_loop_progress_message(started=started, skipped=skipped, blocked=blocked, review_queue=review_queue),
     }
 

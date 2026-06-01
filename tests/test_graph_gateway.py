@@ -3180,6 +3180,14 @@ class GraphGatewayTests(unittest.TestCase):
             progress["study_loop_result"]["native_resume_scope"],
             progress["native_resume"]["scope"],
         )
+        self.assertEqual(
+            progress["study_loop_result"]["native_resume_has_queue_items"],
+            progress["native_resume"]["has_queue_items"],
+        )
+        self.assertEqual(
+            progress["study_loop_result"]["native_resume_queue_item_count"],
+            progress["native_resume"]["queue_item_count"],
+        )
         self.assertIn("stopped at human review gates", progress["study_loop_result"]["message"])
         self.assertEqual(
             {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},
