@@ -72,6 +72,49 @@ class RunPlanResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class NativeStudyStartRequest(StrictBaseModel):
+    """Start the graph-native study product loop until review gates."""
+
+    study_dir: NonEmptyStr
+    run_id: NonEmptyStr
+    target_datasets: list[NonEmptyStr] = Field(min_length=1)
+    study_id: str | None = None
+    config_path: str | None = None
+    rscript_path: str | None = None
+    approved_dependency_datasets: list[str] = Field(default_factory=list)
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class NativeStudyDatasetStartResult(StrictBaseModel):
+    """One dataset result from the graph-native study product loop."""
+
+    dataset: str
+    status: str
+    next_action: str
+    result_type: str
+    code_path: str | None = None
+    draft_spec_path: str | None = None
+    static_check_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NativeStudyStartResponse(StrictBaseModel):
+    """Study-level native product-loop start result."""
+
+    study_id: str
+    run_id: str
+    status: str
+    started_datasets: list[str] = Field(default_factory=list)
+    blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
+    review_queue: list[dict[str, Any]] = Field(default_factory=list)
+    dataset_results: list[NativeStudyDatasetStartResult] = Field(default_factory=list)
+    message: str
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str | None = None
+    workflow_state_path: str | None = None
+
+
 class DatasetProgressItem(StrictBaseModel):
     """Graph-owned next-step summary for one dataset."""
 

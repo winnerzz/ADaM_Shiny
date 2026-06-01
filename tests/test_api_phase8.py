@@ -456,6 +456,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Use My Study Files", response.text)
         self.assertIn("Generate R Code", response.text)
         self.assertIn("Approve And Run Locally", response.text)
+        self.assertIn("Start Runnable Datasets", response.text)
+        self.assertIn("startStudyLoopButton", response.text)
+        self.assertIn("/runs/native-study-loop", response.text)
+        self.assertIn("startNativeStudyLoop", response.text)
         self.assertIn("finalize-inputs", response.text)
         self.assertIn("finalizedInputsByDataset", response.text)
         self.assertIn("Audit Timeline", response.text)
@@ -940,7 +944,10 @@ console.log(JSON.stringify(results));
         self.assertNotIn("selectedTargetsForPlan = graphTargets", apply_graph_body)
         self.assertIn("function plannedTargetsForDisplay(plan, fallbackTargets = null)", html)
         self.assertIn("function renderTargetSelectionSummary()", html)
-        self.assertIn("Code generation and R execution still run only for the active detail target.", html)
+        self.assertIn(
+            "Start Runnable Datasets moves all runnable targets to review gates; R execution stays per dataset after human approval.",
+            html,
+        )
         self.assertIn("function datasetPlanningContext(target, isPlanned, isActive, status)", html)
         self.assertIn("planned in this run", html)
         self.assertIn("view-only history/candidate", html)
@@ -3155,6 +3162,76 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(state["target_datasets"], ["ADAE", "ADCM"])
         self.assertIn("ADAE", state["datasets"])
         self.assertIn("ADCM", state["datasets"])
+
+    def test_native_study_loop_endpoint_starts_multiple_runnable_datasets(self) -> None:
+        study_dir = _study_with_adae_adcm_inputs("phase8_native_study_loop_endpoint")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/native-study-loop",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_native_study_loop_endpoint",
+                "target_datasets": ["ADAE", "ADCM"],
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["started_datasets"], ["ADAE", "ADCM"])
+        self.assertEqual({item["dataset"] for item in payload["dataset_results"]}, {"ADAE", "ADCM"})
+        self.assertTrue(all(item["next_action"] == "review_code" for item in payload["dataset_results"]))
+        self.assertTrue((study_dir / "runs" / "run_native_study_loop_endpoint" / "graph_state.json").exists())
+        progress = client.get(
+            "/runs/run_native_study_loop_endpoint/progress",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(progress.status_code, 200, progress.text)
+        review_queue = {(item["dataset"], item["name"]) for item in progress.json()["review_queue"]}
+        self.assertIn(("ADAE", "code_review"), review_queue)
+        self.assertIn(("ADCM", "code_review"), review_queue)
+
+    def test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets(self) -> None:
+        study_dir = _workspace_dir("phase8_native_study_loop_dependency_block") / "MY_STUDY"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "lb.csv").write_text("USUBJID,LBTEST\n01,ALT\n", encoding="utf-8")
+        (spec_dir / "adtte.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADTTE",
+                    "variables": [
+                        {
+                            "variable": "CNSR",
+                            "source_domains": ["ADLB"],
+                            "derivation": "Use ADLB threshold records.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/native-study-loop",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_native_study_loop_dependency_block",
+                "target_datasets": ["ADTTE"],
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["started_datasets"], [])
+        self.assertEqual(payload["dataset_results"], [])
+        self.assertTrue(any(block["dataset"] == "ADTTE" for block in payload["blocked_datasets"]))
+        self.assertFalse((study_dir / "runs" / "run_native_study_loop_dependency_block" / "code").exists())
 
     def test_public_prepare_marks_existing_graph_dataset_state_stale_when_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_prepare_marks_stale")

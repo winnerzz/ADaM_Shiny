@@ -7194,3 +7194,56 @@ Verification:
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_with_approved_draft_spec_generates_new_draft_and_clears_old_review tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_revise_spec_requires_finalize_before_regenerating_code -v
 Ran 4 tests in 1.550s - OK
 ```
+
+### 2026-06-01 - LG2.3 Native Study Product Loop API/UI Wiring Slice
+
+Completed:
+
+- Added `POST /runs/native-study-loop` as the local UI/API entrypoint for the
+  internal `GraphGateway.start_native_study_product_loop()` pilot.
+- Added the UI `Start Runnable Datasets` action. It uses planning selection,
+  not the active detail target, then refreshes graph state, progress, and review
+  read models after the call.
+- Kept the product boundary explicit:
+  - the study-level start only advances runnable selected datasets to
+    `draft_spec_review` or `code_review`;
+  - it does not approve draft specs;
+  - it does not approve generated code;
+  - it does not execute R.
+- Fixed the checkpoint state boundary:
+  - removed `llm_client_builder` and `target_context_builder` from
+    `DatasetGraphState`;
+  - stopped passing Python function objects through LangGraph state payloads;
+  - moved runtime dependency injection to the `compile_dataset_graph(...)`
+    boundary, so fake/test LLM injection still works without polluting
+    checkpoint state.
+
+Current boundary:
+
+- This is the first local product entrypoint for the native study loop, not a
+  full automatic batch executor.
+- Review-required `no_dependency_evidence` can still be carried into dataset
+  review gates under the current Gateway design; entering the review gate is not
+  a production-grade dependency proof.
+- R execution remains per-dataset and requires explicit human approval after
+  code review.
+
+Subagent review:
+
+- 2026-06-01, Rawls, `gpt-5.5`, read-only review: GO.
+- Verified no review bypass, no R execution in the endpoint, dependency-blocked
+  targets not dispatched, UI uses graph-owned read models, and builder functions
+  no longer enter checkpoint state.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 312 tests in 32.118s - OK (skipped=2)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

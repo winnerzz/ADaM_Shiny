@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, Callable
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -113,11 +114,19 @@ def _skips_stub_nodes(state: DatasetGraphState) -> bool:
     )
 
 
-def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
+LLMClientBuilder = Callable[[LLMProviderConfig], Any]
+TargetContextBuilder = Callable[..., Any]
+
+
+def prepare_dataset(
+    state: DatasetGraphState,
+    *,
+    target_context_builder: TargetContextBuilder = build_target_llm_context,
+) -> DatasetGraphState:
     """Initialize one dataset run."""
 
     if _is_graph_product_prepare_mode(state) or _is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state):
-        return prepare_product_context_node(state)
+        return prepare_product_context_node(state, target_context_builder=target_context_builder)
     if state.get("execution_mode") == LLM_DOWNSTREAM_STUBBED_MODE:
         return run_llm_downstream_stubbed_node(state)
     if state.get("execution_mode") == LLM_DOWNSTREAM_PROVIDER_MODE:
@@ -189,11 +198,15 @@ def prepare_dataset(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
-def prepare_legacy_stub_dataset(state: DatasetGraphState) -> DatasetGraphState:
+def prepare_legacy_stub_dataset(
+    state: DatasetGraphState,
+    *,
+    target_context_builder: TargetContextBuilder = build_target_llm_context,
+) -> DatasetGraphState:
     """Prepare the explicit legacy/test stub graph."""
 
     if not _is_legacy_stub_mode(state):
-        return prepare_dataset(state)
+        return prepare_dataset(state, target_context_builder=target_context_builder)
     return {
         "status": "running",
         "repair_attempts": state.get("repair_attempts", 0),
@@ -203,7 +216,11 @@ def prepare_legacy_stub_dataset(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
-def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
+def prepare_product_context_node(
+    state: DatasetGraphState,
+    *,
+    target_context_builder: TargetContextBuilder = build_target_llm_context,
+) -> DatasetGraphState:
     """Prepare real product context and stop at the first spec gate."""
 
     study_dir = state.get("study_dir")
@@ -222,7 +239,7 @@ def prepare_product_context_node(state: DatasetGraphState) -> DatasetGraphState:
 
     try:
         exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
-        context = _build_target_context_for_state(state)(
+        context = target_context_builder(
             study_id=state["study_id"],
             run_id=state["run_id"],
             target_dataset=state["dataset"],
@@ -394,7 +411,11 @@ def _evidence_agent_output(
     )
 
 
-def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
+def draft_spec_agent_node(
+    state: DatasetGraphState,
+    *,
+    llm_client_builder: LLMClientBuilder = build_llm_client,
+) -> DatasetGraphState:
     """Generate a review-required draft spec from graph-prepared context."""
 
     if not (_is_graph_product_prepare_mode(state) or _is_graph_product_full_loop_mode(state)):
@@ -416,7 +437,7 @@ def draft_spec_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     try:
         provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
         exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
-        llm_client = _build_llm_client_for_state(state, provider_config)
+        llm_client = llm_client_builder(provider_config)
         if provider_config.provider.strip().lower() == "mock":
             llm_client = MockLLMClient(fixed_response_text=default_mock_draft_spec_response(target, context_dict))
         draft_result = generate_draft_spec_from_evidence(
@@ -624,7 +645,11 @@ def _spec_agent_output(
     )
 
 
-def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
+def generate_r_code_agent_node(
+    state: DatasetGraphState,
+    *,
+    llm_client_builder: LLMClientBuilder = build_llm_client,
+) -> DatasetGraphState:
     """Generate R code and stop at graph-native code review."""
 
     if not (_is_graph_product_generate_code_mode(state) or _is_graph_product_full_loop_mode(state)):
@@ -665,7 +690,7 @@ def generate_r_code_agent_node(state: DatasetGraphState) -> DatasetGraphState:
     try:
         provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
         exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
-        llm_client = _build_llm_client_for_state(state, provider_config)
+        llm_client = llm_client_builder(provider_config)
         if provider_config.provider.strip().lower() == "mock":
             llm_client = MockLLMClient(fixed_response_text=default_mock_generated_code_response(target))
         compact_prompt = compact_prompt_from_context(context_dict)
@@ -1594,7 +1619,12 @@ def summarize_real_downstream(state: DatasetGraphState) -> DatasetGraphState:
     }
 
 
-def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
+def build_dataset_graph(
+    *,
+    include_legacy_stub_chain: bool = False,
+    llm_client_builder: LLMClientBuilder = build_llm_client,
+    target_context_builder: TargetContextBuilder = build_target_llm_context,
+):
     """Build the dataset-level graph.
 
     The default graph is the product graph. The old synthetic stub chain is
@@ -1604,11 +1634,35 @@ def build_dataset_graph(*, include_legacy_stub_chain: bool = False):
     graph = StateGraph(DatasetGraphState)
     graph.add_node(
         "prepare_dataset",
-        prepare_legacy_stub_dataset if include_legacy_stub_chain else prepare_dataset,
+        (
+            lambda state: prepare_legacy_stub_dataset(
+                state,
+                target_context_builder=target_context_builder,
+            )
+        )
+        if include_legacy_stub_chain
+        else (
+            lambda state: prepare_dataset(
+                state,
+                target_context_builder=target_context_builder,
+            )
+        ),
     )
-    graph.add_node("draft_spec_agent", draft_spec_agent_node)
+    graph.add_node(
+        "draft_spec_agent",
+        lambda state: draft_spec_agent_node(
+            state,
+            llm_client_builder=llm_client_builder,
+        ),
+    )
     graph.add_node("wait_for_draft_spec_review", wait_for_draft_spec_review_node)
-    graph.add_node("generate_r_code_agent", generate_r_code_agent_node)
+    graph.add_node(
+        "generate_r_code_agent",
+        lambda state: generate_r_code_agent_node(
+            state,
+            llm_client_builder=llm_client_builder,
+        ),
+    )
     graph.add_node("wait_for_code_review", wait_for_code_review_node)
     graph.add_node("execute_approved_code", execute_approved_code_node)
     graph.add_node("wait_for_terminal_failure_review", wait_for_terminal_failure_review_node)
@@ -1932,20 +1986,6 @@ def _artifact_id(value: object) -> str | None:
     return value.artifact_id if isinstance(value, ArtifactRef) else None
 
 
-def _build_llm_client_for_state(state: DatasetGraphState, provider_config: LLMProviderConfig):
-    builder = state.get("llm_client_builder")
-    if builder is not None and callable(builder):
-        return builder(provider_config)
-    return build_llm_client(provider_config)
-
-
-def _build_target_context_for_state(state: DatasetGraphState):
-    builder = state.get("target_context_builder")
-    if builder is not None and callable(builder):
-        return builder
-    return build_target_llm_context
-
-
 def _product_failure(
     failure_type: str,
     message: str,
@@ -2096,10 +2136,18 @@ def _merge_json_artifact(path: str | Path, payload: dict[str, object]) -> None:
     _write_json(path, current)
 
 
-def compile_dataset_graph(checkpointer=None):
+def compile_dataset_graph(
+    checkpointer=None,
+    *,
+    llm_client_builder: LLMClientBuilder = build_llm_client,
+    target_context_builder: TargetContextBuilder = build_target_llm_context,
+):
     """Compile the product dataset graph with an optional parent checkpointer."""
 
-    return build_dataset_graph().compile(checkpointer=checkpointer, name="dataset_graph")
+    return build_dataset_graph(
+        llm_client_builder=llm_client_builder,
+        target_context_builder=target_context_builder,
+    ).compile(checkpointer=checkpointer, name="dataset_graph")
 
 
 def compile_legacy_stub_dataset_graph():

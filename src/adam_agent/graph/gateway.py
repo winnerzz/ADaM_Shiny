@@ -44,6 +44,8 @@ from adam_agent.graph.workflow_state import (
     project_graph_state_to_workflow,
     update_workflow_state,
 )
+from adam_agent.llm.clients import build_llm_client
+from adam_agent.llm.context import build_target_llm_context
 from adam_agent.schemas.graph_state import DatasetRunState, HumanCommand, InterruptState, StudyRunState
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.routing import FailureRecord
@@ -766,7 +768,11 @@ class GraphGateway:
         dependency_resolution = list(plan.dependency_resolution)
         dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
-        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        dataset_graph = compile_dataset_graph(
+            checkpointer=self._checkpointer,
+            llm_client_builder=llm_client_builder or build_llm_client,
+            target_context_builder=target_context_builder or build_target_llm_context,
+        )
         result = dataset_graph.invoke(
             {
                 "study_id": study_id,
@@ -778,8 +784,6 @@ class GraphGateway:
                 "dependency_resolution": dependency_resolution,
                 "llm_provider": llm_provider,
                 "llm_exposure": llm_exposure,
-                "llm_client_builder": llm_client_builder,
-                "target_context_builder": target_context_builder,
                 "native_code_review": True,
                 "audit_artifacts": [],
             },
@@ -838,7 +842,11 @@ class GraphGateway:
         dependency_resolution = list(plan.dependency_resolution)
         dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
         self._validate_native_dataset_loop_start(study_dir=root, run_id=run_id, dataset=target)
-        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        dataset_graph = compile_dataset_graph(
+            checkpointer=self._checkpointer,
+            llm_client_builder=llm_client_builder or build_llm_client,
+            target_context_builder=target_context_builder or build_target_llm_context,
+        )
         result = dataset_graph.invoke(
             {
                 "study_id": study_id,
@@ -850,8 +858,6 @@ class GraphGateway:
                 "dependency_resolution": dependency_resolution,
                 "llm_provider": llm_provider,
                 "llm_exposure": llm_exposure,
-                "llm_client_builder": llm_client_builder,
-                "target_context_builder": target_context_builder,
                 "native_draft_spec_review": True,
                 "native_code_review": True,
                 "native_full_loop": True,
@@ -1608,7 +1614,10 @@ class GraphGateway:
         )
         dependency_resolution = list(plan.dependency_resolution)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
-        result = compile_dataset_graph().invoke(
+        result = compile_dataset_graph(
+            llm_client_builder=llm_client_builder or build_llm_client,
+            target_context_builder=target_context_builder or build_target_llm_context,
+        ).invoke(
             {
                 "study_id": study_id,
                 "run_id": run_id,
@@ -1619,8 +1628,6 @@ class GraphGateway:
                 "dependency_resolution": dependency_resolution,
                 "llm_provider": llm_provider,
                 "llm_exposure": llm_exposure,
-                "llm_client_builder": llm_client_builder,
-                "target_context_builder": target_context_builder,
                 "force_new_draft_spec": force_new_draft_spec,
                 "audit_artifacts": [],
             }
@@ -1759,7 +1766,11 @@ class GraphGateway:
         )
         dependency_resolution = list(plan.dependency_resolution)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
-        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        dataset_graph = compile_dataset_graph(
+            checkpointer=self._checkpointer,
+            llm_client_builder=llm_client_builder or build_llm_client,
+            target_context_builder=target_context_builder or build_target_llm_context,
+        )
         result = dataset_graph.invoke(
             {
                 "study_id": study_id,
@@ -1771,8 +1782,6 @@ class GraphGateway:
                 "dependency_resolution": dependency_resolution,
                 "llm_provider": llm_provider,
                 "llm_exposure": llm_exposure,
-                "llm_client_builder": llm_client_builder,
-                "target_context_builder": target_context_builder,
                 "force_new_draft_spec": force_new_draft_spec,
                 "native_draft_spec_review": True,
                 "audit_artifacts": [],
@@ -2504,7 +2513,10 @@ class GraphGateway:
         dependency_resolution = list(plan.dependency_resolution)
         dependency_artifacts = _dependency_artifacts_for_dataset(dependency_resolution, target)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="generate_code")
-        result = compile_dataset_graph().invoke(
+        result = compile_dataset_graph(
+            llm_client_builder=llm_client_builder or build_llm_client,
+            target_context_builder=target_context_builder or build_target_llm_context,
+        ).invoke(
             {
                 "study_id": study_id,
                 "run_id": run_id,
@@ -2515,8 +2527,6 @@ class GraphGateway:
                 "dependency_resolution": dependency_resolution,
                 "llm_provider": llm_provider,
                 "llm_exposure": llm_exposure,
-                "llm_client_builder": llm_client_builder,
-                "target_context_builder": target_context_builder,
                 "audit_artifacts": [],
             }
         )

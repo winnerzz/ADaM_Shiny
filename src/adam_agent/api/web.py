@@ -1054,7 +1054,7 @@ INDEX_HTML = r"""<!doctype html>
           <span id="planStatus" class="pill warn">waiting</span>
         </div>
         <div class="section-body">
-          <p class="note">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panels below; generation and execution still happen one dataset at a time.</p>
+          <p class="note">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panels below; study-level start can move all runnable datasets to their review gates without running R.</p>
           <div class="button-row" id="targetButtons"></div>
           <div id="targetSelectionSummary" class="target-selection-summary">No planning target selected yet.</div>
           <div class="grid2" style="margin-top:12px;">
@@ -1070,6 +1070,7 @@ INDEX_HTML = r"""<!doctype html>
           <div id="planView" class="note">Load inputs first, then choose a target.</div>
           <div class="button-row">
             <button class="secondary" id="finalizeInputsButton" disabled>Finalize Inputs / Draft Spec</button>
+            <button class="secondary" id="startStudyLoopButton" disabled>Start Runnable Datasets</button>
             <button class="secondary" id="approveDraftSpecButton" disabled>Approve Draft Spec</button>
           </div>
           <div id="specActionHints" class="action-hints"></div>
@@ -1849,8 +1850,9 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
-      byId('generateCodeButton').disabled = !state.selectedTarget;
       byId('finalizeInputsButton').disabled = !state.selectedTarget;
+      byId('startStudyLoopButton').disabled = !selectedTargets().length;
+      byId('generateCodeButton').disabled = !state.selectedTarget;
       renderDraftSpecPane();
       renderGraphAwareDashboard();
     }
@@ -1859,7 +1861,7 @@ INDEX_HTML = r"""<!doctype html>
       const planned = selectedTargets();
       const active = state.selectedTarget || '';
       byId('targetSelectionSummary').textContent = planned.length
-        ? `Planned together: ${planned.join(', ')}. Active detail view: ${active || 'none'}. Code generation and R execution still run only for the active detail target.`
+        ? `Planned together: ${planned.join(', ')}. Active detail view: ${active || 'none'}. Start Runnable Datasets moves all runnable targets to review gates; R execution stays per dataset after human approval.`
         : `No planning target selected. Active detail view: ${active || 'none'}. Reference-only candidates stay unplanned until you explicitly select them.`;
     }
 
@@ -1912,6 +1914,7 @@ INDEX_HTML = r"""<!doctype html>
       setPill('codeStatus', codeStatusForActiveDataset());
       byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
       byId('finalizeInputsButton').disabled = !state.selectedTarget;
+      byId('startStudyLoopButton').disabled = !selectedTargets().length;
       renderDraftSpecPane();
       renderPane();
       renderGraphAwareDashboard();
@@ -2172,6 +2175,21 @@ INDEX_HTML = r"""<!doctype html>
       const generateGate = graphActionGate(progress, 'generate');
       const approveRunGate = graphActionGate(progress, 'approveRun');
       const effectiveSpecGate = hasSpecGate || Boolean(generateGate?.ready && graphAllowsCodeGeneration(progress));
+      const selected = selectedTargets();
+      const progressDatasets = state.runProgress?.datasets || [];
+      const startable = progressDatasets.filter((item) =>
+        selected.includes(String(item.dataset || '').toUpperCase()) &&
+        !item.blocked &&
+        ['finalize_inputs', 'generate_code', 'review_draft_spec', 'review_code'].includes(String(item.next_action || ''))
+      );
+      const blockedCount = (state.runProgress?.blocked_datasets || state.plan?.blocked_datasets || []).length;
+      const startStudyReady = Boolean(
+        selected.length &&
+        state.plan &&
+        !state.runProgress?.plan_stale &&
+        !['blocked', 'review_required', 'stale'].includes(String(state.runProgress?.dependency_review_status || state.plan?.dependency_review_status || '')) &&
+        startable.length
+      );
       const finalizeReady = finalizeGate
         ? Boolean(target && targetIsPlanned && !blocked && finalizeGate.ready)
         : Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
@@ -2206,6 +2224,23 @@ INDEX_HTML = r"""<!doctype html>
                 : hasSpecGate
                   ? `${target} already has an input spec or approved draft spec; finalizing again is optional.`
                   : `Ready to check whether ${target} has an input spec or needs a draft spec.`
+        },
+        startStudy: {
+          ready: startStudyReady,
+          label: 'Start Runnable Datasets',
+          reason: !selected.length
+            ? 'Select at least one ADaM output for this study run.'
+            : !state.plan
+              ? 'Prepare the dependency plan before starting runnable datasets.'
+              : state.runProgress?.plan_stale
+                ? 'Inputs changed after planning. Re-run dependency planning before starting datasets.'
+                : ['blocked', 'review_required', 'stale'].includes(String(state.runProgress?.dependency_review_status || state.plan?.dependency_review_status || ''))
+                  ? 'Resolve the study dependency review before starting dataset review gates.'
+                  : blockedCount && !startable.length
+                    ? 'All selected datasets are currently blocked by dependency decisions.'
+                    : startable.length
+                      ? `Start ${startable.map((item) => item.dataset).join(', ')} and stop at draft/code review gates. R will not run.`
+                      : 'No new runnable dataset needs to be started; existing graph progress is preserved.'
         },
         approveDraft: {
           ready: draftApprovalReady,
@@ -2283,10 +2318,11 @@ INDEX_HTML = r"""<!doctype html>
     function renderActionAvailability() {
       const availability = actionAvailability();
       setButtonAvailability('finalizeInputsButton', availability.finalize);
+      setButtonAvailability('startStudyLoopButton', availability.startStudy);
       setButtonAvailability('approveDraftSpecButton', availability.approveDraft);
       setButtonAvailability('generateCodeButton', availability.generate);
       setButtonAvailability('approveButton', availability.approveRun);
-      renderActionHints('specActionHints', [availability.finalize, availability.approveDraft]);
+      renderActionHints('specActionHints', [availability.finalize, availability.startStudy, availability.approveDraft]);
       renderActionHints('generationActionHints', [availability.generate, availability.approveRun]);
     }
 
@@ -2508,6 +2544,52 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', 'failed');
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Finalize inputs failed', error);
+      }
+    }
+
+    async function startNativeStudyLoop() {
+      const targets = selectedTargets();
+      if (!targets.length) return;
+      if (!state.plan) await preparePlan();
+      const availability = actionAvailability().startStudy;
+      if (!availability.ready) {
+        byId('planView').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
+        renderActionAvailability();
+        return;
+      }
+      beginOperation('Starting runnable datasets', `Dispatching ${targets.join(', ')} to graph-owned draft/code review gates. R will not run.`);
+      try {
+        const payload = await api('/runs/native-study-loop', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            run_id: runId(),
+            target_datasets: targets,
+            config_path: byId('configPath').value.trim() || null,
+            rscript_path: byId('rscriptPath').value.trim() || null,
+            approved_dependency_datasets: [],
+            ...llmOverridePayload()
+          })
+        });
+        await refreshGraphReadModels();
+        await loadReviewSummary(runId());
+        const started = payload.started_datasets || [];
+        const resultText = (payload.dataset_results || []).map((item) => `${item.dataset}: ${titleFromToken(item.next_action)}`).join('; ');
+        addEvent('Study loop started', payload.message);
+        completeOperation(
+          started.length ? 'Review gates ready' : 'Study loop checked',
+          resultText || payload.message || 'No new dataset was started.'
+        );
+        setPill('planStatus', payload.status || 'started');
+        renderPlan(state.plan || {requested_datasets: targets, runnable_datasets: started, blocked_datasets: payload.blocked_datasets || []});
+        renderDraftSpecPane();
+        renderPane();
+        renderGraphAwareDashboard();
+      } catch (error) {
+        failOperation('Study loop start failed', error);
+        byId('planView').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
       }
     }
 
@@ -3944,6 +4026,7 @@ INDEX_HTML = r"""<!doctype html>
     byId('createDemoButton').addEventListener('click', createDemoStudy);
     byId('startUploadButton').addEventListener('click', startUploadWorkspace);
     byId('finalizeInputsButton').addEventListener('click', finalizeInputsForDraftSpec);
+    byId('startStudyLoopButton').addEventListener('click', startNativeStudyLoop);
     byId('approveDraftSpecButton').addEventListener('click', approveDraftSpec);
     byId('generateCodeButton').addEventListener('click', generateCode);
     byId('approveButton').addEventListener('click', approveAndRun);

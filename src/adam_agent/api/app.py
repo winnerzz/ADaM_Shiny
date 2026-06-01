@@ -28,6 +28,8 @@ from adam_agent.api.models import (
     GenerateCodeResponse,
     LLMConnectionTestRequest,
     LLMConnectionTestResponse,
+    NativeStudyStartRequest,
+    NativeStudyStartResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
     RunProgressResponse,
@@ -64,6 +66,7 @@ from adam_agent.api.service import (
     read_run_progress,
     run_study_from_request,
     save_uploaded_file_bytes,
+    start_native_study_product_loop,
     summarize_study_inputs,
     test_llm_connection,
 )
@@ -153,6 +156,13 @@ def create_app() -> FastAPI:
     def prepare_run(request: RunPlanRequest) -> RunPlanResponse:
         try:
             return prepare_run_plan(request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/native-study-loop", response_model=NativeStudyStartResponse)
+    def native_study_loop(request: NativeStudyStartRequest) -> NativeStudyStartResponse:
+        try:
+            return start_native_study_product_loop(request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

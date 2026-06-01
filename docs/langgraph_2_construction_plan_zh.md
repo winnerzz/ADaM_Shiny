@@ -6702,3 +6702,72 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.3 Native Study Product Loop API/UI 接线切片
+
+已完成：
+
+- 新增 `POST /runs/native-study-loop`，把上一切片的 internal
+  `GraphGateway.start_native_study_product_loop()` 暴露给本地 UI：
+  - API 只接收 study/run/target/config/LLM exposure 信息；
+  - service 层只做 request validation、provider/exposure resolution 和 response shaping；
+  - 真实状态转换仍委托 `GraphGateway`。
+- UI 新增 `Start Runnable Datasets` 主动作：
+  - 使用 planning selection，而不是当前 active detail target；
+  - 调用 `/runs/native-study-loop` 后刷新 graph state、progress read model 和 review
+    summary；
+  - 不把浏览器本地状态写回 graph state。
+- 明确产品边界：
+  - study-level start 只把当前 runnable selected datasets 推进到
+    `draft_spec_review` 或 `code_review`；
+  - 不自动 approve draft spec；
+  - 不自动 approve generated code；
+  - 不执行 R；
+  - 后续审核、批准和执行仍走现有 per-dataset review/execute 路径。
+- 修复 native checkpoint state 序列化边界：
+  - 移除 `DatasetGraphState` 中的 `llm_client_builder` 和
+    `target_context_builder`；
+  - `GraphGateway` 不再把 Python function object 放入 LangGraph state payload；
+  - 运行时依赖注入改为 `compile_dataset_graph(...)` 编译边界上的闭包参数；
+  - 因此本地 fake LLM/测试注入仍可用，但 checkpoint state 只保留可序列化业务数据。
+- 新增 API/UI 回归测试：
+  - endpoint 可以一次启动多个 runnable datasets；
+  - dependency-blocked target 不会被启动；
+  - UI 暴露 `Start Runnable Datasets`、`/runs/native-study-loop` 和
+    `startNativeStudyLoop()`；
+  - planning selection 和 active detail target 继续分离。
+
+当前边界：
+
+- 这是 native study loop 的第一版本地产品入口，不是完整自动批处理执行器。
+- `no_dependency_evidence` 这类 review-required dependency evidence 会被带入
+  dataset review gate，而不是直接当作硬失败；这符合当前 Gateway 设计，但 UI
+  文案后续应继续说明“进入 review gate 不等于依赖已经被生产级证明”。
+- R 执行仍必须由用户在 per-dataset code review 之后显式触发。
+
+子 agent 审查：
+
+- 2026-06-01，Rawls，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - `/runs/native-study-loop` 不调用 approve 或 R execution；
+  - dependency-blocked targets 不会 dispatch；
+  - UI 使用 multi-target plan selection，并刷新 graph-owned read models；
+  - builder functions 不再进入 `DatasetGraphState`，而是通过 graph compile boundary
+    注入；
+  - 现有单 dataset approve/execute 路径仍是独立显式调用。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view -v
+Ran 1 test in 0.039s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_graph_smoke tests.test_api_phase8 -v
+Ran 312 tests in 32.118s - OK (skipped=2)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

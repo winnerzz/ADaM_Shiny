@@ -104,8 +104,6 @@ class DatasetGraphState(TypedDict, total=False):
     dependency_resolution: list[dict[str, object]]
     llm_exposure: dict[str, object]
     llm_provider: dict[str, object]
-    llm_client_builder: object
-    target_context_builder: object
     force_new_draft_spec: bool
     native_draft_spec_review: bool
     native_draft_spec_review_status: str

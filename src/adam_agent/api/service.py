@@ -27,6 +27,8 @@ from adam_agent.api.models import (
     FinalizeInputsResponse,
     GenerateCodeResponse,
     LLMConnectionTestResponse,
+    NativeStudyDatasetStartResult,
+    NativeStudyStartResponse,
     ProductWorkspaceResponse,
     RunReviewSummary,
     RunProgressResponse,
@@ -378,6 +380,66 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
         dependency_resolution=list(graph_state.dependency_resolution),
         dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
         **_gateway_projection_paths(gateway_result),
+    )
+
+
+def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
+    """Start runnable study datasets and stop at graph-owned review gates."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    targets = [
+        str(dataset).strip().upper()
+        for dataset in request.target_datasets
+        if str(dataset).strip()
+    ]
+    if not targets:
+        raise ApiServiceError("target_datasets must not be empty.")
+    study_id = request.study_id or study_dir.name
+    config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_id, run_id=request.run_id)
+    provider_config = _provider_config_from_override(
+        getattr(request, "llm_provider_override", None),
+        fallback=config.llm_provider,
+    )
+    exposure = _exposure_config_from_override(
+        getattr(request, "llm_exposure_override", None),
+        fallback=config.llm_exposure,
+    )
+    try:
+        result = GraphGateway().start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=request.run_id,
+            target_datasets=targets,
+            approved_dependency_datasets=getattr(request, "approved_dependency_datasets", []),
+            llm_provider=provider_config.__dict__,
+            llm_exposure=exposure.model_dump(mode="json"),
+            llm_client_builder=build_llm_client,
+            target_context_builder=build_target_llm_context,
+            rscript_path=getattr(request, "rscript_path", None) or "",
+        )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    dataset_results = [
+        _native_study_dataset_start_result(dataset, dataset_result)
+        for dataset, dataset_result in sorted(result.dataset_results.items())
+    ]
+    message = _native_study_start_message(
+        started=result.started_datasets,
+        blocked=result.blocked_datasets,
+        review_queue=result.review_queue,
+    )
+    return NativeStudyStartResponse(
+        study_id=result.graph_state.study_id,
+        run_id=request.run_id,
+        status=result.graph_state.status,
+        started_datasets=list(result.started_datasets),
+        blocked_datasets=list(result.blocked_datasets),
+        review_queue=list(result.review_queue),
+        dataset_results=dataset_results,
+        message=message,
+        **_gateway_compatibility_metadata(result),
     )
 
 
@@ -1069,6 +1131,60 @@ def _validated_run_dir(root: Path, run_id: str) -> Path:
     if not _is_relative_to(run_dir, root.resolve()) or not run_dir.exists():
         raise ApiServiceError(f"Run directory does not exist: {run_dir}")
     return run_dir
+
+
+def _native_study_dataset_start_result(dataset: str, result: Any) -> NativeStudyDatasetStartResult:
+    target = dataset.strip().upper()
+    if hasattr(result, "code_path"):
+        warnings = list(getattr(result, "warnings", []) or []) + list(getattr(result, "dependency_warnings", []) or [])
+        return NativeStudyDatasetStartResult(
+            dataset=target,
+            status="code_review_required",
+            next_action="review_code",
+            result_type="code_review",
+            code_path=getattr(result, "code_path", None),
+            draft_spec_path=getattr(result, "draft_spec_path", None),
+            static_check_path=getattr(result, "static_check_path", None),
+            warnings=warnings,
+        )
+    warnings = list(getattr(result, "warnings", []) or []) + list(getattr(result, "dependency_warnings", []) or [])
+    if getattr(result, "spec_source", "") == "input_spec":
+        status = "input_spec_ready"
+        next_action = "generate_code"
+        result_type = "input_spec_ready"
+    elif getattr(result, "spec_source", "") == "approved_draft_spec":
+        status = "approved_draft_spec_ready"
+        next_action = "generate_code"
+        result_type = "approved_draft_spec_ready"
+    else:
+        status = "draft_spec_review_required"
+        next_action = "review_draft_spec"
+        result_type = "draft_spec_review"
+    return NativeStudyDatasetStartResult(
+        dataset=target,
+        status=status,
+        next_action=next_action,
+        result_type=result_type,
+        draft_spec_path=getattr(result, "draft_spec_path", None),
+        warnings=warnings,
+    )
+
+
+def _native_study_start_message(
+    *,
+    started: list[str],
+    blocked: list[dict[str, Any]],
+    review_queue: list[dict[str, Any]],
+) -> str:
+    if started:
+        review_count = len(review_queue)
+        return (
+            f"Started {', '.join(started)} and stopped at human review gates. "
+            f"{review_count} review item(s) are now queued."
+        )
+    if blocked:
+        return "No dataset was started because dependency review or user action is still required."
+    return "No new dataset was started; existing graph progress was preserved."
 
 
 def _resolution_scope_datasets(requested: list[str], approved_dependencies: list[str]) -> list[str]:
