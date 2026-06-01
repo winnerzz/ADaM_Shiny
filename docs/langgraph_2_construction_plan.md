@@ -7248,6 +7248,67 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.3 Native Study Loop Preserved Progress Explanation Slice
+
+Done:
+
+- `GraphGateway.start_native_study_product_loop()` now records datasets that were
+  not restarted because they already had graph progress as `skipped_datasets`.
+- `runtime_persistence.native_study_product_loop` and
+  `GET /runs/{run_id}/progress.study_loop_result` expose the same explanation.
+- `POST /runs/native-study-loop` now returns `skipped_datasets`, so a repeated
+  `Start Runnable Datasets` action can say which dataset states were preserved
+  instead of only saying that no new dataset was started.
+- Partial preserve/start is covered: if a run first starts ADAE and later expands
+  the target set to ADAE + ADCM, ADAE is reported in `skipped_datasets` and ADCM
+  is reported in `started_datasets`.
+- Dataset start-failure runtime metadata excludes datasets already started in
+  the same attempt, so a dataset is not recorded as both started and skipped.
+- The UI Study Loop Result panel now renders a `Preserved` row:
+  - dataset already has graph progress;
+  - current status and next action;
+  - the same skipped dataset is not rendered again from the review queue;
+  - no change to dispatch, review, or execution behavior.
+
+Boundary:
+
+- `skipped_datasets` is a graph-owned read model. It explains native study-loop
+  dispatch behavior and does not participate in dependency planning, routing,
+  review approvals, or R execution.
+- This slice does not make active-dataset review/execute fully automatic and
+  does not enable durable native resume.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 2 tests in 0.451s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_new_target_while_preserving_existing_progress tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.644s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_reports_preserved_progress_on_restart tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary -v
+Ran 3 tests in 0.467s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - `skipped_datasets` is explanatory read model only and does not change dispatch;
+  - blocked/non-runnable datasets are not reported as skipped;
+  - the API field is additive and does not break old callers;
+  - UI copy does not present preserved progress as successful generation and
+    keeps the no-approval/no-R-execution boundary.
+- Non-blocking suggestion: avoid rendering a preserved dataset a second time
+  from the review queue. This was absorbed before commit.
+
 ### 2026-06-01 - LG2.7 Graph-State Read-Model Apply Boundary Slice
 
 Completed:

@@ -106,6 +106,7 @@ class NativeStudyStartResponse(StrictBaseModel):
     run_id: str
     status: str
     started_datasets: list[str] = Field(default_factory=list)
+    skipped_datasets: list[dict[str, Any]] = Field(default_factory=list)
     blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
     review_queue: list[dict[str, Any]] = Field(default_factory=list)
     dataset_results: list[NativeStudyDatasetStartResult] = Field(default_factory=list)

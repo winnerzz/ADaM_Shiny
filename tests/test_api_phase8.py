@@ -793,8 +793,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("pilot graph interrupts only", loop_body)
         self.assertNotIn("for ${result.native_resume_scope", loop_body)
         self.assertIn("studyLoopStartedRows(result)", loop_body)
+        self.assertIn("studyLoopSkippedRows(skipped)", loop_body)
         self.assertIn("studyLoopBlockedRows(blocked)", loop_body)
-        self.assertIn("studyLoopReviewQueueRows(reviewQueue, started)", loop_body)
+        self.assertIn("studyLoopReviewQueueRows(reviewQueue, started, skipped)", loop_body)
         self.assertIn("humanDependencyReason(item.reason)", loop_body)
         self.assertNotIn("JSON.stringify", loop_body)
 
@@ -837,13 +838,17 @@ state.lastStudyLoopResult = {
   dataset_results: [
     {dataset: 'ADAE', next_action: 'review_code', warnings: ['Static warning needs review.']}
   ],
-  blocked_datasets: [
-    {dataset: 'ADLB', reason: 'dependency_user_action_required', blocked_by: 'ADSL'}
-  ],
-  review_queue: [
-    {dataset: 'ADCM', name: 'draft_spec_review', reason: 'No approved input spec was supplied.'}
-  ]
-};
+          blocked_datasets: [
+            {dataset: 'ADLB', reason: 'dependency_user_action_required', blocked_by: 'ADSL'}
+          ],
+          skipped_datasets: [
+            {dataset: 'ADCM', reason: 'existing_graph_progress', status: 'needs_review', next_action: 'review_code', interrupt: 'code_review'}
+          ],
+          review_queue: [
+            {dataset: 'ADCM', name: 'code_review', reason: 'Existing code review remains open.'},
+            {dataset: 'ADLB', name: 'draft_spec_review', reason: 'No approved input spec was supplied.'}
+          ]
+        };
 renderStudyLoopResult();
 console.log(JSON.stringify({
   title: nodes.get('studyLoopResultTitle').textContent,
@@ -875,6 +880,11 @@ console.log(JSON.stringify({
         self.assertIn("Blocked", result["html"])
         self.assertIn("missing upstream ADaM", result["html"])
         self.assertIn("ADCM", result["html"])
+        self.assertEqual(result["html"].count('<div class="study-loop-target">ADCM</div>'), 1)
+        self.assertNotIn("Existing code review remains open.", result["html"])
+        self.assertIn("Preserved", result["html"])
+        self.assertIn("already has graph progress", result["html"])
+        self.assertIn("ADLB", result["html"])
         self.assertIn("Draft spec review", result["html"])
 
     def test_index_recovers_study_loop_result_from_progress(self) -> None:
@@ -4155,6 +4165,45 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
                 / "review"
                 / "adae_code_review.json"
             ).exists()
+        )
+
+    def test_native_study_loop_endpoint_reports_preserved_progress_on_restart(self) -> None:
+        study_dir = _study_with_adae_adcm_inputs("phase8_native_study_loop_restart_skip")
+        client = TestClient(create_app())
+        request = {
+            "study_dir": str(study_dir),
+            "run_id": "run_native_study_loop_restart_skip",
+            "target_datasets": ["ADAE", "ADCM"],
+            "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+        }
+        first = client.post("/runs/native-study-loop", json=request)
+        self.assertEqual(first.status_code, 200, first.text)
+
+        second = client.post("/runs/native-study-loop", json=request)
+
+        self.assertEqual(second.status_code, 200, second.text)
+        payload = second.json()
+        self.assertEqual(payload["started_datasets"], [])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in payload["skipped_datasets"]],
+            [
+                ("ADAE", "existing_graph_progress", "review_code"),
+                ("ADCM", "existing_graph_progress", "review_code"),
+            ],
+        )
+        self.assertIn("existing graph progress was preserved for ADAE, ADCM", payload["message"])
+        progress = client.get(
+            "/runs/run_native_study_loop_restart_skip/progress",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(progress.status_code, 200, progress.text)
+        progress_payload = progress.json()
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in progress_payload["study_loop_result"]["skipped_datasets"]],
+            [
+                ("ADAE", "existing_graph_progress", "review_code"),
+                ("ADCM", "existing_graph_progress", "review_code"),
+            ],
         )
 
     def test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets(self) -> None:

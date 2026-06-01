@@ -515,6 +515,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .study-loop-item.warn { border-color: #f0d19b; background: #fff8ea; }
     .study-loop-item.fail { border-color: #efc4be; background: #fff8f7; }
+    .study-loop-item.info { border-color: rgba(15, 118, 110, 0.24); background: #f4fbfa; }
     .study-loop-target {
       color: var(--text);
       font-size: 13px;
@@ -776,6 +777,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .pill.warn { color: var(--warn); background: #fff4df; }
     .pill.fail { color: var(--danger); background: #fde9e7; }
+    .pill.info { color: var(--accent-dark); background: #e6f3f2; }
     .note {
       margin: 0 0 12px;
       padding: 10px 12px;
@@ -3154,11 +3156,14 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const started = (result.started_datasets || []).map((dataset) => String(dataset || '').toUpperCase()).filter(Boolean);
+      const skipped = result.skipped_datasets || [];
       const blocked = result.blocked_datasets || [];
       const reviewQueue = result.review_queue || state.runProgress?.review_queue || [];
       byId('studyLoopResultTitle').textContent = started.length
         ? `${started.length} dataset(s) moved to review gates`
-        : 'No new dataset moved';
+        : skipped.length
+          ? 'Existing dataset progress preserved'
+          : 'No new dataset moved';
       const sourceText = result.source === 'graph_progress'
         ? 'Recovered from graph progress.'
         : result.source === 'command_response'
@@ -3179,8 +3184,9 @@ INDEX_HTML = r"""<!doctype html>
       setPill('studyLoopResultStatus', started.length ? 'review' : blocked.length ? 'blocked' : 'clear');
       const rows = [
         ...studyLoopStartedRows(result),
+        ...studyLoopSkippedRows(skipped),
         ...studyLoopBlockedRows(blocked),
-        ...studyLoopReviewQueueRows(reviewQueue, started)
+        ...studyLoopReviewQueueRows(reviewQueue, started, skipped)
       ];
       list.innerHTML = rows.length
         ? rows.join('')
@@ -3226,12 +3232,27 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
 
-    function studyLoopReviewQueueRows(reviewQueue, started) {
+    function studyLoopSkippedRows(skipped) {
+      return (skipped || []).map((item) => {
+        const dataset = String(item.dataset || 'Dataset').toUpperCase();
+        const nextAction = item.next_action ? titleFromToken(item.next_action) : 'Review existing progress';
+        const interrupt = item.interrupt ? ` Current gate: ${readableInterruptName(item.interrupt)}.` : '';
+        return studyLoopResultItemHtml({
+          dataset,
+          tone: 'info',
+          label: 'Preserved',
+          detail: `${dataset} already has graph progress (${item.status || 'unknown'}). Start Runnable Datasets left it unchanged. Next action: ${nextAction}.${interrupt}`
+        });
+      });
+    }
+
+    function studyLoopReviewQueueRows(reviewQueue, started, skipped) {
       const startedSet = new Set(started || []);
+      const skippedSet = new Set((skipped || []).map((item) => String(item.dataset || '').toUpperCase()).filter(Boolean));
       return (reviewQueue || [])
         .filter((item) => {
           const dataset = String(item.dataset || '').toUpperCase();
-          return dataset && !startedSet.has(dataset);
+          return dataset && !startedSet.has(dataset) && !skippedSet.has(dataset);
         })
         .map((item) => studyLoopResultItemHtml({
           dataset: String(item.dataset || 'Study').toUpperCase(),
@@ -3246,7 +3267,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="study-loop-item ${item.tone || ''}">
           <div>
             <div class="study-loop-target">${escapeHtml(item.dataset || 'Study')}</div>
-            <span class="pill ${item.tone === 'fail' ? 'fail' : 'warn'}">${escapeHtml(item.label || 'Review')}</span>
+            <span class="pill ${item.tone === 'fail' ? 'fail' : item.tone === 'info' ? 'info' : 'warn'}">${escapeHtml(item.label || 'Review')}</span>
           </div>
           <div>
             <div class="study-loop-action">${escapeHtml(item.label || 'Review required')}</div>

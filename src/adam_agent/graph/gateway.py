@@ -145,6 +145,7 @@ class GraphGatewayNativeStudyLoopResult(GraphGatewayResult):
     dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult]
     blocked_datasets: list[dict[str, Any]]
     started_datasets: list[str]
+    skipped_datasets: list[dict[str, Any]]
     review_queue: list[dict[str, Any]]
 
 
@@ -961,6 +962,7 @@ class GraphGateway:
                 state=plan_state,
                 dataset_results={},
                 started_datasets=[],
+                skipped_datasets=[],
                 node="native_study_product_loop_dependency_review",
             )
         _handoff_spec_gap_dependency_warning_for_native_study_loop(self, root, plan_state)
@@ -990,6 +992,10 @@ class GraphGateway:
                     runtime_persistence_extra={
                         "native_study_product_loop": {
                             "started_datasets": started_datasets,
+                            "skipped_datasets": _native_study_loop_skipped_datasets(
+                                graph_state,
+                                exclude=started_datasets,
+                            ),
                             "failed_dataset": dataset,
                             "failed_reason": str(exc),
                             "boundary": "study_product_loop_pilot_only",
@@ -1011,6 +1017,7 @@ class GraphGateway:
             state=final_state,
             dataset_results=dataset_results,
             started_datasets=started_datasets,
+            skipped_datasets=_native_study_loop_skipped_datasets(final_state, exclude=started_datasets),
             node="native_study_product_loop_started",
         )
 
@@ -4104,6 +4111,7 @@ class GraphGateway:
         state: StudyRunState,
         dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult],
         started_datasets: list[str],
+        skipped_datasets: list[dict[str, Any]],
         node: str,
     ) -> GraphGatewayNativeStudyLoopResult:
         _roll_up_study_state(state)
@@ -4114,6 +4122,7 @@ class GraphGateway:
             runtime_persistence_extra={
                 "native_study_product_loop": {
                     "started_datasets": list(started_datasets),
+                    "skipped_datasets": list(skipped_datasets),
                     "blocked_datasets": list(state.blocked_datasets),
                     "boundary": "study_product_loop_pilot_only",
                 }
@@ -4127,6 +4136,7 @@ class GraphGateway:
             dataset_results=dataset_results,
             blocked_datasets=list(state.blocked_datasets),
             started_datasets=list(started_datasets),
+            skipped_datasets=list(skipped_datasets),
             review_queue=list(progress.get("review_queue", [])),
         )
 
@@ -4338,6 +4348,51 @@ def _native_study_loop_can_start_dataset(
     if not target or target not in runnable or target in blocked or target in ordered:
         return False
     return not _has_dataset_product_progress(state.datasets.get(target))
+
+
+def _native_study_loop_skipped_datasets(state: StudyRunState, *, exclude: list[str] | None = None) -> list[dict[str, Any]]:
+    excluded = {dataset.strip().upper() for dataset in (exclude or []) if dataset.strip()}
+    runnable = {dataset.strip().upper() for dataset in state.runnable_datasets}
+    blocked = _blocked_dataset_names(state.blocked_datasets)
+    skipped: list[dict[str, Any]] = []
+    for dataset in _native_study_loop_candidate_order(state):
+        if dataset in excluded or dataset not in runnable or dataset in blocked:
+            continue
+        dataset_state = state.datasets.get(dataset)
+        if not _has_dataset_product_progress(dataset_state):
+            continue
+        skipped.append(
+            {
+                "dataset": dataset,
+                "reason": "existing_graph_progress",
+                "status": dataset_state.status if dataset_state is not None else "unknown",
+                "next_action": _dataset_next_action(dataset_state, blocked_reason="")["next_action"]
+                if dataset_state is not None
+                else "review_existing_progress",
+                "interrupt": dataset_state.current_interrupt.name
+                if dataset_state is not None and dataset_state.current_interrupt is not None
+                else None,
+            }
+        )
+    return skipped
+
+
+def _native_study_loop_candidate_order(state: StudyRunState) -> list[str]:
+    ordered: list[str] = []
+    execution_batches = state.dependency_plan.get("execution_batches", [])
+    if isinstance(execution_batches, list):
+        for batch in execution_batches:
+            if not isinstance(batch, list):
+                continue
+            for dataset in batch:
+                target = str(dataset).strip().upper()
+                if target and target not in ordered:
+                    ordered.append(target)
+    for dataset in state.target_datasets:
+        target = dataset.strip().upper()
+        if target and target not in ordered:
+            ordered.append(target)
+    return ordered
 
 
 def _native_study_loop_dependency_review_blocks_dispatch(state: StudyRunState) -> bool:
@@ -4922,18 +4977,20 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
     if not loop:
         return {}
     started = _normalize_dataset_list([str(dataset) for dataset in loop.get("started_datasets", [])])
+    skipped = list(loop.get("skipped_datasets") or [])
     blocked = list(loop.get("blocked_datasets") or state.blocked_datasets)
     native_resume = _native_resume_progress(state)
     return {
         "source": "graph_progress",
         "boundary": loop.get("boundary", "study_product_loop_pilot_only"),
         "started_datasets": started,
+        "skipped_datasets": skipped,
         "blocked_datasets": blocked,
         "review_queue": list(review_queue),
         "native_resume_available": bool(native_resume["available"]),
         "native_resume_scope": str(native_resume["scope"]),
         "resume_boundary": str(native_resume["boundary"]),
-        "message": _study_loop_progress_message(started=started, blocked=blocked, review_queue=review_queue),
+        "message": _study_loop_progress_message(started=started, skipped=skipped, blocked=blocked, review_queue=review_queue),
     }
 
 
@@ -4965,6 +5022,7 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
 def _study_loop_progress_message(
     *,
     started: list[str],
+    skipped: list[dict[str, Any]],
     blocked: list[dict[str, Any]],
     review_queue: list[dict[str, Any]],
 ) -> str:
@@ -4975,6 +5033,10 @@ def _study_loop_progress_message(
         )
     if blocked:
         return "No dataset was started because dependency review or user action is still required."
+    if skipped:
+        datasets = [str(item.get("dataset") or "").strip().upper() for item in skipped]
+        datasets = [dataset for dataset in datasets if dataset]
+        return f"No new dataset was started; existing graph progress was preserved for {', '.join(datasets)}."
     return "No new dataset was started; existing graph progress was preserved."
 
 

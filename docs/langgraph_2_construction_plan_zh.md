@@ -6703,6 +6703,63 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.3 Native Study Loop 保留进度解释切片
+
+已完成：
+
+- `GraphGateway.start_native_study_product_loop()` 现在会把“本次没有重新启动，但已有
+  graph progress 的 dataset”写入 `skipped_datasets` read model。
+- `runtime_persistence.native_study_product_loop` 和
+  `GET /runs/{run_id}/progress` 的 `study_loop_result` 都会携带这份解释。
+- `POST /runs/native-study-loop` 响应新增 `skipped_datasets` 字段，避免用户第二次点击
+  `Start Runnable Datasets` 时只看到“没有启动新 dataset”，却不知道是因为已有进度被保留。
+- 支持“部分保留、部分新启动”：例如同一 run 先启动 ADAE，随后把 target set 扩展到
+  ADAE + ADCM 时，ADAE 会进入 `skipped_datasets`，ADCM 会进入
+  `started_datasets`。
+- dataset start failure 的 runtime metadata 会排除本轮已 started 的 dataset，避免
+  一个 dataset 同时被记录为 started 和 skipped。
+- UI 的 Study Loop Result 增加 `Preserved` 行：
+  - 显示 dataset 已有 graph progress；
+  - 显示当前状态和下一步动作；
+  - 避免同一个 skipped dataset 再从 review queue 重复渲染一遍；
+  - 不改变任何 dispatch、review 或 execution 行为。
+
+边界：
+
+- `skipped_datasets` 是 graph-owned read model，只解释 native study-loop dispatch
+  行为，不参与 dependency planning、dataset routing、审核批准或 R 执行。
+- 这个切片没有把 active-dataset review/execute 改成全自动批处理，也没有启用 durable
+  native resume。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 2 tests in 0.451s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_new_target_while_preserving_existing_progress tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.644s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_reports_preserved_progress_on_restart tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary -v
+Ran 3 tests in 0.467s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - `skipped_datasets` 只解释 read model，不改变 dispatch；
+  - blocked/non-runnable dataset 不会被误标为 skipped；
+  - API 字段是 additive，不破坏旧调用；
+  - UI 文案没有把 preserved 说成生成成功，也保留了“不审批、不执行 R”的说明。
+- 非阻断建议：避免 preserved dataset 同时从 review queue 重复出现；已在提交前吸收。
+
 ### 2026-06-01 - LG2.7 Graph-State Read-Model Apply Boundary 切片
 
 已完成：

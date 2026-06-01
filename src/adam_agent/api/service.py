@@ -486,6 +486,7 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
     ]
     message = _native_study_start_message(
         started=result.started_datasets,
+        skipped=result.skipped_datasets,
         blocked=result.blocked_datasets,
         review_queue=result.review_queue,
     )
@@ -494,6 +495,7 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
         run_id=request.run_id,
         status=result.graph_state.status,
         started_datasets=list(result.started_datasets),
+        skipped_datasets=list(result.skipped_datasets),
         blocked_datasets=list(result.blocked_datasets),
         review_queue=list(result.review_queue),
         dataset_results=dataset_results,
@@ -1276,6 +1278,7 @@ def _native_study_dataset_start_result(dataset: str, result: Any) -> NativeStudy
 def _native_study_start_message(
     *,
     started: list[str],
+    skipped: list[dict[str, Any]],
     blocked: list[dict[str, Any]],
     review_queue: list[dict[str, Any]],
 ) -> str:
@@ -1287,6 +1290,10 @@ def _native_study_start_message(
         )
     if blocked:
         return "No dataset was started because dependency review or user action is still required."
+    if skipped:
+        datasets = [str(item.get("dataset") or "").strip().upper() for item in skipped]
+        datasets = [dataset for dataset in datasets if dataset]
+        return f"No new dataset was started; existing graph progress was preserved for {', '.join(datasets)}."
     return "No new dataset was started; existing graph progress was preserved."
 
 

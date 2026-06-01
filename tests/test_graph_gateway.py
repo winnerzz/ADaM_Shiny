@@ -3114,6 +3114,7 @@ class GraphGatewayTests(unittest.TestCase):
 
         self.assertEqual(result.started_datasets, [])
         self.assertEqual(result.dataset_results, {})
+        self.assertEqual(result.skipped_datasets, [])
         self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
         self.assertEqual(result.graph_state.current_interrupt.dataset, None)
         self.assertTrue(any(block["dataset"] == "ADTTE" for block in result.blocked_datasets))
@@ -3158,8 +3159,75 @@ class GraphGatewayTests(unittest.TestCase):
         start_dataset_loop.assert_not_called()
         self.assertEqual(first.started_datasets, ["ADAE", "ADCM"])
         self.assertEqual(second.started_datasets, [])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in second.skipped_datasets],
+            [
+                ("ADAE", "existing_graph_progress", "review_code"),
+                ("ADCM", "existing_graph_progress", "review_code"),
+            ],
+        )
         self.assertEqual(second.graph_state.datasets["ADAE"].current_interrupt.name, "code_review")
         self.assertEqual(second.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_restart")
+        self.assertEqual(progress["study_loop_result"]["started_datasets"], [])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in progress["study_loop_result"]["skipped_datasets"]],
+            [
+                ("ADAE", "existing_graph_progress", "review_code"),
+                ("ADCM", "existing_graph_progress", "review_code"),
+            ],
+        )
+        self.assertIn("existing graph progress was preserved for ADAE, ADCM", progress["study_loop_result"]["message"])
+
+    def test_gateway_native_study_product_loop_starts_new_target_while_preserving_existing_progress(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_partial_preserve") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,ASPIRIN\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (spec_dir / "adcm.json").write_text(
+            json.dumps({"dataset": "ADCM", "variables": [{"variable": "CMTRT", "source_domains": ["CM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+
+        first = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_study_loop_partial_preserve",
+            target_datasets=["ADAE"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        second = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_study_loop_partial_preserve",
+            target_datasets=["ADAE", "ADCM"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(first.started_datasets, ["ADAE"])
+        self.assertEqual(second.started_datasets, ["ADCM"])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in second.skipped_datasets],
+            [("ADAE", "existing_graph_progress", "review_code")],
+        )
+        self.assertEqual(second.graph_state.datasets["ADAE"].current_interrupt.name, "code_review")
+        self.assertEqual(second.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_partial_preserve")
+        self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADCM"])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in progress["study_loop_result"]["skipped_datasets"]],
+            [("ADAE", "existing_graph_progress", "review_code")],
+        )
 
     def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"
