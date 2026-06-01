@@ -1146,7 +1146,7 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         if str(result.get("dataset", "")).strip()
     ]
     datasets = _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
-    graph_state = _load_review_graph_state(root, run_id)
+    graph_state = _load_review_graph_state(root, run_id, fail_on_existing=True)
     workflow_state = _read_json_if_exists(run_dir / "workflow_state.json") if graph_state is None else {}
     graph_datasets = _review_datasets_from_graph_state(graph_state)
     datasets = _unique_non_empty(datasets + graph_datasets)
@@ -1913,11 +1913,19 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
     return {}
 
 
-def _load_review_graph_state(root: Path, run_id: str) -> StudyRunState | None:
+def _load_review_graph_state(root: Path, run_id: str, *, fail_on_existing: bool = False) -> StudyRunState | None:
     try:
         with _open_graph_gateway(study_dir=root, run_id=run_id) as gateway:
             return gateway.load_graph_state(study_dir=root, run_id=run_id)
-    except (FileNotFoundError, ValueError, ValidationError):
+    except FileNotFoundError:
+        return None
+    except (ValueError, ValidationError) as exc:
+        graph_state_path = root / "runs" / run_id / "graph_state.json"
+        if fail_on_existing and graph_state_path.exists():
+            raise ApiServiceError(
+                f"Canonical graph state for run {run_id} exists but cannot be read. "
+                "Review summary will not fall back to workflow_state.json."
+            ) from exc
         return None
 
 

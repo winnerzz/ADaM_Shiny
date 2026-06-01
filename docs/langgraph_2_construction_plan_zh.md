@@ -6703,6 +6703,40 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.8 Review Summary 损坏 Graph Fail-Closed 切片
+
+已完成：
+
+- 收紧 `/runs/{run_id}/review-summary` 的 read-model 权威来源。
+- 如果 `graph_state.json` 不存在，review-summary 仍可为旧 compatibility run 使用
+  `workflow_state.json` fallback。
+- 如果 `graph_state.json` 已存在但无法解析或无法通过 schema 校验，review-summary
+  现在会 fail closed，不再静默回退到 `workflow_state.json`。
+- 这样可以防止过期 compatibility projection 掩盖损坏的 canonical graph state。
+
+当前边界：
+
+- 这是 read-model authority 加固切片。
+- 不修改 graph state、workflow projection、compare artifacts 或 R execution。
+- 旧 run-to-completion compatibility summaries 在没有 canonical graph state 时仍然可用。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+
+子 agent 审查前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+Ran 1 test in 0.062s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_validation_over_stale_validation_file -v
+Ran 3 tests in 0.282s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare -v
+Ran 2 tests in 0.044s - OK
+```
+
 ### 2026-06-01 - LG2.7 缺失 Progress Target Fail-Closed 切片
 
 已完成：

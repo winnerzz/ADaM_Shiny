@@ -5154,6 +5154,48 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse(review["output_quality"]["runtime_dependency_eligible"])
         self.assertIn("mock", " ".join(review["warnings"]).lower())
 
+    def test_review_summary_fails_closed_when_existing_graph_state_is_corrupt(self) -> None:
+        study_dir = _workspace_dir("phase8_review_corrupt_graph_state") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_corrupt_graph_review"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir(parents=True)
+        (output_dir / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        (validation_dir / "adsl_validation_report.json").write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        (run_dir / "workflow_state.json").write_text(
+            json.dumps(
+                {
+                    "study_id": "MY_STUDY",
+                    "run_id": "run_corrupt_graph_review",
+                    "status": "completed",
+                    "datasets": {
+                        "ADSL": {
+                            "dataset": "ADSL",
+                            "status": "completed",
+                            "validation_summary": {"status": "pass"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "graph_state.json").write_text("{not-json", encoding="utf-8")
+        client = TestClient(create_app())
+
+        response = client.get(
+            "/runs/run_corrupt_graph_review/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        detail = response.json()["detail"]
+        self.assertIn("Canonical graph state", detail)
+        self.assertIn("will not fall back to workflow_state.json", detail)
+
     def test_review_summary_prefers_graph_state_without_workflow_projection(self) -> None:
         study_dir = _workspace_dir("phase8_review_graph_state_authority") / "MY_STUDY"
         run_dir = study_dir / "runs" / "run_graph_review_authority"

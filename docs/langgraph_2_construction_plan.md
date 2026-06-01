@@ -7248,6 +7248,44 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.8 Review Summary Corrupt Graph Fail-Closed Slice
+
+Completed:
+
+- Tightened `/runs/{run_id}/review-summary` read-model authority.
+- If `graph_state.json` does not exist, review-summary can still use the legacy
+  `workflow_state.json` fallback for old compatibility runs.
+- If `graph_state.json` exists but cannot be parsed or validated,
+  review-summary now fails closed and does not silently fall back to
+  `workflow_state.json`.
+- This prevents a stale compatibility projection from masking a broken
+  canonical graph state.
+
+Current boundary:
+
+- This is a read-model authority hardening slice.
+- It does not mutate graph state, workflow projection, compare artifacts, or R
+  execution.
+- Old run-to-completion compatibility summaries remain supported when no
+  canonical graph state exists.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+
+Verification before subagent review:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+Ran 1 test in 0.062s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_review_summary_surfaces_not_real_quality_from_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_validation_over_stale_validation_file -v
+Ran 3 tests in 0.282s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models tests.test_api_phase8.Phase8ApiTests.test_review_summary_read_model_helpers_do_not_record_compare -v
+Ran 2 tests in 0.044s - OK
+```
+
 ### 2026-06-01 - LG2.7 Missing Progress Target Fail-Closed Slice
 
 Completed:
