@@ -8157,9 +8157,17 @@ Subagent review:
     review-summary cannot recover generated code, cannot enable approve, and
     cannot POST `/code-review`.
 - Re-review result: GO.
-- Non-blocking suggestion: later add coverage for graph-state success with
-  progress failure. Current behavior treats graph_state as workflow truth, which
-  matches the project principle and does not block this slice.
+- Non-blocking suggestion absorbed: added coverage for graph-state success with
+  progress failure, making explicit that graph_state can act as workflow truth.
+  The negative test where both graph/progress are unavailable remains in place
+  to prevent review-summary artifacts from opening gates by themselves.
+
+Additional verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_load_review_summary_recovers_generated_code_for_graph_review_gate tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_without_graph_gate_cannot_enable_code_approval tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_can_recover_code_when_graph_state_succeeds_without_progress -v
+Ran 3 tests in 0.300s - OK
+```
 
 ### 2026-06-01 - LG2.1/LG2.8 Native Resume Endpoint Fail-Closed Slice
 
