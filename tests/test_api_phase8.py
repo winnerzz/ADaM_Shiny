@@ -731,7 +731,11 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
         apply_progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
         self.assertIn("Object.prototype.hasOwnProperty.call(progress, 'study_loop_result')", apply_progress_body)
+        self.assertIn("state.runProgress = progress || null;", apply_progress_body)
         self.assertIn("state.lastStudyLoopResult = progress.study_loop_result && Object.keys(progress.study_loop_result).length", apply_progress_body)
+        refresh_body = html.split("async function refreshRunProgress()", 1)[1].split("async function refreshGraphReadModels()", 1)[0]
+        self.assertIn("applyRunProgress(progress);", refresh_body)
+        self.assertNotIn("state.runProgress = progress;", refresh_body)
 
     def test_index_exposes_human_review_queue_from_graph_state(self) -> None:
         client = TestClient(create_app())
@@ -988,11 +992,11 @@ const progress = {
     review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
   }
 };
-state.runProgress = progress;
 applyRunProgress(progress);
 renderStudyProgress(state.targetCandidates, [], []);
 renderStudyLoopResult();
 console.log(JSON.stringify({
+  appliedResume: state.runProgress.native_resume.available,
   progressHtml: nodes.get('studyProgressSteps').innerHTML,
   detail: nodes.get('studyLoopResultDetail').textContent,
   loopHtml: nodes.get('studyLoopResultList').innerHTML
@@ -1010,6 +1014,7 @@ console.log(JSON.stringify({
         )
         result = json.loads(completed.stdout.strip())
         rendered = " ".join([result["progressHtml"], result["detail"], result["loopHtml"]])
+        self.assertTrue(result["appliedResume"])
         self.assertIn("Native resume: available for pilot graph interrupts only.", rendered)
         self.assertIn("Durable native resume is available for pilot graph interrupts only.", rendered)
         self.assertNotIn("native-resume", rendered)
@@ -1076,6 +1081,50 @@ console.log(JSON.stringify({
         self.assertIsNone(result["result"])
         self.assertEqual(result["title"], "No batch start yet")
         self.assertIn("No study-level dataset dispatch has been started", result["html"])
+
+    def test_index_apply_run_progress_null_clears_progress_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById() {
+    return {
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    };
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.runProgress = { target_datasets: ['ADAE'], native_resume: { available: true } };
+applyRunProgress(null);
+console.log(JSON.stringify({ progress: state.runProgress }));
+"""
+        script_path = TMP_ROOT / "ui_apply_run_progress_null.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIsNone(result["progress"])
 
     def test_index_start_study_loop_keeps_graph_progress_result_over_command_response(self) -> None:
         client = TestClient(create_app())

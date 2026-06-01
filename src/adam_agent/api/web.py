@@ -2013,7 +2013,6 @@ INDEX_HTML = r"""<!doctype html>
       if (!studyDir() || !runId()) return null;
       try {
         const progress = await api(`/runs/${encodeURIComponent(runId())}/progress?study_dir=${encodeURIComponent(studyDir())}`);
-        state.runProgress = progress;
         applyRunProgress(progress);
         return progress;
       } catch {
@@ -2029,6 +2028,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function applyRunProgress(progress) {
+      state.runProgress = progress || null;
       const progressTargets = (progress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
       if (progressTargets.length) {
         for (const target of progressTargets) recordTargetSource(target, 'progress');

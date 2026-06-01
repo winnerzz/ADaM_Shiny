@@ -7248,6 +7248,47 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Progress Read-Model Apply Boundary Slice
+
+Completed:
+
+- Tightened the local UI `applyRunProgress(progress)` contract:
+  - the function itself stores the backend progress projection in
+    `state.runProgress`;
+  - `refreshRunProgress()` no longer writes the same field before calling it;
+  - direct apply, refresh apply, and test harnesses now share one read-model
+    application path.
+- Added UI contract coverage:
+  - `refreshRunProgress()` must call `applyRunProgress(progress)`;
+  - `applyRunProgress(null)` clears `state.runProgress`;
+  - direct apply still renders native resume as status text without exposing an
+    endpoint or button.
+
+Current boundary:
+
+- This is browser read-model application cleanup. It does not change APIs,
+  GraphGateway, graph state transitions, or product buttons.
+
+Subagent review:
+
+- 2026-06-01, Heisenberg, `gpt-5.5`, read-only review: GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_apply_run_progress_null_clears_progress_state -v
+Ran 3 tests in 0.203s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 129 tests in 16.692s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Native Resume UI Boundary Guard Slice
 
 Completed:
