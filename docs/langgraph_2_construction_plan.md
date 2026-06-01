@@ -1073,6 +1073,10 @@ Current implementation status:
     deterministic R-template product path.
   - API/CLI paths now require explicit execution mode instead of silently
     choosing stub behavior for mock-provider requests.
+  - Review summary and compare read paths now fail closed when a canonical
+    `graph_state.json` exists but cannot be read. They only use artifact or
+    `workflow_state.json` fallback when no canonical graph state has ever been
+    created for that run.
 - Boundary:
   - This phase has largely cleaned up compatibility ownership and made legacy
     behavior explicit.
@@ -1410,6 +1414,25 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 Result: 151 tests passed.
+
+### 2026-06-01 - LG2.8 Compare Corrupt Graph-State Guard
+
+Completed:
+
+- Tightened the compare compatibility path so it fails closed when
+  `runs/{run_id}/graph_state.json` exists but cannot be parsed or validated.
+- Preserved artifact-only compare fallback for legacy runs that have no
+  canonical graph state.
+- Added a regression test proving corrupt canonical graph state does not fall
+  back to artifact compare and does not write a compare report.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_compare_fails_closed_when_existing_graph_state_is_corrupt tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+```
+
+Result: 3 tests passed.
 
 ### 2026-05-29 - LG2.2 Terminal Failure Review Slice
 

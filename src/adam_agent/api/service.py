@@ -1027,7 +1027,13 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
         output_path = usable_generated_output_path(run_dir, target)
         reference_path = reference_adam_path(root, target)
         return DatasetCompareResponse(**compare_dataset_files(target, output_path, reference_path))
-    except ValueError as exc:
+    except (ValueError, ValidationError) as exc:
+        graph_state_path = run_dir / "graph_state.json"
+        if graph_state_path.exists():
+            raise ApiServiceError(
+                f"Canonical graph state for run {run_id} exists but cannot be read. "
+                "Compare will not fall back to artifact-only mode."
+            ) from exc
         raise ApiServiceError(str(exc)) from exc
     payload = {
         key: value

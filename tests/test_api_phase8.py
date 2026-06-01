@@ -3275,6 +3275,43 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse((run_dir / "graph_state.json").exists())
         self.assertFalse((run_dir / "compare" / "adae_compare_report.json").exists())
 
+    def test_compare_fails_closed_when_existing_graph_state_is_corrupt(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_compare_corrupt_graph_state")
+        client = TestClient(create_app())
+        run_dir = study_dir / "runs" / "run_compare_corrupt_graph_state"
+        output_dir = run_dir / "outputs"
+        validation_dir = run_dir / "validation"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir()
+        (output_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (validation_dir / "adae_validation_report.json").write_text(
+            json.dumps({"dataset": "ADAE", "status": "pass"}),
+            encoding="utf-8",
+        )
+        (run_dir / "workflow_state.json").write_text(
+            json.dumps(
+                {
+                    "study_id": "MY_STUDY",
+                    "run_id": "run_compare_corrupt_graph_state",
+                    "status": "completed",
+                    "datasets": {"ADAE": {"dataset": "ADAE", "status": "completed"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "graph_state.json").write_text("{not-json", encoding="utf-8")
+
+        compare = client.get(
+            "/runs/run_compare_corrupt_graph_state/datasets/ADAE/compare",
+            params={"study_dir": str(study_dir)},
+        )
+
+        self.assertEqual(compare.status_code, 400, compare.text)
+        detail = compare.json()["detail"]
+        self.assertIn("Canonical graph state", detail)
+        self.assertIn("Compare will not fall back", detail)
+        self.assertFalse((run_dir / "compare" / "adae_compare_report.json").exists())
+
     def test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_compare_missing_refresh")
         client = TestClient(create_app())

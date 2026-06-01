@@ -924,6 +924,9 @@ LG2.6 当前 slice 验证：
     显式 legacy stub graph。
   - ADSL 保持在统一 ADaM LLM flow 中，没有重新接回旧 deterministic R-template 产品路径。
   - API/CLI 现在要求显式 execution mode，不再因为 mock provider 请求自动选择 stub 行为。
+  - review summary 和 compare read paths 现在会在 canonical `graph_state.json`
+    已存在但不可读时 fail closed。只有 run 从未创建 canonical graph state 时，
+    才允许使用 artifact 或 `workflow_state.json` fallback。
 - 边界：
   - 当前已经基本完成 compatibility ownership 清理，并把 legacy behavior 显式化。
   - 但完整产品流程仍没有完全替换为 native LangGraph interrupt/checkpointer resume。
@@ -1231,6 +1234,25 @@ python -B -m unittest tests.test_llm_context tests.test_prompt_compaction tests.
 ```
 
 结果：151 tests passed。
+
+### 2026-06-01 - LG2.8 Compare Corrupt Graph-State Guard
+
+已完成：
+
+- 收紧 compare compatibility path：如果 `runs/{run_id}/graph_state.json`
+  已存在但无法解析或无法通过 schema validation，则直接 fail closed。
+- 保留 legacy run 的 artifact-only compare fallback；也就是只有没有 canonical
+  graph state 的旧 run 才能走这个兼容路径。
+- 新增回归测试，证明损坏的 canonical graph state 不会回退到 artifact compare，
+  也不会写出 compare report。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_does_not_create_graph_state_without_prepared_run tests.test_api_phase8.Phase8ApiTests.test_compare_fails_closed_when_existing_graph_state_is_corrupt tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+```
+
+结果：3 tests passed。
 
 ### 2026-05-29 - LG2.2 Terminal Failure Review 切片
 
