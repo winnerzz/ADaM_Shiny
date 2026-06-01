@@ -8624,3 +8624,56 @@ OK
     sandboxing、legacy stub cleanup 等主要剩余工作。
 - 已吸收非阻断措辞建议：R1 现在说明未完成的是 product-default、end-to-end
   native interrupts，同时承认已有 pilot/native-resume work。
+
+## LG3.0 - Native Product Run And Durable Resume
+
+### 2026-06-01 - LG3.0 单 Dataset Native Full-Run 后端契约切片
+
+已完成：
+
+- 新增明确的 `GraphGateway.start_native_dataset_full_run()` 单 dataset 后端契约。
+- 新增对应的 `GraphGateway.resume_native_dataset_full_run()` 人工 code-review
+  resume 入口。
+- 这条契约目前覆盖：
+  - 用户提供的 approved input spec 或已批准 draft spec；
+  - DatasetGraph 生成 R code；
+  - native `code_review` interrupt；
+  - 人工 approve/reject；
+  - approve 后通过现有 graph-owned R boundary 执行 approved code。
+- runtime metadata 现在会记录 `native_dataset_full_run`：
+  - `contract=single_dataset_spec_code_review_execute`；
+  - `boundary=lg3_backend_contract`；
+  - 当前阶段和当前 interrupt；
+  - 是否在 approval 后执行。
+- 写入 LG3 metadata 时会保留已有 native dataset-loop metadata，避免新的
+  contract 记录覆盖底层 LangGraph interrupt 证据。
+
+边界：
+
+- 这是 backend-only 切片。没有新增浏览器 UI 路由，也没有新增 FastAPI endpoint。
+- 它还不宣称已经是完整 durable product runtime。默认本地 memory checkpointer
+  下，native resume 仍然不是可持久恢复能力。
+- 图仍然会停在人工审核 gate。只有明确批准 code review 后，才允许执行 R。
+- R 执行仍要求 formal review artifact 和 canonical graph approval 同时存在。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute -v
+Ran 3 tests in 0.539s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 本切片没有宣称 durable full native runtime；
+  - 默认 memory mode 仍然没有被描述成可 durable native resume；
+  - R 执行仍要求 formal review artifact 和 canonical graph approval；
+  - reject 路径不会执行 R，并继续停在 review gate；
+  - LG3 metadata 会保留底层 native dataset-loop interrupt 证据；
+  - 这是 backend runtime 的推进，不是 UI/read-model polish。
+- 非阻断后续建议：
+  - 增加 `execute_after_approval=false` 测试，明确 approved but not executed
+    的 phase 语义；
+  - 增加 approved draft spec 起点测试。

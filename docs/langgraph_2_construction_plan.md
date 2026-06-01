@@ -9229,3 +9229,61 @@ Subagent review:
 - Non-blocking wording suggestion absorbed: R1 now says product-default,
   end-to-end native interrupts remain unfinished while acknowledging existing
   pilot/native-resume work.
+
+## LG3.0 - Native Product Run And Durable Resume
+
+### 2026-06-01 - LG3.0 Single Dataset Native Full-Run Backend Contract Slice
+
+Completed:
+
+- Added an explicit `GraphGateway.start_native_dataset_full_run()` backend
+  contract for one dataset.
+- Added `GraphGateway.resume_native_dataset_full_run()` for the matching human
+  code-review resume path.
+- The contract currently covers:
+  - approved input spec or approved draft spec;
+  - DatasetGraph-generated R code;
+  - native `code_review` interrupt;
+  - explicit human approval/rejection;
+  - approved-code execution through the existing graph-owned R boundary.
+- Runtime metadata now records `native_dataset_full_run` with:
+  - `contract=single_dataset_spec_code_review_execute`;
+  - `boundary=lg3_backend_contract`;
+  - current phase and interrupt;
+  - whether execution happened after approval.
+- Existing native dataset-loop metadata is preserved when LG3 metadata is
+  written, so the new contract does not erase the lower-level LangGraph
+  interrupt evidence.
+
+Boundary:
+
+- This is backend-only. No browser/UI route or FastAPI endpoint was added.
+- It does not claim full durable product runtime yet. Default local memory
+  checkpointer behavior remains non-durable for native resume.
+- The graph still stops at human review gates. R execution is reachable only
+  after an explicit code-review approval.
+- The execution safety gate still requires both the formal review artifact and
+  canonical graph approval before R runs.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute -v
+Ran 3 tests in 0.539s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - the slice does not claim durable full native runtime;
+  - default memory mode still does not claim durable native resume;
+  - R execution still requires formal review artifact and canonical graph
+    approval;
+  - reject does not execute R and remains at the review gate;
+  - LG3 metadata preserves lower-level native dataset-loop interrupt evidence;
+  - this is backend runtime progress, not UI/read-model polishing.
+- Non-blocking follow-ups:
+  - add `execute_after_approval=false` coverage for approved-but-not-executed
+    phase semantics;
+  - add explicit approved-draft-spec entry coverage.

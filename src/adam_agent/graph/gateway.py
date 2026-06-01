@@ -122,6 +122,17 @@ class GraphGatewayNativeDatasetLoopResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayNativeDatasetFullRunResult(GraphGatewayResult):
+    """LG3 backend contract for one dataset native full-run boundary."""
+
+    dataset: str
+    phase: str
+    current_interrupt: str | None
+    approved: bool
+    execution: GraphGatewayExecutionResult | None = None
+
+
+@dataclass(frozen=True)
 class GraphGatewayNativeDatasetResumeResult(GraphGatewayResult):
     """Explicit native dataset interrupt resume result."""
 
@@ -926,6 +937,74 @@ class GraphGateway:
             },
         )
 
+    def start_native_dataset_full_run(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        llm_provider: dict[str, Any],
+        llm_exposure: dict[str, Any],
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayNativeDatasetFullRunResult:
+        """Start the LG3 single-dataset native full-run contract.
+
+        This backend contract uses DatasetGraph for the spec/code gates and
+        records the exact boundary in canonical state. It intentionally stops
+        at the first human interrupt; approval and R execution must be resumed
+        explicitly.
+        """
+
+        target = dataset.strip().upper()
+        started = self.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            llm_provider=llm_provider,
+            llm_exposure=llm_exposure,
+            llm_client_builder=llm_client_builder,
+            target_context_builder=target_context_builder,
+            rscript_path=rscript_path,
+        )
+        dataset_state = started.graph_state.datasets.get(target)
+        current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
+        graph_state = started.graph_state.model_copy(deep=True)
+        runtime_extra = _runtime_persistence_extras(graph_state)
+        runtime_extra["native_dataset_full_run"] = {
+            "dataset": target,
+            "phase": "waiting_for_human_gate",
+            "current_interrupt": current_interrupt,
+            "contract": "single_dataset_spec_code_review_execute",
+            "boundary": "lg3_backend_contract",
+            "execution_requires_explicit_resume": True,
+            "durable_resume_available": self.native_interrupt_resume_available(),
+        }
+        root = Path(study_dir).expanduser()
+        self._persist_graph_state(
+            root,
+            graph_state,
+            node="native_dataset_full_run_started",
+            runtime_persistence_extra=runtime_extra,
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            graph_state,
+            node="graph_gateway_native_dataset_full_run_started",
+        )
+        return GraphGatewayNativeDatasetFullRunResult(
+            graph_state=graph_state,
+            workflow_projection=projection,
+            dataset=target,
+            phase="waiting_for_human_gate",
+            current_interrupt=current_interrupt,
+            approved=False,
+            execution=None,
+        )
+
     def start_native_study_product_loop(
         self,
         *,
@@ -1253,6 +1332,72 @@ class GraphGateway:
             approved=review.approved,
             review_path=review.review_path,
             execution=execution,
+        )
+
+    def resume_native_dataset_full_run(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        execute_after_approval: bool = True,
+        rscript_path: str | None = None,
+        input_fingerprint_payload: dict[str, Any] | None = None,
+    ) -> GraphGatewayNativeDatasetFullRunResult:
+        """Resume the LG3 single-dataset native full-run contract."""
+
+        target = dataset.strip().upper()
+        resumed = self.resume_native_dataset_product_loop(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset=target,
+            decision=decision,
+            reviewer=reviewer,
+            notes=notes,
+            execute_after_approval=execute_after_approval,
+            rscript_path=rscript_path,
+            input_fingerprint_payload=input_fingerprint_payload,
+        )
+        dataset_state = resumed.graph_state.datasets.get(target)
+        current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
+        phase = "executed" if resumed.execution is not None else "reviewed"
+        if current_interrupt:
+            phase = "waiting_for_human_gate"
+        graph_state = resumed.graph_state.model_copy(deep=True)
+        runtime_extra = _runtime_persistence_extras(graph_state)
+        runtime_extra["native_dataset_full_run"] = {
+            "dataset": target,
+            "phase": phase,
+            "current_interrupt": current_interrupt,
+            "contract": "single_dataset_spec_code_review_execute",
+            "boundary": "lg3_backend_contract",
+            "approved": resumed.approved,
+            "executed_after_approval": resumed.execution is not None,
+            "durable_resume_available": self.native_interrupt_resume_available(),
+        }
+        root = Path(study_dir).expanduser()
+        self._persist_graph_state(
+            root,
+            graph_state,
+            node="native_dataset_full_run_resumed",
+            runtime_persistence_extra=runtime_extra,
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            graph_state,
+            node="graph_gateway_native_dataset_full_run_resumed",
+        )
+        return GraphGatewayNativeDatasetFullRunResult(
+            graph_state=graph_state,
+            workflow_projection=projection,
+            dataset=target,
+            phase=phase,
+            current_interrupt=current_interrupt,
+            approved=resumed.approved,
+            execution=resumed.execution,
         )
 
     def resume_native_dataset_interrupt(
@@ -5220,6 +5365,16 @@ def _native_resume_interrupt_queue(
             }
         )
     return queue
+
+
+def _runtime_persistence_extras(state: StudyRunState) -> dict[str, Any]:
+    """Carry forward native runtime markers when refreshing persistence metadata."""
+
+    extras: dict[str, Any] = {}
+    for key, value in state.runtime_persistence.items():
+        if key.startswith("native_") and isinstance(value, dict):
+            extras[key] = dict(value)
+    return extras
 
 
 def _study_loop_progress_message(

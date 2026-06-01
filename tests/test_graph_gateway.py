@@ -3116,6 +3116,181 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["status"], "stale")
         self.assertEqual(dataset_state.code_state["terminal_failure_followup"]["action"], "revise_spec")
 
+    def test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_start") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+
+        result = gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_start",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "waiting_for_human_gate")
+        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertFalse(result.approved)
+        self.assertIsNone(result.execution)
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["contract"], "single_dataset_spec_code_review_execute")
+        self.assertTrue(contract["execution_requires_explicit_resume"])
+        self.assertFalse(contract["durable_resume_available"])
+        self.assertIn("native_dataset_product_loop_interrupt", result.graph_state.runtime_persistence)
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_start"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
+    def test_gateway_lg3_native_dataset_full_run_approval_executes(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_execute") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,AGE\n01,50\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        output_artifact = ArtifactRef(
+            artifact_id="output_adam_psy201_run_lg3_native_full_run_adsl",
+            kind="output_adam",
+            path="runs/run_lg3_native_full_run_execute/outputs/adsl.csv",
+            sha256=f"sha256:{'a' * 64}",
+            dataset="ADSL",
+            format="csv",
+            role="output",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_native_full_run_adsl",
+            kind="validation_report",
+            path="runs/run_lg3_native_full_run_execute/validation/adsl_validation_report.json",
+            sha256=f"sha256:{'b' * 64}",
+            dataset="ADSL",
+            format="json",
+            role="output",
+        )
+        fake_execution = SimpleNamespace(
+            terminal_failure=False,
+            response_status="completed",
+            validation_status="pass",
+            output_path="runs/run_lg3_native_full_run_execute/outputs/adsl.csv",
+            validation_report_path="runs/run_lg3_native_full_run_execute/validation/adsl_validation_report.json",
+            diagnostics_path=None,
+            errors=[],
+            warnings=[],
+            validation_report={"status": "pass", "errors": [], "warnings": []},
+            failure_records=[],
+            artifacts={"output_adam": output_artifact, "validation_report": validation_artifact},
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_execute",
+            dataset="ADSL",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_execution):
+            result = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id="run_lg3_native_full_run_execute",
+                dataset="ADSL",
+                decision="approve",
+                reviewer="tester",
+                notes="Approve generated R and execute the LG3 full-run contract.",
+            )
+
+        dataset_state = result.graph_state.datasets["ADSL"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "executed")
+        self.assertTrue(result.approved)
+        self.assertIsNotNone(result.execution)
+        self.assertEqual(result.execution.status, "completed")
+        self.assertEqual(dataset_state.status, "completed")
+        self.assertEqual(dataset_state.execution_state["status"], "completed")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "executed")
+        self.assertTrue(contract["approved"])
+        self.assertTrue(contract["executed_after_approval"])
+        self.assertIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_execute"
+                / "review"
+                / "adsl_code_review.json"
+            ).exists()
+        )
+
+    def test_gateway_lg3_native_dataset_full_run_reject_does_not_execute(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_reject") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_reject",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch.object(gateway, "execute_approved_code") as execute_approved:
+            result = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id="run_lg3_native_full_run_reject",
+                dataset="ADAE",
+                decision="reject",
+                reviewer="tester",
+                notes="Generated R is not acceptable.",
+            )
+
+        execute_approved.assert_not_called()
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "waiting_for_human_gate")
+        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertFalse(result.approved)
+        self.assertIsNone(result.execution)
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "rejected")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "waiting_for_human_gate")
+        self.assertFalse(contract["approved"])
+        self.assertFalse(contract["executed_after_approval"])
+
     def test_gateway_native_study_product_loop_starts_multiple_runnable_datasets(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_multi") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
