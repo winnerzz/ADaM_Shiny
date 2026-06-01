@@ -7619,6 +7619,47 @@ Subagent review:
   pass the actual `study_dir/runs/{run_id}` into the runtime dependency gate
   instead of deriving it from graph artifact paths.
 
+### 2026-06-01 - LG2.3 Explicit Run-Dir Runtime Dependency Gate Slice
+
+Completed:
+
+- Absorbed the remaining non-blocking hardening idea from the prior review.
+- `GraphGateway.start_native_study_product_loop()` now computes the real
+  `study_dir/runs/{run_id}` path once and passes it into:
+  - native study-loop dispatch ordering;
+  - per-dataset start eligibility;
+  - runtime dependency output checks;
+  - `skipped_datasets` read-model construction.
+- Removed runtime dependency gate reliance on deriving run directory from
+  artifact paths. Artifact paths are still normalized, but the trusted boundary
+  is now the graph-owned run directory passed by the gateway.
+- Existing path-equivalence and outside-path regression tests now exercise the
+  same explicit `run_dir` boundary used by the product flow.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 3 tests in 0.259s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK, with expected CRLF working-copy warnings only
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 275 tests in 30.141s - OK (skipped=3)
+```
+
+Subagent review:
+
+- GO.
+- Non-blocking suggestion: later, split `_resolve_run_artifact_path()` path
+  equivalence and containment behavior into a focused helper test matrix for
+  Windows slashes, run-relative paths, output-relative paths, absolute paths,
+  and `..` escape attempts.
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
 
 Completed:

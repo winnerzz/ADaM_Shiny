@@ -3427,21 +3427,22 @@ class GraphGatewayTests(unittest.TestCase):
                 "ADAE": DatasetRunState(study_id="PSY201", run_id="run_lg2_native_study_loop_dependency_hash_gate", dataset="ADAE"),
             },
         )
+        run_dir = study_dir / "runs" / "run_lg2_native_study_loop_dependency_hash_gate"
 
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
         state.dependency_resolution[0]["artifact_sha256"] = output_sha
-        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
         state.dependency_resolution[0]["artifact_source"] = "reference_adam"
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
         state.dependency_resolution[0]["artifact_source"] = "run_output"
         state.datasets["ADSL"].status = "completed_stub"
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
         state.datasets["ADSL"].status = "completed"
         state.datasets["ADSL"].execution_state["terminal_failure"] = True
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
         state.datasets["ADSL"].execution_state["terminal_failure"] = False
         state.datasets["ADSL"].artifacts = []
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=run_dir))
 
     def test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_path_equivalence") / "PSY201"
@@ -3504,9 +3505,9 @@ class GraphGatewayTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
         state.dependency_resolution[0]["artifact_path"] = "outputs/wrong_adsl.csv"
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
 
     def test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_outside_path") / "PSY201"
@@ -3572,12 +3573,12 @@ class GraphGatewayTests(unittest.TestCase):
             },
         )
 
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
         state.dependency_resolution[0]["artifact_path"] = "../decoy/runs/run_lg2_native_study_loop_dependency_outside_path/outputs/adsl.csv"
-        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
         state.dependency_resolution[0]["artifact_path"] = str(good_output.as_posix())
         state.dependency_resolution[0]["artifact_sha256"] = good_sha
-        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE", run_dir=study_dir / "runs" / run_id))
 
     def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"

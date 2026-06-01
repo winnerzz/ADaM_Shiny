@@ -7047,6 +7047,45 @@ Ran 275 tests in 29.197s - OK (skipped=3)
 - 剩余非阻断想法：如果后续要继续加固，可以把真实 `study_dir/runs/{run_id}` 传入
   runtime dependency gate，而不是完全从 graph artifact path 推导。
 
+### 2026-06-01 - LG2.3 显式 Run-Dir Runtime Dependency Gate 切片
+
+已完成：
+
+- 吸收上一段审查剩余的非阻断加固建议。
+- `GraphGateway.start_native_study_product_loop()` 现在一次性计算真实
+  `study_dir/runs/{run_id}`，并传入：
+  - native study-loop dispatch ordering；
+  - per-dataset start eligibility；
+  - runtime dependency output checks；
+  - `skipped_datasets` read model 构造。
+- runtime dependency gate 不再依赖从 artifact path 反推出 run directory。artifact
+  path 仍会被归一化，但可信边界现在是 gateway 传入的 graph-owned run directory。
+- 现有 path-equivalence 和 outside-path 回归测试现在覆盖的也是产品路径使用的显式
+  `run_dir` 边界。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 3 tests in 0.259s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK，仅有预期内 CRLF working-copy warnings
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 275 tests in 30.141s - OK (skipped=3)
+```
+
+子 agent 审查：
+
+- GO。
+- 非阻断建议：后续可把 `_resolve_run_artifact_path()` 的 path equivalence 和
+  containment 行为拆成一个独立 helper 单测矩阵，覆盖 Windows 反斜杠、
+  run-relative path、output-relative path、absolute path 和 `..` 逃逸尝试。
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
 
 已完成：

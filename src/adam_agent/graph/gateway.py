@@ -969,7 +969,8 @@ class GraphGateway:
 
         dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult] = {}
         started_datasets: list[str] = []
-        for dataset in _native_study_loop_dispatch_order(plan_state):
+        run_dir = root / "runs" / run_id
+        for dataset in _native_study_loop_dispatch_order(plan_state, run_dir=run_dir):
             try:
                 result = self.start_native_dataset_product_loop(
                     study_dir=root,
@@ -994,6 +995,7 @@ class GraphGateway:
                             "started_datasets": started_datasets,
                             "skipped_datasets": _native_study_loop_skipped_datasets(
                                 graph_state,
+                                run_dir=run_dir,
                                 exclude=started_datasets,
                             ),
                             "failed_dataset": dataset,
@@ -1017,7 +1019,7 @@ class GraphGateway:
             state=final_state,
             dataset_results=dataset_results,
             started_datasets=started_datasets,
-            skipped_datasets=_native_study_loop_skipped_datasets(final_state, exclude=started_datasets),
+            skipped_datasets=_native_study_loop_skipped_datasets(final_state, run_dir=run_dir, exclude=started_datasets),
             node="native_study_product_loop_started",
         )
 
@@ -4339,7 +4341,7 @@ def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]
     return artifacts
 
 
-def _native_study_loop_dispatch_order(state: StudyRunState) -> list[str]:
+def _native_study_loop_dispatch_order(state: StudyRunState, *, run_dir: Path) -> list[str]:
     runnable = {dataset.strip().upper() for dataset in state.runnable_datasets}
     blocked = _blocked_dataset_names(state.blocked_datasets)
     ordered: list[str] = []
@@ -4350,11 +4352,11 @@ def _native_study_loop_dispatch_order(state: StudyRunState) -> list[str]:
                 continue
             for dataset in batch:
                 target = str(dataset).strip().upper()
-                if _native_study_loop_can_start_dataset(state, target, runnable=runnable, blocked=blocked, ordered=ordered):
+                if _native_study_loop_can_start_dataset(state, target, run_dir=run_dir, runnable=runnable, blocked=blocked, ordered=ordered):
                     ordered.append(target)
     for dataset in state.target_datasets:
         target = dataset.strip().upper()
-        if _native_study_loop_can_start_dataset(state, target, runnable=runnable, blocked=blocked, ordered=ordered):
+        if _native_study_loop_can_start_dataset(state, target, run_dir=run_dir, runnable=runnable, blocked=blocked, ordered=ordered):
             ordered.append(target)
     return ordered
 
@@ -4363,18 +4365,19 @@ def _native_study_loop_can_start_dataset(
     state: StudyRunState,
     target: str,
     *,
+    run_dir: Path,
     runnable: set[str],
     blocked: set[str],
     ordered: list[str],
 ) -> bool:
     if not target or target not in runnable or target in blocked or target in ordered:
         return False
-    if not _native_study_loop_dependency_outputs_available(state, target):
+    if not _native_study_loop_dependency_outputs_available(state, target, run_dir=run_dir):
         return False
     return not _has_dataset_product_progress(state.datasets.get(target))
 
 
-def _native_study_loop_dependency_outputs_available(state: StudyRunState, target: str) -> bool:
+def _native_study_loop_dependency_outputs_available(state: StudyRunState, target: str, *, run_dir: Path) -> bool:
     """Require real runtime dependency artifacts before starting downstream product work."""
 
     dataset = target.strip().upper()
@@ -4392,7 +4395,12 @@ def _native_study_loop_dependency_outputs_available(state: StudyRunState, target
         if not record.get("artifact_path") or not record.get("artifact_sha256"):
             continue
         required = str(record.get("required_dataset") or "").strip().upper()
-        if required and _native_study_loop_runtime_dependency_record_is_current(state, required, record):
+        if required and _native_study_loop_runtime_dependency_record_is_current(
+            state,
+            required,
+            record,
+            run_dir=run_dir,
+        ):
             available.add(required)
     return all(dependency in available for dependency in dependencies)
 
@@ -4401,6 +4409,8 @@ def _native_study_loop_runtime_dependency_record_is_current(
     state: StudyRunState,
     required: str,
     record: dict[str, Any],
+    *,
+    run_dir: Path,
 ) -> bool:
     dependency = required.strip().upper()
     dataset_state = state.datasets.get(dependency)
@@ -4418,7 +4428,6 @@ def _native_study_loop_runtime_dependency_record_is_current(
     artifact_sha256 = str(record.get("artifact_sha256") or "").strip()
     if not artifact_path or not artifact_sha256:
         return False
-    run_dir = _native_study_loop_runtime_dependency_run_dir(dataset_state)
     record_path = _resolve_run_artifact_path(run_dir, artifact_path)
     if record_path is None:
         return False
@@ -4443,24 +4452,6 @@ def _native_study_loop_runtime_dependency_record_is_current(
     return record_path.exists() and record_path.is_file()
 
 
-def _native_study_loop_runtime_dependency_run_dir(dataset_state: DatasetRunState) -> Path:
-    run_dir_suffix = Path("runs") / dataset_state.run_id
-    path_values: list[str] = []
-    execution_output = dataset_state.execution_state.get("output_path")
-    if execution_output:
-        path_values.append(str(execution_output))
-    path_values.extend(str(artifact.path) for artifact in dataset_state.artifacts)
-    for value in path_values:
-        candidate = Path(value)
-        normalized_parts = Path(str(value).replace("\\", "/")).parts
-        for index in range(len(normalized_parts) - 1):
-            if normalized_parts[index].lower() == "runs" and normalized_parts[index + 1] == dataset_state.run_id:
-                if candidate.is_absolute():
-                    return Path(*candidate.parts[: index + 2])
-                return Path(*normalized_parts[: index + 2])
-    return run_dir_suffix
-
-
 def _paths_equivalent(left: Path, right: Path) -> bool:
     return str(left.resolve(strict=False).as_posix()) == str(right.resolve(strict=False).as_posix())
 
@@ -4480,7 +4471,12 @@ def _native_study_loop_dependencies_for_dataset(state: StudyRunState, target: st
     return result
 
 
-def _native_study_loop_skipped_datasets(state: StudyRunState, *, exclude: list[str] | None = None) -> list[dict[str, Any]]:
+def _native_study_loop_skipped_datasets(
+    state: StudyRunState,
+    *,
+    run_dir: Path,
+    exclude: list[str] | None = None,
+) -> list[dict[str, Any]]:
     excluded = {dataset.strip().upper() for dataset in (exclude or []) if dataset.strip()}
     runnable = {dataset.strip().upper() for dataset in state.runnable_datasets}
     blocked = _blocked_dataset_names(state.blocked_datasets)
@@ -4504,7 +4500,7 @@ def _native_study_loop_skipped_datasets(state: StudyRunState, *, exclude: list[s
                 }
             )
             continue
-        if not _native_study_loop_dependency_outputs_available(state, dataset):
+        if not _native_study_loop_dependency_outputs_available(state, dataset, run_dir=run_dir):
             skipped.append(
                 {
                     "dataset": dataset,
