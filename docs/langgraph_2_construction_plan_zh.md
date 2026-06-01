@@ -7851,6 +7851,76 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Queue Read-Model 切片
+
+已完成：
+
+- 在 graph-owned `native_resume` progress read model 中新增
+  `interrupt_queue`。
+- 这个队列只列出显式 native dataset resume endpoint 能处理的 dataset
+  interrupt：
+  - `draft_spec_review`；
+  - `code_review`；
+  - `terminal_failure`。
+- 每个 item 包含 dataset、interrupt name、dataset status、可用人工动作、
+  默认 split-flow review path，以及当前 run 是否真的能通过 durable native
+  LangGraph checkpointer resume。
+- 默认 memory checkpointer 下，队列可以展示正在等待的 dataset gate，但每个 item
+  都是 `can_resume == false`，也没有 resume endpoint。这保持当前产品路径诚实：
+  durable native resume 没有显式可用时，用户应继续使用 split-flow review
+  endpoints。
+- 当可选 SQLite checkpointer 可用时，同一个队列会标记为 resumable，并暴露显式
+  native resume endpoint。
+- `study_loop_result` 现在也通过 `native_resume_interrupts` 带上同一队列，使
+  study-loop result 和顶层 progress read model 保持一致。
+
+当前边界：
+
+- 这是 read-model 和 API contract 切片。
+- 不新增 UI 按钮，不批准/拒绝任何内容，不执行 R，也不改变默认 memory
+  checkpointer fail-closed 行为。
+- `dependency_user_action_required` 不进入该队列，因为 native dataset resume
+  endpoint 不处理这个 interrupt。
+- 经审查后，queue 现在会跳过 available actions 为空的 interrupt。这样已经
+  triage 过的 terminal-failure 状态不会被继续展示成新的 native resume gate。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 4 tests in 0.168s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.387s - OK (skipped=1)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK，仅有预期内 CRLF working-copy warnings
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 279 tests in 29.955s - OK (skipped=4)
+```
+
+子 agent 审查：
+
+- 初审：NO-GO。
+- 必修问题：已经 triage 过的 terminal-failure interrupt 在 durable checkpointer
+  下仍可能出现在 queue 中并显示 `can_resume=true`，因为原实现只按 interrupt
+  name 过滤，没有确认该 gate 是否仍有可用动作。
+- 已修复：`_native_resume_interrupt_queue()` 在
+  `_available_dataset_actions(dataset_state)` 为空时跳过该 item。
+- 已补回归：native terminal-failure review 在 triage 前进入 queue；记录
+  `terminal_failure_review` 后从 queue 消失。
+
+补充验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.522s - OK
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Boundary Read-Model 切片
 
 已完成：

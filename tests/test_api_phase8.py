@@ -5006,6 +5006,14 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse(progress_payload["study_loop_result"]["native_resume_available"])
         self.assertEqual(progress_payload["study_loop_result"]["native_resume_scope"], "none")
         self.assertEqual(progress_payload["study_loop_result"]["resume_boundary"], "graph_state_projection_only")
+        self.assertEqual(
+            [(item["dataset"], item["interrupt"], item["can_resume"]) for item in progress_payload["native_resume"]["interrupt_queue"]],
+            [("ADAE", "code_review", False), ("ADCM", "code_review", False)],
+        )
+        self.assertEqual(
+            [(item["dataset"], item["interrupt"], item["can_resume"]) for item in progress_payload["study_loop_result"]["native_resume_interrupts"]],
+            [("ADAE", "code_review", False), ("ADCM", "code_review", False)],
+        )
         loop_review_queue = {(item["dataset"], item["name"]) for item in progress_payload["study_loop_result"]["review_queue"]}
         self.assertIn(("ADAE", "code_review"), loop_review_queue)
         self.assertIn(("ADCM", "code_review"), loop_review_queue)

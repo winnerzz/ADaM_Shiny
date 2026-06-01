@@ -501,6 +501,7 @@ class GraphGatewayTests(unittest.TestCase):
                 "explicit_resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
                 "default_review_path": "split_flow_review_endpoints",
                 "restart_recovery_source": "graph_state_json",
+                "interrupt_queue": [],
                 "message": (
                     "Durable native LangGraph interrupt resume is not enabled for this run. "
                     "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
@@ -655,6 +656,82 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertNotIn("endpoint", progress["native_resume"])
         self.assertEqual(progress["native_resume"]["restart_recovery_source"], "langgraph_sqlite_checkpointer")
         self.assertIn("available for pilot graph interrupts", progress["native_resume"]["message"])
+
+    def test_progress_reports_native_resume_queue_without_enabling_memory_resume(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_memory") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_queue_memory",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_memory")
+
+        queue = progress["native_resume"]["interrupt_queue"]
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["dataset"], "ADAE")
+        self.assertEqual(queue[0]["interrupt"], "code_review")
+        self.assertFalse(queue[0]["can_resume"])
+        self.assertIsNone(queue[0]["resume_endpoint"])
+        self.assertEqual(queue[0]["default_review_path"], "split_flow_review_endpoints")
+        self.assertEqual([item["action"] for item in queue[0]["available_actions"]], ["approve", "reject"])
+        self.assertFalse(progress["native_resume"]["available"])
+        self.assertEqual(progress["study_loop_result"], {})
+
+    def test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_sqlite") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, "run_lg2_native_resume_queue_sqlite")
+
+        try:
+            gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            gateway.start_native_dataset_product_loop(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_native_resume_queue_sqlite",
+                dataset="ADAE",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+            progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_sqlite")
+        finally:
+            gateway.close()
+
+        queue = progress["native_resume"]["interrupt_queue"]
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["dataset"], "ADAE")
+        self.assertEqual(queue[0]["interrupt"], "code_review")
+        self.assertTrue(queue[0]["can_resume"])
+        self.assertEqual(queue[0]["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
+        self.assertTrue(progress["native_resume"]["available"])
+        self.assertEqual(progress["study_loop_result"], {})
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"
@@ -3998,6 +4075,14 @@ class GraphGatewayTests(unittest.TestCase):
             started.graph_state.runtime_persistence["native_terminal_failure_review_interrupt"]["boundary"],
             "terminal_failure_review_pilot_only",
         )
+        before_review_progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(
+            [
+                (item["dataset"], item["interrupt"], item["can_resume"])
+                for item in before_review_progress["native_resume"]["interrupt_queue"]
+            ],
+            [("ADAE", "terminal_failure", False)],
+        )
 
         reviewed = gateway.resume_native_terminal_failure_review(
             study_dir=study_dir,
@@ -4019,6 +4104,8 @@ class GraphGatewayTests(unittest.TestCase):
             reviewed.graph_state.runtime_persistence["native_terminal_failure_review_resume"]["native_status"],
             "triaged",
         )
+        after_review_progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(after_review_progress["native_resume"]["interrupt_queue"], [])
         persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
         self.assertEqual(
             persisted_state["datasets"]["ADAE"]["execution_state"]["terminal_failure_review"]["action"],

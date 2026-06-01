@@ -8573,6 +8573,79 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Queue Read-Model Slice
+
+Completed:
+
+- Extended the graph-owned `native_resume` progress read-model with an
+  `interrupt_queue` list.
+- The queue lists only dataset interrupts that the explicit native dataset
+  resume endpoint knows how to handle:
+  - `draft_spec_review`;
+  - `code_review`;
+  - `terminal_failure`.
+- Each item includes dataset, interrupt name, dataset status, available human
+  actions, default split-flow review path, and whether this run can actually
+  resume through durable native LangGraph checkpointing.
+- With the default memory checkpointer, the queue can show waiting dataset
+  gates, but every item has `can_resume == false` and no resume endpoint. This
+  keeps the current product path honest: users should use split-flow review
+  endpoints unless durable native resume is explicitly available.
+- When the optional SQLite checkpointer is available, the same queue is marked
+  resumable and exposes the explicit native resume endpoint.
+- `study_loop_result` now carries the same queue under
+  `native_resume_interrupts`, so the study-loop result and top-level progress
+  read-model stay aligned.
+
+Current boundary:
+
+- This is a read-model and API contract slice.
+- It does not add UI buttons, does not approve/reject anything, does not execute
+  R, and does not change the default memory-checkpointer fail-closed behavior.
+- Dependency-user-action interrupts are intentionally not listed because the
+  native dataset resume endpoint does not handle them.
+- After review, the queue now skips any interrupt whose available action list
+  is empty. This prevents already-triaged terminal-failure states from being
+  advertised as fresh native resume gates.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 4 tests in 0.168s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.387s - OK (skipped=1)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK, with expected CRLF working-copy warnings only
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 279 tests in 29.955s - OK (skipped=4)
+```
+
+Subagent review:
+
+- Initial review: NO-GO.
+- Must-fix: already-triaged terminal-failure interrupts could still appear in
+  the queue with `can_resume=true` under a durable checkpointer, because the
+  queue filtered by interrupt name before checking whether the gate still had
+  available actions.
+- Fix applied: `_native_resume_interrupt_queue()` skips queue items when
+  `_available_dataset_actions(dataset_state)` is empty.
+- Regression added: native terminal-failure review appears in the queue before
+  triage, then disappears after `terminal_failure_review` is recorded.
+
+Additional verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 3 tests in 0.522s - OK
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Boundary Read-Model Slice
 
 Completed:

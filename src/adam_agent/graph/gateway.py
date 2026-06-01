@@ -5127,6 +5127,7 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
         "native_resume_available": bool(native_resume["available"]),
         "native_resume_scope": str(native_resume["scope"]),
         "resume_boundary": str(native_resume["boundary"]),
+        "native_resume_interrupts": list(native_resume.get("interrupt_queue") or []),
         "message": _study_loop_progress_message(started=started, skipped=skipped, blocked=blocked, review_queue=review_queue),
     }
 
@@ -5136,8 +5137,15 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
     resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
     boundary = "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only"
     explicit_resume_endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
+    interrupt_queue = _native_resume_interrupt_queue(state, native_resume_available=native_resume_available)
     if native_resume_available:
-        message = "Durable native LangGraph interrupt resume is available for pilot graph interrupts."
+        if interrupt_queue:
+            message = "Durable native LangGraph interrupt resume is available for the listed dataset gates."
+        else:
+            message = (
+                "Durable native LangGraph interrupt resume is available for pilot graph interrupts, "
+                "but no dataset gate is waiting."
+            )
         recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "langgraph_checkpointer")
     else:
         message = (
@@ -5152,8 +5160,45 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
         "explicit_resume_endpoint": explicit_resume_endpoint,
         "default_review_path": "split_flow_review_endpoints",
         "restart_recovery_source": recovery_source,
+        "interrupt_queue": interrupt_queue,
         "message": message,
     }
+
+
+def _native_resume_interrupt_queue(
+    state: StudyRunState,
+    *,
+    native_resume_available: bool,
+) -> list[dict[str, Any]]:
+    """Expose dataset interrupts that the native dataset-resume endpoint can handle."""
+
+    supported = {"draft_spec_review", "code_review", "terminal_failure"}
+    queue: list[dict[str, Any]] = []
+    for dataset in _progress_dataset_order(state):
+        dataset_state = state.datasets.get(dataset)
+        if dataset_state is None:
+            continue
+        interrupt = dataset_state.current_interrupt
+        if interrupt is None or interrupt.status != "open" or interrupt.name not in supported:
+            continue
+        actions = _available_dataset_actions(dataset_state)
+        if not actions:
+            continue
+        queue.append(
+            {
+                "dataset": dataset,
+                "interrupt": interrupt.name,
+                "status": dataset_state.status,
+                "can_resume": native_resume_available,
+                "resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume"
+                if native_resume_available
+                else None,
+                "default_review_path": "split_flow_review_endpoints",
+                "available_actions": actions,
+                "reason": interrupt.reason,
+            }
+        )
+    return queue
 
 
 def _study_loop_progress_message(
