@@ -175,6 +175,38 @@ class Phase8ApiTests(unittest.TestCase):
             "Service helpers must delegate state changes to GraphGateway instead of writing workflow_state directly.",
         )
 
+    def test_service_layer_constructs_graph_gateway_only_through_factory(self) -> None:
+        from adam_agent.api import service
+
+        direct_gateway_callers: list[str] = []
+        for name, obj in vars(service).items():
+            if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
+                continue
+            if name == "_new_graph_gateway":
+                continue
+            tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+            calls_gateway_directly = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "GraphGateway"
+                for node in ast.walk(tree)
+            )
+            if calls_gateway_directly:
+                direct_gateway_callers.append(name)
+
+        self.assertEqual(
+            direct_gateway_callers,
+            [],
+            "Service helpers should construct GraphGateway only through _new_graph_gateway().",
+        )
+        factory_tree = ast.parse(textwrap.dedent(inspect.getsource(service._new_graph_gateway)))
+        factory_calls = {
+            node.func.id
+            for node in ast.walk(factory_tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("GraphGateway", factory_calls)
+
     def test_service_layer_reads_graph_state_only_for_explicit_read_models(self) -> None:
         from adam_agent.api import service
 

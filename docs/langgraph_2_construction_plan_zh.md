@@ -6703,6 +6703,55 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Gateway Factory Boundary 切片
+
+已完成：
+
+- 在 `api/service.py` 中新增 `_new_graph_gateway()`，作为 service 层唯一的
+  `GraphGateway` 构造边界。
+- 把 service helpers 里的直接 `GraphGateway()` 构造改为调用这个 factory，覆盖：
+  - upload invalidation；
+  - legacy run shim；
+  - prepare；
+  - native study loop；
+  - dependency/draft/code/terminal-failure review gates；
+  - approved-code execution；
+  - progress、graph-state、compare、review-summary read models。
+- 增加 service-layer contract test：除 `_new_graph_gateway()` 外，service helper
+  不能直接构造 `GraphGateway`。
+- 当前运行行为不变：factory 仍返回默认 `GraphGateway()`，所以公开 API/UI 默认仍是
+  memory checkpointer 行为。
+
+当前边界：
+
+- 本切片不启用 SQLite/Postgres checkpointer persistence。
+- 不改变 FastAPI routes、workflow state transitions、review gates、LLM 生成、
+  R execution 或 artifact 写入。
+- 目的只是把后续 checkpointer/backend 配置收敛到一个 service 边界，避免每个
+  endpoint 各自选择。
+
+子 agent 审查：
+
+- 2026-06-01，Averroes，`gpt-5.5`，只读审查结论：GO。
+- 它确认没有业务行为变化，service 层除 factory 外没有残留直接
+  `GraphGateway()` 调用，且现有测试仍可 patch
+  `adam_agent.api.service.GraphGateway`。
+- 非阻断建议：AST guard 挡不住 `Gateway = GraphGateway` 这类别名绕法；已在
+  factory 附近增加约定注释。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+Ran 5 tests in 0.120s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 118 tests in 15.949s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.7 Code Approval 与 Execution UI 拆分切片
 
 已完成：

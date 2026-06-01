@@ -115,6 +115,18 @@ DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
 
 
+# Keep service-layer GraphGateway construction centralized here. Endpoint
+# helpers should call this factory instead of instantiating GraphGateway.
+def _new_graph_gateway() -> GraphGateway:
+    """Construct the service-owned workflow gateway in one place.
+
+    FastAPI/service code should not choose checkpointer details per endpoint.
+    Future persistence backends belong behind this boundary.
+    """
+
+    return GraphGateway()
+
+
 def _gateway_compatibility_metadata(result: Any) -> dict[str, str]:
     """Copy compatibility metadata from the gateway-owned workflow projection."""
 
@@ -221,7 +233,7 @@ def save_uploaded_file_bytes(
         target.write_bytes(content)
         saved.append(str(target.as_posix()))
     summary = summarize_study_inputs(root, study_id=study_id or root.name)
-    graph_invalidation = GraphGateway().mark_study_inputs_changed(study_dir=root)
+    graph_invalidation = _new_graph_gateway().mark_study_inputs_changed(study_dir=root)
     upload_state = {
         "input_fingerprint": graph_invalidation.input_fingerprint,
         "input_diff": graph_invalidation.input_diff,
@@ -314,7 +326,7 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             f"Allowed legacy endpoint modes: {format_execution_modes(LEGACY_RUN_ENDPOINT_MODES)}. "
             "Use the split-flow endpoints for product LLM generation."
         )
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     if execution_mode in LEGACY_RUN_BLOCKED_LLM_MODES:
         gateway.block_legacy_run_to_completion(
             study_dir=study_dir,
@@ -354,7 +366,7 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
     if not study_dir.exists() or not study_dir.is_dir():
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     study_id = request.study_id or study_dir.name
-    gateway_result = GraphGateway().start_dependency_plan(
+    gateway_result = _new_graph_gateway().start_dependency_plan(
         study_dir=study_dir,
         study_id=study_id,
         run_id=request.run_id,
@@ -407,7 +419,7 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
         fallback=config.llm_exposure,
     )
     try:
-        result = GraphGateway().start_native_study_product_loop(
+        result = _new_graph_gateway().start_native_study_product_loop(
             study_dir=study_dir,
             study_id=study_id,
             run_id=request.run_id,
@@ -452,7 +464,7 @@ def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResp
     decision = request.decision.strip().lower()
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Dependency review decision must be approve or reject.")
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.review_dependency(
             study_dir=study_dir,
@@ -528,7 +540,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -579,7 +591,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -666,7 +678,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
@@ -708,7 +720,7 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
     decision = request.decision.strip().lower()
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Draft spec review decision must be approve or reject.")
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.review_draft_spec(
             study_dir=study_dir,
@@ -744,7 +756,7 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Code review decision must be approve or reject.")
     study_id = study_dir.name
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.review_code(
             study_dir=study_dir,
@@ -777,7 +789,7 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.execute_approved_code(
             study_dir=study_dir,
@@ -811,7 +823,7 @@ def persist_terminal_failure_review(run_id: str, dataset: str, request: Any) -> 
     if not study_dir.exists() or not study_dir.is_dir():
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.review_terminal_failure(
             study_dir=study_dir,
@@ -853,7 +865,7 @@ def read_run_graph_state(study_dir: str | Path, run_id: str) -> dict[str, Any]:
     """Read the canonical graph state for one local run."""
 
     try:
-        state = GraphGateway().load_graph_state(study_dir=study_dir, run_id=run_id)
+        state = _new_graph_gateway().load_graph_state(study_dir=study_dir, run_id=run_id)
     except FileNotFoundError as exc:
         raise ApiServiceError(str(exc)) from exc
     return state.model_dump(mode="json")
@@ -863,7 +875,7 @@ def read_run_progress(study_dir: str | Path, run_id: str) -> RunProgressResponse
     """Read graph-owned progress guidance for one local run."""
 
     try:
-        payload = GraphGateway().progress_summary(study_dir=study_dir, run_id=run_id)
+        payload = _new_graph_gateway().progress_summary(study_dir=study_dir, run_id=run_id)
     except FileNotFoundError as exc:
         raise ApiServiceError(str(exc)) from exc
     return RunProgressResponse(**payload)
@@ -911,7 +923,7 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
     root = _validated_study_root(study_dir)
     target = dataset.strip().upper()
     run_dir = _validated_run_dir(root, run_id)
-    gateway = GraphGateway()
+    gateway = _new_graph_gateway()
     try:
         result = gateway.compare_reference_output(
             study_dir=root,
@@ -1805,7 +1817,7 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
 
 def _load_review_graph_state(root: Path, run_id: str) -> StudyRunState | None:
     try:
-        return GraphGateway().load_graph_state(study_dir=root, run_id=run_id)
+        return _new_graph_gateway().load_graph_state(study_dir=root, run_id=run_id)
     except (FileNotFoundError, ValueError, ValidationError):
         return None
 

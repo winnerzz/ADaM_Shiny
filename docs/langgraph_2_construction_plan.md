@@ -7248,6 +7248,53 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Gateway Factory Boundary Slice
+
+Completed:
+
+- Added `_new_graph_gateway()` in `api/service.py` as the single service-owned
+  construction boundary for `GraphGateway`.
+- Replaced direct `GraphGateway()` construction inside service helpers with the
+  new factory, including upload invalidation, legacy run shim, prepare,
+  native study loop, review gates, execution, progress, graph-state, compare,
+  and review-summary helpers.
+- Added a service-layer contract test that fails if any service helper other
+  than `_new_graph_gateway()` directly constructs `GraphGateway`.
+- Kept the current runtime behavior unchanged: the factory still returns
+  `GraphGateway()` with default arguments and therefore keeps the current memory
+  checkpointer default.
+
+Current boundary:
+
+- This slice does not enable SQLite/Postgres checkpointer persistence.
+- It does not change FastAPI routes, workflow state transitions, review gates,
+  LLM generation, R execution, or artifact writing.
+- The purpose is to keep future checkpointer/backend configuration behind one
+  service boundary instead of letting each endpoint choose separately.
+
+Subagent review:
+
+- 2026-06-01, Averroes, `gpt-5.5`, read-only review: GO.
+- Confirmed no business behavior change, no direct service-layer
+  `GraphGateway()` call remains outside the factory, and existing tests can
+  still patch `adam_agent.api.service.GraphGateway`.
+- Non-blocking suggestion: the AST guard does not catch alias tricks such as
+  assigning `Gateway = GraphGateway`; a convention comment was added near the
+  factory.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory tests.test_api_phase8.Phase8ApiTests.test_product_service_wrappers_delegate_state_changes_to_gateway_methods tests.test_api_phase8.Phase8ApiTests.test_service_layer_no_longer_writes_workflow_state_directly tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model -v
+Ran 5 tests in 0.120s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 118 tests in 15.949s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.7 Split Code Approval And Execution UI Slice
 
 Completed:
