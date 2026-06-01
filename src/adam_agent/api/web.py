@@ -1920,9 +1920,6 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
-      byId('finalizeInputsButton').disabled = !state.selectedTarget;
-      byId('startStudyLoopButton').disabled = !selectedTargets().length;
-      byId('generateCodeButton').disabled = !state.selectedTarget;
       renderDraftSpecPane();
       renderGraphAwareDashboard();
     }
@@ -1983,10 +1980,6 @@ INDEX_HTML = r"""<!doctype html>
       syncActiveDatasetState();
       state.selectedResultView = 'generated';
       setPill('codeStatus', codeStatusForActiveDataset());
-      byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
-      byId('runApprovedButton').disabled = true;
-      byId('finalizeInputsButton').disabled = !state.selectedTarget;
-      byId('startStudyLoopButton').disabled = !selectedTargets().length;
       renderDraftSpecPane();
       renderPane();
       renderGraphAwareDashboard();
@@ -2640,7 +2633,6 @@ INDEX_HTML = r"""<!doctype html>
         }
         await refreshGraphReadModels();
         setPill('codeStatus', payload.next_action === 'review_draft_spec' ? 'draft review' : 'not generated');
-        byId('approveDraftSpecButton').disabled = payload.next_action !== 'review_draft_spec';
         addEvent('Inputs finalized', payload.message);
         completeOperation('Inputs finalized', payload.message);
         renderDraftSpecPane();
@@ -2739,7 +2731,6 @@ INDEX_HTML = r"""<!doctype html>
       if (!node) return;
       if (!state.selectedTarget) {
         node.innerHTML = '<p class="note">Choose an output dataset before finalizing inputs.</p>';
-        byId('approveDraftSpecButton').disabled = true;
         return;
       }
       const finalized = finalizedInputsFor(state.selectedTarget);
@@ -2753,17 +2744,14 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (finalized?.input_spec_available || targetHasInputSpec(state.selectedTarget)) {
         node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly. ${artifactRecordedNote('Input spec artifact')}</p>`;
-        byId('approveDraftSpecButton').disabled = true;
         return;
       }
       if (finalized?.approved_draft_spec_available) {
         node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} already has a user-approved draft spec for this run. The code generator can use it now. ${artifactRecordedNote('Approved draft-spec artifact')}</p>`;
-        byId('approveDraftSpecButton').disabled = true;
         return;
       }
       if (!draft) {
         node.innerHTML = `<p class="note warn">No input spec found for ${escapeHtml(state.selectedTarget)}. Generate a draft spec from uploaded SDTM/reference/define/legacy evidence, review it, then approve it before generating R code.</p>`;
-        byId('approveDraftSpecButton').disabled = true;
         return;
       }
       renderDraftSpecReviewTable(node, draft, review);
@@ -2787,7 +2775,6 @@ INDEX_HTML = r"""<!doctype html>
         <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Type</th><th>Source</th><th>Derivation</th><th>Risk</th></tr></thead><tbody>${rows || '<tr><td class="muted" colspan="5">No variables returned.</td></tr>'}</tbody></table></div>
         <div style="margin-top:10px;"><h3>Draft warnings</h3><ul class="clean">${listItems(draft.warnings, 'None reported.')}</ul></div>
       `;
-      byId('approveDraftSpecButton').disabled = Boolean(review?.approved);
     }
 
     function artifactRecordedNote(label) {
@@ -3966,8 +3953,6 @@ INDEX_HTML = r"""<!doctype html>
         }
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
-        byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
-        byId('runApprovedButton').disabled = !reviewFor(state.selectedTarget)?.approved;
         renderAdvanced();
         renderGraphAwareDashboard();
         renderActionAvailability();

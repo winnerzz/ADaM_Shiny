@@ -7963,6 +7963,43 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Primary Action Availability Writer Slice
+
+Completed:
+
+- Removed direct local `button.disabled = ...` assignments for primary workflow
+  actions outside the graph-aware availability renderer:
+  - `Finalize Inputs / Draft Spec`
+  - `Start Runnable Datasets`
+  - `Approve Draft Spec`
+  - `Generate R Code`
+  - `Approve Code`
+  - `Run Approved Code`
+- Primary button state is now written through `renderActionAvailability()` and
+  `setButtonAvailability()`, which derive readiness and disabled reasons from
+  `actionAvailability()`.
+- `renderTargetButtons()`, `resetActiveDatasetView()`, `finalizeInputsForDraftSpec()`,
+  `renderDraftSpecPane()`, `renderDraftSpecReviewTable()`, and
+  `loadReviewSummary()` no longer override the primary workflow buttons with
+  browser-local cache guesses.
+- Added a UI contract test that prevents those primary buttons from regressing
+  back to scattered direct `.disabled` writes.
+
+Current boundary:
+
+- This is a browser UI read-model boundary cleanup.
+- It does not change FastAPI endpoints, GraphGateway state transitions, graph
+  progress payloads, or backend review/execute behavior.
+- The graph-owned `actionAvailability()` / `graphActionGate()` path remains the
+  authority for whether a primary workflow action is available.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_action_buttons_use_single_availability_writer tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions tests.test_api_phase8.Phase8ApiTests.test_index_load_review_summary_recovers_generated_code_for_graph_review_gate tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_without_graph_gate_cannot_enable_code_approval tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_can_recover_code_when_graph_state_succeeds_without_progress -v
+Ran 7 tests in 0.532s - OK
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Progress Read-Model Slice
 
 Completed:

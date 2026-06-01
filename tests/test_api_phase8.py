@@ -1572,6 +1572,30 @@ console.log(JSON.stringify({
         dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
         self.assertIn("renderActionAvailability()", dashboard_body)
 
+    def test_index_primary_action_buttons_use_single_availability_writer(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+        primary_buttons = [
+            "finalizeInputsButton",
+            "startStudyLoopButton",
+            "approveDraftSpecButton",
+            "generateCodeButton",
+            "approveButton",
+            "runApprovedButton",
+        ]
+        for button_id in primary_buttons:
+            self.assertNotIn(f"byId('{button_id}').disabled =", script)
+        self.assertIn("function setButtonAvailability(id, item)", script)
+        self.assertIn("button.disabled = !item.ready", script)
+        availability_body = html.split("function renderActionAvailability()", 1)[1].split("function setButtonAvailability", 1)[0]
+        for button_id in primary_buttons:
+            self.assertIn(f"setButtonAvailability('{button_id}'", availability_body)
+
     def test_index_primary_actions_follow_graph_progress_next_action(self) -> None:
         client = TestClient(create_app())
 
@@ -2221,7 +2245,7 @@ console.log(JSON.stringify(results));
         planned_display_body = html.split("function plannedTargetsForDisplay(plan, fallbackTargets = null)", 1)[1].split("function dependencyPlanSummary(plan)", 1)[0]
         self.assertIn("plan?.requested_datasets", planned_display_body)
         self.assertNotIn("plan.target_datasets", planned_display_body)
-        view_handler = html.split("for (const button of node.querySelectorAll('[data-target-view]'))", 1)[1].split("byId('generateCodeButton')", 1)[0]
+        view_handler = html.split("for (const button of node.querySelectorAll('[data-target-view]'))", 1)[1].split("renderDraftSpecPane();", 1)[0]
         self.assertIn("state.selectedTarget = button.dataset.targetView;", view_handler)
         self.assertNotIn("selectedTargetsForPlan", view_handler)
         dataset_card_handler = html.split("for (const card of node.querySelectorAll('[data-card-target]'))", 1)[1].split("function hasReferenceAdamEvidence", 1)[0]

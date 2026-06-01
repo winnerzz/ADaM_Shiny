@@ -7445,6 +7445,42 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Primary Action Availability Writer 切片
+
+已完成：
+
+- 移除了 primary workflow 按钮在 graph-aware availability renderer 之外的本地
+  `button.disabled = ...` 直接赋值：
+  - `Finalize Inputs / Draft Spec`
+  - `Start Runnable Datasets`
+  - `Approve Draft Spec`
+  - `Generate R Code`
+  - `Approve Code`
+  - `Run Approved Code`
+- 这些按钮现在统一通过 `renderActionAvailability()` 和
+  `setButtonAvailability()` 写入可用状态；可用性和 disabled reason 都来自
+  `actionAvailability()`。
+- `renderTargetButtons()`、`resetActiveDatasetView()`、`finalizeInputsForDraftSpec()`、
+  `renderDraftSpecPane()`、`renderDraftSpecReviewTable()` 和 `loadReviewSummary()`
+  不再用浏览器本地缓存猜测 primary workflow 按钮状态。
+- 新增 UI contract 测试，防止这些 primary buttons 以后又退回到分散的
+  `.disabled` 直接写入。
+
+当前边界：
+
+- 这是浏览器 UI read-model 边界清理。
+- 不改变 FastAPI endpoints、GraphGateway 状态转换、graph progress payload，也不改变
+  后端 review/execute 行为。
+- graph-owned 的 `actionAvailability()` / `graphActionGate()` 路径仍是 primary
+  workflow action 是否可用的权威来源。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_action_buttons_use_single_availability_writer tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions tests.test_api_phase8.Phase8ApiTests.test_index_load_review_summary_recovers_generated_code_for_graph_review_gate tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_without_graph_gate_cannot_enable_code_approval tests.test_api_phase8.Phase8ApiTests.test_index_review_summary_can_recover_code_when_graph_state_succeeds_without_progress -v
+Ran 7 tests in 0.532s - OK
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Progress Read-Model 切片
 
 已完成：
