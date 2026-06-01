@@ -3246,6 +3246,62 @@ class GraphGatewayTests(unittest.TestCase):
             ).exists()
         )
 
+    def test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_approve_pause") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_approve_pause",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch.object(gateway, "execute_approved_code") as execute_approved:
+            result = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id="run_lg3_native_full_run_approve_pause",
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+                notes="Approve generated R but leave execution for a later explicit step.",
+                execute_after_approval=False,
+            )
+
+        execute_approved.assert_not_called()
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "reviewed")
+        self.assertTrue(result.approved)
+        self.assertIsNone(result.execution)
+        self.assertIsNone(result.current_interrupt)
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertEqual(dataset_state.code_state["status"], "approved")
+        self.assertFalse(dataset_state.execution_state)
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "reviewed")
+        self.assertTrue(contract["approved"])
+        self.assertFalse(contract["executed_after_approval"])
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_approve_pause"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
     def test_gateway_lg3_native_dataset_full_run_reject_does_not_execute(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_reject") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
@@ -3290,6 +3346,71 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["phase"], "waiting_for_human_gate")
         self.assertFalse(contract["approved"])
         self.assertFalse(contract["executed_after_approval"])
+
+    def test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_approved_draft") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "runs" / "run_lg3_native_full_run_approved_draft" / "specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        draft_path = spec_dir / "adae_draft_spec.json"
+        fingerprint = input_fingerprint(study_dir)
+        draft_path.write_text(
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "input_fingerprint": fingerprint,
+                    "variables": [{"variable": "AETERM", "source_domains": ["AE"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_approved_draft",
+            dataset="ADAE",
+            draft_spec_path=draft_path,
+        )
+        reviewed = gateway.review_draft_spec(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_approved_draft",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve generated draft spec for LG3 full-run start.",
+        )
+
+        result = gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_native_full_run_approved_draft",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.phase, "waiting_for_human_gate")
+        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["spec_source"], "approved_draft_spec")
+        self.assertEqual(dataset_state.code_state["spec_path"], reviewed.approved_spec_path)
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertTrue(
+            (
+                study_dir
+                / "runs"
+                / "run_lg3_native_full_run_approved_draft"
+                / "code"
+                / "build_adae.R"
+            ).exists()
+        )
 
     def test_gateway_native_study_product_loop_starts_multiple_runnable_datasets(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_multi") / "PSY201"

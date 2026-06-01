@@ -9287,3 +9287,42 @@ Subagent review:
   - add `execute_after_approval=false` coverage for approved-but-not-executed
     phase semantics;
   - add explicit approved-draft-spec entry coverage.
+
+### 2026-06-01 - LG3.0 Native Full-Run Contract Coverage Hardening Slice
+
+Completed:
+
+- Added focused tests for the two follow-ups from the prior subagent review:
+  - approving code with `execute_after_approval=false` now records phase
+    `reviewed`, keeps execution empty, and does not call R execution;
+  - starting the LG3 full-run contract from a graph-approved draft spec now
+    uses `spec_source=approved_draft_spec` and reaches `code_review`.
+- No product code changes were needed. The existing Gateway and DatasetGraph
+  behavior already satisfied both contract cases.
+- The approved draft spec test seeds state through the normal draft-generation
+  and draft-review paths, preserving the input-fingerprint safety rule instead
+  of bypassing it.
+
+Boundary:
+
+- This is test and documentation hardening only.
+- It does not add UI/API surface, change runtime behavior, or loosen stale
+  draft-spec protections.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec -v
+Ran 5 tests in 0.877s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - the approve-but-not-execute test checks that R execution is not called,
+    phase is `reviewed`, code is approved, execution state stays empty, and no
+    completed output is implied;
+  - the approved-draft-spec test uses normal draft generation and review paths,
+    including path/hash/fingerprint checks, before starting the LG3 contract;
+  - documentation accurately frames the slice as test/documentation hardening.

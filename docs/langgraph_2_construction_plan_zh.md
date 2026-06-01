@@ -8677,3 +8677,40 @@ Ran 3 tests in 0.539s - OK
   - 增加 `execute_after_approval=false` 测试，明确 approved but not executed
     的 phase 语义；
   - 增加 approved draft spec 起点测试。
+
+### 2026-06-01 - LG3.0 Native Full-Run Contract 覆盖硬化切片
+
+已完成：
+
+- 按上一轮子 agent 的两个非阻断建议补充聚焦测试：
+  - 当 code review 被 approve，但 `execute_after_approval=false` 时，系统记录
+    phase 为 `reviewed`，execution 为空，并且不会调用 R execution；
+  - 当 LG3 full-run contract 从 graph-approved draft spec 起步时，系统使用
+    `spec_source=approved_draft_spec` 并进入 `code_review`。
+- 没有修改产品代码。现有 Gateway 和 DatasetGraph 行为已经满足这两类 contract
+  场景。
+- approved draft spec 测试通过正常 draft-generation 和 draft-review 路径种子状态，
+  没有绕过 input-fingerprint 防过期规则。
+
+边界：
+
+- 这是测试和文档硬化切片。
+- 不新增 UI/API surface，不改变 runtime 行为，也不放宽 stale draft-spec 保护。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec -v
+Ran 5 tests in 0.877s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - approve-but-not-execute 测试确认不会调用 R execution，phase 为
+    `reviewed`，code 已批准，execution state 为空，并且没有暗示 completed
+    output；
+  - approved-draft-spec 测试先走正常 draft generation 和 review 路径，包括
+    path/hash/fingerprint 校验，然后才启动 LG3 contract；
+  - 文档准确描述这是测试/文档硬化切片。
