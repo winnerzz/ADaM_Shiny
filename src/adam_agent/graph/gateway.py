@@ -960,8 +960,13 @@ class GraphGateway:
         """
 
         target = dataset.strip().upper()
+        root = Path(study_dir).expanduser()
+        try:
+            previous_graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError:
+            previous_graph_state = None
         started = self.start_native_dataset_product_loop(
-            study_dir=study_dir,
+            study_dir=root,
             study_id=study_id,
             run_id=run_id,
             dataset=target,
@@ -975,18 +980,18 @@ class GraphGateway:
         current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
         graph_state = started.graph_state.model_copy(deep=True)
         runtime_extra = _runtime_persistence_extras(graph_state)
-        runtime_extra["native_dataset_full_run"] = {
-            "dataset": target,
-            "phase": "waiting_for_human_gate",
-            "current_interrupt": current_interrupt,
-            "contract": "single_dataset_spec_code_review_execute",
-            "boundary": "lg3_backend_contract",
-            "execution_requires_explicit_resume": True,
-            "durable_resume_available": self.native_interrupt_resume_available(),
-            "llm_provider": _llm_provider_audit_payload(llm_provider),
-            "llm_exposure": dict(llm_exposure),
-        }
-        root = Path(study_dir).expanduser()
+        runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
+            previous_graph_state or graph_state,
+            dataset=target,
+            phase="waiting_for_human_gate",
+            current_interrupt=current_interrupt,
+            durable_resume_available=self.native_interrupt_resume_available(),
+            llm_provider=llm_provider,
+            llm_exposure=llm_exposure,
+            repair_or_revision_continued=_has_native_dataset_full_run_terminal_followup(previous_graph_state, target)
+            if previous_graph_state is not None
+            else False,
+        )
         self._persist_graph_state(
             root,
             graph_state,
@@ -5517,6 +5522,58 @@ def _has_native_dataset_full_run_contract(state: StudyRunState, dataset: str) ->
     if str(payload.get("boundary") or "") != "lg3_backend_contract":
         return False
     return str(payload.get("dataset") or "").strip().upper() == dataset.strip().upper()
+
+
+def _has_native_dataset_full_run_terminal_followup(state: StudyRunState, dataset: str) -> bool:
+    if not _has_native_dataset_full_run_contract(state, dataset):
+        return False
+    payload = state.runtime_persistence.get("native_dataset_full_run")
+    if not isinstance(payload, dict):
+        return False
+    return (
+        str(payload.get("last_interrupt") or "") == "terminal_failure"
+        and str(payload.get("decision") or "") in {"repair_code", "revise_spec"}
+        and payload.get("terminal_failure") is True
+    )
+
+
+def _native_dataset_full_run_metadata(
+    state: StudyRunState,
+    *,
+    dataset: str,
+    phase: str,
+    current_interrupt: str | None,
+    durable_resume_available: bool,
+    llm_provider: dict[str, Any] | None = None,
+    llm_exposure: dict[str, Any] | None = None,
+    **updates: Any,
+) -> dict[str, Any]:
+    """Build LG3 full-run metadata without losing prior terminal triage context."""
+
+    target = dataset.strip().upper()
+    if _has_native_dataset_full_run_contract(state, target):
+        payload = dict(state.runtime_persistence.get("native_dataset_full_run") or {})
+    else:
+        payload = {}
+    payload.update(
+        {
+            "dataset": target,
+            "phase": phase,
+            "current_interrupt": current_interrupt,
+            "contract": "single_dataset_spec_code_review_execute",
+            "boundary": "lg3_backend_contract",
+            "execution_requires_explicit_resume": True,
+            "durable_resume_available": durable_resume_available,
+        }
+    )
+    if current_interrupt is not None:
+        payload["next_action"] = current_interrupt
+    if llm_provider is not None:
+        payload["llm_provider"] = _llm_provider_audit_payload(llm_provider)
+    if llm_exposure is not None:
+        payload["llm_exposure"] = dict(llm_exposure)
+    payload.update(updates)
+    return payload
 
 
 def _llm_provider_audit_payload(provider: dict[str, Any]) -> dict[str, Any]:

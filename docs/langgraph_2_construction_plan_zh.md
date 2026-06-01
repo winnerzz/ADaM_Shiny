@@ -8858,3 +8858,69 @@ Ran 10 tests in 1.801s - OK
     resume。
 - 已吸收它的非阻断建议：普通非 LG3 `review_terminal_failure()` 回归测试现在断言
   不会创建 `native_dataset_full_run` metadata。
+
+### 2026-06-01 - LG3.0 Repair/Revise Follow-Up Contract 连续性切片
+
+已完成：
+
+- 修复 `start_native_dataset_full_run()` 在 terminal-failure triage 后重新进入
+  full-run contract 时重写 metadata 的问题。
+- 新增 `_native_dataset_full_run_metadata()` helper：
+  - 只在同 dataset 且 `boundary=lg3_backend_contract` 时继承旧 LG3 metadata；
+  - 保留上一轮 terminal-failure triage 的 `last_interrupt`、`decision`、
+    `terminal_failure` 等审计字段；
+  - 覆盖当前阶段的 `phase`、`current_interrupt`、provider/exposure audit payload。
+- 新增 continuation guard：只有旧 LG3 metadata 明确来自 terminal failure，且人工
+  decision 是 `repair_code` 或 `revise_spec` 时，才标记
+  `repair_or_revision_continued=true`。
+- `repair_code` follow-up 现在可以再次进入 LG3 full-run，并停在
+  `code_review`，同时保留 `native_dataset_full_run` contract continuity。
+- `revise_spec` follow-up 现在可以再次进入 LG3 full-run，并停在
+  `draft_spec_review`，同时把旧 code 标记为 stale，并保留 contract continuity。
+- 普通 LG2 native dataset loop 不受影响，仍使用既有
+  `native_dataset_product_loop_*` metadata。
+
+边界：
+
+- 这不是自动修复执行，也不是自动 spec revision 完成。
+- 本切片只保证用户已经 triage 为 `repair_code` 或 `revise_spec` 后，再次进入
+  LG3 full-run 时不会丢失上一轮 full-run 审计边界。
+- 它不改变默认 memory checkpointer 的 fail-closed durable-resume 边界。
+- 没有新增 UI/API surface。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract -v
+Ran 3 tests in 1.155s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 15 tests in 3.441s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 149 tests in 14.410s - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 148 tests in 21.153s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK, CRLF warnings only
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，只读审查结论：GO，无 P0/P1/P2。
+- 它确认：
+  - `native_dataset_full_run` metadata 只在同 dataset 且
+    `boundary=lg3_backend_contract` 时继承；
+  - `repair_code` 会回到 `code_review`，`revise_spec` 会回到
+    `draft_spec_review`，且旧 code 会 stale；
+  - 文档没有把本切片说成自动 repair execution、完成 spec revision 或 durable
+    native resume。
+- 已吸收非阻断建议：
+  - 新增回归测试，证明其他 dataset 的 LG3 metadata 或非 LG3 boundary metadata
+    不会被当前 dataset 继承；
+  - 同一测试确认 follow-up re-entry 的 provider audit 不持久化 raw API key。

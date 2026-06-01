@@ -9483,3 +9483,75 @@ Subagent review:
 - Follow-up applied from the non-blocking suggestion:
   - the ordinary non-LG3 `review_terminal_failure()` regression now asserts it
     does not create `native_dataset_full_run` metadata.
+
+### 2026-06-01 - LG3.0 Repair/Revise Follow-Up Contract Continuity Slice
+
+Completed:
+
+- Fixed `start_native_dataset_full_run()` so re-entering the full-run contract
+  after terminal-failure triage does not overwrite prior LG3 metadata.
+- Added `_native_dataset_full_run_metadata()`:
+  - inherits prior LG3 metadata only for the same dataset and
+    `boundary=lg3_backend_contract`;
+  - preserves prior terminal-failure triage fields such as `last_interrupt`,
+    `decision`, and `terminal_failure`;
+  - overwrites the current `phase`, `current_interrupt`, and provider/exposure
+    audit payload.
+- Added a continuation guard: `repair_or_revision_continued=true` is set only
+  when prior LG3 metadata clearly came from terminal failure and the human
+  decision was `repair_code` or `revise_spec`.
+- `repair_code` follow-up can now re-enter the LG3 full-run and stop at
+  `code_review` while keeping `native_dataset_full_run` contract continuity.
+- `revise_spec` follow-up can now re-enter the LG3 full-run and stop at
+  `draft_spec_review`, mark old code stale, and keep contract continuity.
+- Ordinary LG2 native dataset-loop behavior is unchanged and still uses the
+  existing `native_dataset_product_loop_*` metadata.
+
+Boundary:
+
+- This is not automatic repair execution and not completed automatic spec
+  revision.
+- The slice only guarantees that after the user has triaged a terminal failure
+  as `repair_code` or `revise_spec`, the next LG3 full-run entry preserves the
+  previous full-run audit boundary.
+- It does not change the default memory-checkpointer fail-closed durable-resume
+  boundary.
+- No UI/API surface was added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract -v
+Ran 3 tests in 1.155s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 15 tests in 3.441s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 149 tests in 14.410s - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 148 tests in 21.153s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK, CRLF warnings only
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, read-only review: GO, no P0/P1/P2 findings.
+- Confirmed:
+  - `native_dataset_full_run` metadata is inherited only for the same dataset
+    and `boundary=lg3_backend_contract`;
+  - `repair_code` returns to `code_review`, while `revise_spec` returns to
+    `draft_spec_review` and marks old code stale;
+  - documentation does not claim automatic repair execution, completed spec
+    revision, or durable native resume.
+- Non-blocking suggestions applied:
+  - added a regression proving other-dataset LG3 metadata and non-LG3 boundary
+    metadata are not inherited by the current dataset;
+  - the same regression confirms follow-up re-entry provider audit does not
+    persist raw API keys.
