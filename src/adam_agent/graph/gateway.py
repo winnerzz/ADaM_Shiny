@@ -147,6 +147,12 @@ class GraphGatewayNativeStudyLoopResult(GraphGatewayResult):
     started_datasets: list[str]
     skipped_datasets: list[dict[str, Any]]
     review_queue: list[dict[str, Any]]
+    native_resume_available: bool
+    native_resume_scope: str
+    resume_boundary: str
+    native_resume_interrupts: list[dict[str, Any]]
+    native_resume_has_queue_items: bool
+    native_resume_queue_item_count: int
 
 
 @dataclass(frozen=True)
@@ -4162,6 +4168,12 @@ class GraphGateway:
             started_datasets=list(started_datasets),
             skipped_datasets=list(skipped_datasets),
             review_queue=list(progress.get("review_queue", [])),
+            native_resume_available=bool(progress.get("native_resume", {}).get("available")),
+            native_resume_scope=str(progress.get("native_resume", {}).get("scope") or "none"),
+            resume_boundary=str(progress.get("native_resume", {}).get("boundary") or "graph_state_projection_only"),
+            native_resume_interrupts=list(progress.get("native_resume", {}).get("interrupt_queue") or []),
+            native_resume_has_queue_items=bool(progress.get("native_resume", {}).get("has_queue_items")),
+            native_resume_queue_item_count=int(progress.get("native_resume", {}).get("queue_item_count") or 0),
         )
 
 

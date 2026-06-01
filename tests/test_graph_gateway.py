@@ -3156,6 +3156,15 @@ class GraphGatewayTests(unittest.TestCase):
         review_queue = {(item["dataset"], item["name"]) for item in result.review_queue}
         self.assertIn(("ADAE", "code_review"), review_queue)
         self.assertIn(("ADCM", "code_review"), review_queue)
+        self.assertFalse(result.native_resume_available)
+        self.assertEqual(result.native_resume_scope, "none")
+        self.assertEqual(result.resume_boundary, "graph_state_projection_only")
+        self.assertTrue(result.native_resume_has_queue_items)
+        self.assertEqual(result.native_resume_queue_item_count, 2)
+        self.assertEqual(
+            [(item["dataset"], item["interrupt"], item["can_resume"]) for item in result.native_resume_interrupts],
+            [("ADAE", "code_review", False), ("ADCM", "code_review", False)],
+        )
         self.assertIn("native_study_product_loop", result.graph_state.runtime_persistence)
         self.assertEqual(
             result.graph_state.runtime_persistence["native_study_product_loop"]["boundary"],
@@ -3188,6 +3197,11 @@ class GraphGatewayTests(unittest.TestCase):
             progress["study_loop_result"]["native_resume_queue_item_count"],
             progress["native_resume"]["queue_item_count"],
         )
+        self.assertEqual(result.native_resume_available, progress["study_loop_result"]["native_resume_available"])
+        self.assertEqual(result.native_resume_scope, progress["study_loop_result"]["native_resume_scope"])
+        self.assertEqual(result.resume_boundary, progress["study_loop_result"]["resume_boundary"])
+        self.assertEqual(result.native_resume_has_queue_items, progress["study_loop_result"]["native_resume_has_queue_items"])
+        self.assertEqual(result.native_resume_queue_item_count, progress["study_loop_result"]["native_resume_queue_item_count"])
         self.assertIn("stopped at human review gates", progress["study_loop_result"]["message"])
         self.assertEqual(
             {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},

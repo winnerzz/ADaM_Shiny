@@ -9121,3 +9121,66 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue Command Response Slice
+
+Completed:
+
+- Extended `/runs/native-study-loop` command response with the same native
+  resume status fields already present in the graph progress read-model:
+  - `native_resume_available`
+  - `native_resume_scope`
+  - `resume_boundary`
+  - `native_resume_interrupts`
+  - `native_resume_has_queue_items`
+  - `native_resume_queue_item_count`
+- `GraphGatewayNativeStudyLoopResult` now sources these fields from the
+  gateway progress summary, so the command response and
+  `progress.study_loop_result` use the same graph-owned read-model values.
+- API response shaping in `start_native_study_product_loop()` only maps the
+  gateway result fields. It does not recompute native resume status in the
+  service layer.
+- Added gateway/API coverage proving that when multiple runnable datasets stop
+  at code-review gates, the command response and progress read-model agree on
+  native resume availability, boundary, queue visibility, and queue count.
+
+Boundary:
+
+- This is read-model/API contract alignment only.
+- It does not add a native resume button, endpoint behavior, approval path,
+  LLM generation behavior, R execution behavior, or durable checkpointer
+  enablement.
+- Queue visibility still means "there are visible review gates"; it does not
+  mean native resume is callable under the default memory checkpointer. Clients
+  must continue to use `native_resume_available` and per-item `can_resume` /
+  `resume_endpoint` before treating native resume as callable.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 2 tests in 0.352s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.848s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - response fields are sourced from `progress_summary()`'s existing
+    `native_resume` read-model;
+  - `service.py` only maps gateway fields and does not recompute workflow or
+    native resume state;
+  - default memory behavior remains clear: `native_resume_available=false`
+    while visible queue items have `can_resume=false`;
+  - tests cover `/runs/native-study-loop` response fields and
+    `progress.study_loop_result` staying aligned;
+  - docs correctly frame this as read-model/API contract alignment only.

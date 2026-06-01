@@ -8524,3 +8524,63 @@ Ran 4 tests in 0.279s - OK
   call、GraphGateway write、LLM 路径或 R execution 行为。
 - 它也确认测试覆盖了主要误导风险：渲染结果不会暴露 `native-resume`、
   `explicit_resume_endpoint` 或 `<button`。
+
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue Command Response 切片
+
+已完成：
+
+- 将 `/runs/native-study-loop` 命令响应补齐为和 graph progress read-model
+  一致的 native resume 状态字段：
+  - `native_resume_available`
+  - `native_resume_scope`
+  - `resume_boundary`
+  - `native_resume_interrupts`
+  - `native_resume_has_queue_items`
+  - `native_resume_queue_item_count`
+- `GraphGatewayNativeStudyLoopResult` 现在从 gateway progress summary 读取这些字段，
+  因此命令响应和 `progress.study_loop_result` 使用同一份 graph-owned read-model
+  值。
+- `start_native_study_product_loop()` 只负责把 gateway result 映射成 API response，
+  不在 service 层重新计算 native resume 状态。
+- 增加 gateway/API 覆盖，证明多个 runnable datasets 停在 code-review gates 时，
+  命令响应和 progress read-model 在 native resume 可用性、边界、queue 可见性和
+  queue count 上保持一致。
+
+边界：
+
+- 这是 read-model/API contract 对齐切片。
+- 不新增 native resume button、不改变 endpoint 行为、不新增 approval path、不改变
+  LLM generation、不改变 R execution，也不启用 durable checkpointer。
+- queue 可见性仍只表示“存在可见 review gates”；它不表示默认 memory checkpointer
+  下 native resume 可调用。客户端仍必须用 `native_resume_available` 和每个 item 的
+  `can_resume` / `resume_endpoint` 判断是否真的可调用 native resume。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets -v
+Ran 2 tests in 0.352s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.848s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - response 字段来自 `progress_summary()` 既有的 `native_resume`
+    read-model；
+  - `service.py` 只映射 gateway 字段，不重新计算 workflow 或 native resume
+    状态；
+  - 默认 memory 行为仍清楚：`native_resume_available=false`，但可见 queue items
+    的 `can_resume=false`；
+  - 测试覆盖 `/runs/native-study-loop` response 字段和
+    `progress.study_loop_result` 保持一致；
+  - 文档正确说明这是 read-model/API contract 对齐，不是新增 native resume 行为。

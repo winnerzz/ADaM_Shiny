@@ -109,6 +109,12 @@ class NativeStudyStartResponse(StrictBaseModel):
     skipped_datasets: list[dict[str, Any]] = Field(default_factory=list)
     blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
     review_queue: list[dict[str, Any]] = Field(default_factory=list)
+    native_resume_available: bool = False
+    native_resume_scope: str = "none"
+    resume_boundary: str = "graph_state_projection_only"
+    native_resume_interrupts: list[dict[str, Any]] = Field(default_factory=list)
+    native_resume_has_queue_items: bool = False
+    native_resume_queue_item_count: int = 0
     dataset_results: list[NativeStudyDatasetStartResult] = Field(default_factory=list)
     message: str
     workflow_control: str = "graph_gateway_compatibility_shim"
