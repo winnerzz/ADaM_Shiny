@@ -8924,3 +8924,64 @@ OK, CRLF warnings only
   - 新增回归测试，证明其他 dataset 的 LG3 metadata 或非 LG3 boundary metadata
     不会被当前 dataset 继承；
   - 同一测试确认 follow-up re-entry 的 provider audit 不持久化 raw API key。
+
+### 2026-06-01 - LG3.0 Follow-Up Context 贯穿 Resume/Execution 切片
+
+已完成：
+
+- 新增 `_native_dataset_full_run_terminal_followup_context()`，把最初
+  terminal failure 后用户选择 `repair_code` 或 `revise_spec` 的原因保存成受控
+  audit context。
+- `start_native_dataset_full_run()` 在 terminal-failure triage 后重新进入
+  full-run 时，会记录 `terminal_failure_followup`。
+- `resume_native_dataset_full_run()` 不再手写一份新的
+  `native_dataset_full_run` metadata，而是统一通过
+  `_native_dataset_full_run_metadata()` 生成。这样 repair/revise 后继续到下一次
+  人工 gate，或修复后成功执行 R，都不会丢失最初为什么进入 follow-up 的上下文。
+- 新增测试覆盖：
+  - `repair_code` follow-up -> `code_review` -> 批准修复代码并成功执行；
+  - `revise_spec` follow-up -> `draft_spec_review` -> 批准 draft spec 后进入下一站
+    `code_review`。
+
+边界：
+
+- 这仍然只是后端 contract continuity。
+- 它不会自动执行 repair，不会自动完成 spec revision，也不会在默认 memory
+  checkpointer 下启用 durable restart recovery。
+- `terminal_failure_followup` 是历史上下文，不能替代当前的 `phase`、
+  `current_interrupt` 或当前 `next_action`。
+- 已修复审查发现的 stale action 风险：当 full-run 已执行完成且没有当前
+  interrupt 时，LG3 metadata 顶层会清掉 `next_action`；旧的 repair/revision
+  动作只保留在 `terminal_failure_followup` 里作为审计上下文。
+- 没有新增 UI/API surface。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 17 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 148 tests - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Mencius，`gpt-5.5`，只读审查先发现一个 P1：
+  修复代码成功执行后，`native_dataset_full_run.next_action` 顶层字段可能保留旧的
+  `code_review`，误导直接读取 contract metadata 的调用方。
+- 已修复：`_native_dataset_full_run_metadata()` 在 `current_interrupt is None` 时会
+  清掉顶层 `next_action`。
+- 已补回归断言：修复后 executed 状态不再保留顶层 `next_action`，但历史
+  `terminal_failure_followup.next_action` 仍作为审计上下文保留。
+- 复审结论：GO。Mencius 确认 P1/P2 已关闭，没有发现 metadata 污染、当前动作
+  误导、provider 脱敏、durable-resume 措辞或 LG3 contract 边界上的剩余阻断问题。

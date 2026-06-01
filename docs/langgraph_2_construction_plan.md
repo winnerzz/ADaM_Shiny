@@ -9555,3 +9555,68 @@ Subagent review:
     metadata are not inherited by the current dataset;
   - the same regression confirms follow-up re-entry provider audit does not
     persist raw API keys.
+
+### 2026-06-01 - LG3.0 Follow-Up Context Continuity Through Resume/Execution Slice
+
+Completed:
+
+- Added `_native_dataset_full_run_terminal_followup_context()` so LG3 can keep
+  the original terminal-failure follow-up reason as a bounded audit context.
+- `start_native_dataset_full_run()` now records `terminal_failure_followup`
+  when re-entering after a formal `repair_code` or `revise_spec` triage.
+- `resume_native_dataset_full_run()` now builds its metadata through the shared
+  `_native_dataset_full_run_metadata()` helper instead of hand-writing a new
+  metadata dictionary. That preserves the original terminal-failure follow-up
+  context through the next human gate and through successful repaired
+  execution.
+- Added coverage for:
+  - repair follow-up -> code review -> approved repaired execution;
+  - revise-spec follow-up -> draft-spec review -> next code review.
+
+Boundary:
+
+- This is still backend contract continuity only.
+- It does not run repair automatically, does not complete spec revision
+  automatically, and does not enable durable restart recovery under the default
+  memory checkpointer.
+- `terminal_failure_followup` is historical context. It must not replace the
+  current `phase`, `current_interrupt`, or current `next_action` fields.
+- Fixed the reviewed stale-action risk: when the full-run reaches an executed
+  state with no current interrupt, the top-level LG3 metadata clears
+  `next_action`; the old repair/revision action remains only under
+  `terminal_failure_followup`.
+- No UI/API surface was added.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_routes_revise_spec_followup_to_draft_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_followup_preserves_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_ignores_foreign_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer -v
+Ran 17 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 148 tests - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
+Subagent review:
+
+- 2026-06-01, Mencius, `gpt-5.5`, read-only review initially found one P1:
+  the top-level `native_dataset_full_run.next_action` could remain stale after
+  successful repaired execution.
+- Fixed by clearing top-level `next_action` when `current_interrupt` is `None`
+  in `_native_dataset_full_run_metadata()`.
+- Added a regression assertion that the repaired executed state no longer keeps
+  a top-level `next_action`, while the historical
+  `terminal_failure_followup.next_action` remains available for audit context.
+- Follow-up read-only review result: GO. Mencius confirmed the P1/P2 are closed
+  and found no remaining blocker around metadata pollution, current-action
+  ambiguity, provider redaction, durable-resume wording, or LG3 contract
+  boundaries.

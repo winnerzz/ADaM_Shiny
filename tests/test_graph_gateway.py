@@ -3936,6 +3936,228 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(contract["llm_provider"]["api_key_present"])
         self.assertNotIn("api_key", contract["llm_provider"])
 
+    def test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_repair_execute_context") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        failure_validation = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_repair_execute_context_adae_failure",
+            kind="validation_report",
+            path="runs/run_lg3_repair_execute_context/validation/adae_failure_validation_report.json",
+            sha256=f"sha256:{'f' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        failed_execution = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg3_repair_execute_context/validation/adae_failure_validation_report.json",
+            diagnostics_path="runs/run_lg3_repair_execute_context/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": []},
+            failure_records=[
+                FailureRecord(
+                    failure_id="failure_lg3_adae_repair_execute_context",
+                    dataset="ADAE",
+                    node="execute_approved_code",
+                    failure_type="sandbox_error",
+                    message="R execution failed.",
+                    root_cause="r_runtime_error",
+                    recommended_route="repair_code",
+                )
+            ],
+            artifacts={"validation_report": failure_validation},
+        )
+        success_output = ArtifactRef(
+            artifact_id="output_adam_psy201_run_lg3_repair_execute_context_adae",
+            kind="output_adam",
+            path="runs/run_lg3_repair_execute_context/outputs/adae.csv",
+            sha256=f"sha256:{'1' * 64}",
+            dataset="ADAE",
+            format="csv",
+            role="output",
+        )
+        success_validation = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_repair_execute_context_adae_success",
+            kind="validation_report",
+            path="runs/run_lg3_repair_execute_context/validation/adae_validation_report.json",
+            sha256=f"sha256:{'2' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        successful_execution = SimpleNamespace(
+            terminal_failure=False,
+            response_status="completed",
+            validation_status="pass",
+            output_path="runs/run_lg3_repair_execute_context/outputs/adae.csv",
+            validation_report_path="runs/run_lg3_repair_execute_context/validation/adae_validation_report.json",
+            diagnostics_path=None,
+            errors=[],
+            warnings=[],
+            validation_report={"status": "pass", "errors": [], "warnings": []},
+            failure_records=[],
+            artifacts={"output_adam": success_output, "validation_report": success_validation},
+        )
+        gateway = GraphGateway()
+        run_id = "run_lg3_repair_execute_context"
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=failed_execution):
+            gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+            )
+        gateway.review_terminal_failure(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="repair_code",
+            reviewer="tester",
+        )
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=successful_execution):
+            repaired = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+            )
+
+        contract = repaired.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(repaired.phase, "executed")
+        self.assertFalse(contract["terminal_failure"])
+        self.assertTrue(contract["repair_or_revision_continued"])
+        self.assertNotIn("next_action", contract)
+        self.assertEqual(contract["terminal_failure_followup"]["action"], "repair_code")
+        self.assertEqual(contract["terminal_failure_followup"]["last_interrupt"], "terminal_failure")
+        self.assertEqual(contract["terminal_failure_followup"]["next_action"], "repair_generated_code")
+
+    def test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_revise_review_context") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_revise_review_context_adae",
+            kind="validation_report",
+            path="runs/run_lg3_revise_review_context/validation/adae_validation_report.json",
+            sha256=f"sha256:{'3' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        fake_execution = SimpleNamespace(
+            terminal_failure=True,
+            response_status="terminal_failure",
+            validation_status="fail",
+            output_path=None,
+            validation_report_path="runs/run_lg3_revise_review_context/validation/adae_validation_report.json",
+            diagnostics_path="runs/run_lg3_revise_review_context/diagnostics/adae_failure_report.json",
+            errors=["R execution failed"],
+            warnings=[],
+            validation_report={"status": "fail", "errors": ["R execution failed"], "warnings": []},
+            failure_records=[
+                FailureRecord(
+                    failure_id="failure_lg3_adae_revise_review_context",
+                    dataset="ADAE",
+                    node="execute_approved_code",
+                    failure_type="sandbox_error",
+                    message="R execution failed.",
+                    root_cause="spec_error",
+                    recommended_route="revise_spec",
+                )
+            ],
+            artifacts={"validation_report": validation_artifact},
+        )
+        gateway = GraphGateway()
+        run_id = "run_lg3_revise_review_context"
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        with patch("adam_agent.graph.dataset_graph.execute_approved_r_code", return_value=fake_execution):
+            gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+            )
+        gateway.review_terminal_failure(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="revise_spec",
+            reviewer="tester",
+        )
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        revised = gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        contract = revised.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(revised.phase, "waiting_for_human_gate")
+        self.assertEqual(revised.current_interrupt, "code_review")
+        self.assertTrue(contract["repair_or_revision_continued"])
+        self.assertEqual(contract["terminal_failure_followup"]["action"], "revise_spec")
+        self.assertEqual(contract["terminal_failure_followup"]["last_interrupt"], "terminal_failure")
+        self.assertEqual(contract["terminal_failure_followup"]["next_action"], "revise_approved_spec")
+        self.assertTrue(contract["code_generation_continued"])
+
     def test_gateway_native_study_product_loop_starts_multiple_runnable_datasets(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_multi") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
