@@ -25,6 +25,7 @@ try:
         GraphGatewayCodeGenerationResult,
         GraphGatewayFinalizeInputsResult,
         _generation_quality_from_dataset_result,
+        _native_study_loop_dependency_outputs_available,
     )
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -45,6 +46,7 @@ except ModuleNotFoundError:
         GraphGatewayCodeGenerationResult,
         GraphGatewayFinalizeInputsResult,
         _generation_quality_from_dataset_result,
+        _native_study_loop_dependency_outputs_available,
     )
     from adam_agent.graph.output_quality import dataset_output_quality
     from adam_agent.graph.workflow_state import input_fingerprint, workflow_projection_consistency
@@ -3267,6 +3269,179 @@ class GraphGatewayTests(unittest.TestCase):
             [(item["dataset"], item["reason"], item["next_action"]) for item in progress["study_loop_result"]["skipped_datasets"]],
             [("ADAE", "existing_graph_progress", "review_code")],
         )
+
+    def test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_after_dependency_output") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        run_id = "run_lg2_native_study_loop_after_dependency_output"
+        run_dir = study_dir / "runs" / run_id
+        output_dir = run_dir / "outputs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        output_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (sdtm_dir / "dm.csv").write_text("USUBJID,ARM\n01,Placebo\n", encoding="utf-8")
+        (spec_dir / "adsl.json").write_text(
+            json.dumps({"dataset": "ADSL", "variables": [{"variable": "USUBJID", "source_domains": ["DM"]}]}),
+            encoding="utf-8",
+        )
+        (spec_dir / "adae.json").write_text(
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "variables": [
+                        {"variable": "USUBJID", "source_domains": ["AE"]},
+                        {"variable": "TRTSDT", "source_domains": ["ADSL"]},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        first = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADAE"],
+            approved_dependency_datasets=["ADSL"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        self.assertEqual(first.started_datasets, ["ADSL"])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in first.skipped_datasets],
+            [("ADAE", "waiting_for_runtime_dependency_output", "complete_dependency_output")],
+        )
+
+        adsl_output = output_dir / "adsl.csv"
+        adsl_output.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id).model_copy(deep=True)
+        adsl_state = state.datasets["ADSL"]
+        adsl_state.status = "completed"
+        adsl_state.current_interrupt = None
+        adsl_state.code_state["generation_quality"] = {"not_real_derivation": False}
+        adsl_state.execution_state.update(
+            {
+                "status": "completed",
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(adsl_output.as_posix()),
+            }
+        )
+        adsl_state.validation_summary = {"status": "passed"}
+        adsl_state.artifacts.append(
+            ArtifactRef(
+                artifact_id="output_adam_psy201_run_lg2_native_study_loop_after_dependency_output_adsl",
+                kind="output_adam",
+                path=str(adsl_output.as_posix()),
+                sha256=f"sha256:{sha256_file(adsl_output)}",
+                dataset="ADSL",
+                format="csv",
+                role="output",
+            )
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_completed_adsl_dependency_output")
+
+        second = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADAE"],
+            approved_dependency_datasets=["ADSL"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(second.started_datasets, ["ADAE"])
+        self.assertEqual(
+            [(item["dataset"], item["reason"], item["next_action"]) for item in second.skipped_datasets],
+            [("ADSL", "existing_graph_progress", "complete")],
+        )
+        adae_state = second.graph_state.datasets["ADAE"]
+        self.assertEqual(adae_state.current_interrupt.name, "code_review")
+        self.assertEqual(adae_state.code_state["dependency_artifacts"][0]["required_dataset"], "ADSL")
+        self.assertEqual(adae_state.code_state["dependency_artifacts"][0]["artifact_source"], "run_output")
+        self.assertEqual(adae_state.code_state["dependency_artifacts"][0]["artifact_path"], str(adsl_output.as_posix()))
+        self.assertNotIn("ADAE", {block["dataset"] for block in second.blocked_datasets})
+        progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE"])
+        self.assertEqual(progress["study_loop_result"]["skipped_datasets"][0]["dataset"], "ADSL")
+
+    def test_gateway_native_study_loop_dependency_output_gate_requires_run_output_artifact_hash(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_hash_gate") / "PSY201"
+        output_dir = study_dir / "runs" / "run_lg2_native_study_loop_dependency_hash_gate" / "outputs"
+        output_dir.mkdir(parents=True)
+        adsl_output = output_dir / "adsl.csv"
+        adsl_output.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        output_sha = f"sha256:{sha256_file(adsl_output)}"
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_native_study_loop_dependency_hash_gate",
+            status="pending",
+            requested_datasets=["ADAE"],
+            target_datasets=["ADSL", "ADAE"],
+            runnable_datasets=["ADSL", "ADAE"],
+            dependency_plan={
+                "dataset_dependencies": {"ADSL": [], "ADAE": ["ADSL"]},
+                "execution_batches": [["ADSL"], ["ADAE"]],
+            },
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "available": True,
+                    "artifact_path": str(adsl_output.as_posix()),
+                    "artifact_sha256": None,
+                    "artifact_source": "run_output",
+                    "resolution_status": "available",
+                    "allowed_actions": [],
+                    "selected_action": "use_existing_dataset",
+                    "reason": "Malformed available record without a hash should fail closed.",
+                }
+            ],
+            datasets={
+                "ADSL": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_native_study_loop_dependency_hash_gate",
+                    dataset="ADSL",
+                    status="completed",
+                    execution_state={
+                        "status": "completed",
+                        "terminal_failure": False,
+                        "partial_output_usable": True,
+                        "output_path": str(adsl_output.as_posix()),
+                    },
+                    artifacts=[
+                        ArtifactRef(
+                            artifact_id="output_adam_psy201_run_lg2_native_study_loop_dependency_hash_gate_adsl",
+                            kind="output_adam",
+                            path=str(adsl_output.as_posix()),
+                            sha256=output_sha,
+                            dataset="ADSL",
+                            format="csv",
+                            role="output",
+                        )
+                    ],
+                ),
+                "ADAE": DatasetRunState(study_id="PSY201", run_id="run_lg2_native_study_loop_dependency_hash_gate", dataset="ADAE"),
+            },
+        )
+
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_sha256"] = output_sha
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_source"] = "reference_adam"
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_source"] = "run_output"
+        state.datasets["ADSL"].status = "completed_stub"
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.datasets["ADSL"].status = "completed"
+        state.datasets["ADSL"].execution_state["terminal_failure"] = True
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.datasets["ADSL"].execution_state["terminal_failure"] = False
+        state.datasets["ADSL"].artifacts = []
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
 
     def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"

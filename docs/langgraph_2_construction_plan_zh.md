@@ -6932,6 +6932,81 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.3 Native Study Loop 运行时依赖输出闸门切片
+
+已完成：
+
+- 收紧 `GraphGateway.start_native_study_product_loop()` 的分发逻辑：当用户批准
+  “由系统生成上游依赖”时，native study loop 只会先启动上游 dataset；在同一轮里
+  不会把下游 ADaM 也直接启动。下游必须等 canonical graph state 中出现真实、
+  graph-authorized 的上游 run output artifact。
+- 新增 native study-loop helper：
+  - 从 canonical `StudyRunState.dependency_plan` 读取目标 dataset 的依赖关系；
+  - 从 canonical `StudyRunState.dependency_resolution` 判断是否已有可用 runtime
+    dependency artifact。
+- 分发闸门现在要求 dependency record 必须是 `run_output`，且同时带有 artifact
+  path 和 artifact hash，才允许启动下游 product work。它还会校验上游 dataset
+  的 canonical graph state：
+  - output quality 必须允许作为 runtime dependency；
+  - dataset 不能是 `completed_stub`、terminal failure、not-real derivation，也不能
+    被标记为 partial output unusable；
+  - graph artifacts 中必须有匹配的 `output_adam` artifact；
+  - artifact path/hash 必须和 dependency record 一致，并且文件仍然存在。
+  这样即使 dependency_resolution stale、残缺、被错误写成 available，或只有非运行时
+  证据，也会 fail closed。
+- Reference ADaM 仍不能满足 runtime dependency：它可以作为 compare、输出形态、
+  依赖可用性证据，但不能被当成下游 ADaM 代码运行时真正需要的上游生成结果。
+- `skipped_datasets` read model 现在会解释“可运行但正在等待上游运行时输出”的
+  dataset：
+  - `reason`: `waiting_for_runtime_dependency_output`
+  - `next_action`: `complete_dependency_output`
+  - `blocked_by`: 逗号分隔的上游 ADaM datasets
+- 新增回归测试证明两步行为：
+  - 第一次 native study loop 请求 `ADAE`，并批准系统生成 `ADSL` 时，只启动
+    `ADSL`，`ADAE` 显示为等待 runtime dependency output；
+  - 当 graph state 中已经有 completed、非 stub 的 ADSL output artifact 后，
+    第二次 native study loop 才启动 `ADAE`，并把 ADSL 的 `run_output` artifact
+    传入 ADAE code-generation context。
+  - 缺少 artifact hash 的残缺 dependency record 不能打开下游分发；
+  - `reference_adam`、`completed_stub`、terminal failure、缺少 graph `output_adam`
+    artifact，以及 not-real/mock output quality 都会被 runtime output gate 拒绝。
+
+当前边界：
+
+- 这个切片只改变 native study-loop dispatch，不改变通用 dependency planner、
+  legacy stub graph，也不改变显式 per-dataset review/execute 闸门。
+- native study loop 仍然停在人工审核闸门；它不会自动批准 draft spec、不会自动
+  批准 generated code，也不会自动执行 R。
+- 用户允许系统生成上游依赖，只代表允许启动上游 dataset；这不是“上游运行时输出
+  已经存在”的证明。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 273 tests in 29.974s - OK (skipped=3)
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，第一次只读审查结论：NO-GO。
+- 问题：第一版实现过度相信 `dependency_resolution`。如果有 stale/manual 的
+  `run_output available` 记录，可能在没有证明上游 dataset canonical graph state
+  是真实、非 stub、非 terminal、且有匹配 graph-owned artifact 的情况下打开下游
+  dispatch。
+- 已吸收修复：
+  - runtime dependency gate 现在会把 dependency resolution 与
+    `state.datasets[required_dataset]` 交叉校验；
+  - 使用 `dataset_output_quality(...).runtime_dependency_eligible` 判断上游输出质量；
+  - 要求 `execution_state.output_path`、graph `output_adam` artifact path/hash 和磁盘
+    文件都匹配；
+  - 测试覆盖缺 hash、`reference_adam`、`completed_stub`、terminal failure、缺少
+    graph output artifact。
+- 复审结论：GO。
+- 非阻断建议：
+  - 后续可补 run-relative path 和 absolute artifact path 等价性的覆盖；
+  - 后续可把 `skipped_datasets.blocked_by` 细化为只列仍缺失的依赖，而不是所有声明依赖。
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
 
 已完成：

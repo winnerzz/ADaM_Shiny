@@ -4369,7 +4369,88 @@ def _native_study_loop_can_start_dataset(
 ) -> bool:
     if not target or target not in runnable or target in blocked or target in ordered:
         return False
+    if not _native_study_loop_dependency_outputs_available(state, target):
+        return False
     return not _has_dataset_product_progress(state.datasets.get(target))
+
+
+def _native_study_loop_dependency_outputs_available(state: StudyRunState, target: str) -> bool:
+    """Require real runtime dependency artifacts before starting downstream product work."""
+
+    dataset = target.strip().upper()
+    dependencies = _native_study_loop_dependencies_for_dataset(state, dataset)
+    if not dependencies:
+        return True
+    available: set[str] = set()
+    for record in state.dependency_resolution:
+        if str(record.get("target_dataset") or "").strip().upper() != dataset:
+            continue
+        if str(record.get("resolution_status") or "").strip() != "available":
+            continue
+        if str(record.get("artifact_source") or "").strip() != "run_output":
+            continue
+        if not record.get("artifact_path") or not record.get("artifact_sha256"):
+            continue
+        required = str(record.get("required_dataset") or "").strip().upper()
+        if required and _native_study_loop_runtime_dependency_record_is_current(state, required, record):
+            available.add(required)
+    return all(dependency in available for dependency in dependencies)
+
+
+def _native_study_loop_runtime_dependency_record_is_current(
+    state: StudyRunState,
+    required: str,
+    record: dict[str, Any],
+) -> bool:
+    dependency = required.strip().upper()
+    dataset_state = state.datasets.get(dependency)
+    if dataset_state is None:
+        return False
+    quality = dataset_output_quality(
+        status=dataset_state.status,
+        code_state=dataset_state.code_state,
+        execution_state=dataset_state.execution_state,
+        validation_summary=dataset_state.validation_summary,
+    )
+    if quality.get("runtime_dependency_eligible") is not True:
+        return False
+    artifact_path = str(record.get("artifact_path") or "").strip()
+    artifact_sha256 = str(record.get("artifact_sha256") or "").strip()
+    if not artifact_path or not artifact_sha256:
+        return False
+    normalized_record_path = str(Path(artifact_path).as_posix())
+    execution_output = dataset_state.execution_state.get("output_path")
+    if execution_output and str(Path(str(execution_output)).as_posix()) != normalized_record_path:
+        return False
+    matched_artifact = None
+    for artifact in dataset_state.artifacts:
+        if artifact.kind != "output_adam":
+            continue
+        if artifact.dataset and artifact.dataset.strip().upper() != dependency:
+            continue
+        if str(Path(str(artifact.path)).as_posix()) != normalized_record_path:
+            continue
+        matched_artifact = artifact
+        break
+    if matched_artifact is None or matched_artifact.sha256 != artifact_sha256:
+        return False
+    path = Path(artifact_path)
+    return path.exists() and path.is_file()
+
+
+def _native_study_loop_dependencies_for_dataset(state: StudyRunState, target: str) -> list[str]:
+    dependencies = state.dependency_plan.get("dataset_dependencies", {})
+    if not isinstance(dependencies, dict):
+        return []
+    raw_values = dependencies.get(target.strip().upper(), [])
+    if not isinstance(raw_values, list):
+        return []
+    result: list[str] = []
+    for value in raw_values:
+        dependency = str(value).strip().upper()
+        if dependency and dependency not in result:
+            result.append(dependency)
+    return result
 
 
 def _native_study_loop_skipped_datasets(state: StudyRunState, *, exclude: list[str] | None = None) -> list[dict[str, Any]]:
@@ -4381,21 +4462,32 @@ def _native_study_loop_skipped_datasets(state: StudyRunState, *, exclude: list[s
         if dataset in excluded or dataset not in runnable or dataset in blocked:
             continue
         dataset_state = state.datasets.get(dataset)
-        if not _has_dataset_product_progress(dataset_state):
+        if _has_dataset_product_progress(dataset_state):
+            skipped.append(
+                {
+                    "dataset": dataset,
+                    "reason": "existing_graph_progress",
+                    "status": dataset_state.status if dataset_state is not None else "unknown",
+                    "next_action": _dataset_next_action(dataset_state, blocked_reason="")["next_action"]
+                    if dataset_state is not None
+                    else "review_existing_progress",
+                    "interrupt": dataset_state.current_interrupt.name
+                    if dataset_state is not None and dataset_state.current_interrupt is not None
+                    else None,
+                }
+            )
             continue
-        skipped.append(
-            {
-                "dataset": dataset,
-                "reason": "existing_graph_progress",
-                "status": dataset_state.status if dataset_state is not None else "unknown",
-                "next_action": _dataset_next_action(dataset_state, blocked_reason="")["next_action"]
-                if dataset_state is not None
-                else "review_existing_progress",
-                "interrupt": dataset_state.current_interrupt.name
-                if dataset_state is not None and dataset_state.current_interrupt is not None
-                else None,
-            }
-        )
+        if not _native_study_loop_dependency_outputs_available(state, dataset):
+            skipped.append(
+                {
+                    "dataset": dataset,
+                    "reason": "waiting_for_runtime_dependency_output",
+                    "status": dataset_state.status if dataset_state is not None else "pending",
+                    "next_action": "complete_dependency_output",
+                    "interrupt": None,
+                    "blocked_by": ",".join(_native_study_loop_dependencies_for_dataset(state, dataset)),
+                }
+            )
     return skipped
 
 

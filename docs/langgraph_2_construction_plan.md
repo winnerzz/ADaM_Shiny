@@ -7491,6 +7491,89 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.3 Native Study Loop Runtime Dependency Output Gate Slice
+
+Completed:
+
+- Tightened `GraphGateway.start_native_study_product_loop()` dispatch so an
+  approved upstream dependency generation request starts the upstream dataset
+  first, but does not start downstream ADaM product work in the same pass until
+  a real graph-authorized upstream run output exists.
+- Added native study-loop helpers that read dependency requirements from the
+  canonical `StudyRunState.dependency_plan` and usable dependency artifacts from
+  `StudyRunState.dependency_resolution`.
+- The dispatch gate now requires a `run_output` dependency record with both an
+  artifact path and artifact hash before downstream product work can start.
+  It also validates the upstream dataset's canonical graph state:
+  - output quality must be runtime-dependency eligible;
+  - the dataset cannot be `completed_stub`, terminal failure, not-real
+    derivation, or marked with unusable partial output;
+  - graph artifacts must include a matching `output_adam` artifact;
+  - artifact path/hash must match the dependency record and the file must still
+    exist.
+  This makes the native study loop fail closed if dependency resolution is
+  stale, incomplete, malformed, or backed only by non-runtime evidence.
+- Reference ADaM artifacts remain excluded from runtime dependency satisfaction:
+  they can support comparison/output-shape/dependency-availability evidence, but
+  they do not count as the generated runtime input for downstream ADaM code.
+- Added `skipped_datasets` read-model explanation for runnable downstream
+  datasets that are waiting on runtime dependency output:
+  - `reason`: `waiting_for_runtime_dependency_output`
+  - `next_action`: `complete_dependency_output`
+  - `blocked_by`: comma-separated upstream ADaM datasets
+- Added regression coverage proving the two-step behavior:
+  - first native study-loop pass with requested `ADAE` and approved `ADSL`
+    starts only `ADSL` and reports `ADAE` as waiting for runtime output;
+  - after graph state contains a completed, non-stub ADSL output artifact, the
+    next native study-loop pass starts `ADAE` and passes the ADSL `run_output`
+    artifact into ADAE code-generation context.
+  - malformed dependency records without artifact hash do not unlock downstream
+    dispatch;
+  - `reference_adam`, `completed_stub`, terminal failure, missing graph
+    `output_adam` artifact, and not-real/mock output quality remain rejected by
+    the runtime output gate.
+
+Current boundary:
+
+- This changes native study-loop dispatch only. It does not change the generic
+  dependency planner, legacy stub graph, or explicit per-dataset review/execute
+  gates.
+- The loop still stops at human review gates. It does not approve draft specs,
+  approve generated code, or execute R automatically.
+- A user decision that allows the system to generate an upstream dependency is
+  treated as permission to start that upstream dataset, not as proof that the
+  upstream runtime artifact already exists.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 273 tests in 29.974s - OK (skipped=3)
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, first read-only review: NO-GO.
+- Finding: the first implementation trusted `dependency_resolution` too much.
+  A stale/manual `run_output available` record could have unlocked downstream
+  dispatch without proving the upstream dataset's canonical graph state was a
+  real, non-stub, non-terminal runtime output with a matching graph-owned
+  artifact.
+- Fix absorbed:
+  - runtime dependency gate now cross-checks dependency resolution against
+    `state.datasets[required_dataset]`;
+  - it uses `dataset_output_quality(...).runtime_dependency_eligible`;
+  - it requires matching `execution_state.output_path`, graph `output_adam`
+    artifact path/hash, and on-disk file existence;
+  - tests cover missing hash, `reference_adam`, `completed_stub`, terminal
+    failure, and missing graph output artifact.
+- Re-review result: GO.
+- Non-blocking suggestions:
+  - later add path-equivalence coverage for run-relative vs absolute artifact
+    paths;
+  - later refine `skipped_datasets.blocked_by` to list only still-missing
+    dependencies instead of all declared dependencies.
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
 
 Completed:
