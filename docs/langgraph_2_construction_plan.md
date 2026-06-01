@@ -7302,6 +7302,70 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Queue Structured Read-Model Slice
+
+Done:
+
+- Added structured fields to the `native_resume` read model:
+  - `has_queue_items`
+  - `queue_item_count`
+- Both fields are derived only from `interrupt_queue`. They let UI/automation
+  clients know whether there are currently visible dataset review/resume queue
+  items without parsing `message` text.
+- Added/updated coverage:
+  - default memory backend with no queue: `available == false`,
+    `has_queue_items == false`, count 0;
+  - default memory backend with a code-review queue: `available == false`,
+    `has_queue_items == true`, count 1, while the queue item still
+    has `can_resume == false` and `resume_endpoint == null`;
+  - durable read-model blocked by study-level gate or stale plan:
+    `available == true`, but `has_queue_items == false`, count 0;
+  - optional SQLite checkpointer coverage, when available, also asserts the
+    resumable queue count is 1.
+
+Boundary:
+
+- This only extends the read model. It does not change the native resume
+  endpoint, split-flow review endpoints, GraphGateway state transitions, LLM/R
+  execution, or repair/spec-revision behavior.
+- `available` continues to mean durable native resume capability is enabled.
+  `has_queue_items` and `queue_item_count` only mean visible queue items exist
+  in current progress.
+  Each queue item still uses `can_resume` and `resume_endpoint` to say whether
+  the native resume endpoint can actually be called.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, first read-only review: GO, but noted that
+  `actionable_queue_available/actionable_queue_count` could imply that native
+  endpoint calls are available.
+- Suggestion absorbed: renamed the fields to `has_queue_items` /
+  `queue_item_count`.
+- Re-review result: GO.
+- Confirmed:
+  - `has_queue_items == true` only means `interrupt_queue` has visible items and
+    does not imply the native endpoint can be called;
+  - native resume capability remains controlled by top-level `available` and
+    item-level `can_resume/resume_endpoint`;
+  - `RunProgressResponse.native_resume: dict[str, Any]` is sufficient for this
+    read-model extension, so no schema change is needed.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 6 tests in 0.210s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.520s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Durable Native Resume Queue Message And Coverage Slice
 
 Done:

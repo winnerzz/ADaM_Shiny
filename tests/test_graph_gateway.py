@@ -502,6 +502,8 @@ class GraphGatewayTests(unittest.TestCase):
                 "default_review_path": "split_flow_review_endpoints",
                 "restart_recovery_source": "graph_state_json",
                 "interrupt_queue": [],
+                "has_queue_items": False,
+                "queue_item_count": 0,
                 "message": (
                     "Durable native LangGraph interrupt resume is not enabled for this run. "
                     "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
@@ -656,6 +658,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertNotIn("endpoint", progress["native_resume"])
         self.assertEqual(progress["native_resume"]["restart_recovery_source"], "langgraph_sqlite_checkpointer")
         self.assertIn("available for pilot graph interrupts", progress["native_resume"]["message"])
+        self.assertFalse(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
 
     def test_progress_reports_native_resume_queue_without_enabling_memory_resume(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_memory") / "PSY201"
@@ -689,6 +693,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(queue[0]["default_review_path"], "split_flow_review_endpoints")
         self.assertEqual([item["action"] for item in queue[0]["available_actions"]], ["approve", "reject"])
         self.assertFalse(progress["native_resume"]["available"])
+        self.assertTrue(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(progress["study_loop_result"], {})
 
     def test_progress_native_resume_queue_respects_study_level_gate(self) -> None:
@@ -789,6 +795,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(progress["native_resume"]["available"])
         self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+        self.assertFalse(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
         self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
 
     def test_progress_durable_native_resume_queue_still_respects_stale_plan(self) -> None:
@@ -828,6 +836,8 @@ class GraphGatewayTests(unittest.TestCase):
 
         self.assertTrue(progress["native_resume"]["available"])
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+        self.assertFalse(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
         self.assertEqual(progress["datasets"][0]["available_actions"], [])
         self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
 
@@ -871,6 +881,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(queue[0]["can_resume"])
         self.assertEqual(queue[0]["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
         self.assertTrue(progress["native_resume"]["available"])
+        self.assertTrue(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(progress["study_loop_result"], {})
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:

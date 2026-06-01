@@ -6753,6 +6753,64 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Queue 结构化 Read-Model 切片
+
+已完成：
+
+- 在 `native_resume` read-model 中新增结构化字段：
+  - `has_queue_items`
+  - `queue_item_count`
+- 这两个字段完全从 `interrupt_queue` 派生，用于告诉 UI/自动化客户端当前是否有可展示的
+  dataset review/resume 队列项，避免依赖 `message` 文案做判断。
+- 新增/更新测试覆盖：
+  - 默认 memory backend 且无 queue：`available == false`，
+    `has_queue_items == false`，count 为 0；
+  - 默认 memory backend 但有 code-review queue：`available == false`，
+    `has_queue_items == true`，count 为 1，且 queue item
+    `can_resume == false`、`resume_endpoint == null`；
+  - durable read-model 被 study-level gate 或 stale plan 阻挡：
+    `available == true`，但 `has_queue_items == false`，count 为 0；
+  - 可选 SQLite checkpointer 如果可用，resumable queue 分支也断言 count 为 1。
+
+边界：
+
+- 这是 read-model 字段补充，不改变 native resume endpoint、split-flow review
+  endpoint、GraphGateway 状态转换、LLM/R execution 或 repair/spec-revision。
+- `available` 继续表示 durable native resume 能力是否启用；`has_queue_items` 和
+  `queue_item_count` 只表示当前 progress 中是否有 visible queue items。单个 item 仍通过
+  `can_resume` 和 `resume_endpoint` 表示是否能调用 native resume endpoint。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，第一次只读审查结论：GO，但指出
+  `actionable_queue_available/actionable_queue_count` 字段名可能让人误以为 native
+  endpoint 一定可调用。
+- 已吸收建议：改名为 `has_queue_items` / `queue_item_count`。
+- 复审结论：GO。
+- 它确认：
+  - `has_queue_items == true` 只说明 `interrupt_queue` 有可展示项，不暗示 native
+    endpoint 可调用；
+  - 是否能走 native resume 仍由 top-level `available` 和 item-level
+    `can_resume/resume_endpoint` 决定；
+  - `RunProgressResponse.native_resume: dict[str, Any]` 对该 read-model 扩展足够，
+    不需要 schema 改动。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 6 tests in 0.210s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 283 tests in 29.520s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Durable Native Resume Queue 文案与覆盖切片
 
 已完成：

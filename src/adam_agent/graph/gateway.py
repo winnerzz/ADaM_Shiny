@@ -5161,6 +5161,8 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
         "default_review_path": "split_flow_review_endpoints",
         "restart_recovery_source": recovery_source,
         "interrupt_queue": interrupt_queue,
+        "has_queue_items": bool(interrupt_queue),
+        "queue_item_count": len(interrupt_queue),
         "message": message,
     }
 
