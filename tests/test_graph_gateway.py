@@ -2339,6 +2339,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["static_check_sha256"], static_sha)
         self.assertTrue(dataset_state.code_state["generation_quality"]["not_real_derivation"])
         self.assertEqual(dataset_state.code_state["generation_quality"]["llm_provider"], "mock")
+        self.assertEqual(dataset_state.code_state["assumptions"], ["Assumption under review."])
+        self.assertEqual(dataset_state.code_state["risk_points"], ["Review generated derivation."])
+        self.assertEqual(dataset_state.code_state["used_inputs"], ["AE"])
+        self.assertEqual(dataset_state.code_state["expected_outputs"], ["outputs/adae.csv"])
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_inputs], ["code_agent", "static_review_agent"])
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_outputs], ["code_agent", "static_review_agent"])
         self.assertEqual(

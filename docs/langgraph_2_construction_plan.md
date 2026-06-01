@@ -7302,6 +7302,56 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard Slice
+
+Completed:
+
+- Tightened graph-owned dataset read models:
+  - when `graph_state.json` exists, `review-summary` now derives its dataset
+    list from canonical graph state only, instead of discovering extra datasets
+    from `outputs/*.csv`, stale manifests, or workflow projections;
+  - beyond generated table/download reads, code, validation report, compare
+    report, diagnostics, and parsed LLM response artifacts must now be present
+    in the canonical dataset state before review/download/read endpoints expose
+    them;
+  - legacy/artifact-only runs without `graph_state.json` keep their previous
+    fallback behavior.
+- Tightened JSON artifact reads:
+  - `/datasets/{dataset}/validation` and `/artifacts/read` now require graph
+    authorization for `validation/*_validation_report.json`,
+    `diagnostics/*_failure_report.json`, `compare/*_compare_report.json`, and
+    `llm/*_parsed_response.json` whenever canonical graph state exists;
+  - stale dataset artifacts for datasets absent from canonical graph state fail
+    closed.
+- `advanced_artifacts` for graph-owned runs is now built from study/dataset
+  graph artifacts rather than scanning validation/diagnostics/llm folders and
+  surfacing stale files.
+- Code generation now records assumptions, risk points, used inputs, and
+  expected outputs in canonical `code_state`, so review-summary can recover
+  review material from graph state instead of reading stale parsed-response
+  JSON.
+
+Boundary:
+
+- This slice only fixes graph-owned read-model ownership. It does not change
+  real LLM generation, R execution, comparison logic, or UI layout.
+- Legacy runs can still use artifact fallback. Once a run has canonical
+  `graph_state.json`, product dataset artifacts must be authorized by graph
+  state.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_blocks_generated_reads_for_dataset_absent_from_canonical_state tests.test_api_phase8.Phase8ApiTests.test_graph_state_allows_recorded_validation_artifact_read tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_validation_over_stale_validation_file tests.test_api_phase8.Phase8ApiTests.test_review_summary_ignores_graph_state_output_path_outside_run_dir tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection -v
+Ran 5 tests in 0.726s - OK
+
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 268 tests in 27.534s - OK (skipped=3)
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.8 Review Summary Corrupt Graph Fail-Closed Slice
 
 Completed:

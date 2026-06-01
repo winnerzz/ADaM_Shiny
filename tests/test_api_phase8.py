@@ -4535,13 +4535,22 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
     def test_graph_state_blocks_generated_reads_for_dataset_absent_from_canonical_state(self) -> None:
         study_dir = _workspace_dir("phase8_graph_absent_dataset_blocks_stale_output") / "MY_STUDY"
         run_dir = study_dir / "runs" / "run_graph_absent_dataset"
+        code_dir = run_dir / "code"
         outputs_dir = run_dir / "outputs"
         validation_dir = run_dir / "validation"
+        compare_dir = run_dir / "compare"
+        code_dir.mkdir(parents=True)
         outputs_dir.mkdir(parents=True)
         validation_dir.mkdir(parents=True)
+        compare_dir.mkdir(parents=True)
+        (code_dir / "build_adlb.R").write_text("adlb <- data.frame(USUBJID = '01')\n", encoding="utf-8")
         (outputs_dir / "adlb.csv").write_text("USUBJID,PARAMCD\n01,ALT\n", encoding="utf-8")
         (validation_dir / "adlb_validation_report.json").write_text(
             json.dumps({"dataset": "ADLB", "status": "pass", "terminal_failure": False, "partial_output_usable": True}),
+            encoding="utf-8",
+        )
+        (compare_dir / "adlb_compare_report.json").write_text(
+            json.dumps({"dataset": "ADLB", "status": "match"}),
             encoding="utf-8",
         )
         gateway = GraphGateway()
@@ -4561,6 +4570,37 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             "/runs/run_graph_absent_dataset/datasets/ADLB/download",
             params={"study_dir": str(study_dir), "kind": "generated"},
         )
+        code_download = client.get(
+            "/runs/run_graph_absent_dataset/datasets/ADLB/download",
+            params={"study_dir": str(study_dir), "kind": "code"},
+        )
+        validation_download = client.get(
+            "/runs/run_graph_absent_dataset/datasets/ADLB/download",
+            params={"study_dir": str(study_dir), "kind": "validation_report"},
+        )
+        compare_download = client.get(
+            "/runs/run_graph_absent_dataset/datasets/ADLB/download",
+            params={"study_dir": str(study_dir), "kind": "compare_report"},
+        )
+        validation_artifact = client.get(
+            "/runs/run_graph_absent_dataset/datasets/ADLB/validation",
+            params={"study_dir": str(study_dir)},
+        )
+        artifact_read = client.post(
+            "/runs/run_graph_absent_dataset/artifacts/read",
+            params={"study_dir": str(study_dir)},
+            json={"relative_path": "validation/adlb_validation_report.json"},
+        )
+        artifact_read_with_dotdot = client.post(
+            "/runs/run_graph_absent_dataset/artifacts/read",
+            params={"study_dir": str(study_dir)},
+            json={"relative_path": "validation/../validation/adlb_validation_report.json"},
+        )
+        artifact_read_with_backslashes = client.post(
+            "/runs/run_graph_absent_dataset/artifacts/read",
+            params={"study_dir": str(study_dir)},
+            json={"relative_path": r"validation\..\validation\adlb_validation_report.json"},
+        )
         review = client.get(
             "/runs/run_graph_absent_dataset/review-summary",
             params={"study_dir": str(study_dir)},
@@ -4569,11 +4609,53 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(table.status_code, 200, table.text)
         self.assertEqual(table.json()["status"], "missing")
         self.assertEqual(download.status_code, 404)
+        self.assertEqual(code_download.status_code, 404)
+        self.assertEqual(validation_download.status_code, 404)
+        self.assertEqual(compare_download.status_code, 404)
+        self.assertEqual(validation_artifact.status_code, 404)
+        self.assertEqual(artifact_read.status_code, 404)
+        self.assertEqual(artifact_read_with_dotdot.status_code, 404)
+        self.assertEqual(artifact_read_with_backslashes.status_code, 404)
         self.assertEqual(review.status_code, 200, review.text)
-        adlb_review = next(item for item in review.json()["dataset_reviews"] if item["dataset"] == "ADLB")
-        self.assertIsNone(adlb_review["output_path"])
-        self.assertIsNone(adlb_review["output_preview"])
-        self.assertEqual(adlb_review["compare_summary"]["status"], "missing_generated")
+        self.assertNotIn("ADLB", [item["dataset"] for item in review.json()["dataset_reviews"]])
+        self.assertNotIn("validation_adlb", review.json()["advanced_artifacts"])
+
+    def test_graph_state_allows_recorded_validation_artifact_read(self) -> None:
+        study_dir = _workspace_dir("phase8_graph_recorded_validation_read") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_recorded_validation"
+        validation_dir = run_dir / "validation"
+        validation_dir.mkdir(parents=True)
+        validation_path = validation_dir / "adsl_validation_report.json"
+        validation_path.write_text(
+            json.dumps({"dataset": "ADSL", "status": "pass", "warnings": ["canonical validation"]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_recorded_validation",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_recorded_validation").model_copy(deep=True)
+        state.datasets["ADSL"].validation_summary = {"status": "pass", "warnings": ["canonical validation"]}
+        state.datasets["ADSL"].execution_state["validation_report_path"] = str(validation_path.as_posix())
+        gateway._persist_graph_state(study_dir, state, node="test_seed_recorded_validation_read")
+        client = TestClient(create_app())
+
+        validation_artifact = client.get(
+            "/runs/run_graph_recorded_validation/datasets/ADSL/validation",
+            params={"study_dir": str(study_dir)},
+        )
+        download = client.get(
+            "/runs/run_graph_recorded_validation/datasets/ADSL/download",
+            params={"study_dir": str(study_dir), "kind": "validation_report"},
+        )
+
+        self.assertEqual(validation_artifact.status_code, 200, validation_artifact.text)
+        self.assertEqual(validation_artifact.json()["status"], "pass")
+        self.assertEqual(download.status_code, 200, download.text)
+        self.assertIn("canonical validation", download.text)
 
     def test_code_approval_is_invalidated_when_code_or_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_stale_code_approval")

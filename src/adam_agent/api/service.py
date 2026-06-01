@@ -943,7 +943,7 @@ def read_run_json_artifact(study_dir: str | Path, run_id: str, relative_path: st
 
     root = Path(study_dir).expanduser()
     run_dir = (root / "runs" / run_id).resolve()
-    target_path = (run_dir / relative_path).resolve()
+    target_path = _json_artifact_path_for_read(root, run_id, relative_path)
     if not _is_relative_to(target_path, run_dir):
         raise ApiServiceError("Artifact path must stay under the requested run directory.")
     if not target_path.exists() or not target_path.is_file():
@@ -1051,8 +1051,17 @@ def dataset_download_path(study_dir: str | Path, run_id: str, dataset: str, kind
     target = dataset.strip().upper()
     resolved_kind = kind.strip().lower()
     if resolved_kind == "compare_report":
-        compare_dataset_with_reference(root, run_id, target)
-    path = _dataset_download_file(root, run_id, target, resolved_kind)
+        graph_state = _load_read_model_graph_state(
+            root,
+            run_id,
+            fail_on_existing=True,
+            fallback_message="Dataset download will not fall back to artifact-only mode.",
+        )
+        if graph_state is None or _graph_dataset_state(graph_state, target) is not None:
+            compare_dataset_with_reference(root, run_id, target)
+        path = _dataset_download_file(root, run_id, target, resolved_kind)
+    else:
+        path = _dataset_download_file(root, run_id, target, resolved_kind)
     if path is None or not path.exists() or not path.is_file():
         raise ApiServiceError(f"Download is not available for {target} {resolved_kind}.")
     if not _is_relative_to(path.resolve(), root.resolve()):
@@ -1152,11 +1161,13 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         for result in manifest.get("dataset_results", [])
         if str(result.get("dataset", "")).strip()
     ]
-    datasets = _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
     graph_state = _load_read_model_graph_state(root, run_id, fail_on_existing=True)
     workflow_state = _read_json_if_exists(run_dir / "workflow_state.json") if graph_state is None else {}
-    graph_datasets = _review_datasets_from_graph_state(graph_state)
-    datasets = _unique_non_empty(datasets + graph_datasets)
+    datasets = (
+        _review_datasets_from_graph_state(graph_state)
+        if graph_state is not None
+        else _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
+    )
     dataset_reviews = [
         _dataset_review(root, run_id, dataset, manifest, workflow_state, graph_state)
         for dataset in datasets
@@ -1188,7 +1199,7 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         plain_summary=_plain_run_summary(status, dataset_reviews),
         input_summary=input_summary,
         dataset_reviews=dataset_reviews,
-        advanced_artifacts=_advanced_artifacts(run_dir),
+        advanced_artifacts=_advanced_artifacts(run_dir, graph_state=graph_state),
     )
 
 
@@ -1585,6 +1596,19 @@ def _dataset_download_file(
         return _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     if kind == "reference":
         return reference_adam_path(root, dataset)
+    state = graph_state
+    if state is _GRAPH_STATE_UNSET:
+        state = _load_read_model_graph_state(
+            root,
+            run_id,
+            fail_on_existing=True,
+            fallback_message="Dataset artifact download will not fall back to artifact-only mode.",
+        )
+    if state is not None:
+        dataset_state = _graph_dataset_state(state, dataset)
+        if dataset_state is None:
+            return None
+        return _graph_dataset_artifact_path(run_dir, dataset_state, kind)
     if kind == "code":
         path = run_dir / "code" / f"build_{dataset.lower()}.R"
         return path if path.exists() else None
@@ -1850,10 +1874,18 @@ def _dataset_review(
     result = _dataset_result_from_manifest(manifest, dataset)
     graph_dataset = _graph_dataset_state(graph_state, dataset)
     projected_dataset = _projected_dataset_state(workflow_state or {}, dataset) if graph_dataset is None else {}
-    validation_report = _read_json_if_exists(run_dir / "validation" / f"{dataset_lower}_validation_report.json")
-    diagnostics = _read_json_if_exists(run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json")
-    parsed_response = _read_json_if_exists(run_dir / "llm" / f"{dataset_lower}_parsed_response.json")
-    code_path = run_dir / "code" / f"build_{dataset_lower}.R"
+    validation_report_path = _dataset_download_file(root, run_id, dataset, "validation_report", graph_state=graph_state)
+    diagnostics_path = _graph_dataset_artifact_path(run_dir, graph_dataset, "diagnostics") if graph_dataset else None
+    parsed_response_path = _graph_dataset_artifact_path(run_dir, graph_dataset, "parsed_response") if graph_dataset else None
+    code_path = _dataset_download_file(root, run_id, dataset, "code", graph_state=graph_state)
+    if graph_state is None:
+        validation_report_path = run_dir / "validation" / f"{dataset_lower}_validation_report.json"
+        diagnostics_path = run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json"
+        parsed_response_path = run_dir / "llm" / f"{dataset_lower}_parsed_response.json"
+        code_path = run_dir / "code" / f"build_{dataset_lower}.R"
+    validation_report = _read_json_if_exists(validation_report_path) if validation_report_path else {}
+    diagnostics = _read_json_if_exists(diagnostics_path) if diagnostics_path else {}
+    parsed_response = _read_json_if_exists(parsed_response_path) if parsed_response_path else {}
     output_path = _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     reference_path = reference_adam_path(root, dataset)
     reader = SDTMReader()
@@ -1908,10 +1940,10 @@ def _dataset_review(
         else None,
         compare_summary=compare_summary,
         downloads=_dataset_downloads(root, run_id, dataset, graph_state=graph_state),
-        generated_code_path=str(code_path.as_posix()) if code_path.exists() else None,
-        generated_code=_read_text_if_exists(code_path, limit_chars=40000),
-        assumptions=_string_list(parsed_response.get("assumptions")),
-        risk_points=_string_list(parsed_response.get("risk_points")),
+        generated_code_path=str(code_path.as_posix()) if code_path is not None and code_path.exists() else None,
+        generated_code=_read_text_if_exists(code_path, limit_chars=40000) if code_path is not None else "",
+        assumptions=_string_list(code_state.get("assumptions")) or _string_list(parsed_response.get("assumptions")),
+        risk_points=_string_list(code_state.get("risk_points")) or _string_list(parsed_response.get("risk_points")),
         warnings=warnings,
         errors=_string_list(review_validation.get("errors")),
         validation_report=review_validation,
@@ -1963,6 +1995,113 @@ def _graph_dataset_state(graph_state: StudyRunState | None, dataset: str) -> Dat
     if graph_state is None:
         return None
     return graph_state.datasets.get(dataset.strip().upper())
+
+
+def _graph_dataset_artifact_path(
+    run_dir: Path,
+    dataset_state: DatasetRunState | None,
+    kind: str,
+) -> Path | None:
+    if dataset_state is None:
+        return None
+    if kind == "code":
+        artifact_path = _first_graph_artifact_path(run_dir, dataset_state, {"generated_code"})
+        if artifact_path is not None:
+            return artifact_path
+        code_path = str(dataset_state.code_state.get("code_path") or "").strip()
+        return _existing_run_artifact_path(run_dir, code_path)
+    if kind == "validation_report":
+        artifact_path = _first_graph_artifact_path(run_dir, dataset_state, {"validation_report"})
+        if artifact_path is not None:
+            return artifact_path
+        validation_path = str(dataset_state.execution_state.get("validation_report_path") or "").strip()
+        return _existing_run_artifact_path(run_dir, validation_path)
+    if kind == "compare_report":
+        artifact_path = _first_graph_artifact_path(run_dir, dataset_state, {"compare_report"})
+        if artifact_path is not None:
+            return artifact_path
+        compare_path = str(dataset_state.compare_summary.get("report_path") or "").strip()
+        if not compare_path and dataset_state.result_summary is not None:
+            compare_path = str(dataset_state.result_summary.metadata.get("compare_report_path") or "").strip()
+        return _existing_run_artifact_path(run_dir, compare_path)
+    if kind == "diagnostics":
+        artifact_path = _first_graph_artifact_path(run_dir, dataset_state, {"tool_log"}, name_contains="_failure_report")
+        if artifact_path is not None:
+            return artifact_path
+        diagnostics_path = str(dataset_state.execution_state.get("diagnostics_path") or "").strip()
+        return _existing_run_artifact_path(run_dir, diagnostics_path)
+    if kind == "parsed_response":
+        return _first_graph_artifact_path(run_dir, dataset_state, {"tool_log"}, name_contains="_parsed_response")
+    return None
+
+
+def _first_graph_artifact_path(
+    run_dir: Path,
+    dataset_state: DatasetRunState,
+    kinds: set[str],
+    *,
+    name_contains: str = "",
+) -> Path | None:
+    for artifact in dataset_state.artifacts:
+        if artifact.kind not in kinds:
+            continue
+        if name_contains and name_contains not in str(artifact.path):
+            continue
+        path = _existing_run_artifact_path(run_dir, str(artifact.path))
+        if path is not None:
+            return path
+    return None
+
+
+def _existing_run_artifact_path(run_dir: Path, artifact_path: str) -> Path | None:
+    candidate = _resolve_review_artifact_path(run_dir, artifact_path)
+    if candidate is not None and candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
+def _json_artifact_path_for_read(root: Path, run_id: str, relative_path: str) -> Path:
+    run_dir = (root / "runs" / run_id).resolve()
+    normalized = Path(str(relative_path).replace("\\", "/"))
+    target_path = (run_dir / normalized).resolve()
+    try:
+        canonical_relative = target_path.relative_to(run_dir)
+    except ValueError:
+        canonical_relative = normalized
+    graph_state = _load_read_model_graph_state(
+        root,
+        run_id,
+        fail_on_existing=True,
+        fallback_message="JSON artifact read will not fall back to artifact-only mode.",
+    )
+    if graph_state is None:
+        return target_path
+    guarded = _guarded_dataset_artifact_request(canonical_relative)
+    if guarded is None:
+        return target_path
+    dataset, kind = guarded
+    dataset_state = _graph_dataset_state(graph_state, dataset)
+    guarded_path = _graph_dataset_artifact_path(run_dir, dataset_state, kind)
+    if guarded_path is None:
+        raise ApiServiceError(f"Artifact is not recorded in canonical graph state: {relative_path}")
+    return guarded_path.resolve()
+
+
+def _guarded_dataset_artifact_request(relative_path: Path) -> tuple[str, str] | None:
+    parts = relative_path.parts
+    if len(parts) != 2:
+        return None
+    folder, filename = parts[0].lower(), parts[1]
+    lower_name = filename.lower()
+    if folder == "validation" and lower_name.endswith("_validation_report.json"):
+        return lower_name.removesuffix("_validation_report.json").upper(), "validation_report"
+    if folder == "diagnostics" and lower_name.endswith("_failure_report.json"):
+        return lower_name.removesuffix("_failure_report.json").upper(), "diagnostics"
+    if folder == "compare" and lower_name.endswith("_compare_report.json"):
+        return lower_name.removesuffix("_compare_report.json").upper(), "compare_report"
+    if folder == "llm" and lower_name.endswith("_parsed_response.json"):
+        return lower_name.removesuffix("_parsed_response.json").upper(), "parsed_response"
+    return None
 
 
 def _graph_dataset_review_status(dataset_state: DatasetRunState | None) -> str:
@@ -2189,12 +2328,25 @@ def _datasets_from_outputs(run_dir: Path) -> list[str]:
     return [path.stem.upper() for path in sorted(output_dir.glob("*.csv"))]
 
 
-def _advanced_artifacts(run_dir: Path) -> dict[str, str]:
+def _advanced_artifacts(run_dir: Path, *, graph_state: StudyRunState | None = None) -> dict[str, str]:
     candidates = {
         "dependency_plan": run_dir / "planning" / "dependency_plan.json",
         "dependency_review": run_dir / "planning" / "dependency_review.md",
         "audit_manifest": run_dir / "audit" / "manifest.json",
     }
+    if graph_state is not None:
+        for artifact in graph_state.artifacts:
+            key = f"{artifact.kind}_{artifact.artifact_id}"
+            path = _existing_run_artifact_path(run_dir, str(artifact.path))
+            if path is not None:
+                candidates[key] = path
+        for dataset, dataset_state in sorted(graph_state.datasets.items()):
+            for artifact in dataset_state.artifacts:
+                key = f"{dataset.lower()}_{artifact.kind}_{artifact.artifact_id}"
+                path = _existing_run_artifact_path(run_dir, str(artifact.path))
+                if path is not None:
+                    candidates[key] = path
+        return {key: str(path.as_posix()) for key, path in candidates.items() if path.exists()}
     for path in sorted((run_dir / "llm").glob("*_context.json")) if (run_dir / "llm").exists() else []:
         candidates[f"llm_context_{path.stem.removesuffix('_context')}"] = path
     for path in sorted((run_dir / "llm").glob("*_compact_prompt.txt")) if (run_dir / "llm").exists() else []:

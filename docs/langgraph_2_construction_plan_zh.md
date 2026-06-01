@@ -6753,6 +6753,52 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard 切片
+
+已完成：
+
+- 收紧 graph-owned run 的 dataset 级 read model：
+  - 只要 `graph_state.json` 存在，`review-summary` 的 dataset 列表只来自 canonical
+    graph state，不再从 `outputs/*.csv`、旧 manifest 或 workflow projection 反推
+    额外 dataset；
+  - generated table/download 之外，code、validation report、compare report、
+    diagnostics 和 parsed LLM response 这些 dataset artifact 也必须先在 canonical
+    dataset state 中存在，才会被 review/download/read endpoint 暴露；
+  - 没有 `graph_state.json` 的 legacy/artifact-only run 仍保留旧 fallback 行为。
+- 收紧 JSON artifact 读取：
+  - `/datasets/{dataset}/validation` 和 `/artifacts/read` 读取
+    `validation/*_validation_report.json`、`diagnostics/*_failure_report.json`、
+    `compare/*_compare_report.json`、`llm/*_parsed_response.json` 时，如果 run 已经有
+    canonical graph state，就必须能在对应 dataset state 中找到该 artifact 或
+    path；
+  - graph-owned run 中不存在于 canonical state 的 stale dataset artifact 会 fail
+    closed。
+- `advanced_artifacts` 在 graph-owned run 中改为从 study/dataset graph artifacts
+  构建，不再扫描 validation/diagnostics/llm 目录把陈旧文件显示成当前产物。
+- code generation 的 assumptions、risk points、used inputs 和 expected outputs
+  现在会写入 canonical `code_state`，这样 review-summary 可以从 graph state 恢复
+  审核材料，而不是偷读旧的 parsed-response JSON。
+
+边界：
+
+- 这个切片只修 graph-owned read-model ownership，不改变真实 LLM 生成、R 执行、
+  compare 算法或 UI 布局。
+- Legacy run 仍可以使用 artifact fallback；但一旦 run 有 canonical
+  `graph_state.json`，产品级 dataset artifact 必须由 graph state 授权。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_blocks_generated_reads_for_dataset_absent_from_canonical_state tests.test_api_phase8.Phase8ApiTests.test_graph_state_allows_recorded_validation_artifact_read tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_validation_over_stale_validation_file tests.test_api_phase8.Phase8ApiTests.test_review_summary_ignores_graph_state_output_path_outside_run_dir tests.test_api_phase8.Phase8ApiTests.test_review_summary_prefers_graph_state_without_workflow_projection -v
+Ran 5 tests in 0.726s - OK
+
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 268 tests in 27.534s - OK (skipped=3)
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.8 Review Summary 损坏 Graph Fail-Closed 切片
 
 已完成：
