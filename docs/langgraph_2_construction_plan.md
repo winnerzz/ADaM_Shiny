@@ -7248,6 +7248,61 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Missing Progress Target Fail-Closed Slice
+
+Completed:
+
+- Tightened UI primary action availability when graph progress has been loaded
+  but the active planned target has no dataset progress row.
+- `Finalize Inputs / Draft Spec`, `Approve Draft Spec`, `Generate R Code`,
+  `Approve Code`, and `Run Approved Code` now fail closed in that mismatch
+  state instead of falling back to browser-local generated/review/execution
+  caches.
+- The UI explains the mismatch with:
+  `Graph progress has no dataset step for {target}. Refresh graph state or
+  prepare the dependency plan again before continuing.`
+- The legacy/local fallback remains available only when no graph progress has
+  been loaded, preserving the older pre-progress browser flow.
+
+Current boundary:
+
+- This is a UI read-model hardening slice only.
+- It does not change FastAPI endpoints, `GraphGateway` transitions, dependency
+  planning, or R execution.
+- `Start Runnable Datasets` remains study-level and still derives readiness
+  from selected targets plus graph progress rows.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- It confirmed:
+  - all five intended per-target actions are guarded by
+    `graphProgressMissingTarget`;
+  - legacy fallback remains available only when `state.runProgress` is absent;
+  - `Start Runnable Datasets` remains study-level;
+  - the click handlers re-check `actionAvailability()` before API calls, so
+    the mismatch state blocks both button readiness and direct handler
+    execution.
+
+Verification before subagent review:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_fail_closed_when_progress_lacks_active_target tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state -v
+Ran 4 tests in 0.244s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_next_action_text_ignores_local_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_terminal_failure_panel_requires_graph_owned_actions -v
+Ran 2 tests in 0.160s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 138 tests in 17.622s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
 
 Completed:

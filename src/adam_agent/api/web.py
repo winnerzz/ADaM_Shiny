@@ -2237,6 +2237,10 @@ INDEX_HTML = r"""<!doctype html>
       const finalized = finalizedInputsFor(target);
       const hasSpecGate = targetSpecGateSatisfied(target);
       const targetIsPlanned = Boolean(target && selectedTargets().includes(target));
+      const graphProgressMissingTarget = Boolean(state.runProgress && target && targetIsPlanned && !progress);
+      const graphProgressMissingReason = graphProgressMissingTarget
+        ? `Graph progress has no dataset step for ${target}. Refresh graph state or prepare the dependency plan again before continuing.`
+        : '';
       const planRequiredReason = target && !targetIsPlanned && isReferenceOnlyTarget(target)
         ? `${target} is currently reference-only evidence. Select its checkbox to request generation before finalizing inputs.`
         : target && !targetIsPlanned
@@ -2264,23 +2268,23 @@ INDEX_HTML = r"""<!doctype html>
         startable.length
       );
       const finalizeReady = finalizeGate
-        ? Boolean(target && targetIsPlanned && !blocked && finalizeGate.ready)
-        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked);
+        ? Boolean(target && targetIsPlanned && !blocked && !graphProgressMissingTarget && finalizeGate.ready)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !graphProgressMissingTarget);
       const draftApprovalReady = draftGate
-        ? Boolean(target && draftGate.ready && draft && !draftReview?.approved)
-        : Boolean(target && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
+        ? Boolean(target && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)
+        : Boolean(target && !graphProgressMissingTarget && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
       const generateReady = generateGate
-        ? Boolean(target && targetIsPlanned && !blocked && generateGate.ready && effectiveSpecGate)
-        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
+        ? Boolean(target && targetIsPlanned && !blocked && !graphProgressMissingTarget && generateGate.ready && effectiveSpecGate)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !graphProgressMissingTarget && hasSpecGate);
       const codeApprovalReady = approveCodeGate?.nextAction === 'review_code'
         ? canApproveGeneratedCode(target)
         : Boolean(generated);
       const approveReady = approveCodeGate
-        ? Boolean(target && !blocked && approveCodeGate.ready && codeApprovalReady)
-        : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
+        ? Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)
+        : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked && !graphProgressMissingTarget);
       const runReady = runApprovedGate
-        ? Boolean(target && !blocked && runApprovedGate.ready && generated)
-        : Boolean(target && !blocked && !progressBlocked && generated && reviewFor(target)?.approved);
+        ? Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated)
+        : Boolean(target && !blocked && !progressBlocked && !graphProgressMissingTarget && generated && reviewFor(target)?.approved);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2291,6 +2295,8 @@ INDEX_HTML = r"""<!doctype html>
               ? planRequiredReason
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
+              : graphProgressMissingTarget
+                ? graphProgressMissingReason
               : progressBlocked
                 ? progressBlockReason
                 : finalizeGate
@@ -2323,6 +2329,8 @@ INDEX_HTML = r"""<!doctype html>
           label: 'Approve Draft Spec',
           reason: !target
             ? 'Choose an ADaM output first.'
+            : graphProgressMissingTarget
+              ? graphProgressMissingReason
             : draftGate?.ready
               ? `Graph requires draft-spec review for ${target}. Review and approve the draft before code generation.`
             : finalized?.input_spec_available || targetHasInputSpec(target)
@@ -2346,6 +2354,8 @@ INDEX_HTML = r"""<!doctype html>
               ? planRequiredReason
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
+              : graphProgressMissingTarget
+                ? graphProgressMissingReason
               : progressBlocked
                 ? progressBlockReason
                 : generateGate
@@ -2367,6 +2377,8 @@ INDEX_HTML = r"""<!doctype html>
           label: 'Approve Code',
           reason: !target
             ? 'Choose an ADaM output first.'
+            : graphProgressMissingTarget
+              ? graphProgressMissingReason
             : progressBlocked
               ? progressBlockReason
             : approveCodeGate
@@ -2393,6 +2405,8 @@ INDEX_HTML = r"""<!doctype html>
           pill: execution?.status === 'completed' ? 'rerun' : execution?.status === 'terminal_failure' || execution?.status === 'failed' ? 'diagnose' : null,
           reason: !target
             ? 'Choose an ADaM output first.'
+            : graphProgressMissingTarget
+              ? graphProgressMissingReason
             : progressBlocked
               ? progressBlockReason
             : runApprovedGate

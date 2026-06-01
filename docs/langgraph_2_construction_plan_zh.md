@@ -6703,6 +6703,61 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 缺失 Progress Target Fail-Closed 切片
+
+已完成：
+
+- 收紧 UI 主动作可用性：当 graph progress 已经加载，但当前已纳入计划的 target
+  没有对应 dataset progress 行时，UI 不再回落到浏览器本地缓存。
+- 以下按钮在该状态下都会 fail closed：
+  - `Finalize Inputs / Draft Spec`
+  - `Approve Draft Spec`
+  - `Generate R Code`
+  - `Approve Code`
+  - `Run Approved Code`
+- UI 会明确提示：
+  `Graph progress has no dataset step for {target}. Refresh graph state or
+  prepare the dependency plan again before continuing.`
+- 只有在没有 graph progress 的旧前置状态下，才保留本地 fallback，避免破坏
+  pre-progress 浏览器流程。
+
+当前边界：
+
+- 这是 UI read-model 加固切片。
+- 不改变 FastAPI endpoints、`GraphGateway` 状态转换、dependency planning 或 R
+  execution。
+- `Start Runnable Datasets` 仍是 study-level 动作，继续从 selected targets 和 graph
+  progress rows 判断是否可启动。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 五个预期 per-target 动作都受 `graphProgressMissingTarget` 保护；
+  - legacy fallback 只在 `state.runProgress` 缺失时保留；
+  - `Start Runnable Datasets` 仍是 study-level；
+  - 点击处理函数会在 API 调用前重新检查 `actionAvailability()`，所以该 mismatch
+    状态会同时拦住按钮可用性和直接 handler 执行。
+
+子 agent 审查前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_fail_closed_when_progress_lacks_active_target tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state -v
+Ran 4 tests in 0.244s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_next_action_text_ignores_local_cache_when_progress_loaded tests.test_api_phase8.Phase8ApiTests.test_index_terminal_failure_panel_requires_graph_owned_actions -v
+Ran 2 tests in 0.160s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 138 tests in 17.622s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
 
 已完成：

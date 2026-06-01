@@ -1628,8 +1628,10 @@ console.log(JSON.stringify({
         self.assertIn("graphActionGate(progress, 'generate')", action_body)
         self.assertIn("graphActionGate(progress, 'approveCode')", action_body)
         self.assertIn("graphActionGate(progress, 'runApproved')", action_body)
-        self.assertIn("Boolean(target && !blocked && approveCodeGate.ready && codeApprovalReady)", action_body)
-        self.assertIn("Boolean(target && !blocked && runApprovedGate.ready && generated)", action_body)
+        self.assertIn("const graphProgressMissingTarget = Boolean(state.runProgress && target && targetIsPlanned && !progress);", action_body)
+        self.assertIn("Graph progress has no dataset step for ${target}", action_body)
+        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)", action_body)
+        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated)", action_body)
         self.assertIn("local execution is paused until dependency review is resolved", action_body)
         self.assertIn("Ready for human code approval for ${target}. This will not run R.", action_body)
         self.assertIn("Approve the generated code before running local R.", action_body)
@@ -2251,6 +2253,78 @@ console.log(JSON.stringify(results));
         self.assertFalse(results["execute_approved_code"]["approveCode"])
         self.assertTrue(results["execute_approved_code"]["runApproved"])
 
+    def test_index_primary_actions_fail_closed_when_progress_lacks_active_target(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_missing_progress_target' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], blocked_datasets: []};
+state.finalizedInputsByDataset = {ADAE: {input_spec_available: true}};
+state.draftSpecByDataset = {ADAE: {dataset: 'ADAE', variables: [{variable: 'AETERM'}]}};
+state.generatedByDataset = {ADAE: {dataset: 'ADAE', run_id: 'run_ui_missing_progress_target', status: 'generated', generated_code: 'x <- 1'}};
+state.reviewByDataset = {ADAE: {approved: true}};
+state.executionByDataset = {ADAE: {status: 'completed'}};
+state.runProgress = {datasets: [{dataset: 'ADSL', next_action: 'execute_approved_code', blocked: false}]};
+const availability = actionAvailability();
+state.runProgress = null;
+const legacyFallback = actionAvailability();
+console.log(JSON.stringify({
+  finalize: availability.finalize,
+  approveDraft: availability.approveDraft,
+  generate: availability.generate,
+  approveCode: availability.approveCode,
+  runApproved: availability.runApproved,
+  legacyGenerateReady: legacyFallback.generate.ready,
+  legacyApproveReady: legacyFallback.approveCode.ready,
+  legacyRunReady: legacyFallback.runApproved.ready,
+}));
+"""
+        script_path = TMP_ROOT / "ui_action_progress_missing_target.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        for key in ["finalize", "approveDraft", "generate", "approveCode", "runApproved"]:
+            self.assertFalse(result[key]["ready"], key)
+            self.assertIn("Graph progress has no dataset step for ADAE", result[key]["reason"])
+        self.assertTrue(result["legacyGenerateReady"])
+        self.assertTrue(result["legacyApproveReady"])
+        self.assertTrue(result["legacyRunReady"])
+
     def test_index_draft_review_gate_overrides_local_input_spec_shortcuts(self) -> None:
         client = TestClient(create_app())
 
@@ -2263,7 +2337,7 @@ console.log(JSON.stringify(results));
         self.assertIn("const graphRequiresDraftReview = progress?.next_action === 'review_draft_spec';", draft_body)
         self.assertIn("if (graphRequiresDraftReview && draft)", draft_body)
         self.assertLess(draft_body.index("if (graphRequiresDraftReview && draft)"), draft_body.index("if (finalized?.input_spec_available || targetHasInputSpec"))
-        self.assertIn("Boolean(target && draftGate.ready && draft && !draftReview?.approved)", action_body)
+        self.assertIn("Boolean(target && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)", action_body)
         self.assertNotIn("draftGate.ready && draft && !draftReview?.approved && !finalized?.input_spec_available", action_body)
 
     def test_index_recovers_dependency_plan_projection_from_graph_state(self) -> None:
