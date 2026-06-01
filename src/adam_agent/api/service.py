@@ -118,6 +118,7 @@ UPLOAD_ROLE_TO_FOLDER = {
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
+_GRAPH_STATE_UNSET = object()
 SERVICE_CHECKPOINTER_BACKEND_ENV = "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"
 
 
@@ -1152,7 +1153,7 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         if str(result.get("dataset", "")).strip()
     ]
     datasets = _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
-    graph_state = _load_review_graph_state(root, run_id, fail_on_existing=True)
+    graph_state = _load_read_model_graph_state(root, run_id, fail_on_existing=True)
     workflow_state = _read_json_if_exists(run_dir / "workflow_state.json") if graph_state is None else {}
     graph_datasets = _review_datasets_from_graph_state(graph_state)
     datasets = _unique_non_empty(datasets + graph_datasets)
@@ -1565,16 +1566,23 @@ def _read_csv_page(
 
 def _dataset_file_for_kind(root: Path, run_id: str, dataset: str, kind: str) -> Path | None:
     if kind == "generated":
-        return usable_generated_output_path(root / "runs" / run_id, dataset)
+        return _generated_output_path_for_read(root, run_id, dataset)
     if kind == "reference":
         return reference_adam_path(root, dataset)
     raise ApiServiceError("Table kind must be generated or reference.")
 
 
-def _dataset_download_file(root: Path, run_id: str, dataset: str, kind: str) -> Path | None:
+def _dataset_download_file(
+    root: Path,
+    run_id: str,
+    dataset: str,
+    kind: str,
+    *,
+    graph_state: StudyRunState | None | object = _GRAPH_STATE_UNSET,
+) -> Path | None:
     run_dir = root / "runs" / run_id
     if kind == "generated":
-        return _dataset_file_for_kind(root, run_id, dataset, "generated")
+        return _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     if kind == "reference":
         return reference_adam_path(root, dataset)
     if kind == "code":
@@ -1846,7 +1854,7 @@ def _dataset_review(
     diagnostics = _read_json_if_exists(run_dir / "diagnostics" / f"{dataset_lower}_failure_report.json")
     parsed_response = _read_json_if_exists(run_dir / "llm" / f"{dataset_lower}_parsed_response.json")
     code_path = run_dir / "code" / f"build_{dataset_lower}.R"
-    output_path = _review_output_path(run_dir, dataset, graph_dataset)
+    output_path = _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     reference_path = reference_adam_path(root, dataset)
     reader = SDTMReader()
     compare_summary = DatasetCompareResponse(**compare_dataset_files(dataset, output_path, reference_path))
@@ -1899,7 +1907,7 @@ def _dataset_review(
         if reference_path is not None
         else None,
         compare_summary=compare_summary,
-        downloads=_dataset_downloads(root, run_id, dataset),
+        downloads=_dataset_downloads(root, run_id, dataset, graph_state=graph_state),
         generated_code_path=str(code_path.as_posix()) if code_path.exists() else None,
         generated_code=_read_text_if_exists(code_path, limit_chars=40000),
         assumptions=_string_list(parsed_response.get("assumptions")),
@@ -1919,7 +1927,13 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
     return {}
 
 
-def _load_review_graph_state(root: Path, run_id: str, *, fail_on_existing: bool = False) -> StudyRunState | None:
+def _load_read_model_graph_state(
+    root: Path,
+    run_id: str,
+    *,
+    fail_on_existing: bool = False,
+    fallback_message: str = "Review summary will not fall back to workflow_state.json.",
+) -> StudyRunState | None:
     try:
         with _open_graph_gateway(study_dir=root, run_id=run_id) as gateway:
             return gateway.load_graph_state(study_dir=root, run_id=run_id)
@@ -1930,7 +1944,7 @@ def _load_review_graph_state(root: Path, run_id: str, *, fail_on_existing: bool 
         if fail_on_existing and graph_state_path.exists():
             raise ApiServiceError(
                 f"Canonical graph state for run {run_id} exists but cannot be read. "
-                "Review summary will not fall back to workflow_state.json."
+                f"{fallback_message}"
             ) from exc
         return None
 
@@ -1958,6 +1972,8 @@ def _graph_dataset_review_status(dataset_state: DatasetRunState | None) -> str:
 
 
 def _review_output_path(run_dir: Path, dataset: str, dataset_state: DatasetRunState | None) -> Path | None:
+    if dataset_state is not None and _graph_dataset_output_unusable(dataset_state):
+        return None
     output_from_state = ""
     if dataset_state is not None:
         output_from_state = str(dataset_state.execution_state.get("output_path") or "").strip()
@@ -1970,7 +1986,49 @@ def _review_output_path(run_dir: Path, dataset: str, dataset_state: DatasetRunSt
         candidate = _resolve_review_artifact_path(run_dir, output_from_state)
         if candidate is not None and candidate.exists() and candidate.is_file():
             return candidate
+    if dataset_state is not None:
+        return None
     return usable_generated_output_path(run_dir, dataset)
+
+
+def _generated_output_path_for_read(
+    root: Path,
+    run_id: str,
+    dataset: str,
+    *,
+    graph_state: StudyRunState | None | object = _GRAPH_STATE_UNSET,
+) -> Path | None:
+    run_dir = root / "runs" / run_id
+    state = graph_state
+    if state is _GRAPH_STATE_UNSET:
+        state = _load_read_model_graph_state(
+            root,
+            run_id,
+            fail_on_existing=True,
+            fallback_message="Generated output read will not fall back to validation artifacts.",
+        )
+    if state is None:
+        return usable_generated_output_path(run_dir, dataset)
+    dataset_state = _graph_dataset_state(state, dataset)
+    if dataset_state is None:
+        return None
+    return _review_output_path(run_dir, dataset, dataset_state)
+
+
+def _graph_dataset_output_unusable(dataset_state: DatasetRunState) -> bool:
+    status = str(dataset_state.status or "").strip()
+    interrupt = dataset_state.current_interrupt
+    execution_state = dataset_state.execution_state
+    validation_summary = dataset_state.validation_summary
+    if status in {"terminal_failure", "failed"}:
+        return True
+    if interrupt is not None and interrupt.name == "terminal_failure" and interrupt.status == "open":
+        return True
+    if execution_state.get("terminal_failure") is True or validation_summary.get("terminal_failure") is True:
+        return True
+    if execution_state.get("partial_output_usable") is False or validation_summary.get("partial_output_usable") is False:
+        return True
+    return False
 
 
 def _resolve_review_artifact_path(run_dir: Path, artifact_path: str) -> Path | None:
@@ -2043,7 +2101,13 @@ def _dataset_status_from_report(report: dict[str, Any], output_path: Path | None
     return "completed" if output_path is not None else "unknown"
 
 
-def _dataset_downloads(root: Path, run_id: str, dataset: str) -> list[DownloadItem]:
+def _dataset_downloads(
+    root: Path,
+    run_id: str,
+    dataset: str,
+    *,
+    graph_state: StudyRunState | None | object = _GRAPH_STATE_UNSET,
+) -> list[DownloadItem]:
     specs = [
         ("generated", "Generated ADaM"),
         ("reference", "Reference ADaM"),
@@ -2053,7 +2117,7 @@ def _dataset_downloads(root: Path, run_id: str, dataset: str) -> list[DownloadIt
     ]
     items: list[DownloadItem] = []
     for kind, label in specs:
-        path = _dataset_download_file(root, run_id, dataset, kind)
+        path = _dataset_download_file(root, run_id, dataset, kind, graph_state=graph_state)
         available = path is not None and path.exists() and path.is_file()
         items.append(
             DownloadItem(

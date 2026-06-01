@@ -52,7 +52,7 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.compare import compare_dataset_files, reference_adam_path, usable_generated_output_path
+from adam_agent.tools.compare import compare_dataset_files, reference_adam_path
 from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
@@ -3174,6 +3174,14 @@ class GraphGateway:
             payload["report_path"] = str(report_path.as_posix())
             _write_json(report_path, payload)
             summary["report_path"] = str(report_path.as_posix())
+        generated_file = str(summary.get("generated_file") or "").strip()
+        generated_output_path = _generated_output_path_from_graph_state(root / "runs" / run_id, dataset_state)
+        if generated_output_path is not None and generated_file and generated_output_path.name == generated_file:
+            _upsert_artifact(
+                dataset_state,
+                _artifact_ref(target, "output_adam", "output", generated_output_path, kind="output_adam"),
+            )
+            dataset_state.execution_state.setdefault("output_path", str(generated_output_path.as_posix()))
         dataset_state.compare_summary.update(summary)
         if report_path:
             if report_path.exists() and report_path.is_file():
@@ -3301,7 +3309,8 @@ class GraphGateway:
         target = dataset.strip().upper()
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
         run_dir = root / "runs" / run_id
-        output_path = usable_generated_output_path(run_dir, target)
+        dataset_state = graph_state.datasets.get(target)
+        output_path = _generated_output_path_from_graph_state(run_dir, dataset_state)
         reference_path = reference_adam_path(root, target)
         compare_summary = compare_dataset_files(target, output_path, reference_path)
         result = self.record_compare(
@@ -5432,6 +5441,68 @@ def _artifact_ref(dataset: str, artifact_id: str, role: str, path: str | Path, *
         role=role,
         metadata={"graph_gateway_recorded": True},
     )
+
+
+def _generated_output_path_from_graph_state(run_dir: Path, dataset_state: DatasetRunState | None) -> Path | None:
+    if dataset_state is None or _graph_dataset_output_unusable(dataset_state):
+        return None
+    output_from_state = str(dataset_state.execution_state.get("output_path") or "").strip()
+    if not output_from_state:
+        for artifact in dataset_state.artifacts:
+            if artifact.kind == "output_adam":
+                output_from_state = str(artifact.path or "").strip()
+                break
+    if not output_from_state:
+        return None
+    candidate = _resolve_run_artifact_path(run_dir, output_from_state)
+    if candidate is None or not candidate.exists() or not candidate.is_file():
+        return None
+    return candidate
+
+
+def _graph_dataset_output_unusable(dataset_state: DatasetRunState) -> bool:
+    status = str(dataset_state.status or "").strip()
+    interrupt = dataset_state.current_interrupt
+    execution_state = dataset_state.execution_state
+    validation_summary = dataset_state.validation_summary
+    if status in {"terminal_failure", "failed"}:
+        return True
+    if interrupt is not None and interrupt.name == "terminal_failure" and interrupt.status == "open":
+        return True
+    if execution_state.get("terminal_failure") is True or validation_summary.get("terminal_failure") is True:
+        return True
+    if execution_state.get("partial_output_usable") is False or validation_summary.get("partial_output_usable") is False:
+        return True
+    return False
+
+
+def _resolve_run_artifact_path(run_dir: Path, artifact_path: str) -> Path | None:
+    artifact_path = artifact_path.strip()
+    if not artifact_path:
+        return None
+    candidate = Path(artifact_path)
+    if candidate.is_absolute():
+        return candidate if _path_is_under(candidate, run_dir) else None
+    normalized = Path(str(artifact_path).replace("\\", "/"))
+    parts = normalized.parts
+    run_marker_index = None
+    for index in range(len(parts) - 1):
+        if parts[index].lower() == "runs" and parts[index + 1] == run_dir.name:
+            run_marker_index = index + 2
+            break
+    if run_marker_index is not None:
+        candidate = run_dir.joinpath(*parts[run_marker_index:])
+    else:
+        candidate = run_dir / normalized
+    return candidate if _path_is_under(candidate, run_dir) else None
+
+
+def _path_is_under(candidate: Path, parent: Path) -> bool:
+    try:
+        candidate.resolve(strict=False).relative_to(parent.resolve(strict=False))
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _default_draft_spec_agent_io(

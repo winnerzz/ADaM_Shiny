@@ -927,6 +927,10 @@ LG2.6 当前 slice 验证：
   - review summary 和 compare read paths 现在会在 canonical `graph_state.json`
     已存在但不可读时 fail closed。只有 run 从未创建 canonical graph state 时，
     才允许使用 artifact 或 `workflow_state.json` fallback。
+  - generated table preview、generated downloads、review-summary 里的 generated
+    output preview，以及显式 compare 读取现在只要存在 `graph_state.json`，就使用
+    canonical graph output artifact；不会为 graph-owned run 回退到陈旧 CSV 或
+    validation artifact。
 - 边界：
   - 当前已经基本完成 compatibility ownership 清理，并把 legacy behavior 显式化。
   - 但完整产品流程仍没有完全替换为 native LangGraph interrupt/checkpointer resume。
@@ -1253,6 +1257,30 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_does_not
 ```
 
 结果：3 tests passed。
+
+### 2026-06-01 - LG2.8 Generated Output Read-Model Guard
+
+已完成：
+
+- generated table preview、generated downloads、review-summary output preview
+  和显式 compare 读取现在都走 graph-aware output resolver。
+- 只要 `graph_state.json` 存在，generated output 只有在 canonical dataset
+  graph state 记录了 run 目录下可用的 output path 或 `output_adam` artifact 时才可见。
+- 如果请求的 dataset 不存在于 canonical graph state，generated 读取会 fail closed，
+  不会使用 legacy output discovery。
+- 显式 compare 不能再把陈旧的 `outputs/{dataset}.csv` bootstrap 成 graph state
+  里的 output artifact；它只能比较 graph 已经记录的 generated output。
+- 只为没有 canonical graph state 的 legacy run 保留 artifact fallback。
+- 收紧已有 path-escape 回归：如果 graph state 指向 run 目录外，UI read model
+  会隐藏 generated output，而不是回退到 `outputs/{dataset}.csv`。
+
+已验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_blocks_generated_table_download_without_output_artifact tests.test_api_phase8.Phase8ApiTests.test_graph_state_generated_artifact_controls_table_download_path tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_output_is_not_previewed_or_downloadable tests.test_api_phase8.Phase8ApiTests.test_review_summary_ignores_graph_state_output_path_outside_run_dir tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+```
+
+结果：5 tests passed。
 
 ### 2026-05-29 - LG2.2 Terminal Failure Review 切片
 

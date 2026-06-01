@@ -1077,6 +1077,10 @@ Current implementation status:
     `graph_state.json` exists but cannot be read. They only use artifact or
     `workflow_state.json` fallback when no canonical graph state has ever been
     created for that run.
+  - Generated table preview, generated downloads, review-summary generated
+    output previews, and explicit compare reads now use canonical graph output artifacts whenever
+    `graph_state.json` exists. They do not fall back to stale CSV files or
+    validation artifacts for graph-owned runs.
 - Boundary:
   - This phase has largely cleaned up compatibility ownership and made legacy
     behavior explicit.
@@ -1433,6 +1437,33 @@ python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_compare_does_not
 ```
 
 Result: 3 tests passed.
+
+### 2026-06-01 - LG2.8 Generated Output Read-Model Guard
+
+Completed:
+
+- Routed generated table preview, generated downloads, review-summary output
+  preview, and explicit compare reads through graph-aware output resolvers.
+- When `graph_state.json` exists, generated output is visible only if the
+  canonical dataset graph state records a usable output path or `output_adam`
+  artifact under the run directory.
+- If the requested dataset is absent from canonical graph state, generated reads
+  fail closed instead of using legacy output discovery.
+- Explicit compare can no longer bootstrap a stale `outputs/{dataset}.csv` into
+  graph state. It compares only graph-recorded generated output.
+- Preserved legacy artifact fallback only for runs without canonical graph
+  state.
+- Tightened an existing path-escape regression: if graph state points outside
+  the run directory, the UI read model hides the generated output instead of
+  falling back to `outputs/{dataset}.csv`.
+
+Verified with:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_blocks_generated_table_download_without_output_artifact tests.test_api_phase8.Phase8ApiTests.test_graph_state_generated_artifact_controls_table_download_path tests.test_api_phase8.Phase8ApiTests.test_terminal_failure_output_is_not_previewed_or_downloadable tests.test_api_phase8.Phase8ApiTests.test_review_summary_ignores_graph_state_output_path_outside_run_dir tests.test_api_phase8.Phase8ApiTests.test_review_summary_fails_closed_when_existing_graph_state_is_corrupt -v
+```
+
+Result: 5 tests passed.
 
 ### 2026-05-29 - LG2.2 Terminal Failure Review Slice
 

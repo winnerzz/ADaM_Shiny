@@ -4510,6 +4510,26 @@ class GraphGatewayTests(unittest.TestCase):
             run_id="run_lg2_compare_entrypoint",
             target_datasets=["ADAE"],
         )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_compare_entrypoint").model_copy(deep=True)
+        state.datasets["ADAE"].status = "completed"
+        state.datasets["ADAE"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": str((output_dir / "adae.csv").as_posix()),
+        }
+        state.datasets["ADAE"].artifacts.append(
+            ArtifactRef(
+                artifact_id="output_adam_psy201_run_lg2_compare_entrypoint_adae",
+                kind="output_adam",
+                path=str((output_dir / "adae.csv").as_posix()),
+                sha256=f"sha256:{sha256_file(output_dir / 'adae.csv')}",
+                dataset="ADAE",
+                format="csv",
+                role="output",
+            )
+        )
+        gateway._persist_graph_state(study_dir, state, node="test_seed_compare_output_artifact")
 
         result = gateway.compare_reference_output(
             study_dir=study_dir,
@@ -4524,6 +4544,41 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.datasets["ADAE"].result_summary.compare_status, "match")
         self.assertEqual(result.graph_state.datasets["ADAE"].agent_node_inputs[-1]["agent"], "validation_agent")
         self.assertEqual(result.graph_state.datasets["ADAE"].agent_node_outputs[-1]["decision"], "reference_compare_recorded")
+
+    def test_gateway_compare_reference_output_ignores_unrecorded_stale_output_file(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_ignores_stale_output") / "PSY201"
+        output_dir = study_dir / "runs" / "run_lg2_compare_stale_output" / "outputs"
+        validation_dir = study_dir / "runs" / "run_lg2_compare_stale_output" / "validation"
+        reference_dir = study_dir / "reference_adam"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir()
+        reference_dir.mkdir(parents=True)
+        (output_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (validation_dir / "adae_validation_report.json").write_text(
+            json.dumps({"dataset": "ADAE", "status": "pass"}),
+            encoding="utf-8",
+        )
+        (reference_dir / "adae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_stale_output",
+            target_datasets=["ADAE"],
+        )
+
+        result = gateway.compare_reference_output(
+            study_dir=study_dir,
+            run_id="run_lg2_compare_stale_output",
+            dataset="ADAE",
+        )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(result.compare_summary["status"], "missing_generated")
+        self.assertEqual(dataset_state.compare_summary["status"], "missing_generated")
+        self.assertNotIn("generated_file", dataset_state.compare_summary)
+        self.assertFalse(any(artifact.kind == "output_adam" for artifact in dataset_state.artifacts))
+        self.assertFalse(dataset_state.execution_state.get("output_path"))
 
     def test_gateway_compare_requires_existing_graph_state(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_compare_requires_state") / "PSY201"
