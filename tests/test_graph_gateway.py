@@ -2796,6 +2796,15 @@ class GraphGatewayTests(unittest.TestCase):
             result.graph_state.runtime_persistence["native_study_product_loop"]["boundary"],
             "study_product_loop_pilot_only",
         )
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_multi")
+        self.assertEqual(progress["study_loop_result"]["source"], "graph_progress")
+        self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
+        self.assertEqual(progress["study_loop_result"]["boundary"], "study_product_loop_pilot_only")
+        self.assertIn("stopped at human review gates", progress["study_loop_result"]["message"])
+        self.assertEqual(
+            {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},
+            {(item["dataset"], item["name"]) for item in progress["review_queue"]},
+        )
 
     def test_gateway_native_study_product_loop_preserves_mixed_spec_gates(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_mixed_spec") / "PSY201"

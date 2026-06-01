@@ -2029,6 +2029,11 @@ INDEX_HTML = r"""<!doctype html>
       if (progressTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
         state.selectedTarget = progressTargets[0];
       }
+      if (progress && Object.prototype.hasOwnProperty.call(progress, 'study_loop_result')) {
+        state.lastStudyLoopResult = progress.study_loop_result && Object.keys(progress.study_loop_result).length
+          ? progress.study_loop_result
+          : null;
+      }
     }
 
     function applyGraphState(graph) {
@@ -2645,11 +2650,14 @@ INDEX_HTML = r"""<!doctype html>
           resultText || payload.message || 'No new dataset was started.'
         );
         setPill('planStatus', payload.status || 'started');
-        state.lastStudyLoopResult = {
-          ...payload,
-          requested_targets: targets,
-          recorded_at: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
-        };
+        if (!state.lastStudyLoopResult || state.lastStudyLoopResult.source !== 'graph_progress') {
+          state.lastStudyLoopResult = {
+            ...payload,
+            source: 'command_response',
+            requested_targets: targets,
+            recorded_at: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+          };
+        }
         renderPlan(state.plan || {requested_datasets: targets, runnable_datasets: started, blocked_datasets: payload.blocked_datasets || []});
         renderDraftSpecPane();
         renderPane();
@@ -3083,7 +3091,13 @@ INDEX_HTML = r"""<!doctype html>
       byId('studyLoopResultTitle').textContent = started.length
         ? `${started.length} dataset(s) moved to review gates`
         : 'No new dataset moved';
+      const sourceText = result.source === 'graph_progress'
+        ? 'Recovered from graph progress.'
+        : result.source === 'command_response'
+          ? 'Recorded from the latest Start Runnable Datasets command.'
+          : '';
       byId('studyLoopResultDetail').textContent = [
+        sourceText,
         result.recorded_at ? `Last start: ${result.recorded_at}.` : '',
         result.message || '',
         'This does not approve draft specs, approve code, or run R.'
@@ -3101,18 +3115,20 @@ INDEX_HTML = r"""<!doctype html>
 
     function studyLoopStartedRows(result) {
       const resultsByDataset = new Map((result.dataset_results || []).map((item) => [String(item.dataset || '').toUpperCase(), item]));
+      const queueByDataset = new Map((result.review_queue || []).map((item) => [String(item.dataset || '').toUpperCase(), item]));
       return (result.started_datasets || [])
         .map((dataset) => String(dataset || '').toUpperCase())
         .filter(Boolean)
         .map((dataset) => {
-          const item = resultsByDataset.get(dataset) || {};
-          const nextAction = item.next_action || 'review_required';
+          const item = resultsByDataset.get(dataset) || queueByDataset.get(dataset) || {};
+          const nextAction = item.next_action || item.name || item.interrupt || 'review_required';
+          const label = item.name || item.interrupt ? readableInterruptName(nextAction) : titleFromToken(nextAction);
           const warnings = item.warnings?.length ? ` Warnings: ${item.warnings.join('; ')}` : '';
           return studyLoopResultItemHtml({
             dataset,
             tone: 'warn',
-            label: titleFromToken(nextAction),
-            detail: `${dataset} stopped at ${titleFromToken(nextAction)}. Review this gate before any code approval or local R execution.${warnings}`
+            label,
+            detail: `${dataset} stopped at ${label}. Review this gate before any code approval or local R execution.${warnings}`
           });
         });
     }

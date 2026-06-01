@@ -3654,6 +3654,7 @@ class GraphGateway:
         next_item = _study_next_action(graph_state, datasets, output_quality_rollup=output_quality_rollup)
         run_dir = root / "runs" / run_id
         workflow_state_path = run_dir / "workflow_state.json"
+        review_queue = _human_review_queue_items(graph_state, datasets)
         return {
             "study_id": graph_state.study_id,
             "run_id": graph_state.run_id,
@@ -3667,7 +3668,8 @@ class GraphGateway:
             "target_datasets": list(graph_state.target_datasets),
             "runnable_datasets": list(graph_state.runnable_datasets),
             "blocked_datasets": list(graph_state.blocked_datasets),
-            "review_queue": _human_review_queue_items(graph_state, datasets),
+            "review_queue": review_queue,
+            "study_loop_result": _study_loop_progress_result(graph_state, review_queue=review_queue),
             "datasets": datasets,
             "runtime_persistence": dict(graph_state.runtime_persistence),
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
@@ -4788,6 +4790,38 @@ def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any
                 reason=str(dataset_progress.get("action_label") or dataset_progress.get("blocked_reason") or ""),
             )
     return items
+
+
+def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict[str, Any]]) -> dict[str, Any]:
+    loop = dict(state.runtime_persistence.get("native_study_product_loop") or {})
+    if not loop:
+        return {}
+    started = _normalize_dataset_list([str(dataset) for dataset in loop.get("started_datasets", [])])
+    blocked = list(loop.get("blocked_datasets") or state.blocked_datasets)
+    return {
+        "source": "graph_progress",
+        "boundary": loop.get("boundary", "study_product_loop_pilot_only"),
+        "started_datasets": started,
+        "blocked_datasets": blocked,
+        "review_queue": list(review_queue),
+        "message": _study_loop_progress_message(started=started, blocked=blocked, review_queue=review_queue),
+    }
+
+
+def _study_loop_progress_message(
+    *,
+    started: list[str],
+    blocked: list[dict[str, Any]],
+    review_queue: list[dict[str, Any]],
+) -> str:
+    if started:
+        return (
+            f"Started {', '.join(started)} and stopped at human review gates. "
+            f"{len(review_queue)} review item(s) are now queued."
+        )
+    if blocked:
+        return "No dataset was started because dependency review or user action is still required."
+    return "No new dataset was started; existing graph progress was preserved."
 
 
 def _study_next_action_requires_dependency_review(state: StudyRunState) -> bool:

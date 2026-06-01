@@ -6703,6 +6703,73 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Study Loop Result Progress Read-Model 切片
+
+已完成：
+
+- 在 graph-owned run progress read model 中新增 `study_loop_result`。
+- `GraphGateway.progress_summary()` 现在从 canonical graph state metadata 投影最近一次
+  native study-loop 摘要：
+  - `runtime_persistence.native_study_product_loop.started_datasets`；
+  - `runtime_persistence.native_study_product_loop.blocked_datasets`；
+  - graph-owned `review_queue`。
+- `RunProgressResponse` 现在暴露 `study_loop_result`。
+- UI 在 refresh 或重新加载 progress 时，会从 `progress.study_loop_result` 恢复
+  `Study Loop Result` 面板。
+- 之前 `/runs/native-study-loop` 的 command response 仍然只作为展示 fallback：
+  - 如果 refresh 后已经拿到 `source: graph_progress` 的结果；
+  - command response 不会再覆盖 graph progress 恢复出来的结果。
+- 当 progress 中恢复出的 study-loop result 没有新鲜 `dataset_results` 时，UI 会使用
+  graph `review_queue` 还原 started dataset 对应的具体 review gate 标签。
+
+当前边界：
+
+- `study_loop_result` 只是 read model，不参与 dependency planning、dataset dispatch、
+  draft/code approval、LLM generation 或 R execution。
+- `runtime_persistence` 仍然是 native loop/checkpoint 边界元数据；UI 不会写入它。
+
+子 agent 审查：
+
+- 2026-06-01，Erdos，`gpt-5.5`，第一次只读审查结论：NO-GO。
+- 它指出 `startNativeStudyLoop()` 在刷新 graph progress 后，又用 command response
+  覆盖了已经恢复出的 `graph_progress` 结果。
+- 已修复：
+  - command response 现在只在没有 graph-progress result 时才作为 fallback 写入；
+  - 新增 Node harness 测试覆盖这个优先级问题。
+- 2026-06-01，Erdos，`gpt-5.5`，第二次只读审查结论：GO。
+- 2026-06-01，Euclid，`gpt-5.5`，中文文档同步后的只读审查结论：GO。
+  它提出的非阻断建议已在提交前吸收：
+  - 空的 `progress.study_loop_result` 现在会清理旧浏览器展示态，避免切换 run
+    后继续显示上一轮面板；
+  - API 覆盖现在同时验证 ADAE 和 ADCM 都出现在嵌套的
+    `study_loop_result.review_queue` 中。
+- 2026-06-01，Raman，`gpt-5.5`，吸收建议后的最终只读复核结论：GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_index_start_study_loop_keeps_graph_progress_result_over_command_response -v
+Ran 7 tests in 0.758s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress -v
+Ran 5 tests in 0.823s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 116 tests in 15.760s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 117 tests in 8.797s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_smoke -v
+Ran 84 tests in 7.517s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Study Loop Result Read-Model 切片
 
 已完成：

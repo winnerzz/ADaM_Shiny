@@ -7248,6 +7248,76 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Study Loop Result Progress Read-Model Slice
+
+Completed:
+
+- Added `study_loop_result` to the graph-owned run progress read model.
+- `GraphGateway.progress_summary()` now projects the latest native study-loop
+  summary from canonical graph state metadata:
+  - `runtime_persistence.native_study_product_loop.started_datasets`;
+  - `runtime_persistence.native_study_product_loop.blocked_datasets`;
+  - graph-owned `review_queue`.
+- `RunProgressResponse` now exposes `study_loop_result`.
+- The UI now restores the Study Loop Result panel from
+  `progress.study_loop_result` after refresh or progress reload.
+- The previous command response remains only a display fallback. It cannot
+  override `source: graph_progress` after `refreshGraphReadModels()`.
+- When a study-loop result is restored from progress without fresh
+  `dataset_results`, the UI uses graph `review_queue` to recover the concrete
+  review gate label for started datasets.
+
+Current boundary:
+
+- `study_loop_result` is a read model only. It does not participate in
+  dependency planning, dataset dispatch, draft/code approval, LLM generation,
+  or R execution.
+- `runtime_persistence` remains metadata about native loop/checkpoint
+  boundaries; the UI does not write it.
+
+Subagent review:
+
+- 2026-06-01, Erdos, `gpt-5.5`, first read-only review: NO-GO.
+- Required fix: `startNativeStudyLoop()` refreshed graph progress and then
+  overwrote the restored `graph_progress` result with the command response.
+- Fix applied: command response is now written only when there is no
+  graph-progress result; added a Node harness test covering this exact
+  priority.
+- 2026-06-01, Erdos, `gpt-5.5`, second read-only review: GO.
+- 2026-06-01, Euclid, `gpt-5.5`, read-only review after Chinese-doc sync: GO.
+  Its non-blocking suggestions were absorbed before commit:
+  - empty `progress.study_loop_result` now clears stale browser display state
+    instead of leaving the previous run's panel visible;
+  - API coverage now verifies both ADAE and ADCM are present in the nested
+    `study_loop_result.review_queue`.
+- 2026-06-01, Raman, `gpt-5.5`, final read-only review of the absorbed
+  suggestions: GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_index_start_study_loop_keeps_graph_progress_result_over_command_response -v
+Ran 7 tests in 0.758s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress -v
+Ran 5 tests in 0.823s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 116 tests in 15.760s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 117 tests in 8.797s - OK (skipped=2)
+
+python -B -m unittest tests.test_graph_smoke -v
+Ran 84 tests in 7.517s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Study Loop Result Read-Model Slice
 
 Completed:

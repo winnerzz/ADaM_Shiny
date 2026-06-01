@@ -530,6 +530,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("targetSpecGateSatisfied(active)", html)
         self.assertIn("generatedFor(active)?.status === 'stale'", html)
         self.assertIn("executionFor(active)?.status === 'terminal_failure'", html)
+        apply_progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
+        self.assertIn("Object.prototype.hasOwnProperty.call(progress, 'study_loop_result')", apply_progress_body)
+        self.assertIn("state.lastStudyLoopResult = progress.study_loop_result && Object.keys(progress.study_loop_result).length", apply_progress_body)
 
     def test_index_exposes_human_review_queue_from_graph_state(self) -> None:
         client = TestClient(create_app())
@@ -575,6 +578,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("renderStudyLoopResult()", dashboard_body)
         loop_body = html.split("function renderStudyLoopResult()", 1)[1].split("function graphInterruptLabel()", 1)[0]
         self.assertIn("This does not approve draft specs, approve code, or run R.", loop_body)
+        self.assertIn("Recovered from graph progress.", loop_body)
+        self.assertIn("Recorded from the latest Start Runnable Datasets command.", loop_body)
         self.assertIn("studyLoopStartedRows(result)", loop_body)
         self.assertIn("studyLoopBlockedRows(blocked)", loop_body)
         self.assertIn("studyLoopReviewQueueRows(reviewQueue, started)", loop_body)
@@ -613,6 +618,7 @@ global.document = {
 global.fetch = async () => ({ ok: true, json: async () => ({}) });
 """ + script + r"""
 state.lastStudyLoopResult = {
+  source: 'command_response',
   message: 'Started ADAE and stopped at human review gates. 2 review item(s) are now queued.',
   recorded_at: '10:30:00',
   started_datasets: ['ADAE'],
@@ -647,6 +653,7 @@ console.log(JSON.stringify({
         result = json.loads(completed.stdout.strip())
         self.assertIn("1 dataset(s) moved to review gates", result["title"])
         self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
+        self.assertIn("Recorded from the latest Start Runnable Datasets command.", result["detail"])
         self.assertEqual(result["status"], "review")
         self.assertIn("ADAE", result["html"])
         self.assertIn("Review Code", result["html"])
@@ -656,6 +663,262 @@ console.log(JSON.stringify({
         self.assertIn("missing upstream ADaM", result["html"])
         self.assertIn("ADCM", result["html"])
         self.assertIn("Draft spec review", result["html"])
+
+    def test_index_recovers_study_loop_result_from_progress(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_study_loop_progress' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+applyRunProgress({
+  target_datasets: ['ADAE'],
+  study_loop_result: {
+    source: 'graph_progress',
+    message: 'Started ADAE and stopped at human review gates. 1 review item(s) are now queued.',
+    started_datasets: ['ADAE'],
+    blocked_datasets: [],
+    review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
+  }
+});
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  source: state.lastStudyLoopResult.source,
+  detail: nodes.get('studyLoopResultDetail').textContent,
+  html: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_study_loop_progress_result.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["source"], "graph_progress")
+        self.assertIn("Recovered from graph progress.", result["detail"])
+        self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
+        self.assertIn("ADAE", result["html"])
+        self.assertIn("Code review", result["html"])
+
+    def test_index_clears_stale_study_loop_result_when_progress_has_none(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.lastStudyLoopResult = {
+  source: 'graph_progress',
+  message: 'Old run result',
+  started_datasets: ['ADAE'],
+  blocked_datasets: [],
+  review_queue: []
+};
+applyRunProgress({ target_datasets: ['ADLB'], study_loop_result: {} });
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  result: state.lastStudyLoopResult,
+  title: nodes.get('studyLoopResultTitle').textContent,
+  html: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_study_loop_clear_empty_progress.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIsNone(result["result"])
+        self.assertEqual(result["title"], "No batch start yet")
+        self.assertIn("No study-level dataset dispatch has been started", result["html"])
+
+    def test_index_start_study_loop_keeps_graph_progress_result_over_command_response(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: '',
+      checked: id === 'llmAllowExternal',
+      disabled: false,
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('studyDir').value = 'D:/tmp/study';
+node('runId').value = 'run_ui_study_loop_priority';
+node('configPath').value = '';
+node('rscriptPath').value = '';
+node('modelMode').value = 'mock';
+node('reviewer').value = 'local_user';
+let progressCalls = 0;
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  if (url === '/runs/native-study-loop') {
+    return {
+      ok: true,
+      json: async () => ({
+        status: 'needs_review',
+        message: 'Command response should be fallback only.',
+        started_datasets: ['ADAE'],
+        blocked_datasets: [],
+        review_queue: [],
+        dataset_results: [{dataset: 'ADAE', next_action: 'review_code'}]
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        runnable_datasets: ['ADAE'],
+        blocked_datasets: [],
+        dependency_decisions: [],
+        dependency_resolution: [],
+        datasets: {}
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    progressCalls += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        target_datasets: ['ADAE'],
+        runnable_datasets: ['ADAE'],
+        blocked_datasets: [],
+        review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}],
+        datasets: [{dataset: 'ADAE', next_action: 'review_code', action_label: 'Review generated R code.', blocked: false}],
+        study_loop_result: {
+          source: 'graph_progress',
+          message: 'Graph progress owns the study loop result.',
+          started_datasets: ['ADAE'],
+          blocked_datasets: [],
+          review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
+        }
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return { ok: true, json: async () => ({}) };
+  }
+  return { ok: true, json: async () => ({}) };
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.targetCandidates = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], runnable_datasets: ['ADAE'], blocked_datasets: []};
+state.runProgress = {
+  target_datasets: ['ADAE'],
+  runnable_datasets: ['ADAE'],
+  blocked_datasets: [],
+  datasets: [{dataset: 'ADAE', next_action: 'generate_code', action_label: 'Generate R code.', blocked: false}]
+};
+await startNativeStudyLoop();
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  source: state.lastStudyLoopResult.source,
+  message: state.lastStudyLoopResult.message,
+  progressCalls,
+  detail: nodes.get('studyLoopResultDetail').textContent
+}));
+"""
+        script_path = TMP_ROOT / "ui_study_loop_priority.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertGreaterEqual(result["progressCalls"], 1)
+        self.assertEqual(result["source"], "graph_progress")
+        self.assertEqual(result["message"], "Graph progress owns the study loop result.")
+        self.assertIn("Recovered from graph progress.", result["detail"])
 
     def test_index_exposes_terminal_failure_triage_actions(self) -> None:
         client = TestClient(create_app())
@@ -3307,9 +3570,15 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             params={"study_dir": str(study_dir)},
         )
         self.assertEqual(progress.status_code, 200, progress.text)
-        review_queue = {(item["dataset"], item["name"]) for item in progress.json()["review_queue"]}
+        progress_payload = progress.json()
+        review_queue = {(item["dataset"], item["name"]) for item in progress_payload["review_queue"]}
         self.assertIn(("ADAE", "code_review"), review_queue)
         self.assertIn(("ADCM", "code_review"), review_queue)
+        self.assertEqual(progress_payload["study_loop_result"]["source"], "graph_progress")
+        self.assertEqual(progress_payload["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
+        loop_review_queue = {(item["dataset"], item["name"]) for item in progress_payload["study_loop_result"]["review_queue"]}
+        self.assertIn(("ADAE", "code_review"), loop_review_queue)
+        self.assertIn(("ADCM", "code_review"), loop_review_queue)
 
     def test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets(self) -> None:
         study_dir = _workspace_dir("phase8_native_study_loop_dependency_block") / "MY_STUDY"
