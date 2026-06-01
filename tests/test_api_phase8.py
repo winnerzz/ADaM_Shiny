@@ -656,6 +656,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("/runs/native-study-loop", response.text)
         self.assertIn("startNativeStudyLoop", response.text)
         self.assertIn("This does not approve draft specs, approve code, or run R.", response.text)
+        self.assertNotIn("/native-resume", response.text)
+        self.assertNotIn("explicit_resume_endpoint", response.text)
         self.assertIn("finalize-inputs", response.text)
         self.assertIn("finalizedInputsByDataset", response.text)
         self.assertIn("Audit Timeline", response.text)
@@ -720,6 +722,8 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("function studyStatusPill(progress, blocked, targets)", html)
         self.assertIn("function nativeResumeProgressNote()", html)
         self.assertIn("Native resume: off. Use the visible review buttons; restart recovery reads saved graph state.", html)
+        self.assertNotIn("explicit_resume_endpoint", progress_body)
+        self.assertNotIn("native-resume", progress_body)
         self.assertIn("function studyQualityText(rollup)", html)
         self.assertIn("review-only/demo output(s)", html)
         self.assertIn("targetSpecGateSatisfied(active)", html)
@@ -933,6 +937,84 @@ console.log(JSON.stringify({
         self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
         self.assertIn("ADAE", result["html"])
         self.assertIn("Code review", result["html"])
+
+    def test_index_renders_native_resume_available_as_status_not_action(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_native_resume_status' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+const progress = {
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: true,
+    scope: 'native_pilot_interrupts_only',
+    boundary: 'durable_native_interrupt_resume',
+    explicit_resume_endpoint: 'POST /runs/{run_id}/datasets/{dataset}/native-resume'
+  },
+  study_loop_result: {
+    source: 'graph_progress',
+    native_resume_available: true,
+    native_resume_scope: 'native_pilot_interrupts_only',
+    resume_boundary: 'durable_native_interrupt_resume',
+    message: 'Started ADAE and stopped at human review gates.',
+    started_datasets: ['ADAE'],
+    blocked_datasets: [],
+    review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
+  }
+};
+state.runProgress = progress;
+applyRunProgress(progress);
+renderStudyProgress(state.targetCandidates, [], []);
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  progressHtml: nodes.get('studyProgressSteps').innerHTML,
+  detail: nodes.get('studyLoopResultDetail').textContent,
+  loopHtml: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_available_status.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        rendered = " ".join([result["progressHtml"], result["detail"], result["loopHtml"]])
+        self.assertIn("Native resume: available for pilot graph interrupts only.", rendered)
+        self.assertIn("Durable native resume is available for pilot graph interrupts only.", rendered)
+        self.assertNotIn("native-resume", rendered)
+        self.assertNotIn("explicit_resume_endpoint", rendered)
+        self.assertNotIn("<button", rendered)
 
     def test_index_clears_stale_study_loop_result_when_progress_has_none(self) -> None:
         client = TestClient(create_app())

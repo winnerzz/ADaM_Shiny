@@ -7248,6 +7248,34 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume UI Boundary Guard Slice
+
+Completed:
+
+- Added local UI contract coverage confirming the index page does not expose
+  `native_resume.explicit_resume_endpoint` and does not include a
+  `/native-resume` call path.
+- Added a render harness test confirming that when
+  `native_resume.available == true`, the UI only displays durable native resume
+  as status text and does not create a button or endpoint call.
+- Locked the current product boundary:
+  - the UI may show the `Recovery` explanation;
+  - default product actions still use visible split-flow review buttons;
+  - the native resume endpoint remains an explicit API, not a default UI
+    action.
+
+Current boundary:
+
+- This slice adds no button, no API, and no graph state transition.
+- A UI entry for native resume should only be designed after durable
+  checkpointer/native resume becomes a default product capability.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action -v
+```
+
 ### 2026-06-01 - LG2.1 Service Checkpointer Backend Fail-Closed API Slice
 
 Completed:

@@ -6703,6 +6703,32 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume UI Boundary Guard 切片
+
+已完成：
+
+- 为本地 UI 增加合同测试，确认首页不会暴露
+  `native_resume.explicit_resume_endpoint`，也不会出现 `/native-resume`
+  调用路径。
+- 增加 render harness 测试，确认 `native_resume.available == true` 时 UI 只显示
+  “durable native resume available”的状态说明，不生成按钮或 endpoint 调用。
+- 锁住当前产品边界：
+  - UI 可以展示 `Recovery` 说明；
+  - 默认产品操作仍通过可见的 split-flow review buttons；
+  - native resume endpoint 仍是显式 API，不是默认 UI 动作。
+
+当前边界：
+
+- 本切片不新增按钮、不新增 API、不改变 graph state 或状态转换。
+- 等 durable checkpointer/native resume 真正成为产品默认能力后，才能重新设计 UI
+  入口。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action -v
+```
+
 ### 2026-06-01 - LG2.1 Service Checkpointer Backend Fail-Closed API 切片
 
 已完成：
