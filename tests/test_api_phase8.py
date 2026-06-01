@@ -4657,6 +4657,75 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(download.status_code, 200, download.text)
         self.assertIn("canonical validation", download.text)
 
+    def test_graph_state_advanced_artifacts_ignore_unrecorded_run_files(self) -> None:
+        study_dir = _workspace_dir("phase8_graph_advanced_artifact_guard") / "MY_STUDY"
+        run_dir = study_dir / "runs" / "run_graph_advanced_artifact_guard"
+        planning_dir = run_dir / "planning"
+        planning_dir.mkdir(parents=True)
+        stale_plan = planning_dir / "dependency_plan.json"
+        stale_plan.write_text(json.dumps({"stale": True}), encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_advanced_artifact_guard",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_graph_advanced_artifact_guard").model_copy(deep=True)
+        state.artifacts = [
+            artifact
+            for artifact in state.artifacts
+            if not bool(artifact.metadata.get("planning_artifact"))
+        ]
+        (run_dir / "graph_state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        client = TestClient(create_app())
+
+        review = client.get(
+            "/runs/run_graph_advanced_artifact_guard/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+        artifact_read = client.post(
+            "/runs/run_graph_advanced_artifact_guard/artifacts/read",
+            params={"study_dir": str(study_dir)},
+            json={"relative_path": "planning/dependency_plan.json"},
+        )
+
+        self.assertEqual(review.status_code, 200, review.text)
+        self.assertFalse(
+            any("dependency_plan" in key for key in review.json()["advanced_artifacts"]),
+            review.json()["advanced_artifacts"],
+        )
+        self.assertEqual(artifact_read.status_code, 404)
+
+    def test_graph_state_records_dependency_plan_as_run_artifact(self) -> None:
+        study_dir = _workspace_dir("phase8_graph_recorded_plan_artifact") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="MY_STUDY",
+            run_id="run_graph_recorded_plan_artifact",
+            target_datasets=["ADSL"],
+        )
+        client = TestClient(create_app())
+
+        review = client.get(
+            "/runs/run_graph_recorded_plan_artifact/review-summary",
+            params={"study_dir": str(study_dir)},
+        )
+        artifact_read = client.post(
+            "/runs/run_graph_recorded_plan_artifact/artifacts/read",
+            params={"study_dir": str(study_dir)},
+            json={"relative_path": "planning/dependency_plan.json"},
+        )
+
+        self.assertEqual(review.status_code, 200, review.text)
+        advanced = review.json()["advanced_artifacts"]
+        self.assertTrue(any("dependency_plan" in key for key in advanced), advanced)
+        self.assertEqual(artifact_read.status_code, 200, artifact_read.text)
+        self.assertEqual(artifact_read.json()["study_id"], "MY_STUDY")
+        self.assertEqual(artifact_read.json()["run_id"], "run_graph_recorded_plan_artifact")
+
     def test_code_approval_is_invalidated_when_code_or_inputs_change(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_stale_code_approval")
         client = TestClient(create_app())

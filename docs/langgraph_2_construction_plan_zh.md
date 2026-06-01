@@ -6799,6 +6799,50 @@ python -B -m compileall -q src tests
 OK
 ```
 
+### 2026-06-01 - LG2.8 Run-Level Artifact Read-Model Guard 切片
+
+已完成：
+
+- 收紧 graph-owned run 的 study/run 级 artifact read model：
+  - 只要 run 已经有 canonical `graph_state.json`，Advanced artifacts 不再展示目录里
+    偶然存在的 `planning/dependency_plan.json`、`planning/dependency_review.md`
+    或其他 run-level 文件；
+  - run-level artifact 必须先登记在 canonical `StudyRunState.artifacts`，才会被
+    review-summary 的 Advanced 面板展示；
+  - `/runs/{run_id}/artifacts/read` 在 graph-owned run 中也改为 fail closed：未登记在
+    `StudyRunState.artifacts` 或对应 dataset state 中的 JSON artifact 不能被读取。
+- `GraphGateway._persist_graph_state()` 现在会把 dependency plan 和 dependency
+  review markdown 作为 graph-owned planning artifacts 写入 `runs/{run_id}/planning/`，
+  并登记到 canonical study artifacts。
+- Legacy/artifact-only run 仍保留旧的目录 fallback；这个收紧只在
+  `graph_state.json` 已存在时生效。
+
+边界：
+
+- 这个切片不改变 dependency planning 逻辑、真实 LLM 生成、R 执行、compare 算法或
+  UI 布局。
+- 它只解决“目录里有文件”和“当前 graph state 授权该文件”之间的权威边界，防止旧
+  planning/audit 文件被误展示成当前运行事实。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_advanced_artifacts_ignore_unrecorded_run_files tests.test_api_phase8.Phase8ApiTests.test_graph_state_records_dependency_plan_as_run_artifact -v
+Ran 2 tests in 0.243s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection -v
+Ran 1 test in 0.046s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_planning_artifacts_are_upserted tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection -v
+Ran 2 tests in 0.082s - OK
+
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 271 tests in 28.959s - OK (skipped=3)
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.8 Review Summary 损坏 Graph Fail-Closed 切片
 
 已完成：

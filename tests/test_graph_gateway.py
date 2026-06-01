@@ -407,6 +407,41 @@ class GraphGatewayTests(unittest.TestCase):
         )
         self.assertTrue(consistency["consistent"], consistency["mismatches"])
 
+    def test_gateway_dependency_planning_artifacts_are_upserted(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_plan_artifact_upsert") / "PSY201"
+        study_dir.mkdir(parents=True)
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_gateway_plan_artifact_upsert",
+            target_datasets=["ADSL"],
+        )
+        state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_gateway_plan_artifact_upsert",
+        ).model_copy(deep=True)
+
+        gateway._persist_graph_state(study_dir, state, node="test_repeated_planning_artifact_persist")
+        reloaded = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg2_gateway_plan_artifact_upsert",
+        )
+        artifact_ids = [artifact.artifact_id for artifact in reloaded.artifacts]
+
+        self.assertEqual(
+            artifact_ids.count("dependency_plan_psy201_run_lg2_gateway_plan_artifact_upsert"),
+            1,
+        )
+        self.assertEqual(
+            artifact_ids.count("dependency_review_psy201_run_lg2_gateway_plan_artifact_upsert"),
+            1,
+        )
+        self.assertEqual(
+            artifact_ids.count("agent_summary_psy201_run_lg2_gateway_plan_artifact_upsert"),
+            1,
+        )
+
     def test_gateway_checkpoint_can_be_read_from_same_graph_instance(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_restart") / "PSY201"
         study_dir.mkdir(parents=True)

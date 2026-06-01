@@ -7352,6 +7352,52 @@ python -B -m compileall -q src tests
 OK
 ```
 
+### 2026-06-01 - LG2.8 Run-Level Artifact Read-Model Guard Slice
+
+Completed:
+
+- Tightened study/run-level artifact read models for graph-owned runs:
+  - when canonical `graph_state.json` exists, Advanced artifacts no longer show
+    run-level files merely because `planning/dependency_plan.json`,
+    `planning/dependency_review.md`, or similar files exist on disk;
+  - run-level artifacts must first be recorded in canonical
+    `StudyRunState.artifacts` before review-summary exposes them;
+  - `/runs/{run_id}/artifacts/read` now fails closed for graph-owned runs unless
+    the requested JSON artifact is authorized by `StudyRunState.artifacts` or by
+    the matching dataset state.
+- `GraphGateway._persist_graph_state()` now writes dependency plan and
+  dependency review markdown as graph-owned planning artifacts under
+  `runs/{run_id}/planning/`, then records them in canonical study artifacts.
+- Legacy/artifact-only runs keep their previous directory fallback. The stricter
+  behavior only applies once `graph_state.json` exists.
+
+Boundary:
+
+- This slice does not change dependency planning logic, real LLM generation, R
+  execution, comparison logic, or UI layout.
+- It only fixes the authority boundary between "a file exists in the run
+  directory" and "the current graph state authorizes this file as a product
+  artifact."
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_state_advanced_artifacts_ignore_unrecorded_run_files tests.test_api_phase8.Phase8ApiTests.test_graph_state_records_dependency_plan_as_run_artifact -v
+Ran 2 tests in 0.243s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection -v
+Ran 1 test in 0.046s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_planning_artifacts_are_upserted tests.test_graph_gateway.GraphGatewayTests.test_gateway_dependency_plan_writes_consistent_workflow_projection -v
+Ran 2 tests in 0.082s - OK
+
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway -v
+Ran 271 tests in 28.959s - OK (skipped=3)
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.8 Review Summary Corrupt Graph Fail-Closed Slice
 
 Completed:

@@ -2076,9 +2076,12 @@ def _json_artifact_path_for_read(root: Path, run_id: str, relative_path: str) ->
     )
     if graph_state is None:
         return target_path
+    study_artifact_path = _graph_study_artifact_path(run_dir, graph_state, canonical_relative)
+    if study_artifact_path is not None:
+        return study_artifact_path.resolve()
     guarded = _guarded_dataset_artifact_request(canonical_relative)
     if guarded is None:
-        return target_path
+        raise ApiServiceError(f"Artifact is not recorded in canonical graph state: {relative_path}")
     dataset, kind = guarded
     dataset_state = _graph_dataset_state(graph_state, dataset)
     guarded_path = _graph_dataset_artifact_path(run_dir, dataset_state, kind)
@@ -2101,6 +2104,25 @@ def _guarded_dataset_artifact_request(relative_path: Path) -> tuple[str, str] | 
         return lower_name.removesuffix("_compare_report.json").upper(), "compare_report"
     if folder == "llm" and lower_name.endswith("_parsed_response.json"):
         return lower_name.removesuffix("_parsed_response.json").upper(), "parsed_response"
+    return None
+
+
+def _graph_study_artifact_path(
+    run_dir: Path,
+    graph_state: StudyRunState,
+    relative_path: Path,
+) -> Path | None:
+    normalized_relative = Path(str(relative_path).replace("\\", "/"))
+    for artifact in graph_state.artifacts:
+        candidate = _existing_run_artifact_path(run_dir, str(artifact.path))
+        if candidate is None:
+            continue
+        try:
+            candidate_relative = candidate.resolve().relative_to(run_dir.resolve())
+        except ValueError:
+            continue
+        if candidate_relative == normalized_relative:
+            return candidate
     return None
 
 
@@ -2329,12 +2351,8 @@ def _datasets_from_outputs(run_dir: Path) -> list[str]:
 
 
 def _advanced_artifacts(run_dir: Path, *, graph_state: StudyRunState | None = None) -> dict[str, str]:
-    candidates = {
-        "dependency_plan": run_dir / "planning" / "dependency_plan.json",
-        "dependency_review": run_dir / "planning" / "dependency_review.md",
-        "audit_manifest": run_dir / "audit" / "manifest.json",
-    }
     if graph_state is not None:
+        candidates: dict[str, Path] = {}
         for artifact in graph_state.artifacts:
             key = f"{artifact.kind}_{artifact.artifact_id}"
             path = _existing_run_artifact_path(run_dir, str(artifact.path))
@@ -2347,6 +2365,11 @@ def _advanced_artifacts(run_dir: Path, *, graph_state: StudyRunState | None = No
                 if path is not None:
                     candidates[key] = path
         return {key: str(path.as_posix()) for key, path in candidates.items() if path.exists()}
+    candidates = {
+        "dependency_plan": run_dir / "planning" / "dependency_plan.json",
+        "dependency_review": run_dir / "planning" / "dependency_review.md",
+        "audit_manifest": run_dir / "audit" / "manifest.json",
+    }
     for path in sorted((run_dir / "llm").glob("*_context.json")) if (run_dir / "llm").exists() else []:
         candidates[f"llm_context_{path.stem.removesuffix('_context')}"] = path
     for path in sorted((run_dir / "llm").glob("*_compact_prompt.txt")) if (run_dir / "llm").exists() else []:
