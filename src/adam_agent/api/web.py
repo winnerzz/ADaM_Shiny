@@ -2001,7 +2001,6 @@ INDEX_HTML = r"""<!doctype html>
       if (!studyDir() || !runId()) return null;
       try {
         const graph = await api(`/runs/${encodeURIComponent(runId())}/graph-state?study_dir=${encodeURIComponent(studyDir())}`);
-        state.graphState = graph;
         applyGraphState(graph);
         return graph;
       } catch {
@@ -2045,6 +2044,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function applyGraphState(graph) {
+      state.graphState = graph || null;
       const recoveredPlan = planFromGraphState(graph);
       if (recoveredPlan) {
         state.plan = recoveredPlan;

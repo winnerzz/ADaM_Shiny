@@ -7248,6 +7248,49 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Graph-State Read-Model Apply Boundary Slice
+
+Completed:
+
+- Tightened the local UI `applyGraphState(graph)` contract:
+  - the function itself stores the backend graph-state read model in
+    `state.graphState`;
+  - `refreshGraphState()` no longer writes the same field before calling it;
+  - graph-state and progress read-model application now have symmetric entry
+    points.
+- Added UI contract coverage:
+  - `refreshGraphState()` must call `applyGraphState(graph)`;
+  - `applyGraphState(null)` only clears `state.graphState`;
+  - null apply does not change the existing target, planning selection, or plan,
+    and does not call `renderPlan()`.
+
+Current boundary:
+
+- This is browser read-model application cleanup. It does not change APIs,
+  GraphGateway, graph state transitions, or product buttons.
+- Backend graph state remains the fact source; the UI only stores and renders
+  the fetched projection.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_refresh_graph_state_uses_apply_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_apply_graph_state_null_clears_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae -v
+Ran 3 tests in 0.153s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 131 tests in 16.782s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Progress Read-Model Apply Boundary Slice
 
 Completed:

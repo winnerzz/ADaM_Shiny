@@ -6703,6 +6703,46 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Graph-State Read-Model Apply Boundary 切片
+
+已完成：
+
+- 收紧本地 UI 的 `applyGraphState(graph)` 语义：
+  - 函数自身负责把 backend graph-state read model 写入 `state.graphState`；
+  - `refreshGraphState()` 不再在调用前手动写同一字段；
+  - graph-state 和 progress read-model 应用入口现在保持对称。
+- 增加 UI contract 测试：
+  - `refreshGraphState()` 必须通过 `applyGraphState(graph)`；
+  - `applyGraphState(null)` 只清空 `state.graphState`；
+  - null apply 不会改变现有 target、planning selection 或 plan，也不会调用
+    `renderPlan()`。
+
+当前边界：
+
+- 这是浏览器 read-model 应用边界清理，不改变 API、GraphGateway、graph state
+  transition 或产品按钮。
+- backend graph state 仍然是事实来源；UI 只是保存和渲染读取到的 projection。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_refresh_graph_state_uses_apply_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_apply_graph_state_null_clears_graph_state tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae -v
+Ran 3 tests in 0.153s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 131 tests in 16.782s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Progress Read-Model Apply Boundary 切片
 
 已完成：

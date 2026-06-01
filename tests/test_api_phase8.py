@@ -1404,8 +1404,82 @@ console.log(JSON.stringify({
         self.assertIn("state.selectedTarget = targets[0];", render_body)
         self.assertIn("targetCanAutoPlan(state.selectedTarget)", render_body)
         self.assertIn("state.selectedTarget = progressTargets[0];", progress_body)
+        self.assertIn("state.graphState = graph || null;", graph_body)
         self.assertIn("state.selectedTarget = graphTargets[0];", graph_body)
         self.assertNotIn("includes('ADAE') ? 'ADAE'", auto_body + render_body + progress_body + graph_body)
+
+    def test_index_refresh_graph_state_uses_apply_graph_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        refresh_body = html.split("async function refreshGraphState()", 1)[1].split("async function refreshRunProgress()", 1)[0]
+        graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
+        self.assertIn("applyGraphState(graph);", refresh_body)
+        self.assertNotIn("state.graphState = graph;", refresh_body)
+        self.assertIn("state.graphState = graph || null;", graph_body)
+
+    def test_index_apply_graph_state_null_clears_graph_state(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById() {
+    return {
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    };
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.graphState = { study_id: 'PSY201', run_id: 'run_ui_graph_null', target_datasets: ['ADAE'] };
+state.plan = { dependency_review_status: 'approved', runnable_datasets: ['ADAE'] };
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+let renderPlanCalls = 0;
+const originalRenderPlan = renderPlan;
+renderPlan = (plan) => { renderPlanCalls += 1; originalRenderPlan(plan); };
+applyGraphState(null);
+console.log(JSON.stringify({
+  graphState: state.graphState,
+  plan: state.plan,
+  selectedTarget: state.selectedTarget,
+  selectedTargetsForPlan: state.selectedTargetsForPlan,
+  renderPlanCalls
+}));
+"""
+        script_path = TMP_ROOT / "ui_apply_graph_state_null.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIsNone(result["graphState"])
+        self.assertEqual(result["plan"]["dependency_review_status"], "approved")
+        self.assertEqual(result["selectedTarget"], "ADAE")
+        self.assertEqual(result["selectedTargetsForPlan"], ["ADAE"])
+        self.assertEqual(result["renderPlanCalls"], 0)
 
     def test_index_keeps_reference_only_targets_unplanned_until_explicitly_selected(self) -> None:
         client = TestClient(create_app())
