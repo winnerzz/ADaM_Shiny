@@ -7578,6 +7578,57 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Review Summary 恢复 Code Review 材料切片
+
+已完成：
+
+- UI 的 `loadReviewSummary()` 现在会把 `/review-summary` 返回的
+  `dataset_reviews[].generated_code`、`generated_code_path`、assumptions、
+  risk points 和 warnings 合并进 `state.generatedByDataset`。
+- 这样页面刷新、切换 target 或从 graph progress 恢复后，只要 graph 下一步是
+  `review_code`，UI 可以从持久 review-summary artifact 重新显示代码审核材料。
+- 恢复有 graph gate：只有 graph progress 或 graph state 已经证明该 dataset
+  处于 code-review / approved-code execution / code artifact 状态时，review-summary
+  才能补齐代码文本。
+- 该恢复只补齐浏览器 read model，不写 graph state、不批准代码、不执行 R。
+- 如果 graph 仍要求 `review_code` 且 review-summary 显示 dataset 仍是
+  `needs_review`，UI 会清掉本地 `reviewByDataset` 中可能残留的旧 approval，
+  防止浏览器缓存误导按钮状态。
+
+边界：
+
+- graph progress 的 `next_action` 仍然是按钮可用性的权威来源。
+- review-summary 只是 artifact/read-model 恢复通道，不能单独让 code approval
+  或 execution 越过 graph gate。
+- graph 已经批准代码、下一步是 execution 时，review-summary 的旧 `needs_review`
+  状态不会清除 graph-approved 的本地显示缓存。
+- 该切片不新增 endpoint，不改变 code-review / execute-approved-code 后端行为。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_load_review_summary_recovers_generated_code_for_graph_review_gate -v
+Ran 1 test in 0.098s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions -v
+Ran 3 tests in 0.232s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，第一次只读审查结论：NO-GO。
+- 它指出：如果 review-summary 先恢复代码，而 graph/progress refresh 失败，浏览器可能
+  在没有 graph gate 的情况下通过 fallback 点亮 code approval。
+- 已修复：
+  - `loadReviewSummary()` 现在先刷新 graph read models，再合并 review-summary；
+  - `applyReviewSummaryDataset()` 只有在 graph progress/state 已证明 code-review、
+    approved-code execution 或 code artifact 状态时才恢复代码文本；
+  - 新增负向测试，证明 graph/progress 不可用时 review-summary 不能恢复 generated
+    code、不能点亮 approve、也不会 POST `/code-review`。
+- 复审结论：GO。
+- 非阻断建议：后续可补充 graph-state 成功但 progress 失败时的恢复测试；当前实现把
+  graph_state 视为 workflow truth，符合项目原则，不阻断本切片。
+
 ### 2026-06-01 - LG2.3 Native Study Product Loop API/UI 接线切片
 
 已完成：

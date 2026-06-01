@@ -3957,12 +3957,13 @@ INDEX_HTML = r"""<!doctype html>
     async function loadReviewSummary(id) {
       try {
         state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}`);
+        await refreshGraphReadModels();
         for (const review of state.runReview?.dataset_reviews || []) {
+          applyReviewSummaryDataset(review);
           if (review?.compare_summary) {
             state.compareResults[review.dataset] = review.compare_summary;
           }
         }
-        await refreshGraphReadModels();
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
         byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
@@ -3976,6 +3977,49 @@ INDEX_HTML = r"""<!doctype html>
         renderAdvanced();
         renderGraphAwareDashboard();
       }
+    }
+
+    function applyReviewSummaryDataset(review) {
+      const target = String(review?.dataset || '').toUpperCase();
+      if (!target) return;
+      if ((review.generated_code_path || review.generated_code) && graphAllowsReviewSummaryCodeRecovery(target)) {
+        const existingGenerated = state.generatedByDataset[target] || {};
+        state.generatedByDataset[target] = {
+          ...existingGenerated,
+          study_id: state.runReview?.study_id || state.studyId,
+          run_id: state.runReview?.run_id || runId(),
+          dataset: target,
+          status: existingGenerated.status || 'generated',
+          code_path: review.generated_code_path || existingGenerated.code_path || null,
+          generated_code: review.generated_code || existingGenerated.generated_code || '',
+          assumptions: review.assumptions || existingGenerated.assumptions || [],
+          risk_points: review.risk_points || existingGenerated.risk_points || [],
+          warnings: review.warnings || existingGenerated.warnings || [],
+          used_inputs: existingGenerated.used_inputs || [],
+          expected_outputs: existingGenerated.expected_outputs || []
+        };
+      }
+      if (String(review.status || '').toLowerCase() === 'needs_review' && review.generated_code && graphRequiresCodeReview(target)) {
+        delete state.reviewByDataset[target];
+      }
+    }
+
+    function graphAllowsReviewSummaryCodeRecovery(target) {
+      const progress = datasetProgressFor(target);
+      const nextAction = String(progress?.next_action || '');
+      if (['review_code', 'execute_approved_code', 'retry_approved_execution'].includes(nextAction)) return true;
+      const graphDataset = state.graphState?.datasets?.[target] || {};
+      const codeStatus = String(graphDataset.code_state?.status || '');
+      return ['generated', 'approved', 'stale'].includes(codeStatus);
+    }
+
+    function graphRequiresCodeReview(target) {
+      const progress = datasetProgressFor(target);
+      if (String(progress?.next_action || '') === 'review_code') return true;
+      const graphDataset = state.graphState?.datasets?.[target] || {};
+      const interrupt = graphDataset.current_interrupt || {};
+      if (String(interrupt.name || '') === 'code_review' && String(interrupt.status || 'open') === 'open') return true;
+      return String(graphDataset.code_state?.status || '') === 'generated';
     }
 
     function selectedDatasetReview() {

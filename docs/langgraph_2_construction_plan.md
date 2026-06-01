@@ -8101,6 +8101,66 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Review Summary Code Review Recovery Slice
+
+Completed:
+
+- UI `loadReviewSummary()` now merges `/review-summary`
+  `dataset_reviews[].generated_code`, `generated_code_path`, assumptions, risk
+  points, and warnings into `state.generatedByDataset`.
+- After a browser refresh, target switch, or graph-progress recovery, if graph
+  progress says the next action is `review_code`, the UI can restore the code
+  review material from persisted review-summary artifacts.
+- Recovery is graph-gated: review-summary can fill code text only when graph
+  progress or graph state already proves the dataset is at a code-review,
+  approved-code execution, or code-artifact state.
+- This is a browser read-model recovery only. It does not write graph state,
+  approve code, or execute R.
+- If graph still requires `review_code` and review-summary marks the dataset as
+  `needs_review`, the UI clears a stale local `reviewByDataset` approval for
+  that dataset so browser cache cannot make execution look available.
+
+Current boundary:
+
+- Graph progress `next_action` remains the authority for button availability.
+- Review-summary can restore review material, but it cannot by itself bypass a
+  graph gate for code approval or execution.
+- When graph has already approved code and the next step is execution, stale
+  `needs_review` wording in review-summary does not clear the graph-approved
+  local display cache.
+- This slice adds no endpoint and does not change backend code-review or
+  approved-code execution behavior.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_load_review_summary_recovers_generated_code_for_graph_review_gate -v
+Ran 1 test in 0.098s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions -v
+Ran 3 tests in 0.232s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, first read-only review: NO-GO.
+- It found that if review-summary restored code before graph/progress refresh
+  failed, browser fallback state could make code approval look available
+  without a graph gate.
+- Fixed:
+  - `loadReviewSummary()` now refreshes graph read models before merging
+    review-summary;
+  - `applyReviewSummaryDataset()` restores code text only when graph
+    progress/state proves code-review, approved-code execution, or code
+    artifact state;
+  - added a negative test proving that when graph/progress are unavailable,
+    review-summary cannot recover generated code, cannot enable approve, and
+    cannot POST `/code-review`.
+- Re-review result: GO.
+- Non-blocking suggestion: later add coverage for graph-state success with
+  progress failure. Current behavior treats graph_state as workflow truth, which
+  matches the project principle and does not block this slice.
+
 ### 2026-06-01 - LG2.1/LG2.8 Native Resume Endpoint Fail-Closed Slice
 
 Completed:

@@ -1704,6 +1704,245 @@ console.log(JSON.stringify({
         self.assertTrue(result["approved"])
         self.assertEqual(result["executionStatus"], "completed")
 
+    def test_index_load_review_summary_recovers_generated_code_for_graph_review_gate(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'runId' ? 'run_ui_review_recovery' : id === 'studyDir' ? 'D:/tmp/study' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    return node(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async (path) => {
+  const url = String(path);
+  if (url.includes('/review-summary')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_review_recovery',
+        dataset_reviews: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          generated_code_path: 'runs/run_ui_review_recovery/code/build_adae.R',
+          generated_code: 'adae <- ae',
+          assumptions: ['AE is available.'],
+          risk_points: ['Human review required.'],
+          warnings: ['Static check limited scope.']
+        }]
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    const graphApproved = node('graphApproved').value === 'yes';
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_review_recovery',
+        target_datasets: ['ADAE'],
+        requested_datasets: ['ADAE'],
+        datasets: {
+          ADAE: {
+            status: graphApproved ? 'pending' : 'needs_review',
+            code_state: {status: graphApproved ? 'approved' : 'generated', code_path: 'runs/run_ui_review_recovery/code/build_adae.R'},
+            current_interrupt: graphApproved ? null : {name: 'code_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    const graphApproved = node('graphApproved').value === 'yes';
+    return {
+      ok: true,
+      json: async () => ({
+        target_datasets: ['ADAE'],
+        blocked_datasets: [],
+        datasets: [{
+          dataset: 'ADAE',
+          status: graphApproved ? 'pending' : 'needs_review',
+          next_action: graphApproved ? 'execute_approved_code' : 'review_code',
+          action_label: graphApproved ? 'Run approved R code locally.' : 'Review generated R code before execution.',
+          blocked: false
+        }]
+      })
+    };
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: []};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'review_code', action_label: 'Review generated R code before execution.', blocked: false}]};
+state.generatedByDataset = {};
+await loadReviewSummary('run_ui_review_recovery');
+const availability = actionAvailability();
+const firstApproveButtonDisabled = nodes.get('approveButton').disabled;
+const firstRunButtonDisabled = nodes.get('runApprovedButton').disabled;
+state.generatedByDataset = {};
+state.graphState = null;
+state.runProgress = null;
+applyReviewSummaryDataset({
+  dataset: 'ADAE',
+  status: 'needs_review',
+  generated_code_path: 'runs/run_ui_review_recovery/code/build_adae.R',
+  generated_code: 'artifact only'
+});
+const artifactOnlyRecovered = Boolean(state.generatedByDataset.ADAE);
+node('graphApproved').value = 'yes';
+state.reviewByDataset = {ADAE: {dataset: 'ADAE', approved: true}};
+await loadReviewSummary('run_ui_review_recovery');
+console.log(JSON.stringify({
+  recoveredCode: state.generatedByDataset.ADAE.generated_code,
+  recoveredPath: state.generatedByDataset.ADAE.code_path,
+  assumptions: state.generatedByDataset.ADAE.assumptions,
+  approveReady: availability.approveCode.ready,
+  runReady: availability.runApproved.ready,
+  approveButtonDisabled: firstApproveButtonDisabled,
+  runButtonDisabled: firstRunButtonDisabled,
+  artifactOnlyRecovered,
+  approvalStillPresent: Boolean(state.reviewByDataset.ADAE?.approved)
+}));
+"""
+        script_path = TMP_ROOT / "ui_review_summary_recovery.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["recoveredCode"], "adae <- ae")
+        self.assertIn("build_adae.R", result["recoveredPath"])
+        self.assertEqual(result["assumptions"], ["AE is available."])
+        self.assertTrue(result["approveReady"])
+        self.assertFalse(result["runReady"])
+        self.assertFalse(result["approveButtonDisabled"])
+        self.assertTrue(result["runButtonDisabled"])
+        self.assertFalse(result["artifactOnlyRecovered"])
+        self.assertTrue(result["approvalStillPresent"])
+
+    def test_index_review_summary_without_graph_gate_cannot_enable_code_approval(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'runId' ? 'run_ui_review_recovery_no_gate' : id === 'studyDir' ? 'D:/tmp/study' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+const calls = [];
+global.fetch = async (path) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/review-summary')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_review_recovery_no_gate',
+        dataset_reviews: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          generated_code_path: 'runs/run_ui_review_recovery_no_gate/code/build_adae.R',
+          generated_code: 'adae <- ae'
+        }]
+      })
+    };
+  }
+  if (url.includes('/graph-state') || url.includes('/progress')) {
+    return {ok: false, json: async () => ({detail: 'graph read model unavailable'})};
+  }
+  if (url.includes('/code-review')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: []};
+await loadReviewSummary('run_ui_review_recovery_no_gate');
+const availability = actionAvailability();
+await approveCode();
+console.log(JSON.stringify({
+  generatedRecovered: Boolean(state.generatedByDataset.ADAE?.generated_code),
+  approveReady: availability.approveCode.ready,
+  approveButtonDisabled: nodes.get('approveButton').disabled,
+  codeReviewPosted: calls.some((item) => item.includes('/code-review')),
+  reviewPane: nodes.get('reviewPane').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_review_summary_no_gate.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertFalse(result["generatedRecovered"])
+        self.assertFalse(result["approveReady"])
+        self.assertTrue(result["approveButtonDisabled"])
+        self.assertFalse(result["codeReviewPosted"])
+        self.assertIn("Generate code after choosing a target", result["reviewPane"])
+
     def test_index_action_availability_next_action_matrix(self) -> None:
         client = TestClient(create_app())
 
