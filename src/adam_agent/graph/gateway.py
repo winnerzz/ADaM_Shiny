@@ -122,6 +122,15 @@ class GraphGatewayNativeDatasetLoopResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayNativeDatasetResumeResult(GraphGatewayResult):
+    """Explicit native dataset interrupt resume result."""
+
+    interrupt: str
+    decision: str
+    execution: GraphGatewayExecutionResult | None = None
+
+
+@dataclass(frozen=True)
 class GraphGatewayNativeDatasetLoopDraftResult(GraphGatewayResult):
     """Internal native dataset-loop draft-spec continuation result."""
 
@@ -255,6 +264,13 @@ class GraphGateway:
 
         if self._checkpointer_bundle is not None:
             self._checkpointer_bundle.close()
+
+    def native_interrupt_resume_available(self) -> bool:
+        """Return whether this gateway can resume native LangGraph interrupts durably."""
+
+        if self._checkpointer_bundle is None:
+            return False
+        return bool(self._checkpointer_bundle.persistent)
 
     def __enter__(self) -> GraphGateway:
         return self
@@ -1223,6 +1239,84 @@ class GraphGateway:
             review_path=review.review_path,
             execution=execution,
         )
+
+    def resume_native_dataset_interrupt(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        execute_after_approval: bool = False,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayNativeDatasetResumeResult:
+        """Resume a native dataset interrupt only when durable checkpointing is active."""
+
+        if not self.native_interrupt_resume_available():
+            raise ValueError(
+                "Native LangGraph interrupt resume is not enabled for this run. "
+                "Use the split-flow review endpoints, or enable a durable LangGraph checkpointer."
+            )
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        dataset_state = graph_state.datasets.get(target)
+        interrupt = dataset_state.current_interrupt if dataset_state is not None else None
+        if interrupt is None or interrupt.status != "open":
+            raise ValueError(f"No open native dataset interrupt exists for {target}.")
+        if interrupt.name == "draft_spec_review":
+            draft_result = self.resume_native_draft_spec_review(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            return GraphGatewayNativeDatasetResumeResult(
+                graph_state=draft_result.graph_state,
+                workflow_projection=draft_result.workflow_projection,
+                interrupt="draft_spec_review",
+                decision=draft_result.decision,
+                execution=None,
+            )
+        if interrupt.name == "code_review":
+            code_result = self.resume_native_dataset_product_loop(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=reviewer,
+                notes=notes,
+                execute_after_approval=execute_after_approval,
+                rscript_path=rscript_path,
+            )
+            return GraphGatewayNativeDatasetResumeResult(
+                graph_state=code_result.graph_state,
+                workflow_projection=code_result.workflow_projection,
+                interrupt="code_review",
+                decision=code_result.decision,
+                execution=code_result.execution,
+            )
+        if interrupt.name == "terminal_failure":
+            terminal_result = self.resume_native_terminal_failure_review(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            return GraphGatewayNativeDatasetResumeResult(
+                graph_state=terminal_result.graph_state,
+                workflow_projection=terminal_result.workflow_projection,
+                interrupt="terminal_failure",
+                decision=terminal_result.decision,
+                execution=None,
+            )
+        raise ValueError(f"Unsupported native dataset interrupt for {target}: {interrupt.name}.")
 
     def record_code_review(
         self,

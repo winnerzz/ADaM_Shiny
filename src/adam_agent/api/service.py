@@ -30,6 +30,7 @@ from adam_agent.api.models import (
     FinalizeInputsResponse,
     GenerateCodeResponse,
     LLMConnectionTestResponse,
+    NativeDatasetResumeResponse,
     NativeStudyDatasetStartResult,
     NativeStudyStartResponse,
     ProductWorkspaceResponse,
@@ -498,6 +499,48 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
         dataset_results=dataset_results,
         message=message,
         **_gateway_compatibility_metadata(result),
+    )
+
+
+def resume_native_dataset_interrupt(run_id: str, dataset: str, request: Any) -> NativeDatasetResumeResponse:
+    """Resume a durable graph-native dataset interrupt when the runtime supports it."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    try:
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.resume_native_dataset_interrupt(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset=target,
+                decision=request.decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+                execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    dataset_state = result.graph_state.datasets.get(target)
+    next_action = ""
+    if dataset_state is not None and dataset_state.current_interrupt is not None:
+        next_action = dataset_state.current_interrupt.name
+    executed = bool(getattr(result, "execution", None))
+    return NativeDatasetResumeResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        dataset=target,
+        interrupt=result.interrupt,
+        decision=result.decision,
+        status=dataset_state.status if dataset_state is not None else result.graph_state.status,
+        current_interrupt=dataset_state.current_interrupt.model_dump(mode="json")
+        if dataset_state is not None and dataset_state.current_interrupt is not None
+        else None,
+        executed=executed,
+        next_action=next_action,
+        **_gateway_projection_paths(result),
     )
 
 

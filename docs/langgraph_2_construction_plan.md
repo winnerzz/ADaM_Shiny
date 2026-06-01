@@ -7856,3 +7856,73 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.1/LG2.8 Native Resume Endpoint Fail-Closed Slice
+
+Completed:
+
+- Added explicit API:
+  `POST /runs/{run_id}/datasets/{dataset}/native-resume`.
+- Added `NativeDatasetResumeRequest` / `NativeDatasetResumeResponse`. The
+  request model only keeps fields actually needed by native resume:
+  - `study_dir`
+  - `decision`
+  - `reviewer`
+  - `notes`
+  - `execute_after_approval`
+  - `rscript_path`
+- `GraphGateway.resume_native_dataset_interrupt()` is now the single native
+  dataset interrupt resume entry point, but it first checks whether durable
+  native resume is available.
+- With the default memory checkpointer, the endpoint fails closed:
+  - HTTP 400;
+  - clear message that native LangGraph interrupt resume is not enabled;
+  - no fallback to ordinary code-review/draft-spec-review paths;
+  - no `*_code_review.json` review artifact is written.
+- The entry point routes by interrupt type to the existing native resume
+  methods only after the durable check passes:
+  - `draft_spec_review`
+  - `code_review`
+  - `terminal_failure`
+
+Current boundary:
+
+- This is a public interface reserved for future durable checkpointer/native
+  resume. It does not change the current default split-flow product path.
+- The current local environment does not have `langgraph-checkpoint-sqlite`, so
+  the positive durable resume path is not enabled or faked.
+- This slice adds no UI button and does not imply that the default product flow
+  is already complete native resume.
+
+Subagent review:
+
+- 2026-06-01, Sartre, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - the default API path uses memory backend and returns 400;
+  - `GraphGateway.resume_native_dataset_interrupt()` checks durable native
+    resume before loading state or calling specific resume methods;
+  - unsupported native resume cannot write `*_code_review.json`;
+  - the service layer delegates to gateway and formats the result without adding
+    a new state fork.
+- Non-blocking suggestion: remove unused LLM/config fields from the request
+  model so the endpoint does not imply draft-spec-to-code continuation. This was
+  absorbed before commit.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models -v
+Ran 3 tests in 0.319s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 121 tests in 9.261s - OK (skipped=2)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 127 tests in 17.334s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

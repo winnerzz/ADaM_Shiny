@@ -2530,6 +2530,49 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIn("native_dataset_product_loop_resume", completed.graph_state.runtime_persistence)
         self.assertTrue((study_dir / "runs" / "run_lg2_native_loop" / "review" / "adsl_code_review.json").exists())
 
+    def test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_resume_memory_block") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_memory_block",
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with patch.object(gateway, "resume_native_code_review") as resume_code:
+            with self.assertRaisesRegex(ValueError, "Native LangGraph interrupt resume is not enabled"):
+                gateway.resume_native_dataset_interrupt(
+                    study_dir=study_dir,
+                    run_id="run_lg2_native_resume_memory_block",
+                    dataset="ADAE",
+                    decision="approve",
+                    reviewer="tester",
+                    notes="Default memory checkpointer must fail closed.",
+                )
+
+        resume_code.assert_not_called()
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_lg2_native_resume_memory_block"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
     def test_gateway_native_dataset_product_loop_reject_does_not_execute(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_dataset_product_loop_reject") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

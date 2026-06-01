@@ -7284,6 +7284,72 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1/LG2.8 Native Resume Endpoint Fail-Closed 切片
+
+已完成：
+
+- 新增显式 API：
+  `POST /runs/{run_id}/datasets/{dataset}/native-resume`。
+- 新增 `NativeDatasetResumeRequest` / `NativeDatasetResumeResponse`，请求模型只保留
+  native resume 真正需要的字段：
+  - `study_dir`
+  - `decision`
+  - `reviewer`
+  - `notes`
+  - `execute_after_approval`
+  - `rscript_path`
+- `GraphGateway.resume_native_dataset_interrupt()` 现在是统一 native dataset
+  interrupt resume 入口，但第一步会检查 durable native resume 是否可用。
+- 默认 memory checkpointer 下，该 endpoint 会 fail closed：
+  - HTTP 400；
+  - 明确提示 native LangGraph interrupt resume 未启用；
+  - 不回落到普通 code-review/draft-spec-review path；
+  - 不写 `*_code_review.json` review artifact。
+- 该入口按 interrupt 类型分发到已有 native resume 方法：
+  - `draft_spec_review`
+  - `code_review`
+  - `terminal_failure`
+  但只有 durable checkpointer 可用时才会进入这些路径。
+
+当前边界：
+
+- 这是为后续 durable checkpointer/native resume 预留的公开接口，不改变当前默认
+  split-flow 产品路径。
+- 当前本地环境没有 `langgraph-checkpoint-sqlite`，所以正向 durable resume 路径
+  没有启用，也没有伪造通过。
+- 本切片不新增 UI 按钮，不让用户误以为默认产品流已经完整 native resume。
+
+子 agent 审查：
+
+- 2026-06-01，Sartre，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 默认 API path 使用 memory backend 并返回 400；
+  - `GraphGateway.resume_native_dataset_interrupt()` 在 load state 或调用具体 resume
+    方法前先检查 durable native resume；
+  - 不支持 native resume 时不会写 `*_code_review.json`；
+  - service 层只是委托 gateway 和格式化响应，没有新增状态分叉。
+- 非阻断建议：移除 request model 中未使用的 LLM/config 字段，避免暗示该 endpoint
+  会继续 draft-spec-to-code generation；已吸收。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_service_layer_reads_graph_state_only_for_explicit_read_models -v
+Ran 3 tests in 0.319s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 121 tests in 9.261s - OK (skipped=2)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 127 tests in 17.334s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.3 Native Study Product Loop API/UI 接线切片
 
 已完成：

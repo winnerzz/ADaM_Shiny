@@ -3903,6 +3903,42 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn(("ADAE", "code_review"), loop_review_queue)
         self.assertIn(("ADCM", "code_review"), loop_review_queue)
 
+    def test_native_resume_endpoint_fails_closed_without_durable_checkpointer(self) -> None:
+        study_dir = _study_with_adae_adcm_inputs("phase8_native_resume_memory_block")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/native-study-loop",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_native_resume_memory_block",
+                "target_datasets": ["ADAE"],
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+
+        response = client.post(
+            "/runs/run_native_resume_memory_block/datasets/ADAE/native-resume",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "approve",
+                "reviewer": "tester",
+                "notes": "Should fail closed with default memory checkpointer.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Native LangGraph interrupt resume is not enabled", response.json()["detail"])
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_native_resume_memory_block"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
     def test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets(self) -> None:
         study_dir = _workspace_dir("phase8_native_study_loop_dependency_block") / "MY_STUDY"
         sdtm_dir = study_dir / "input_sdtm"

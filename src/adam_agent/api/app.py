@@ -28,6 +28,8 @@ from adam_agent.api.models import (
     GenerateCodeResponse,
     LLMConnectionTestRequest,
     LLMConnectionTestResponse,
+    NativeDatasetResumeRequest,
+    NativeDatasetResumeResponse,
     NativeStudyStartRequest,
     NativeStudyStartResponse,
     ProductWorkspaceResponse,
@@ -64,6 +66,7 @@ from adam_agent.api.service import (
     read_run_graph_state,
     read_run_json_artifact,
     read_run_progress,
+    resume_native_dataset_interrupt,
     run_study_from_request,
     save_uploaded_file_bytes,
     start_native_study_product_loop,
@@ -163,6 +166,17 @@ def create_app() -> FastAPI:
     def native_study_loop(request: NativeStudyStartRequest) -> NativeStudyStartResponse:
         try:
             return start_native_study_product_loop(request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/native-resume", response_model=NativeDatasetResumeResponse)
+    def native_dataset_resume(
+        run_id: str,
+        dataset: str,
+        request: NativeDatasetResumeRequest,
+    ) -> NativeDatasetResumeResponse:
+        try:
+            return resume_native_dataset_interrupt(run_id, dataset, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

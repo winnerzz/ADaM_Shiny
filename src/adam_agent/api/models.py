@@ -115,6 +115,33 @@ class NativeStudyStartResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class NativeDatasetResumeRequest(StrictBaseModel):
+    """Resume a graph-native dataset interrupt when durable checkpointing is enabled."""
+
+    study_dir: NonEmptyStr
+    reviewer: str = "local_user"
+    decision: str
+    notes: str = ""
+    execute_after_approval: bool = False
+    rscript_path: str | None = None
+
+
+class NativeDatasetResumeResponse(StrictBaseModel):
+    """Result from an explicit native dataset interrupt resume."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    interrupt: str
+    decision: str
+    status: str
+    current_interrupt: dict[str, Any] | None = None
+    executed: bool = False
+    next_action: str = ""
+    graph_state_path: str
+    workflow_state_path: str | None = None
+
+
 class DatasetProgressItem(StrictBaseModel):
     """Graph-owned next-step summary for one dataset."""
 
