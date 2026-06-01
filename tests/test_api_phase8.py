@@ -459,7 +459,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Try With Shiny Demo Data", response.text)
         self.assertIn("Use My Study Files", response.text)
         self.assertIn("Generate R Code", response.text)
-        self.assertIn("Approve And Run Locally", response.text)
+        self.assertIn("Approve Code", response.text)
+        self.assertIn("Run Approved Code", response.text)
+        self.assertIn("runApprovedButton", response.text)
         self.assertIn("Start Runnable Datasets", response.text)
         self.assertIn("startStudyLoopButton", response.text)
         self.assertIn("/runs/native-study-loop", response.text)
@@ -503,6 +505,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("resetActiveDatasetView", response.text)
         self.assertNotIn("resetGeneratedState", response.text)
         self.assertNotIn("Create / Open Study", response.text)
+        self.assertNotIn("Approve And Run Locally", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
 
     def test_index_exposes_graph_owned_progress_panel(self) -> None:
@@ -1136,9 +1139,13 @@ console.log(JSON.stringify({
         self.assertIn("graphActionGate(progress, 'finalize')", action_body)
         self.assertIn("graphActionGate(progress, 'approveDraft')", action_body)
         self.assertIn("graphActionGate(progress, 'generate')", action_body)
-        self.assertIn("graphActionGate(progress, 'approveRun')", action_body)
-        self.assertIn("Boolean(target && !blocked && approveRunGate.ready && codeApprovalReady)", action_body)
+        self.assertIn("graphActionGate(progress, 'approveCode')", action_body)
+        self.assertIn("graphActionGate(progress, 'runApproved')", action_body)
+        self.assertIn("Boolean(target && !blocked && approveCodeGate.ready && codeApprovalReady)", action_body)
+        self.assertIn("Boolean(target && !blocked && runApprovedGate.ready && generated)", action_body)
         self.assertIn("local execution is paused until dependency review is resolved", action_body)
+        self.assertIn("Ready for human code approval for ${target}. This will not run R.", action_body)
+        self.assertIn("Approve the generated code before running local R.", action_body)
         self.assertIn("Clicking will prepare the dependency plan first", action_body)
         self.assertIn("Generated-code metadata exists", action_body)
         self.assertIn("function setButtonAvailability(id, item)", html)
@@ -1147,7 +1154,8 @@ console.log(JSON.stringify({
         self.assertIn("button.disabled = !item.ready", html)
         self.assertIn("const availability = actionAvailability().finalize;", html)
         self.assertIn("const availability = actionAvailability().generate;", html)
-        self.assertIn("const availability = actionAvailability().approveRun;", html)
+        self.assertIn("const availability = actionAvailability().approveCode;", html)
+        self.assertIn("const availability = actionAvailability().runApproved;", html)
         dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
         self.assertIn("renderActionAvailability()", dashboard_body)
 
@@ -1159,20 +1167,129 @@ console.log(JSON.stringify({
         self.assertEqual(response.status_code, 200)
         html = response.text
         gate_body = html.split("function graphActionGate(progress, actionGroup)", 1)[1].split("function actionAvailability()", 1)[0]
-        approve_body = html.split("async function approveAndRun()", 1)[1].split("async function loadReviewSummary", 1)[0]
+        approve_body = html.split("async function approveCode()", 1)[1].split("async function runApprovedCode()", 1)[0]
+        run_body = html.split("async function runApprovedCode()", 1)[1].split("async function loadReviewSummary", 1)[0]
         self.assertIn("finalize: ['finalize_inputs', 'reconfirm_inputs']", gate_body)
         self.assertIn("approveDraft: ['review_draft_spec']", gate_body)
         self.assertIn("generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec']", gate_body)
-        self.assertIn("approveRun: ['review_code', 'execute_approved_code', 'retry_approved_execution']", gate_body)
+        self.assertIn("approveCode: ['review_code']", gate_body)
+        self.assertIn("runApproved: ['execute_approved_code', 'retry_approved_execution']", gate_body)
         self.assertIn("Graph next action:", gate_body)
         self.assertIn("Graph next action is", gate_body)
         self.assertIn("function graphAllowsCodeGeneration(progress)", html)
         self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';", html)
-        self.assertIn("const nextAction = String(datasetProgressFor(generated.dataset)?.next_action || '');", approve_body)
-        self.assertIn("const alreadyApproved = nextAction === 'execute_approved_code' || nextAction === 'retry_approved_execution';", approve_body)
-        self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", approve_body)
-        self.assertIn("if (!alreadyApproved)", approve_body)
-        self.assertLess(approve_body.index("if (!alreadyApproved)"), approve_body.index("/execute-approved-code"))
+        self.assertIn("R will not run in this step.", approve_body)
+        self.assertIn("/code-review", approve_body)
+        self.assertNotIn("/execute-approved-code", approve_body)
+        self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", run_body)
+        self.assertIn("/execute-approved-code", run_body)
+        self.assertNotIn("/code-review", run_body)
+
+    def test_index_code_approval_and_execution_are_separate_ui_actions(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: '',
+      disabled: false,
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('studyDir').value = 'D:/tmp/study';
+node('runId').value = 'run_ui_split_review_execute';
+node('reviewer').value = 'local_user';
+node('reviewNotes').value = 'reviewed';
+node('rscriptPath').value = '';
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/code-review')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', run_id: 'run_ui_split_review_execute', approved: true})};
+  }
+  if (url.includes('/execute-approved-code')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', status: 'completed'})};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({target_datasets: ['ADAE'], datasets: {}})};
+  }
+  if (url.includes('/progress')) {
+    const approved = calls.some((item) => item.includes('/code-review'));
+    return {
+      ok: true,
+      json: async () => ({
+        target_datasets: ['ADAE'],
+        blocked_datasets: [],
+        datasets: [{
+          dataset: 'ADAE',
+          next_action: approved ? 'execute_approved_code' : 'review_code',
+          action_label: approved ? 'Run the approved R code locally.' : 'Review generated R code.',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], blocked_datasets: []};
+state.generatedByDataset = {ADAE: {dataset: 'ADAE', run_id: 'run_ui_split_review_execute', status: 'generated', generated_code: 'x <- 1'}};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'review_code', action_label: 'Review generated R code.', blocked: false}]};
+await approveCode();
+const afterApprove = [...calls];
+state.reviewByDataset = {ADAE: {dataset: 'ADAE', approved: true}};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'execute_approved_code', action_label: 'Run approved code.', blocked: false}]};
+await runApprovedCode();
+console.log(JSON.stringify({
+  afterApprove,
+  afterRun: calls,
+  approved: state.reviewByDataset.ADAE.approved,
+  executionStatus: state.executionByDataset.ADAE.status
+}));
+"""
+        script_path = TMP_ROOT / "ui_split_review_execute.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(any("/code-review" in item for item in result["afterApprove"]))
+        self.assertFalse(any("/execute-approved-code" in item for item in result["afterApprove"]))
+        self.assertTrue(any("/execute-approved-code" in item for item in result["afterRun"]))
+        self.assertTrue(result["approved"])
+        self.assertEqual(result["executionStatus"], "completed")
 
     def test_index_action_availability_next_action_matrix(self) -> None:
         client = TestClient(create_app())
@@ -1223,7 +1340,8 @@ function check(nextAction) {
     approveDraft: availability.approveDraft.ready,
     generate: availability.generate.ready,
     generateLabel: availability.generate.label,
-    approveRun: availability.approveRun.ready,
+    approveCode: availability.approveCode.ready,
+    runApproved: availability.runApproved.ready,
   };
 }
 const results = ['finalize_inputs', 'review_draft_spec', 'generate_code', 'revise_approved_spec', 'review_code', 'execute_approved_code'].map(check);
@@ -1258,13 +1376,16 @@ console.log(JSON.stringify(results));
         self.assertTrue(results["review_draft_spec"]["approveDraft"])
         self.assertFalse(results["review_draft_spec"]["generate"])
         self.assertTrue(results["generate_code"]["generate"])
-        self.assertFalse(results["generate_code"]["approveRun"])
+        self.assertFalse(results["generate_code"]["approveCode"])
+        self.assertFalse(results["generate_code"]["runApproved"])
         self.assertTrue(results["revise_approved_spec"]["generate"])
         self.assertEqual(results["revise_approved_spec"]["generateLabel"], "Generate Revised Draft Spec")
         self.assertFalse(results["revise_approved_spec"]["finalize"])
         self.assertTrue(results["graph_generate_without_local_spec_gate"]["generate"])
-        self.assertTrue(results["review_code"]["approveRun"])
-        self.assertTrue(results["execute_approved_code"]["approveRun"])
+        self.assertTrue(results["review_code"]["approveCode"])
+        self.assertFalse(results["review_code"]["runApproved"])
+        self.assertFalse(results["execute_approved_code"]["approveCode"])
+        self.assertTrue(results["execute_approved_code"]["runApproved"])
 
     def test_index_draft_review_gate_overrides_local_input_spec_shortcuts(self) -> None:
         client = TestClient(create_app())

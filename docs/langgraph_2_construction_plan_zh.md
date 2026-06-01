@@ -6703,6 +6703,62 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Code Approval 与 Execution UI 拆分切片
+
+已完成：
+
+- 把浏览器里旧的合并动作拆成两个明确的 graph 动作：
+  - `Approve Code`：只记录人工 code review 决策；
+  - `Run Approved Code`：只执行已经批准过的代码。
+- 更新 graph-aware UI gate 映射：
+  - `review_code` 只启用 `Approve Code`；
+  - `execute_approved_code` 和 `retry_approved_execution` 只启用
+    `Run Approved Code`。
+- 移除浏览器里的隐藏 approve-then-execute 路径：
+  - UI 不再由同一个按钮连续调用 `/code-review` 和
+    `/execute-approved-code`；
+  - 用户必须先批准代码，再显式运行本地 R。
+- 后端边界不变：
+  - service 和 Gateway 仍然负责真正的 approval / execution gate；
+  - UI 只按 graph progress read model 展示下一步动作。
+- 增加 UI contract 和 Node harness 覆盖：
+  - 旧的 `Approve And Run Locally` 文案已经消失；
+  - approval 只调用 `/code-review`；
+  - execution 只调用 `/execute-approved-code`；
+  - next-action matrix 把 approval 和 execution 拆开验证。
+
+当前边界：
+
+- 这是 UI/gate alignment 切片，不改变 dependency planning、LLM 生成、生成
+  R 代码内容、R execution 内部逻辑或 compare 行为。
+- graph progress read model 仍然是下一步动作的权威来源。浏览器里的 review cache
+  只是展示状态；如果没有 graph-owned code approval，后端仍会拒绝执行。
+
+子 agent 审查：
+
+- 2026-06-01，Lovelace，`gpt-5.5`，只读审查结论：GO。
+- 它确认没有隐藏 approve+execute UI 路径残留，后端 review 和 execution gate
+  仍然分离。
+- 非阻断建议：execution 可用性也可以额外看浏览器本地 review cache，让 disabled
+  reason 更清晰。本切片未采用，因为 graph `next_action` 是权威 workflow state，
+  且后端在缺少 approval 时已经 fail-closed。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions -v
+Ran 5 tests in 0.292s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 117 tests in 15.741s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Review Gate Action Read-Model 切片
 
 已完成：

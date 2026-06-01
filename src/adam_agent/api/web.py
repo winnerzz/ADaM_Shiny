@@ -1151,7 +1151,8 @@ INDEX_HTML = r"""<!doctype html>
         <div class="section-body">
           <div class="button-row">
             <button id="generateCodeButton" disabled>Generate R Code</button>
-            <button id="approveButton" disabled>Approve And Run Locally</button>
+            <button id="approveButton" disabled>Approve Code</button>
+            <button id="runApprovedButton" disabled>Run Approved Code</button>
           </div>
           <div id="generationActionHints" class="action-hints"></div>
           <p class="note">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
@@ -1981,6 +1982,7 @@ INDEX_HTML = r"""<!doctype html>
       state.selectedResultView = 'generated';
       setPill('codeStatus', codeStatusForActiveDataset());
       byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
+      byId('runApprovedButton').disabled = true;
       byId('finalizeInputsButton').disabled = !state.selectedTarget;
       byId('startStudyLoopButton').disabled = !selectedTargets().length;
       renderDraftSpecPane();
@@ -2189,13 +2191,15 @@ INDEX_HTML = r"""<!doctype html>
         finalize: 'Finalize Inputs / Draft Spec',
         approveDraft: 'Approve Draft Spec',
         generate: 'Generate R Code',
-        approveRun: 'Approve And Run Locally'
+        approveCode: 'Approve Code',
+        runApproved: 'Run Approved Code'
       };
       const allowed = {
         finalize: ['finalize_inputs', 'reconfirm_inputs'],
         approveDraft: ['review_draft_spec'],
         generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec'],
-        approveRun: ['review_code', 'execute_approved_code', 'retry_approved_execution']
+        approveCode: ['review_code'],
+        runApproved: ['execute_approved_code', 'retry_approved_execution']
       }[actionGroup] || [];
       const graphLabel = progress.action_label || titleFromToken(next);
       if (progress.blocked) {
@@ -2246,7 +2250,8 @@ INDEX_HTML = r"""<!doctype html>
       const finalizeGate = graphActionGate(progress, 'finalize');
       const draftGate = graphActionGate(progress, 'approveDraft');
       const generateGate = graphActionGate(progress, 'generate');
-      const approveRunGate = graphActionGate(progress, 'approveRun');
+      const approveCodeGate = graphActionGate(progress, 'approveCode');
+      const runApprovedGate = graphActionGate(progress, 'runApproved');
       const effectiveSpecGate = hasSpecGate || Boolean(generateGate?.ready && graphAllowsCodeGeneration(progress));
       const selected = selectedTargets();
       const progressDatasets = state.runProgress?.datasets || [];
@@ -2272,12 +2277,15 @@ INDEX_HTML = r"""<!doctype html>
       const generateReady = generateGate
         ? Boolean(target && targetIsPlanned && !blocked && generateGate.ready && effectiveSpecGate)
         : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && hasSpecGate);
-      const codeApprovalReady = approveRunGate?.nextAction === 'review_code'
+      const codeApprovalReady = approveCodeGate?.nextAction === 'review_code'
         ? canApproveGeneratedCode(target)
         : Boolean(generated);
-      const approveReady = approveRunGate
-        ? Boolean(target && !blocked && approveRunGate.ready && codeApprovalReady)
+      const approveReady = approveCodeGate
+        ? Boolean(target && !blocked && approveCodeGate.ready && codeApprovalReady)
         : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked);
+      const runReady = runApprovedGate
+        ? Boolean(target && !blocked && runApprovedGate.ready && generated)
+        : Boolean(target && !blocked && !progressBlocked && generated && reviewFor(target)?.approved);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2359,31 +2367,52 @@ INDEX_HTML = r"""<!doctype html>
                       ? `${target} already has generated code. Regenerate only if the current code is stale or rejected.`
                       : `Ready to call the selected code generator for ${target}.`
         },
-        approveRun: {
+        approveCode: {
           ready: approveReady,
-          label: 'Approve And Run Locally',
+          label: 'Approve Code',
+          reason: !target
+            ? 'Choose an ADaM output first.'
+            : progressBlocked
+              ? progressBlockReason
+            : approveCodeGate
+              ? approveCodeGate.reason
+            : blocked
+              ? `${target} is blocked by ${blocked.blocked_by}; code approval is paused until dependency review is resolved.`
+            : execution?.status === 'completed'
+              ? `${target} already completed local execution. Regenerate or review only if the current code changed.`
+            : execution?.status === 'terminal_failure' || execution?.status === 'failed'
+              ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
+                : !generated
+                  ? 'Generate R code first.'
+                  : approveCodeGate?.nextAction !== 'review_code'
+                    ? approveCodeGate?.reason || `Code approval is not the current graph step for ${target}.`
+                  : generated.status === 'stale'
+                    ? 'Generated code is stale because inputs changed; regenerate before approval.'
+                    : !generated.generated_code
+                      ? 'Generated-code metadata exists, but the code text is not loaded in this browser. Reload the run review before approving.'
+                      : `Ready for human code approval for ${target}. This will not run R.`
+        },
+        runApproved: {
+          ready: runReady,
+          label: 'Run Approved Code',
           pill: execution?.status === 'completed' ? 'rerun' : execution?.status === 'terminal_failure' || execution?.status === 'failed' ? 'diagnose' : null,
           reason: !target
             ? 'Choose an ADaM output first.'
             : progressBlocked
               ? progressBlockReason
-            : approveRunGate
-              ? approveRunGate.reason
+            : runApprovedGate
+              ? runApprovedGate.reason
             : blocked
               ? `${target} is blocked by ${blocked.blocked_by}; local execution is paused until dependency review is resolved.`
             : execution?.status === 'completed'
-              ? `${target} already completed local execution. Approval remains available only if you intentionally rerun the same generated code.`
+              ? `${target} already completed local execution. Rerun only if you intentionally want to repeat the approved code.`
             : execution?.status === 'terminal_failure' || execution?.status === 'failed'
               ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
-                : !generated
-                  ? 'Generate R code first.'
-                  : approveRunGate?.nextAction !== 'review_code'
-                    ? approveRunGate?.reason || `Ready to execute the graph-approved code artifact for ${target}.`
-                  : generated.status === 'stale'
-                    ? 'Generated code is stale because inputs changed; regenerate before approval.'
-                    : !generated.generated_code
-                      ? 'Generated-code metadata exists, but the code text is not loaded in this browser. Reload the run review before approving.'
-                      : `Ready for human code approval and local R execution for ${target}.`
+              : !generated
+                ? 'Generate R code first.'
+                : !reviewFor(target)?.approved
+                  ? 'Approve the generated code before running local R.'
+                  : `Ready to execute the graph-approved code artifact for ${target}.`
         }
       };
     }
@@ -2394,9 +2423,10 @@ INDEX_HTML = r"""<!doctype html>
       setButtonAvailability('startStudyLoopButton', availability.startStudy);
       setButtonAvailability('approveDraftSpecButton', availability.approveDraft);
       setButtonAvailability('generateCodeButton', availability.generate);
-      setButtonAvailability('approveButton', availability.approveRun);
+      setButtonAvailability('approveButton', availability.approveCode);
+      setButtonAvailability('runApprovedButton', availability.runApproved);
       renderActionHints('specActionHints', [availability.finalize, availability.startStudy, availability.approveDraft]);
-      renderActionHints('generationActionHints', [availability.generate, availability.approveRun]);
+      renderActionHints('generationActionHints', [availability.generate, availability.approveCode, availability.runApproved]);
     }
 
     function setButtonAvailability(id, item) {
@@ -3775,10 +3805,10 @@ INDEX_HTML = r"""<!doctype html>
         state.selectedView = 'summary';
         setActiveTab();
         setPill('codeStatus', 'review');
-        byId('approveButton').disabled = false;
         addEvent('R code generated', `${payload.dataset} code is ready for review.`);
         completeOperation('R code generated', `${payload.dataset} code is ready for review. R has not been executed yet.`);
         renderGraphAwareDashboard();
+        renderActionAvailability();
         setStep(5);
         renderPane();
       } catch (error) {
@@ -3788,40 +3818,63 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    async function approveAndRun() {
+    async function approveCode() {
       const generated = generatedFor(state.selectedTarget);
       if (!generated) return;
-      const availability = actionAvailability().approveRun;
+      const availability = actionAvailability().approveCode;
       if (!availability.ready) {
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
         renderActionAvailability();
         return;
       }
       state.generated = generated;
-      const nextAction = String(datasetProgressFor(generated.dataset)?.next_action || '');
-      const alreadyApproved = nextAction === 'execute_approved_code' || nextAction === 'retry_approved_execution';
+      beginOperation(
+        'Approving generated R code',
+        `Recording human approval for ${generated.dataset}. R will not run in this step.`
+      );
+      setPill('codeStatus', 'review');
+      try {
+        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            reviewer: byId('reviewer').value.trim() || 'local_user',
+            decision: 'approve',
+            notes: byId('reviewNotes').value.trim()
+          })
+        });
+        state.reviewByDataset[generated.dataset] = state.review;
+        await refreshGraphReadModels();
+        setPill('codeStatus', 'approved');
+        addEvent('Code approved', `${generated.dataset} code was approved. R has not been executed yet.`);
+        completeOperation('Code approved', `${generated.dataset} is ready for explicit local R execution.`);
+        renderActionAvailability();
+        renderPane();
+        renderGraphAwareDashboard();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Code approval failed', error);
+      }
+    }
+
+    async function runApprovedCode() {
+      const generated = generatedFor(state.selectedTarget);
+      if (!generated) return;
+      const availability = actionAvailability().runApproved;
+      if (!availability.ready) {
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(availability.reason)}</p>`;
+        renderActionAvailability();
+        return;
+      }
+      state.generated = generated;
       beginOperation(
         'Running approved R code',
-        alreadyApproved
-          ? `Executing the graph-approved ${generated.dataset} R code with local Rscript.`
-          : `Approving ${generated.dataset} code, then executing it with local Rscript.`
+        `Executing the graph-approved ${generated.dataset} R code with local Rscript.`
       );
       setPill('codeStatus', 'running');
       try {
-        if (!alreadyApproved) {
-          state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              study_dir: studyDir(),
-              reviewer: byId('reviewer').value.trim() || 'local_user',
-              decision: 'approve',
-              notes: byId('reviewNotes').value.trim()
-            })
-          });
-          state.reviewByDataset[generated.dataset] = state.review;
-          await refreshGraphReadModels();
-        }
         state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/execute-approved-code`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -3849,7 +3902,7 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
-        failOperation('Approve and run failed', error);
+        failOperation('Approved-code execution failed', error);
       }
     }
 
@@ -3865,8 +3918,10 @@ INDEX_HTML = r"""<!doctype html>
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
         byId('approveButton').disabled = !canApproveGeneratedCode(state.selectedTarget);
+        byId('runApprovedButton').disabled = !reviewFor(state.selectedTarget)?.approved;
         renderAdvanced();
         renderGraphAwareDashboard();
+        renderActionAvailability();
         renderPane();
       } catch {
         state.runReview = null;
@@ -4229,7 +4284,8 @@ INDEX_HTML = r"""<!doctype html>
     byId('startStudyLoopButton').addEventListener('click', startNativeStudyLoop);
     byId('approveDraftSpecButton').addEventListener('click', approveDraftSpec);
     byId('generateCodeButton').addEventListener('click', generateCode);
-    byId('approveButton').addEventListener('click', approveAndRun);
+    byId('approveButton').addEventListener('click', approveCode);
+    byId('runApprovedButton').addEventListener('click', runApprovedCode);
     byId('addTargetButton').addEventListener('click', addManualTarget);
     byId('modelMode').addEventListener('change', updateLlmModeControls);
     byId('testLlmButton').addEventListener('click', testLlmConnection);

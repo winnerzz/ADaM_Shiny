@@ -7248,6 +7248,65 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Split Code Approval And Execution UI Slice
+
+Completed:
+
+- Split the browser's old combined code-review action into two explicit graph
+  actions:
+  - `Approve Code` records the human code-review decision only.
+  - `Run Approved Code` executes already approved code through the local R
+    boundary only.
+- Updated the graph-aware UI gate mapping:
+  - `review_code` enables `Approve Code`;
+  - `execute_approved_code` and `retry_approved_execution` enable
+    `Run Approved Code`.
+- Removed the hidden approve-then-execute path from the browser handler. The UI
+  no longer calls `/code-review` and `/execute-approved-code` from the same
+  button.
+- Kept the backend boundary unchanged: service and Gateway gates still own the
+  actual approval and execution checks.
+- Added UI contract and Node harness coverage proving:
+  - the old combined label is absent;
+  - approval calls `/code-review` only;
+  - execution calls `/execute-approved-code` only;
+  - the next-action matrix separates approval from execution.
+
+Current boundary:
+
+- This is a UI/gate-alignment slice. It does not change dependency planning,
+  LLM generation, generated R content, R execution internals, or compare
+  behavior.
+- The graph progress read model remains the authority for next action. The
+  browser review cache is display state only; the backend still rejects
+  execution without graph-owned code approval.
+
+Subagent review:
+
+- 2026-06-01, Lovelace, `gpt-5.5`, read-only review: GO.
+- Confirmed that no hidden approve+execute UI path remains and that backend
+  review/execution gates remain separate.
+- Non-blocking suggestion: execution availability could also consider the
+  browser's local review cache for clearer disabled messaging. This was not
+  applied because graph `next_action` is the canonical workflow state and the
+  backend already fail-closes if approval is missing.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_explains_disabled_actions_from_existing_state tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_action_availability_next_action_matrix tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_and_execution_are_separate_ui_actions -v
+Ran 5 tests in 0.292s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 117 tests in 15.741s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Review Gate Action Read-Model Slice
 
 Completed:
