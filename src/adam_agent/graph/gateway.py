@@ -4793,6 +4793,8 @@ def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any
 
 
 def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict[str, Any]]) -> dict[str, Any]:
+    if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
+        return {}
     loop = dict(state.runtime_persistence.get("native_study_product_loop") or {})
     if not loop:
         return {}

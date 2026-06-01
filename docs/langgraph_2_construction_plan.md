@@ -7248,6 +7248,46 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Stale Study Loop Result Guard Slice
+
+Completed:
+
+- Tightened the graph-owned progress read model so `study_loop_result` is hidden
+  whenever the dependency plan is stale:
+  - `dependency_plan.plan_stale == true`; or
+  - `dependency_review_status == "stale"`.
+- This prevents the UI from showing a previous native study-loop start after
+  study input files changed and the graph requires re-planning.
+- The change is intentionally a read-model guard. It does not delete
+  `runtime_persistence.native_study_product_loop`, mutate historical metadata,
+  change dependency planning, approve reviews, generate code, or run R.
+- Added a gateway regression test:
+  - start a native study loop for ADAE/ADCM;
+  - verify `study_loop_result` is projected;
+  - mutate `input_sdtm/ae.csv`;
+  - mark inputs changed;
+  - verify progress is stale and `study_loop_result == {}`.
+
+Subagent review:
+
+- 2026-06-01, Linnaeus, `gpt-5.5`, read-only review: GO.
+- It confirmed the guard does not hide normal dataset review queues because
+  `review_queue` remains independently exposed, and agreed the read-model
+  boundary is safer than deleting runtime persistence metadata.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_hides_study_loop_result_after_inputs_change tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_prioritizes_stale_plan_replan -v
+Ran 4 tests in 0.675s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_clears_stale_study_loop_result_when_progress_has_none tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+Ran 4 tests in 0.384s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 118 tests in 8.436s - OK (skipped=2)
+```
+
 ### 2026-06-01 - LG2.7 Study Loop Result Progress Read-Model Slice
 
 Completed:

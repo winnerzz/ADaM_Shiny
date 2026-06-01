@@ -3053,6 +3053,44 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(second.graph_state.datasets["ADAE"].current_interrupt.name, "code_review")
         self.assertEqual(second.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
 
+    def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        ae_path = sdtm_dir / "ae.csv"
+        ae_path.write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,ASPIRIN\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        (spec_dir / "adcm.json").write_text(
+            json.dumps({"dataset": "ADCM", "variables": [{"variable": "CMTRT", "source_domains": ["CM"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_study_loop_stale",
+            target_datasets=["ADAE", "ADCM"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        before = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_stale")
+        self.assertEqual(before["study_loop_result"]["source"], "graph_progress")
+        self.assertEqual(before["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
+        ae_path.write_text("USUBJID,AETERM\n01,HEADACHE\n02,NAUSEA\n", encoding="utf-8")
+
+        gateway.mark_inputs_changed(study_dir=study_dir, run_id="run_lg2_native_study_loop_stale")
+        after = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_stale")
+
+        self.assertTrue(after["plan_stale"])
+        self.assertEqual(after["dependency_review_status"], "stale")
+        self.assertEqual(after["study_loop_result"], {})
+
     def test_gateway_generate_code_uses_gateway_owned_dependency_plan(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_owned_dependency_plan") / "PSY201"
         run_id = "run_lg2_gateway_owned_dependency_plan"

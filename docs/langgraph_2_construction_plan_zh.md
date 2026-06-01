@@ -6703,6 +6703,48 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Stale Study Loop Result Guard 切片
+
+已完成：
+
+- 收紧 graph-owned progress read model：当 dependency plan 已经过期时，
+  `study_loop_result` 不再投影给 UI：
+  - `dependency_plan.plan_stale == true`；或
+  - `dependency_review_status == "stale"`。
+- 这样可以避免 study input 文件变化后，UI 还继续展示上一轮 native study-loop start
+  的结果。
+- 这个改动刻意放在 read-model 层：
+  - 不删除 `runtime_persistence.native_study_product_loop` 历史元数据；
+  - 不改变 dependency planning；
+  - 不 approve review；
+  - 不 generate code；
+  - 不 run R。
+- 新增 gateway 回归测试：
+  - 先为 ADAE/ADCM 启动 native study loop；
+  - 确认 `study_loop_result` 正常投影；
+  - 修改 `input_sdtm/ae.csv`；
+  - 标记 inputs changed；
+  - 确认 progress 已 stale，且 `study_loop_result == {}`。
+
+子 agent 审查：
+
+- 2026-06-01，Linnaeus，`gpt-5.5`，只读审查结论：GO。
+- 它确认该 guard 不会隐藏正常的 dataset review queue，因为 `review_queue`
+  仍然独立暴露；并同意 read-model 边界比删除 runtime persistence metadata 更稳妥。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_hides_study_loop_result_after_inputs_change tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_prioritizes_stale_plan_replan -v
+Ran 4 tests in 0.675s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_clears_stale_study_loop_result_when_progress_has_none tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_uses_graph_gateway_progress_read_model tests.test_api_phase8.Phase8ApiTests.test_upload_marks_existing_graph_product_state_stale_and_blocks_generation -v
+Ran 4 tests in 0.384s - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 118 tests in 8.436s - OK (skipped=2)
+```
+
 ### 2026-06-01 - LG2.7 Study Loop Result Progress Read-Model 切片
 
 已完成：
