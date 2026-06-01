@@ -30,6 +30,7 @@ from adam_agent.api.models import (
     FinalizeInputsResponse,
     GenerateCodeResponse,
     LLMConnectionTestResponse,
+    NativeDatasetFullRunStartResponse,
     NativeDatasetResumeResponse,
     NativeStudyDatasetStartResult,
     NativeStudyStartResponse,
@@ -507,6 +508,70 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
         native_resume_queue_item_count=result.native_resume_queue_item_count,
         dataset_results=dataset_results,
         message=message,
+        **_gateway_compatibility_metadata(result),
+    )
+
+
+def start_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> NativeDatasetFullRunStartResponse:
+    """Start one dataset through the LG3 native full-run backend contract."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    if not target:
+        raise ApiServiceError("dataset must not be empty.")
+    study_id = request.study_id or study_dir.name
+    config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_id, run_id=run_id)
+    provider_config = _provider_config_from_override(
+        getattr(request, "llm_provider_override", None),
+        fallback=config.llm_provider,
+    )
+    exposure = _exposure_config_from_override(
+        getattr(request, "llm_exposure_override", None),
+        fallback=config.llm_exposure,
+    )
+    try:
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.start_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                llm_provider=provider_config.__dict__,
+                llm_exposure=exposure.model_dump(mode="json"),
+                llm_client_builder=build_llm_client,
+                target_context_builder=build_target_llm_context,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    dataset_state = result.graph_state.datasets.get(target)
+    current_interrupt = (
+        dataset_state.current_interrupt.model_dump(mode="json")
+        if dataset_state is not None and dataset_state.current_interrupt is not None
+        else None
+    )
+    code_state = dataset_state.code_state if dataset_state is not None else {}
+    spec_state = dataset_state.spec_state if dataset_state is not None else {}
+    static_artifact = code_state.get("static_check_artifact") if isinstance(code_state, dict) else None
+    next_action = str(current_interrupt.get("name") if isinstance(current_interrupt, dict) else "")
+    code_path = str(code_state.get("code_path") or "") if isinstance(code_state, dict) else ""
+    draft_spec_path = str(spec_state.get("draft_spec_path") or "") if isinstance(spec_state, dict) else ""
+    static_check_path = str(code_state.get("static_check_path") or "") if isinstance(code_state, dict) else ""
+    if not static_check_path and isinstance(static_artifact, dict):
+        static_check_path = str(static_artifact.get("path") or "")
+    return NativeDatasetFullRunStartResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        dataset=target,
+        phase=result.phase,
+        status=dataset_state.status if dataset_state is not None else result.graph_state.status,
+        current_interrupt=current_interrupt,
+        next_action=next_action,
+        code_path=code_path or None,
+        draft_spec_path=draft_spec_path or None,
+        static_check_path=static_check_path or None,
         **_gateway_compatibility_metadata(result),
     )
 

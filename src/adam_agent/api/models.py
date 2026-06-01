@@ -122,6 +122,35 @@ class NativeStudyStartResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class NativeDatasetFullRunStartRequest(StrictBaseModel):
+    """Start one dataset through the LG3 native full-run contract."""
+
+    study_dir: NonEmptyStr
+    study_id: str | None = None
+    config_path: str | None = None
+    rscript_path: str | None = None
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class NativeDatasetFullRunStartResponse(StrictBaseModel):
+    """Initial human gate reached by one LG3 native full-run."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    phase: str
+    status: str
+    current_interrupt: dict[str, Any] | None = None
+    next_action: str = ""
+    code_path: str | None = None
+    draft_spec_path: str | None = None
+    static_check_path: str | None = None
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str
+    workflow_state_path: str | None = None
+
+
 class NativeDatasetResumeRequest(StrictBaseModel):
     """Resume a graph-native dataset interrupt when durable checkpointing is enabled."""
 

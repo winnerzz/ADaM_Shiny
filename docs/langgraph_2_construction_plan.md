@@ -9620,3 +9620,69 @@ Subagent review:
   and found no remaining blocker around metadata pollution, current-action
   ambiguity, provider redaction, durable-resume wording, or LG3 contract
   boundaries.
+
+### 2026-06-01 - LG3.0 Single-Dataset Full-Run API Entry Slice
+
+Completed:
+
+- Added a narrow FastAPI/service entry point for the existing LG3 single-dataset
+  full-run backend contract:
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run`.
+- Added `NativeDatasetFullRunStartRequest` and
+  `NativeDatasetFullRunStartResponse`.
+- The new route delegates to `GraphGateway.start_native_dataset_full_run()`
+  through the existing service gateway factory/context helper.
+- The response reports the first graph-owned human gate:
+  - current interrupt;
+  - next action;
+  - generated code path;
+  - static-check path;
+  - draft-spec path when applicable;
+  - graph/workflow projection paths.
+- Added API coverage proving the endpoint starts ADAE at `code_review`, records
+  `native_dataset_full_run` contract metadata, and does not execute R.
+- Added service coverage proving LLM provider/exposure overrides are passed to
+  the gateway, while service code does not create a separate workflow path.
+
+Boundary:
+
+- This is not a browser UI change.
+- This is not durable native resume enablement. The existing `native-resume`
+  fail-closed behavior under the default memory checkpointer is unchanged.
+- This does not approve code, execute R, or continue through repair/revision
+  automatically.
+- It only exposes the already implemented LG3 backend contract through a narrow
+  API boundary so future UI work can call one graph-owned product entry instead
+  of re-creating split-flow orchestration.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_full_run_service_delegates_to_gateway_with_llm_config -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 150 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m compileall -q src tests
+OK
+```
+
+Subagent review:
+
+- 2026-06-01, Confucius, `gpt-5.5`, read-only review result: GO.
+- No P0/P1 blockers were found.
+- No blocking P2 was found. The only minor test-strength note was that the
+  service unit test uses a `SimpleNamespace` fake, so it proves service field
+  extraction and gateway delegation; the stronger canonical-state proof comes
+  from the endpoint integration test plus existing gateway tests.
+- The review confirmed:
+  - the new endpoint is a narrow delegate and does not construct service-layer
+    workflow state;
+  - there is no durable-resume, auto-approval, or auto-execution drift;
+  - response fields are read from gateway-owned state/projection;
+  - tests cover contract metadata, no R execution, and LLM override pass-through;
+  - no UI exposure was added.

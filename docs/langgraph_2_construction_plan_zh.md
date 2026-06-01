@@ -8985,3 +8985,65 @@ OK
   `terminal_failure_followup.next_action` 仍作为审计上下文保留。
 - 复审结论：GO。Mencius 确认 P1/P2 已关闭，没有发现 metadata 污染、当前动作
   误导、provider 脱敏、durable-resume 措辞或 LG3 contract 边界上的剩余阻断问题。
+
+### 2026-06-01 - LG3.0 单 Dataset Full-Run API 入口切片
+
+已完成：
+
+- 为已有的 LG3 单 dataset full-run 后端 contract 增加一个很窄的 FastAPI/service
+  入口：
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run`。
+- 新增 `NativeDatasetFullRunStartRequest` 和
+  `NativeDatasetFullRunStartResponse`。
+- 新 route 通过现有 service gateway factory/context helper 委托
+  `GraphGateway.start_native_dataset_full_run()`，不在 service 层自建工作流状态。
+- response 只报告第一站 graph-owned 人工 gate：
+  - 当前 interrupt；
+  - 下一步动作；
+  - generated code path；
+  - static-check path；
+  - 如有需要，draft-spec path；
+  - graph/workflow projection 路径。
+- 新增 API 测试，证明 endpoint 会把 ADAE 启动到 `code_review`，写入
+  `native_dataset_full_run` contract metadata，并且不会执行 R。
+- 新增 service 测试，证明 LLM provider/exposure overrides 会传入 gateway，而
+  service 不会分叉出另一条 workflow 路径。
+
+边界：
+
+- 这不是浏览器 UI 改动。
+- 这不是 durable native resume 启用；默认 memory checkpointer 下
+  `native-resume` 的 fail-closed 行为不变。
+- 这不会批准代码、执行 R，也不会自动完成 repair/revision。
+- 它只是把已经实现的 LG3 后端 contract 暴露成一个窄 API 边界，方便后续 UI
+  调用一个 graph-owned 产品入口，而不是继续在浏览器里重建 split-flow 编排。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_full_run_service_delegates_to_gateway_with_llm_config -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 150 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m compileall -q src tests
+OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Confucius，`gpt-5.5`，只读审查结论：GO。
+- 没有 P0/P1 阻断问题。
+- 没有阻断性 P2；唯一小建议是 service 单测使用 `SimpleNamespace` fake，只能证明
+  service 提取字段和 gateway 委托，canonical state 的更强证明来自 endpoint
+  integration test 和既有 gateway tests。
+- 审查确认：
+  - 新 endpoint 是窄委托，没有在 service 层自建 workflow；
+  - 没有 durable-resume、auto-approval 或 auto-execution 误导；
+  - response 字段来自 gateway-owned state/projection；
+  - 测试覆盖 contract metadata、无 R 执行和 LLM override 传递；
+  - 没有新增 UI 暴露。

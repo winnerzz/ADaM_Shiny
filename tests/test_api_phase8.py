@@ -5049,6 +5049,42 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn(("ADAE", "code_review"), loop_review_queue)
         self.assertIn(("ADCM", "code_review"), loop_review_queue)
 
+    def test_native_full_run_endpoint_starts_single_dataset_at_code_review(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_native_full_run_endpoint")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/run_native_full_run_endpoint/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["dataset"], "ADAE")
+        self.assertEqual(payload["phase"], "waiting_for_human_gate")
+        self.assertEqual(payload["status"], "needs_review")
+        self.assertEqual(payload["current_interrupt"]["name"], "code_review")
+        self.assertEqual(payload["next_action"], "code_review")
+        self.assertTrue(payload["code_path"].endswith("runs/run_native_full_run_endpoint/code/build_adae.R"))
+        self.assertTrue(payload["static_check_path"].endswith("runs/run_native_full_run_endpoint/static_checks/adae_static_check.json"))
+        self.assertIsNone(payload["draft_spec_path"])
+        graph_state, workflow_state = _assert_compatibility_projection(self, payload)
+        contract = graph_state["runtime_persistence"]["native_dataset_full_run"]
+        self.assertEqual(contract["contract"], "single_dataset_spec_code_review_execute")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["dataset"], "ADAE")
+        self.assertEqual(contract["phase"], "waiting_for_human_gate")
+        self.assertEqual(contract["current_interrupt"], "code_review")
+        self.assertEqual(contract["next_action"], "code_review")
+        self.assertFalse(contract["durable_resume_available"])
+        self.assertNotIn("api_key", contract["llm_provider"])
+        self.assertEqual(graph_state["datasets"]["ADAE"]["current_interrupt"]["name"], "code_review")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
+        self.assertFalse((study_dir / "runs" / "run_native_full_run_endpoint" / "outputs" / "adae.csv").exists())
+
     def test_native_resume_endpoint_fails_closed_without_durable_checkpointer(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_resume_memory_block")
         client = TestClient(create_app())
@@ -5156,6 +5192,80 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(captured["llm_exposure"]["mode"], "metadata_only")
         self.assertIs(captured["llm_client_builder"], service.build_llm_client)
         self.assertIs(captured["target_context_builder"], service.build_target_llm_context)
+
+    def test_native_full_run_service_delegates_to_gateway_with_llm_config(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_native_full_run_service_config") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        dataset_state = SimpleNamespace(
+            status="needs_review",
+            current_interrupt=SimpleNamespace(model_dump=lambda mode="json": {"name": "code_review", "status": "open"}),
+            code_state={
+                "code_path": "runs/run_native_full_run_service/code/adae_generated.R",
+                "static_check_path": "runs/run_native_full_run_service/static_checks/adae_static_check.json",
+            },
+            spec_state={},
+        )
+        gateway_result = SimpleNamespace(
+            graph_state=SimpleNamespace(
+                study_id="MY_STUDY",
+                status="needs_review",
+                datasets={"ADAE": dataset_state},
+            ),
+            workflow_projection={
+                "workflow_control": "graph_gateway_compatibility_shim",
+                "graph_state_path": str((study_dir / "runs" / "run_native_full_run_service" / "graph_state.json").as_posix()),
+                "workflow_state_path": str((study_dir / "runs" / "run_native_full_run_service" / "workflow_state.json").as_posix()),
+            },
+            phase="waiting_for_human_gate",
+        )
+        captured: dict[str, Any] = {}
+
+        class FakeGateway:
+            def close(self) -> None:
+                return None
+
+            def start_native_dataset_full_run(self, **kwargs: Any) -> Any:
+                captured.update(kwargs)
+                return gateway_result
+
+        request = SimpleNamespace(
+            study_dir=str(study_dir),
+            study_id="MY_STUDY",
+            config_path=None,
+            rscript_path="C:/Dev/R-4.5.2/bin/Rscript.exe",
+            llm_provider_override=SimpleNamespace(
+                model_dump=lambda exclude_none=True: {
+                    "provider": "mock",
+                    "model": "mock-model",
+                    "api_key": "test-key",
+                    "timeout_seconds": 123.0,
+                }
+            ),
+            llm_exposure_override=SimpleNamespace(
+                model_dump=lambda exclude_none=True: {
+                    "mode": "metadata_only",
+                    "data_classification": "unknown",
+                    "external_api_allowed": False,
+                }
+            ),
+        )
+
+        with patch("adam_agent.api.service._new_graph_gateway", return_value=FakeGateway()):
+            response = service.start_native_dataset_full_run("run_native_full_run_service", "adae", request)
+
+        self.assertEqual(response.dataset, "ADAE")
+        self.assertEqual(response.current_interrupt["name"], "code_review")
+        self.assertEqual(response.next_action, "code_review")
+        self.assertTrue(response.static_check_path.endswith("static_checks/adae_static_check.json"))
+        self.assertEqual(captured["dataset"], "ADAE")
+        self.assertEqual(captured["run_id"], "run_native_full_run_service")
+        self.assertEqual(captured["llm_provider"]["api_key"], "test-key")
+        self.assertEqual(captured["llm_exposure"]["mode"], "metadata_only")
+        self.assertIs(captured["llm_client_builder"], service.build_llm_client)
+        self.assertIs(captured["target_context_builder"], service.build_target_llm_context)
+        self.assertEqual(captured["rscript_path"], "C:/Dev/R-4.5.2/bin/Rscript.exe")
 
     def test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer(self) -> None:
         from adam_agent.api import service
