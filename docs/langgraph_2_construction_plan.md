@@ -9184,3 +9184,48 @@ Subagent review:
   - tests cover `/runs/native-study-loop` response fields and
     `progress.study_loop_result` staying aligned;
   - docs correctly frame this as read-model/API contract alignment only.
+
+### 2026-06-01 - LG2.8 LangGraph-v2 Closeout Audit Document Slice
+
+Completed:
+
+- Added `docs/langgraph_v2_closeout_audit.md` as the current handoff document
+  for LangGraph-v2.
+- The audit records phase-by-phase status for LG2.0-LG2.8:
+  - graph-state ownership and compatibility migration are mostly complete;
+  - full native product runtime and durable checkpointer resume remain
+    incomplete;
+  - multi-dataset execution after approvals, repair/spec-revision loops,
+    standards retrieval, specialist-agent depth, production sandboxing, and
+    legacy cleanup remain next-stage work.
+- The recommended next stage is `LG3.0 Native Product Run And Durable Resume`,
+  starting behind `GraphGateway` before adding more UI controls.
+
+Boundary:
+
+- This is documentation and handoff only.
+- It changes no API behavior, UI behavior, graph state transitions,
+  checkpointer behavior, LLM calls, static rules, R execution, or compatibility
+  shims.
+
+Verification:
+
+```text
+git diff --check -- docs/langgraph_v2_closeout_audit.md
+OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - the audit does not overstate LangGraph-v2 completion;
+  - it correctly distinguishes graph-owned split flow from a true durable
+    native LangGraph product runtime;
+  - it includes the major remaining work around durable full-run resume,
+    multi-dataset execution, repair/spec-revision routing, specialist agents,
+    CDISC/P21/company rule assets, production sandboxing, and legacy stub
+    cleanup.
+- Non-blocking wording suggestion absorbed: R1 now says product-default,
+  end-to-end native interrupts remain unfinished while acknowledging existing
+  pilot/native-resume work.

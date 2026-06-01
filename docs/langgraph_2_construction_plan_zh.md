@@ -8584,3 +8584,43 @@ OK; Windows LF/CRLF warnings only.
   - 测试覆盖 `/runs/native-study-loop` response 字段和
     `progress.study_loop_result` 保持一致；
   - 文档正确说明这是 read-model/API contract 对齐，不是新增 native resume 行为。
+
+### 2026-06-01 - LG2.8 LangGraph-v2 Closeout Audit Document 切片
+
+已完成：
+
+- 新增 `docs/langgraph_v2_closeout_audit.md`，作为当前 LangGraph-v2 的交接审计文档。
+- 审计文档按 LG2.0-LG2.8 记录当前状态：
+  - graph-state ownership 和 compatibility migration 基本完成；
+  - full native product runtime 和 durable checkpointer resume 仍未完成；
+  - approvals 后的 multi-dataset execution、repair/spec-revision 闭环、
+    standards retrieval、specialist-agent 深化、production sandboxing、legacy
+    cleanup 仍属于下一阶段。
+- 建议下一阶段命名为 `LG3.0 Native Product Run And Durable Resume`，先在
+  `GraphGateway` 后面实现 native runtime，再考虑继续加 UI 控件。
+
+边界：
+
+- 这是 documentation/handoff 切片。
+- 不改变 API、UI、graph state transition、checkpointer、LLM call、static rule、
+  R execution 或 compatibility shim 行为。
+
+验证：
+
+```text
+git diff --check -- docs/langgraph_v2_closeout_audit.md
+OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - 审计没有夸大 LangGraph-v2 完成度；
+  - 正确区分 graph-owned split flow 和真正 durable native LangGraph product
+    runtime；
+  - 已覆盖 durable full-run resume、multi-dataset execution、repair/spec-revision
+    routing、specialist agents、CDISC/P21/company rule assets、production
+    sandboxing、legacy stub cleanup 等主要剩余工作。
+- 已吸收非阻断措辞建议：R1 现在说明未完成的是 product-default、end-to-end
+  native interrupts，同时承认已有 pilot/native-resume work。
