@@ -471,6 +471,53 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       line-height: 1.35;
     }
+    .study-loop-panel {
+      margin: 0 0 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .study-loop-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .study-loop-title {
+      display: block;
+      margin: 2px 0 3px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .study-loop-list {
+      display: grid;
+      gap: 7px;
+    }
+    .study-loop-item {
+      display: grid;
+      grid-template-columns: minmax(86px, 0.35fr) 1fr;
+      gap: 10px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .study-loop-item.warn { border-color: #f0d19b; background: #fff8ea; }
+    .study-loop-item.fail { border-color: #efc4be; background: #fff8f7; }
+    .study-loop-target {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .study-loop-action {
+      color: var(--text);
+      font-weight: 800;
+    }
     .graph-canvas {
       min-height: 180px;
       padding: 12px;
@@ -859,6 +906,7 @@ INDEX_HTML = r"""<!doctype html>
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
       .review-queue-item { grid-template-columns: 1fr; }
+      .study-loop-item { grid-template-columns: 1fr; }
       .status-meta-grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -935,6 +983,17 @@ INDEX_HTML = r"""<!doctype html>
               <span class="pill" id="humanReviewQueueStatus">clear</span>
             </div>
             <div class="review-queue-list" id="humanReviewQueueList"></div>
+          </div>
+          <div class="study-loop-panel" id="studyLoopResultPanel">
+            <div class="study-loop-head">
+              <div>
+                <span class="status-label">Study Loop Result</span>
+                <span class="study-loop-title" id="studyLoopResultTitle">No batch start yet</span>
+                <div class="muted" id="studyLoopResultDetail">Start Runnable Datasets will show which datasets moved to review gates and which stayed blocked.</div>
+              </div>
+              <span class="pill" id="studyLoopResultStatus">idle</span>
+            </div>
+            <div class="study-loop-list" id="studyLoopResultList"></div>
           </div>
           <div class="metric-grid">
             <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
@@ -1203,6 +1262,7 @@ INDEX_HTML = r"""<!doctype html>
       selectedTargetsForPlan: [],
       targetCandidates: [],
       targetEvidenceSources: {},
+      lastStudyLoopResult: null,
       events: [],
       selectedView: 'summary',
       selectedResultView: 'generated',
@@ -1639,6 +1699,7 @@ INDEX_HTML = r"""<!doctype html>
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
       state.runReview = null;
+      state.lastStudyLoopResult = null;
       state.selectedTargetsForPlan = [];
       state.tablePages = {};
       state.compareResults = {};
@@ -1899,6 +1960,7 @@ INDEX_HTML = r"""<!doctype html>
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
       state.runReview = null;
+      state.lastStudyLoopResult = null;
       state.targetCandidates = state.selectedTarget ? [state.selectedTarget] : [];
       state.targetEvidenceSources = {};
       if (state.selectedTarget) recordTargetSource(state.selectedTarget, 'manual');
@@ -2583,6 +2645,11 @@ INDEX_HTML = r"""<!doctype html>
           resultText || payload.message || 'No new dataset was started.'
         );
         setPill('planStatus', payload.status || 'started');
+        state.lastStudyLoopResult = {
+          ...payload,
+          requested_targets: targets,
+          recorded_at: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+        };
         renderPlan(state.plan || {requested_datasets: targets, runnable_datasets: started, blocked_datasets: payload.blocked_datasets || []});
         renderDraftSpecPane();
         renderPane();
@@ -2700,6 +2767,7 @@ INDEX_HTML = r"""<!doctype html>
       setPill('graphStatus', studyStatusPill(progress, blocked, targets));
       renderStudyProgress(targets, runnable, blocked);
       renderHumanReviewQueue();
+      renderStudyLoopResult();
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
       renderAgentAuditPanel();
@@ -2997,6 +3065,98 @@ INDEX_HTML = r"""<!doctype html>
           ? `Graph progress action: ${item.status}.`
         : 'Open graph interrupt.';
       return [source, item.reason || 'No additional reason was recorded.'].join(' ');
+    }
+
+    function renderStudyLoopResult() {
+      const result = state.lastStudyLoopResult;
+      const list = byId('studyLoopResultList');
+      if (!result) {
+        byId('studyLoopResultTitle').textContent = 'No batch start yet';
+        byId('studyLoopResultDetail').textContent = 'Start Runnable Datasets will show which datasets moved to review gates and which stayed blocked.';
+        setPill('studyLoopResultStatus', 'idle');
+        list.innerHTML = '<div class="muted">No study-level dataset dispatch has been started in this browser session.</div>';
+        return;
+      }
+      const started = (result.started_datasets || []).map((dataset) => String(dataset || '').toUpperCase()).filter(Boolean);
+      const blocked = result.blocked_datasets || [];
+      const reviewQueue = result.review_queue || state.runProgress?.review_queue || [];
+      byId('studyLoopResultTitle').textContent = started.length
+        ? `${started.length} dataset(s) moved to review gates`
+        : 'No new dataset moved';
+      byId('studyLoopResultDetail').textContent = [
+        result.recorded_at ? `Last start: ${result.recorded_at}.` : '',
+        result.message || '',
+        'This does not approve draft specs, approve code, or run R.'
+      ].filter(Boolean).join(' ');
+      setPill('studyLoopResultStatus', started.length ? 'review' : blocked.length ? 'blocked' : 'clear');
+      const rows = [
+        ...studyLoopStartedRows(result),
+        ...studyLoopBlockedRows(blocked),
+        ...studyLoopReviewQueueRows(reviewQueue, started)
+      ];
+      list.innerHTML = rows.length
+        ? rows.join('')
+        : '<div class="muted">No new dataset needed a start action. Existing graph progress was preserved.</div>';
+    }
+
+    function studyLoopStartedRows(result) {
+      const resultsByDataset = new Map((result.dataset_results || []).map((item) => [String(item.dataset || '').toUpperCase(), item]));
+      return (result.started_datasets || [])
+        .map((dataset) => String(dataset || '').toUpperCase())
+        .filter(Boolean)
+        .map((dataset) => {
+          const item = resultsByDataset.get(dataset) || {};
+          const nextAction = item.next_action || 'review_required';
+          const warnings = item.warnings?.length ? ` Warnings: ${item.warnings.join('; ')}` : '';
+          return studyLoopResultItemHtml({
+            dataset,
+            tone: 'warn',
+            label: titleFromToken(nextAction),
+            detail: `${dataset} stopped at ${titleFromToken(nextAction)}. Review this gate before any code approval or local R execution.${warnings}`
+          });
+        });
+    }
+
+    function studyLoopBlockedRows(blocked) {
+      return (blocked || []).map((item) => {
+        const dataset = String(item.dataset || 'Dataset').toUpperCase();
+        return studyLoopResultItemHtml({
+          dataset,
+          tone: 'fail',
+          label: 'Blocked',
+          detail: `${humanDependencyReason(item.reason)}${item.blocked_by ? ` Blocked by: ${item.blocked_by}.` : ''}`
+        });
+      });
+    }
+
+    function studyLoopReviewQueueRows(reviewQueue, started) {
+      const startedSet = new Set(started || []);
+      return (reviewQueue || [])
+        .filter((item) => {
+          const dataset = String(item.dataset || '').toUpperCase();
+          return dataset && !startedSet.has(dataset);
+        })
+        .map((item) => studyLoopResultItemHtml({
+          dataset: String(item.dataset || 'Study').toUpperCase(),
+          tone: 'warn',
+          label: readableInterruptName(item.name || item.interrupt || progressInterruptName(item.action)),
+          detail: item.reason || 'A review gate is open in graph progress.'
+        }));
+    }
+
+    function studyLoopResultItemHtml(item) {
+      return `
+        <div class="study-loop-item ${item.tone || ''}">
+          <div>
+            <div class="study-loop-target">${escapeHtml(item.dataset || 'Study')}</div>
+            <span class="pill ${item.tone === 'fail' ? 'fail' : 'warn'}">${escapeHtml(item.label || 'Review')}</span>
+          </div>
+          <div>
+            <div class="study-loop-action">${escapeHtml(item.label || 'Review required')}</div>
+            <div>${escapeHtml(item.detail || 'No detail recorded.')}</div>
+          </div>
+        </div>
+      `;
     }
 
     function graphInterruptLabel() {

@@ -435,6 +435,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("renderHumanReviewQueue", response.text)
         self.assertIn("humanReviewQueueItems", response.text)
         self.assertIn("reviewQueueActionText", response.text)
+        self.assertIn("studyLoopResultPanel", response.text)
+        self.assertIn("Study Loop Result", response.text)
+        self.assertIn("lastStudyLoopResult", response.text)
+        self.assertIn("renderStudyLoopResult", response.text)
         self.assertIn("agentAuditPanel", response.text)
         self.assertIn("Agent Audit", response.text)
         self.assertIn("renderAgentAuditPanel", response.text)
@@ -460,6 +464,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("startStudyLoopButton", response.text)
         self.assertIn("/runs/native-study-loop", response.text)
         self.assertIn("startNativeStudyLoop", response.text)
+        self.assertIn("This does not approve draft specs, approve code, or run R.", response.text)
         self.assertIn("finalize-inputs", response.text)
         self.assertIn("finalizedInputsByDataset", response.text)
         self.assertIn("Audit Timeline", response.text)
@@ -551,6 +556,106 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Review generated R code before local execution.", queue_body)
         self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
         self.assertNotIn("JSON.stringify", queue_body)
+
+    def test_index_exposes_native_study_loop_result_summary(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.text
+        self.assertIn("Study Loop Result", html)
+        self.assertIn("studyLoopResultPanel", html)
+        self.assertIn("studyLoopResultList", html)
+        start_body = html.split("async function startNativeStudyLoop()", 1)[1].split("async function approveDraftSpec()", 1)[0]
+        self.assertIn("state.lastStudyLoopResult = {", start_body)
+        self.assertIn("requested_targets: targets", start_body)
+        self.assertIn("recorded_at:", start_body)
+        dashboard_body = html.split("function renderGraphAwareDashboard()", 1)[1].split("function renderStudyProgress", 1)[0]
+        self.assertIn("renderStudyLoopResult()", dashboard_body)
+        loop_body = html.split("function renderStudyLoopResult()", 1)[1].split("function graphInterruptLabel()", 1)[0]
+        self.assertIn("This does not approve draft specs, approve code, or run R.", loop_body)
+        self.assertIn("studyLoopStartedRows(result)", loop_body)
+        self.assertIn("studyLoopBlockedRows(blocked)", loop_body)
+        self.assertIn("studyLoopReviewQueueRows(reviewQueue, started)", loop_body)
+        self.assertIn("humanDependencyReason(item.reason)", loop_body)
+        self.assertNotIn("JSON.stringify", loop_body)
+
+    def test_index_renders_native_study_loop_result_summary(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_study_loop_result' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.lastStudyLoopResult = {
+  message: 'Started ADAE and stopped at human review gates. 2 review item(s) are now queued.',
+  recorded_at: '10:30:00',
+  started_datasets: ['ADAE'],
+  dataset_results: [
+    {dataset: 'ADAE', next_action: 'review_code', warnings: ['Static warning needs review.']}
+  ],
+  blocked_datasets: [
+    {dataset: 'ADLB', reason: 'dependency_user_action_required', blocked_by: 'ADSL'}
+  ],
+  review_queue: [
+    {dataset: 'ADCM', name: 'draft_spec_review', reason: 'No approved input spec was supplied.'}
+  ]
+};
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  title: nodes.get('studyLoopResultTitle').textContent,
+  detail: nodes.get('studyLoopResultDetail').textContent,
+  status: nodes.get('studyLoopResultStatus').textContent,
+  html: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_study_loop_result.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIn("1 dataset(s) moved to review gates", result["title"])
+        self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
+        self.assertEqual(result["status"], "review")
+        self.assertIn("ADAE", result["html"])
+        self.assertIn("Review Code", result["html"])
+        self.assertIn("Static warning needs review.", result["html"])
+        self.assertIn("ADLB", result["html"])
+        self.assertIn("Blocked", result["html"])
+        self.assertIn("missing upstream ADaM", result["html"])
+        self.assertIn("ADCM", result["html"])
+        self.assertIn("Draft spec review", result["html"])
 
     def test_index_exposes_terminal_failure_triage_actions(self) -> None:
         client = TestClient(create_app())

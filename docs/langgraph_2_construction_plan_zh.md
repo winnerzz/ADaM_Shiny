@@ -6703,6 +6703,57 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Study Loop Result Read-Model 切片
+
+已完成：
+
+- 在本地 UI dashboard 中新增 `Study Loop Result` 面板。
+- 该面板只展示 `/runs/native-study-loop` 返回值和 graph progress read model 中已有
+  的事实：
+  - 本次 study-level start 启动了哪些 datasets；
+  - 哪些 datasets 仍因为 dependency/user action 被阻断；
+  - graph review queue 中还有哪些审核门打开。
+- 继续明确产品边界：
+  - `Start Runnable Datasets` 只把 dataset 推进到 review gate；
+  - 不自动 approve draft spec；
+  - 不自动 approve generated code；
+  - 不执行 R。
+- 浏览器新增 `lastStudyLoopResult` 仅作为最近一次命令返回的展示缓存，不会写回后端，
+  也不参与 graph 决策。
+- 根据子 agent 的非阻断建议，新增 Node harness 测试，直接执行
+  `renderStudyLoopResult()`，验证 started、blocked、review queue 三类信息都能实际
+  渲染出来，而不只是检查 HTML 字符串存在。
+
+当前边界：
+
+- 这是 UI read-model 改进，不改变 dependency planning、Gateway dispatch、approval
+  gates、LLM generation 或 R execution。
+- 面板总结的是当前浏览器会话中最近一次 study-loop start；canonical workflow truth
+  仍然是 graph state 和 graph progress。
+
+子 agent 审查：
+
+- 2026-06-01，Anscombe，`gpt-5.5`，只读审查结论：GO。
+- 它确认本切片没有新增隐藏 approve/run 路径，也没有把浏览器本地状态变成独立 workflow
+  state machine。
+- 它提出的非阻断建议是补一个 Node harness render test；已在提交前完成。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary -v
+Ran 2 tests in 0.120s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets -v
+Ran 4 tests in 0.407s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Dependency Assumption UI Wording 切片
 
 已完成：

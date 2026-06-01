@@ -7248,6 +7248,60 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Study Loop Result Read-Model Slice
+
+Completed:
+
+- Added a `Study Loop Result` panel to the local UI dashboard.
+- The panel renders only data returned by `/runs/native-study-loop` and the
+  graph progress read model:
+  - datasets started by the study-level command;
+  - datasets that stayed blocked by dependency/user action;
+  - review gates still open in the graph review queue.
+- Kept the product boundary explicit in the UI:
+  - `Start Runnable Datasets` moves datasets to review gates only;
+  - it does not approve draft specs;
+  - it does not approve generated code;
+  - it does not run R.
+- The browser stores the last command response as `lastStudyLoopResult` only
+  for display. It is not sent back as workflow state and does not affect graph
+  decisions.
+- Added a Node harness test that executes `renderStudyLoopResult()` with
+  started, blocked, and queued-review data, so the panel is tested as rendered
+  UI, not only as static HTML text.
+
+Current boundary:
+
+- This is a UI read-model improvement only. It does not change dependency
+  planning, Gateway dispatch rules, approval gates, LLM generation, or R
+  execution.
+- The panel summarizes the latest study-loop start in the current browser
+  session. Canonical workflow truth remains graph state and graph progress.
+
+Subagent review:
+
+- 2026-06-01, Anscombe, `gpt-5.5`, read-only review: GO.
+- Verified that the UI does not add hidden approve/run paths and does not
+  replace graph state with a local state machine.
+- Non-blocking suggestion was to add a Node harness render test; this was
+  implemented before commit.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary -v
+Ran 2 tests in 0.120s - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets -v
+Ran 4 tests in 0.407s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Dependency Assumption UI Wording Slice
 
 Completed:
