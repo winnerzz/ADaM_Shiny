@@ -207,6 +207,44 @@ class Phase8ApiTests(unittest.TestCase):
         }
         self.assertIn("GraphGateway", factory_calls)
 
+    def test_service_layer_opens_graph_gateway_through_context_helper(self) -> None:
+        from adam_agent.api import service
+
+        direct_factory_callers: list[str] = []
+        for name, obj in vars(service).items():
+            if name.startswith("__") or not inspect.isfunction(obj) or obj.__module__ != service.__name__:
+                continue
+            if name in {"_new_graph_gateway", "_open_graph_gateway"}:
+                continue
+            tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+            calls_factory_directly = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_new_graph_gateway"
+                for node in ast.walk(tree)
+            )
+            if calls_factory_directly:
+                direct_factory_callers.append(name)
+
+        self.assertEqual(
+            direct_factory_callers,
+            [],
+            "Service helpers should open GraphGateway through _open_graph_gateway() so resources are closed.",
+        )
+
+    def test_open_graph_gateway_closes_gateway_after_use(self) -> None:
+        from adam_agent.api import service
+
+        with patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            with service._open_graph_gateway(
+                study_dir="D:/tmp/study",
+                run_id="run_context_close",
+            ) as gateway:
+                self.assertIs(gateway, gateway_cls.return_value)
+                gateway.close.assert_not_called()
+
+            gateway.close.assert_called_once_with()
+
     def test_service_gateway_factory_defaults_to_memory_backend(self) -> None:
         from adam_agent.api import service
 

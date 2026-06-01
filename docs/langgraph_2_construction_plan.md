@@ -7248,6 +7248,62 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Gateway Lifecycle Boundary Slice
+
+Completed:
+
+- Added `_open_graph_gateway(study_dir=None, run_id=None)` as the
+  service-scoped lifecycle boundary for `GraphGateway`.
+- The helper still delegates construction to `_new_graph_gateway()`, but now
+  guarantees `gateway.close()` in a `finally` block.
+- Migrated service-layer gateway use to the context helper across:
+  - upload invalidation;
+  - legacy `/runs` shim;
+  - dependency planning;
+  - native study product loop start;
+  - dependency, draft-spec, code, and terminal-failure review gates;
+  - finalize inputs, draft spec generation, code generation, approved-code
+    execution;
+  - graph-state, progress, compare, and review-summary read models.
+- Added service-layer contract tests:
+  - service helpers cannot call `_new_graph_gateway()` directly except through
+    `_open_graph_gateway()`;
+  - `_open_graph_gateway()` closes the gateway after use.
+
+Current boundary:
+
+- This slice does not change the default public API/UI backend. Memory remains
+  the default unless `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND` is explicitly set.
+- It does not enable full graph-native product resume by itself.
+- The purpose is to make the service layer safe for the already-added
+  run-scoped SQLite checkpointer path by closing per-request gateway resources.
+- `GraphGateway` still owns workflow state transitions; FastAPI service code
+  remains request validation, response shaping, and read-model plumbing.
+
+Subagent review:
+
+- 2026-06-01, Dewey, `gpt-5.5`, read-only review: GO.
+- Confirmed all service-layer gateway use flows through `_open_graph_gateway()`;
+  default memory behavior and run-scoped sqlite behavior remain unchanged;
+  exception paths close resources; no double-close or lazy-result lifetime risk
+  was found.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory tests.test_api_phase8.Phase8ApiTests.test_service_layer_opens_graph_gateway_through_context_helper tests.test_api_phase8.Phase8ApiTests.test_open_graph_gateway_closes_gateway_after_use tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_memory_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend -v
+Ran 7 tests in 0.096s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 124 tests in 15.848s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.1 Service Checkpointer Backend Config Slice
 
 Completed:

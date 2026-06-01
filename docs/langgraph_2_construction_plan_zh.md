@@ -6703,6 +6703,61 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Gateway Lifecycle Boundary 切片
+
+已完成：
+
+- 新增 `_open_graph_gateway(study_dir=None, run_id=None)`，作为 service 层
+  `GraphGateway` 的生命周期边界。
+- 该 helper 仍通过 `_new_graph_gateway()` 构造 gateway，但会在 `finally` 中
+  保证调用 `gateway.close()`。
+- 把 service 层 gateway 使用迁移到 context helper，覆盖：
+  - upload invalidation；
+  - legacy `/runs` shim；
+  - dependency planning；
+  - native study product loop start；
+  - dependency、draft-spec、code、terminal-failure review gates；
+  - finalize inputs、draft spec generation、code generation、approved-code
+    execution；
+  - graph-state、progress、compare、review-summary read models。
+- 增加 service-layer contract tests：
+  - 除 `_open_graph_gateway()` 外，service helper 不能直接调用
+    `_new_graph_gateway()`；
+  - `_open_graph_gateway()` 使用结束后必须关闭 gateway。
+
+当前边界：
+
+- 本切片不改变公开 API/UI 默认 backend。没有显式设置
+  `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND` 时，仍使用 memory。
+- 本切片本身不宣称完整产品流已经具备 graph-native resume。
+- 目的只是让 service 层适配前一切片已经加入的 run-scoped SQLite
+  checkpointer path：每次请求打开的 gateway 用完就关闭资源。
+- `GraphGateway` 仍然拥有 workflow state transitions；FastAPI service 层仍只做
+  request validation、response shaping 和 read-model plumbing。
+
+子 agent 审查：
+
+- 2026-06-01，Dewey，`gpt-5.5`，只读审查结论：GO。
+- 它确认 service 层 gateway 使用都经过 `_open_graph_gateway()`；默认 memory
+  行为和 run-scoped sqlite 行为不变；异常路径会关闭资源；没有发现 double-close
+  或 result 生命周期太短的风险。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory tests.test_api_phase8.Phase8ApiTests.test_service_layer_opens_graph_gateway_through_context_helper tests.test_api_phase8.Phase8ApiTests.test_open_graph_gateway_closes_gateway_after_use tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_memory_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend -v
+Ran 7 tests in 0.096s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 124 tests in 15.848s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.1 Service Checkpointer Backend Config 切片
 
 已完成：

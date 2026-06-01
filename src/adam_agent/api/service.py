@@ -8,6 +8,8 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -153,6 +155,21 @@ def _new_graph_gateway(
     )
 
 
+@contextmanager
+def _open_graph_gateway(
+    *,
+    study_dir: str | Path | None = None,
+    run_id: str | None = None,
+) -> Iterator[GraphGateway]:
+    """Open a service-scoped graph gateway and always release its resources."""
+
+    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
+    try:
+        yield gateway
+    finally:
+        gateway.close()
+
+
 def _gateway_compatibility_metadata(result: Any) -> dict[str, str]:
     """Copy compatibility metadata from the gateway-owned workflow projection."""
 
@@ -259,7 +276,8 @@ def save_uploaded_file_bytes(
         target.write_bytes(content)
         saved.append(str(target.as_posix()))
     summary = summarize_study_inputs(root, study_id=study_id or root.name)
-    graph_invalidation = _new_graph_gateway().mark_study_inputs_changed(study_dir=root)
+    with _open_graph_gateway() as gateway:
+        graph_invalidation = gateway.mark_study_inputs_changed(study_dir=root)
     upload_state = {
         "input_fingerprint": graph_invalidation.input_fingerprint,
         "input_diff": graph_invalidation.input_diff,
@@ -352,36 +370,36 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             f"Allowed legacy endpoint modes: {format_execution_modes(LEGACY_RUN_ENDPOINT_MODES)}. "
             "Use the split-flow endpoints for product LLM generation."
         )
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=config.run_id)
-    if execution_mode in LEGACY_RUN_BLOCKED_LLM_MODES:
-        gateway.block_legacy_run_to_completion(
-            study_dir=study_dir,
-            run_id=config.run_id,
-            study_id=study_id,
-            requested_datasets=list(request.target_datasets),
-            execution_mode=execution_mode,
-        )
-        raise ApiServiceError(
-            "LLM ADaM generation cannot run through POST /runs because it would bypass review gates. "
-            "Use /runs/prepare, finalize-inputs, draft-spec-review, generate-code, code-review, "
-            "and execute-approved-code."
-        )
+    with _open_graph_gateway(study_dir=study_dir, run_id=config.run_id) as gateway:
+        if execution_mode in LEGACY_RUN_BLOCKED_LLM_MODES:
+            gateway.block_legacy_run_to_completion(
+                study_dir=study_dir,
+                run_id=config.run_id,
+                study_id=study_id,
+                requested_datasets=list(request.target_datasets),
+                execution_mode=execution_mode,
+            )
+            raise ApiServiceError(
+                "LLM ADaM generation cannot run through POST /runs because it would bypass review gates. "
+                "Use /runs/prepare, finalize-inputs, draft-spec-review, generate-code, code-review, "
+                "and execute-approved-code."
+            )
 
-    legacy_result = gateway.run_legacy_to_completion(
-        study_dir=study_dir,
-        study_id=config.study_id,
-        run_id=config.run_id,
-        target_datasets=list(request.target_datasets),
-        execution_mode=execution_mode,
-        approved_dependency_datasets=request.approved_dependency_datasets,
-        rscript_path=request.rscript_path or "",
-        llm_exposure=config.llm_exposure.model_dump(mode="json"),
-        llm_provider={
-            key: value
-            for key, value in config.llm_provider.__dict__.items()
-            if value is not None
-        },
-    )
+        legacy_result = gateway.run_legacy_to_completion(
+            study_dir=study_dir,
+            study_id=config.study_id,
+            run_id=config.run_id,
+            target_datasets=list(request.target_datasets),
+            execution_mode=execution_mode,
+            approved_dependency_datasets=request.approved_dependency_datasets,
+            rscript_path=request.rscript_path or "",
+            llm_exposure=config.llm_exposure.model_dump(mode="json"),
+            llm_provider={
+                key: value
+                for key, value in config.llm_provider.__dict__.items()
+                if value is not None
+            },
+        )
     return _response_from_legacy_graph_result(legacy_result, execution_mode=execution_mode, study_dir=study_dir)
 
 
@@ -392,13 +410,14 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
     if not study_dir.exists() or not study_dir.is_dir():
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     study_id = request.study_id or study_dir.name
-    gateway_result = _new_graph_gateway(study_dir=study_dir, run_id=request.run_id).start_dependency_plan(
-        study_dir=study_dir,
-        study_id=study_id,
-        run_id=request.run_id,
-        target_datasets=list(request.target_datasets),
-        approved_dependency_datasets=request.approved_dependency_datasets,
-    )
+    with _open_graph_gateway(study_dir=study_dir, run_id=request.run_id) as gateway:
+        gateway_result = gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id=study_id,
+            run_id=request.run_id,
+            target_datasets=list(request.target_datasets),
+            approved_dependency_datasets=request.approved_dependency_datasets,
+        )
     graph_state = gateway_result.graph_state
     plan_payload = graph_state.dependency_plan
     blocked = list(graph_state.blocked_datasets)
@@ -445,18 +464,19 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
         fallback=config.llm_exposure,
     )
     try:
-        result = _new_graph_gateway(study_dir=study_dir, run_id=request.run_id).start_native_study_product_loop(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=request.run_id,
-            target_datasets=targets,
-            approved_dependency_datasets=getattr(request, "approved_dependency_datasets", []),
-            llm_provider=provider_config.__dict__,
-            llm_exposure=exposure.model_dump(mode="json"),
-            llm_client_builder=build_llm_client,
-            target_context_builder=build_target_llm_context,
-            rscript_path=getattr(request, "rscript_path", None) or "",
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=request.run_id) as gateway:
+            result = gateway.start_native_study_product_loop(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=request.run_id,
+                target_datasets=targets,
+                approved_dependency_datasets=getattr(request, "approved_dependency_datasets", []),
+                llm_provider=provider_config.__dict__,
+                llm_exposure=exposure.model_dump(mode="json"),
+                llm_client_builder=build_llm_client,
+                target_context_builder=build_target_llm_context,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     dataset_results = [
@@ -490,20 +510,20 @@ def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResp
     decision = request.decision.strip().lower()
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Dependency review decision must be approve or reject.")
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     try:
-        result = gateway.review_dependency(
-            study_dir=study_dir,
-            run_id=run_id,
-            decision=decision,
-            reviewer=request.reviewer,
-            notes=request.notes,
-            approved_dependency_datasets=[
-                str(item).strip().upper()
-                for item in getattr(request, "approved_dependency_datasets", [])
-                if str(item).strip()
-            ],
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.review_dependency(
+                study_dir=study_dir,
+                run_id=run_id,
+                decision=decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+                approved_dependency_datasets=[
+                    str(item).strip().upper()
+                    for item in getattr(request, "approved_dependency_datasets", [])
+                    if str(item).strip()
+                ],
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     return DependencyReviewResponse(
@@ -566,21 +586,21 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = gateway.generate_code(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            llm_provider=provider_config.__dict__,
-            llm_exposure=exposure.model_dump(mode="json"),
-            llm_client_builder=build_llm_client,
-            target_context_builder=build_target_llm_context,
-            rscript_path=getattr(request, "rscript_path", None) or "",
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.generate_code(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                llm_provider=provider_config.__dict__,
+                llm_exposure=exposure.model_dump(mode="json"),
+                llm_client_builder=build_llm_client,
+                target_context_builder=build_target_llm_context,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     warnings = result.warnings + list(result.dependency_warnings or []) + [
@@ -617,21 +637,21 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = gateway.finalize_inputs(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            llm_provider=provider_config.__dict__,
-            llm_exposure=exposure.model_dump(mode="json"),
-            llm_client_builder=build_llm_client,
-            target_context_builder=build_target_llm_context,
-            rscript_path=getattr(request, "rscript_path", None) or "",
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.finalize_inputs(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                llm_provider=provider_config.__dict__,
+                llm_exposure=exposure.model_dump(mode="json"),
+                llm_client_builder=build_llm_client,
+                target_context_builder=build_target_llm_context,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     warnings = result.warnings + list(result.dependency_warnings or [])
@@ -704,21 +724,21 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
     config = ConfigLoader().load(request.config_path, study_id=study_id, run_id=run_id)
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     provider_config = _provider_config_from_override(request.llm_provider_override, fallback=config.llm_provider)
     exposure = _exposure_config_from_override(request.llm_exposure_override, fallback=config.llm_exposure)
     try:
-        result = gateway.generate_draft_spec(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            llm_provider=provider_config.__dict__,
-            llm_exposure=exposure.model_dump(mode="json"),
-            llm_client_builder=build_llm_client,
-            target_context_builder=build_target_llm_context,
-            rscript_path=getattr(request, "rscript_path", None) or "",
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.generate_draft_spec(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                llm_provider=provider_config.__dict__,
+                llm_exposure=exposure.model_dump(mode="json"),
+                llm_client_builder=build_llm_client,
+                target_context_builder=build_target_llm_context,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
     except ValueError as exc:
         raise ApiServiceError(f"Draft spec generation failed: {exc}") from exc
     warnings = result.warnings + list(result.dependency_warnings or [])
@@ -746,17 +766,17 @@ def persist_draft_spec_review(run_id: str, dataset: str, request: Any) -> DraftS
     decision = request.decision.strip().lower()
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Draft spec review decision must be approve or reject.")
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     try:
-        result = gateway.review_draft_spec(
-            study_dir=study_dir,
-            study_id=study_dir.name,
-            run_id=run_id,
-            dataset=target,
-            decision=decision,
-            reviewer=request.reviewer,
-            notes=request.notes,
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.review_draft_spec(
+                study_dir=study_dir,
+                study_id=study_dir.name,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     return DraftSpecReviewResponse(
@@ -782,17 +802,17 @@ def persist_code_review(run_id: str, dataset: str, request: Any) -> CodeReviewRe
     if decision not in {"approve", "reject"}:
         raise ApiServiceError("Code review decision must be approve or reject.")
     study_id = study_dir.name
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     try:
-        result = gateway.review_code(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            decision=decision,
-            reviewer=request.reviewer,
-            notes=request.notes,
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.review_code(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     return CodeReviewResponse(
@@ -815,15 +835,15 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
     study_id = request.study_id or study_dir.name
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     try:
-        result = gateway.execute_approved_code(
-            study_dir=study_dir,
-            study_id=study_id,
-            run_id=run_id,
-            dataset=target,
-            rscript_path=getattr(request, "rscript_path", None) or "",
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.execute_approved_code(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     return ExecuteCodeResponse(
@@ -849,16 +869,16 @@ def persist_terminal_failure_review(run_id: str, dataset: str, request: Any) -> 
     if not study_dir.exists() or not study_dir.is_dir():
         raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
     target = dataset.strip().upper()
-    gateway = _new_graph_gateway(study_dir=study_dir, run_id=run_id)
     try:
-        result = gateway.review_terminal_failure(
-            study_dir=study_dir,
-            run_id=run_id,
-            dataset=target,
-            decision=request.decision,
-            reviewer=request.reviewer,
-            notes=request.notes,
-        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.review_terminal_failure(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset=target,
+                decision=request.decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+            )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
     return TerminalFailureReviewResponse(
@@ -891,7 +911,8 @@ def read_run_graph_state(study_dir: str | Path, run_id: str) -> dict[str, Any]:
     """Read the canonical graph state for one local run."""
 
     try:
-        state = _new_graph_gateway(study_dir=study_dir, run_id=run_id).load_graph_state(study_dir=study_dir, run_id=run_id)
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
     except FileNotFoundError as exc:
         raise ApiServiceError(str(exc)) from exc
     return state.model_dump(mode="json")
@@ -901,7 +922,8 @@ def read_run_progress(study_dir: str | Path, run_id: str) -> RunProgressResponse
     """Read graph-owned progress guidance for one local run."""
 
     try:
-        payload = _new_graph_gateway(study_dir=study_dir, run_id=run_id).progress_summary(study_dir=study_dir, run_id=run_id)
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            payload = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
     except FileNotFoundError as exc:
         raise ApiServiceError(str(exc)) from exc
     return RunProgressResponse(**payload)
@@ -949,13 +971,13 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
     root = _validated_study_root(study_dir)
     target = dataset.strip().upper()
     run_dir = _validated_run_dir(root, run_id)
-    gateway = _new_graph_gateway(study_dir=root, run_id=run_id)
     try:
-        result = gateway.compare_reference_output(
-            study_dir=root,
-            run_id=run_id,
-            dataset=target,
-        )
+        with _open_graph_gateway(study_dir=root, run_id=run_id) as gateway:
+            result = gateway.compare_reference_output(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+            )
     except FileNotFoundError:
         output_path = usable_generated_output_path(run_dir, target)
         reference_path = reference_adam_path(root, target)
@@ -1843,7 +1865,8 @@ def _dataset_result_from_manifest(manifest: dict[str, Any], dataset: str) -> dic
 
 def _load_review_graph_state(root: Path, run_id: str) -> StudyRunState | None:
     try:
-        return _new_graph_gateway(study_dir=root, run_id=run_id).load_graph_state(study_dir=root, run_id=run_id)
+        with _open_graph_gateway(study_dir=root, run_id=run_id) as gateway:
+            return gateway.load_graph_state(study_dir=root, run_id=run_id)
     except (FileNotFoundError, ValueError, ValidationError):
         return None
 
