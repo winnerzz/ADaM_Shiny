@@ -7533,6 +7533,46 @@ Subagent review:
   - tests preserve the default memory fail-closed boundary where queue entries
     can be visible while native resume is unavailable.
 
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue UI Status Slice
+
+Completed:
+
+- Updated the local Study Loop Result panel to consume
+  `study_loop_result.native_resume_has_queue_items` and
+  `study_loop_result.native_resume_queue_item_count`.
+- The panel now tells users when review gates are visible in the native resume
+  queue, while keeping the boundary explicit:
+  - default memory mode: use the visible review buttons; native resume is not
+    callable;
+  - durable mode: the panel is status-only and does not create resume controls.
+- Added UI contract/render tests for both memory-mode queue visibility and
+  durable-native-resume status visibility.
+
+Current boundary:
+
+- This is a read-model display slice only.
+- It adds no endpoint, no native-resume button, no LLM/R behavior, and no
+  workflow state transition.
+- Queue count remains a visibility signal, not a callable-resume signal.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress -v
+Ran 4 tests in 0.279s - OK
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- It confirmed that the UI only reads the study-loop native resume queue
+  fields, uses `native_resume_available` to separate memory and durable wording,
+  and adds no button, endpoint call, GraphGateway write, LLM path, or R
+  execution behavior.
+- It also confirmed that tests cover the main user-misleading risks by
+  asserting the rendered output does not expose `native-resume`,
+  `explicit_resume_endpoint`, or `<button`.
+
 ### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard Slice
 
 Completed:

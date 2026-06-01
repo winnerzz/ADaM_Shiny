@@ -789,6 +789,10 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Recorded from the latest Start Runnable Datasets command.", loop_body)
         self.assertIn("durable LangGraph checkpoint resume is not enabled", loop_body)
         self.assertIn("Durable native resume is available", loop_body)
+        self.assertIn("function studyLoopNativeResumeQueueText(result)", loop_body)
+        self.assertIn("visible in native resume queue", loop_body)
+        self.assertIn("native resume is not callable in the default memory mode", loop_body)
+        self.assertIn("this panel is status-only", loop_body)
         self.assertIn("function humanNativeResumeScope(scope)", loop_body)
         self.assertIn("pilot graph interrupts only", loop_body)
         self.assertNotIn("for ${result.native_resume_scope", loop_body)
@@ -834,6 +838,9 @@ state.lastStudyLoopResult = {
   source: 'command_response',
   message: 'Started ADAE and stopped at human review gates. 2 review item(s) are now queued.',
   recorded_at: '10:30:00',
+  native_resume_has_queue_items: true,
+  native_resume_queue_item_count: 2,
+  native_resume_available: false,
   started_datasets: ['ADAE'],
   dataset_results: [
     {dataset: 'ADAE', next_action: 'review_code', warnings: ['Static warning needs review.']}
@@ -872,6 +879,8 @@ console.log(JSON.stringify({
         self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
         self.assertIn("Recorded from the latest Start Runnable Datasets command.", result["detail"])
         self.assertNotIn("durable LangGraph checkpoint resume is not enabled", result["detail"])
+        self.assertIn("2 review gates visible in native resume queue.", result["detail"])
+        self.assertIn("native resume is not callable in the default memory mode.", result["detail"])
         self.assertEqual(result["status"], "review")
         self.assertIn("ADAE", result["html"])
         self.assertIn("Review Code", result["html"])
@@ -996,6 +1005,8 @@ const progress = {
     native_resume_available: true,
     native_resume_scope: 'native_pilot_interrupts_only',
     resume_boundary: 'durable_native_interrupt_resume',
+    native_resume_has_queue_items: true,
+    native_resume_queue_item_count: 1,
     message: 'Started ADAE and stopped at human review gates.',
     started_datasets: ['ADAE'],
     blocked_datasets: [],
@@ -1027,6 +1038,8 @@ console.log(JSON.stringify({
         self.assertTrue(result["appliedResume"])
         self.assertIn("Native resume: available for pilot graph interrupts only.", rendered)
         self.assertIn("Durable native resume is available for pilot graph interrupts only.", rendered)
+        self.assertIn("1 review gate visible in native resume queue.", rendered)
+        self.assertIn("this panel is status-only.", rendered)
         self.assertNotIn("native-resume", rendered)
         self.assertNotIn("explicit_resume_endpoint", rendered)
         self.assertNotIn("<button", rendered)

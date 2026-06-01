@@ -8488,3 +8488,39 @@ Ran 3 tests in 0.579s - OK
     `can_resume` / `resume_endpoint` 判断；
   - 测试保留了默认 memory fail-closed 语义，也就是 queue 可见但 native resume
     不可调用。
+
+### 2026-06-01 - LG2.7 Study Loop Native Resume Queue UI Status 切片
+
+已完成：
+
+- 更新本地 Study Loop Result 面板，让它消费
+  `study_loop_result.native_resume_has_queue_items` 和
+  `study_loop_result.native_resume_queue_item_count`。
+- 面板现在会告诉用户 native resume queue 里有多少可见 review gates，同时保持边界：
+  - 默认 memory mode：继续使用可见 review buttons；native resume 不可调用；
+  - durable mode：该面板仍只是状态展示，不创建 resume 控件。
+- 新增 UI contract/render 测试，覆盖 memory-mode queue 可见性和 durable-native-resume
+  状态可见性。
+
+边界：
+
+- 这是 read-model display 切片。
+- 不新增 endpoint、不新增 native-resume button、不改变 LLM/R 行为，也不改变 workflow
+  state transition。
+- queue count 仍只是 visibility signal，不是 callable-resume signal。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_recovers_study_loop_result_from_progress -v
+Ran 4 tests in 0.279s - OK
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认 UI 只读取 study-loop native resume queue 字段，并用
+  `native_resume_available` 区分 memory 和 durable 文案；没有新增 button、endpoint
+  call、GraphGateway write、LLM 路径或 R execution 行为。
+- 它也确认测试覆盖了主要误导风险：渲染结果不会暴露 `native-resume`、
+  `explicit_resume_endpoint` 或 `<button`。

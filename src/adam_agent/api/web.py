@@ -3175,9 +3175,11 @@ INDEX_HTML = r"""<!doctype html>
           ? `Durable native resume is available for ${humanNativeResumeScope(result.native_resume_scope)}.`
           : 'Default recovery uses saved graph state; durable LangGraph checkpoint resume is not enabled for this run.'
         : '';
+      const resumeQueueText = studyLoopNativeResumeQueueText(result);
       byId('studyLoopResultDetail').textContent = [
         sourceText,
         resumeText,
+        resumeQueueText,
         result.recorded_at ? `Last start: ${result.recorded_at}.` : '',
         result.message || '',
         'This does not approve draft specs, approve code, or run R.'
@@ -3199,6 +3201,23 @@ INDEX_HTML = r"""<!doctype html>
       if (normalized === 'native_pilot_interrupts_only') return 'pilot graph interrupts only';
       if (!normalized || normalized === 'none') return 'configured graph interrupts';
       return titleFromToken(normalized);
+    }
+
+    function studyLoopNativeResumeQueueText(result) {
+      const count = Number(result?.native_resume_queue_item_count || 0);
+      const hasQueueItems = Boolean(
+        result?.native_resume_has_queue_items ||
+        count > 0 ||
+        (Array.isArray(result?.native_resume_interrupts) && result.native_resume_interrupts.length)
+      );
+      if (!hasQueueItems) return '';
+      const countText = count > 0
+        ? `${count} review gate${count === 1 ? '' : 's'} visible in native resume queue.`
+        : 'Review gates are visible in native resume queue.';
+      const boundaryText = result?.native_resume_available
+        ? 'Use explicit resume controls only when they are shown; this panel is status-only.'
+        : 'Use the visible review buttons; native resume is not callable in the default memory mode.';
+      return `${countText} ${boundaryText}`;
     }
 
     function studyLoopStartedRows(result) {
