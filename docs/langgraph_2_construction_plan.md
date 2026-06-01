@@ -7248,6 +7248,65 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Checkpointer Backend Config Slice
+
+Completed:
+
+- Extended `_new_graph_gateway(study_dir=None, run_id=None)` into the single
+  service-layer runtime checkpointer/backend configuration point.
+- Default behavior is unchanged:
+  - no environment variable means plain `GraphGateway()`;
+  - public API/UI still uses the memory checkpointer unless explicitly
+    configured.
+- Added opt-in `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND` handling:
+  - `memory` returns the default gateway;
+  - `sqlite` uses the run-scoped
+    `runs/{run_id}/langgraph_checkpoints.sqlite` path when a run context is
+    available;
+  - `sqlite` without `study_dir` or `run_id` falls back to memory for
+    study-wide operations such as upload invalidation;
+  - `postgres` delegates to `GraphGateway` and fails closed until lifecycle
+    management is wired;
+  - unknown backend names fail closed with `ApiServiceError`.
+- Kept the runtime checkpoint store separate from the product audit ledger:
+  `langgraph_checkpoints.sqlite` is not `graph_checkpoints.sqlite`.
+- Added tests for default memory behavior, run-scoped sqlite routing,
+  no-context memory fallback, and unknown backend rejection.
+
+Current boundary:
+
+- This slice provides a configuration entry point only. It does not claim the
+  complete product flow is now a persistent native LangGraph run.
+- SQLite still requires the optional `langgraph-checkpoint-sqlite` dependency.
+- Full product interrupt/resume, automatic repair loops, and production
+  Postgres lifecycle management remain later work.
+
+Subagent review:
+
+- 2026-06-01, Peirce, `gpt-5.5`, first read-only review: NO-GO.
+- Blocking issue: an environment override for the sqlite path could have made
+  multiple runs share one checkpoint database, and could have forced sqlite on
+  study-wide operations without run context.
+- Fix applied:
+  - removed the service-level sqlite path override;
+  - sqlite now always derives from `default_sqlite_checkpointer_path(study_dir,
+    run_id)` when run context exists;
+  - sqlite without run context falls back to memory.
+- 2026-06-01, Einstein, `gpt-5.5`, read-only re-review: GO.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_memory_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory -v
+Ran 5 tests in 0.040s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 122 tests in 15.958s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.1 Service Gateway Factory Boundary Slice
 
 Completed:

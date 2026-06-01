@@ -207,6 +207,61 @@ class Phase8ApiTests(unittest.TestCase):
         }
         self.assertIn("GraphGateway", factory_calls)
 
+    def test_service_gateway_factory_defaults_to_memory_backend(self) -> None:
+        from adam_agent.api import service
+
+        with patch.dict("os.environ", {}, clear=True), patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway = service._new_graph_gateway(
+                study_dir="D:/tmp/study",
+                run_id="run_factory_default",
+            )
+
+        self.assertIs(gateway, gateway_cls.return_value)
+        gateway_cls.assert_called_once_with()
+
+    def test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled(self) -> None:
+        from adam_agent.api import service
+
+        study_dir = _workspace_dir("phase8_service_gateway_sqlite") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
+        env = {
+            "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite",
+            "ADAM_AGENT_GRAPH_CHECKPOINTER_SQLITE_PATH": "D:/tmp/shared_should_not_be_used.sqlite",
+        }
+        with patch.dict("os.environ", env, clear=True), patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway = service._new_graph_gateway(
+                study_dir=study_dir,
+                run_id="run_factory_sqlite",
+            )
+
+        self.assertIs(gateway, gateway_cls.return_value)
+        gateway_cls.assert_called_once()
+        _, kwargs = gateway_cls.call_args
+        self.assertEqual(kwargs["checkpointer_backend"], "sqlite")
+        sqlite_path = str(kwargs["sqlite_checkpointer_path"]).replace("\\", "/")
+        self.assertTrue(sqlite_path.endswith("runs/run_factory_sqlite/langgraph_checkpoints.sqlite"))
+        self.assertNotIn("shared_should_not_be_used", sqlite_path)
+
+    def test_service_gateway_factory_falls_back_to_memory_without_run_context(self) -> None:
+        from adam_agent.api import service
+
+        env = {
+            "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite",
+            "ADAM_AGENT_GRAPH_CHECKPOINTER_SQLITE_PATH": "D:/tmp/shared_should_not_be_used.sqlite",
+        }
+        with patch.dict("os.environ", env, clear=True), patch("adam_agent.api.service.GraphGateway") as gateway_cls:
+            gateway = service._new_graph_gateway()
+
+        self.assertIs(gateway, gateway_cls.return_value)
+        gateway_cls.assert_called_once_with()
+
+    def test_service_gateway_factory_rejects_unknown_backend(self) -> None:
+        from adam_agent.api import service
+
+        with patch.dict("os.environ", {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "bogus"}, clear=True):
+            with self.assertRaisesRegex(service.ApiServiceError, "Unsupported service GraphGateway checkpointer backend"):
+                service._new_graph_gateway(study_dir="D:/tmp/study", run_id="run_unknown_backend")
+
     def test_service_layer_reads_graph_state_only_for_explicit_read_models(self) -> None:
         from adam_agent.api import service
 

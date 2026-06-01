@@ -6703,6 +6703,65 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.1 Service Checkpointer Backend Config 切片
+
+已完成：
+
+- 将 `_new_graph_gateway(study_dir=None, run_id=None)` 扩展为 service 层唯一的
+  runtime checkpointer/backend 配置入口。
+- 默认行为不变：
+  - 没有环境变量时仍返回普通 `GraphGateway()`；
+  - 公开 API/UI 默认仍使用 memory checkpointer。
+- 新增显式环境变量 `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND`：
+  - `memory`：返回默认 gateway；
+  - `sqlite`：当有 `study_dir` 和 `run_id` 时，使用当前 run 专属
+    `runs/{run_id}/langgraph_checkpoints.sqlite`；
+  - `sqlite` 但没有 run context 时，回退到 memory，用于 upload invalidation
+    这类 study-wide 操作；
+  - `postgres`：委托给 `GraphGateway`，在 lifecycle management 接好前 fail closed；
+  - 未知 backend：用 `ApiServiceError` fail closed。
+- 保持 runtime checkpoint store 和 product audit ledger 分离：
+  `langgraph_checkpoints.sqlite` 不是 `graph_checkpoints.sqlite`。
+- 增加测试覆盖：
+  - 默认 memory；
+  - run-scoped sqlite path；
+  - 无 run context 时回退 memory；
+  - 未知 backend 拒绝；
+  - service helper 仍只能通过 factory 构造 `GraphGateway`。
+
+当前边界：
+
+- 本切片只是提供配置入口，不宣称完整产品流已经变成 persistent native
+  LangGraph run。
+- SQLite 仍需要可选 `langgraph-checkpoint-sqlite` 依赖。
+- 完整 product interrupt/resume、automatic repair loops、生产级 Postgres
+  lifecycle management 仍是后续工作。
+
+子 agent 审查：
+
+- 2026-06-01，Peirce，`gpt-5.5`，第一次只读审查结论：NO-GO。
+- 阻断问题：当时的 sqlite path env override 可能让多个 run 共享同一个
+  checkpoint DB，也可能让没有 run context 的 study-wide 操作误用 sqlite。
+- 已修复：
+  - 删除 service-level sqlite path override；
+  - sqlite 现在只在 run context 存在时，用
+    `default_sqlite_checkpointer_path(study_dir, run_id)` 生成路径；
+  - sqlite 但无 run context 时回退 memory。
+- 2026-06-01，Einstein，`gpt-5.5`，只读复核结论：GO。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_memory_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_rejects_unknown_backend tests.test_api_phase8.Phase8ApiTests.test_service_layer_constructs_graph_gateway_only_through_factory -v
+Ran 5 tests in 0.040s - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 122 tests in 15.958s - OK
+
+python -B -m compileall -q src tests
+OK
+```
+
 ### 2026-06-01 - LG2.1 Service Gateway Factory Boundary 切片
 
 已完成：
