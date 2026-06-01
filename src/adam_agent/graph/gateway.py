@@ -4923,17 +4923,16 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
         return {}
     started = _normalize_dataset_list([str(dataset) for dataset in loop.get("started_datasets", [])])
     blocked = list(loop.get("blocked_datasets") or state.blocked_datasets)
-    native_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
-    resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
+    native_resume = _native_resume_progress(state)
     return {
         "source": "graph_progress",
         "boundary": loop.get("boundary", "study_product_loop_pilot_only"),
         "started_datasets": started,
         "blocked_datasets": blocked,
         "review_queue": list(review_queue),
-        "native_resume_available": native_resume_available,
-        "native_resume_scope": resume_scope,
-        "resume_boundary": "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only",
+        "native_resume_available": bool(native_resume["available"]),
+        "native_resume_scope": str(native_resume["scope"]),
+        "resume_boundary": str(native_resume["boundary"]),
         "message": _study_loop_progress_message(started=started, blocked=blocked, review_queue=review_queue),
     }
 
@@ -4942,7 +4941,7 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
     native_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
     resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
     boundary = "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only"
-    endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
+    explicit_resume_endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
     if native_resume_available:
         message = "Durable native LangGraph interrupt resume is available for pilot graph interrupts."
         recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "langgraph_checkpointer")
@@ -4956,7 +4955,7 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
         "available": native_resume_available,
         "scope": resume_scope,
         "boundary": boundary,
-        "endpoint": endpoint,
+        "explicit_resume_endpoint": explicit_resume_endpoint,
         "default_review_path": "split_flow_review_endpoints",
         "restart_recovery_source": recovery_source,
         "message": message,

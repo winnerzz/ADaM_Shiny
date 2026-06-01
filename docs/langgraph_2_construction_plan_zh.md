@@ -7293,7 +7293,7 @@ OK; Windows LF/CRLF warnings only.
   - `available`
   - `scope`
   - `boundary`
-  - `endpoint`
+  - `explicit_resume_endpoint`
   - `default_review_path`
   - `restart_recovery_source`
   - `message`
@@ -7312,6 +7312,14 @@ OK; Windows LF/CRLF warnings only.
 - 这是 read-model 和 UI clarity 切片。
 - 不新增按钮、不新增 workflow command、不新增状态转换路径。
 - 显式 native resume endpoint 在默认 memory checkpointer 下仍然 fail closed。
+
+后续清理：
+
+- `study_loop_result.native_resume_available/native_resume_scope/resume_boundary`
+  现在复用同一个 `native_resume` helper，不再各自重新计算字段。
+- 将 `native_resume.endpoint` 改名为 `native_resume.explicit_resume_endpoint`，
+  避免自动化客户端误把它理解成默认 review path。
+- 增加断言，证明 `study_loop_result` 和顶层 `native_resume` 保持一致。
 
 子 agent 审查：
 

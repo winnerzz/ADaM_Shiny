@@ -459,7 +459,7 @@ class GraphGatewayTests(unittest.TestCase):
                 "available": False,
                 "scope": "none",
                 "boundary": "graph_state_projection_only",
-                "endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
+                "explicit_resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
                 "default_review_path": "split_flow_review_endpoints",
                 "restart_recovery_source": "graph_state_json",
                 "message": (
@@ -468,6 +468,7 @@ class GraphGatewayTests(unittest.TestCase):
                 ),
             },
         )
+        self.assertNotIn("endpoint", progress["native_resume"])
 
     def test_checkpointing_boundary_defaults_to_nonpersistent_memory(self) -> None:
         study_dir = _workspace_dir("lg2_checkpointing_boundary") / "PSY201"
@@ -608,6 +609,11 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(progress["native_resume"]["available"])
         self.assertEqual(progress["native_resume"]["scope"], "native_pilot_interrupts_only")
         self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
+        self.assertEqual(
+            progress["native_resume"]["explicit_resume_endpoint"],
+            "POST /runs/{run_id}/datasets/{dataset}/native-resume",
+        )
+        self.assertNotIn("endpoint", progress["native_resume"])
         self.assertEqual(progress["native_resume"]["restart_recovery_source"], "langgraph_sqlite_checkpointer")
         self.assertIn("available for pilot graph interrupts", progress["native_resume"]["message"])
 
@@ -2890,6 +2896,18 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(progress["study_loop_result"]["native_resume_available"])
         self.assertEqual(progress["study_loop_result"]["native_resume_scope"], "none")
         self.assertEqual(progress["study_loop_result"]["resume_boundary"], "graph_state_projection_only")
+        self.assertEqual(
+            progress["study_loop_result"]["resume_boundary"],
+            progress["native_resume"]["boundary"],
+        )
+        self.assertEqual(
+            progress["study_loop_result"]["native_resume_available"],
+            progress["native_resume"]["available"],
+        )
+        self.assertEqual(
+            progress["study_loop_result"]["native_resume_scope"],
+            progress["native_resume"]["scope"],
+        )
         self.assertIn("stopped at human review gates", progress["study_loop_result"]["message"])
         self.assertEqual(
             {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},

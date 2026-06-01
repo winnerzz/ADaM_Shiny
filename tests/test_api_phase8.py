@@ -2138,7 +2138,11 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["native_resume"]["available"], False)
         self.assertEqual(payload["native_resume"]["scope"], "none")
         self.assertEqual(payload["native_resume"]["boundary"], "graph_state_projection_only")
-        self.assertEqual(payload["native_resume"]["endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
+        self.assertEqual(
+            payload["native_resume"]["explicit_resume_endpoint"],
+            "POST /runs/{run_id}/datasets/{dataset}/native-resume",
+        )
+        self.assertNotIn("endpoint", payload["native_resume"])
         self.assertEqual(payload["native_resume"]["default_review_path"], "split_flow_review_endpoints")
         self.assertIn("not enabled", payload["native_resume"]["message"])
         by_dataset = {item["dataset"]: item for item in payload["datasets"]}

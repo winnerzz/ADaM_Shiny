@@ -7799,7 +7799,7 @@ Completed:
   - `available`
   - `scope`
   - `boundary`
-  - `endpoint`
+  - `explicit_resume_endpoint`
   - `default_review_path`
   - `restart_recovery_source`
   - `message`
@@ -7820,6 +7820,15 @@ Current boundary:
 - It adds no button, no new workflow command, and no state transition path.
 - The explicit native resume endpoint still fails closed with the default
   memory checkpointer.
+
+Follow-up cleanup:
+
+- `study_loop_result.native_resume_available/native_resume_scope/resume_boundary`
+  now reuse the same `native_resume` helper instead of recomputing the fields.
+- Renamed `native_resume.endpoint` to `native_resume.explicit_resume_endpoint`
+  so automated clients do not mistake it for the default review path.
+- Added assertions that `study_loop_result` and top-level `native_resume`
+  remain consistent.
 
 Subagent review:
 
