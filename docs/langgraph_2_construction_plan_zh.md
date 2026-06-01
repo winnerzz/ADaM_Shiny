@@ -8278,3 +8278,60 @@ OK
 git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
+
+### 2026-06-01 - LG2.7 Native Resume Queue Gate 对齐切片
+
+已完成：
+
+- 收紧 `native_resume.interrupt_queue` 的 read-model：
+  - 如果 study-level interrupt 仍 open，例如 `dependency_review`，不再展示任何
+    dataset native-resume gate；
+  - dataset gate 在进入 native-resume queue 前复用 graph progress 的 blocked
+    reason 计算，确保 stale dependency plan、blocked dependency、review-required
+    dependency source 等状态不会被展示成 native resume 任务。
+- 该切片不改变 split-flow review endpoint。默认 memory checkpointer 下，用户仍应通过
+  可见 review buttons 处理审核；native resume endpoint 仍是 durable checkpointer
+  可用时的显式入口。
+- 新增回归测试：
+  - study-level `dependency_review` gate open 时，`review_queue` 保留 study gate，
+    `native_resume.interrupt_queue` 为空；
+  - dependency plan stale 时，dataset card 可显示原始下一步为 `review_code`，但
+    blocked flag 和 available actions 会关闭，native resume queue 也为空。
+
+边界：
+
+- 这是 read-model consistency hardening，不新增 UI 按钮、不改变 API endpoint、不执行
+  R、不改变 LLM generation、repair/spec-revision 或 dependency planning。
+- 它让 native resume queue 与 graph-owned progress 的“能不能继续”判断保持一致，
+  避免 UI 或自动化客户端把被 study gate / stale plan 拦住的 dataset gate 理解成
+  可恢复任务。
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - study-level open interrupt 下 queue 为空，和 `review_queue` 先处理 study gate
+    的语义一致；
+  - dataset gate 复用 `_blocked_dataset_progress_reason()` 后不会越过 stale
+    dependency plan 或 blocked dependency；
+  - 默认 memory checkpointer 仍只展示 read-model，不暴露可调用 endpoint；
+  - 本切片没有新增 UI 按钮、API workflow command、LLM/R execution 或 repair
+    路径变化。
+- 非阻断建议：后续可补 durable SQLite 场景下 study-level gate 仍不暴露 queue
+  endpoint 的测试；当前同一函数路径已覆盖，暂不扩大本切片范围。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_study_level_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_blocked_dataset_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage -v
+Ran 4 tests in 0.309s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 281 tests in 29.429s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```

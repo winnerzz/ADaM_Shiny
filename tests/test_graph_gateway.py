@@ -691,6 +691,67 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(progress["native_resume"]["available"])
         self.assertEqual(progress["study_loop_result"], {})
 
+    def test_progress_native_resume_queue_respects_study_level_gate(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_study_gate") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_queue_study_gate",
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            current_interrupt=InterruptState(name="dependency_review", reason="Review dependency plan first."),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_native_resume_queue_study_gate",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(study_dir, state, node="test_seed_native_resume_study_gate")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_study_gate")
+
+        self.assertEqual(progress["next_action"], "review_dependency_plan")
+        self.assertEqual(progress["review_queue"][0]["name"], "dependency_review")
+        self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+
+    def test_progress_native_resume_queue_respects_blocked_dataset_gate(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_blocked_dataset") / "PSY201"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id="run_lg2_native_resume_queue_blocked_dataset",
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            dependency_review_status="stale",
+            dependency_plan={"plan_stale": True},
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id="run_lg2_native_resume_queue_blocked_dataset",
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(study_dir, state, node="test_seed_native_resume_blocked_dataset")
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_blocked_dataset")
+
+        self.assertEqual(progress["next_action"], "replan_dependencies")
+        self.assertEqual(progress["datasets"][0]["next_action"], "review_code")
+        self.assertTrue(progress["datasets"][0]["blocked"])
+        self.assertEqual(progress["datasets"][0]["available_actions"], [])
+        self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
+
     def test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_sqlite") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

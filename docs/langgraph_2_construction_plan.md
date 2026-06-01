@@ -7302,6 +7302,68 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Queue Gate Alignment Slice
+
+Done:
+
+- Tightened the `native_resume.interrupt_queue` read model:
+  - if a study-level interrupt is still open, such as `dependency_review`, no
+    dataset native-resume gate is exposed;
+  - dataset gates now reuse the graph progress blocked-reason calculation before
+    exposing available native-resume actions, so stale dependency plans, blocked
+    dependencies, and review-required dependency sources do not appear as
+    resumable native tasks.
+- This does not change split-flow review endpoints. With the default memory
+  checkpointer, users still use the visible review buttons; the native resume
+  endpoint remains an explicit durable-checkpointer path.
+- Added regression tests:
+  - an open study-level `dependency_review` remains in `review_queue` while
+    `native_resume.interrupt_queue` stays empty;
+  - a stale dependency plan can still show the dataset's underlying next action
+    as `review_code`, but blocks available actions and keeps the native resume
+    queue empty.
+
+Boundary:
+
+- This is read-model consistency hardening only. It does not add UI buttons,
+  change API endpoints, execute R, change LLM generation, repair/spec-revision,
+  or dependency planning.
+- It keeps the native resume queue aligned with graph-owned progress on whether
+  a dataset is allowed to continue, so UI or automation clients do not treat a
+  study-gated or stale-plan dataset gate as resumable.
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - an open study-level interrupt produces an empty queue, matching the
+    `review_queue` semantics that the study gate is handled first;
+  - dataset gates reuse `_blocked_dataset_progress_reason()` and do not bypass
+    stale dependency plans or blocked dependencies;
+  - the default memory checkpointer still exposes a read model only and no
+    callable endpoint;
+  - this slice adds no UI button, API workflow command, LLM/R execution path, or
+    repair path.
+- Non-blocking suggestion: later add durable SQLite coverage proving a
+  study-level gate still hides queue endpoints. The current code path is shared,
+  so this was not expanded in this slice.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_study_level_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_queue_respects_blocked_dataset_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_terminal_failure_review_roundtrip_persists_triage -v
+Ran 4 tests in 0.309s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 281 tests in 29.429s - OK (skipped=4)
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.8 Dataset Artifact Read-Model Guard Slice
 
 Completed:

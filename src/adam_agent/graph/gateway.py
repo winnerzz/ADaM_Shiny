@@ -5172,6 +5172,8 @@ def _native_resume_interrupt_queue(
 ) -> list[dict[str, Any]]:
     """Expose dataset interrupts that the native dataset-resume endpoint can handle."""
 
+    if _open_study_interrupt(state) is not None:
+        return []
     supported = {"draft_spec_review", "code_review", "terminal_failure"}
     queue: list[dict[str, Any]] = []
     for dataset in _progress_dataset_order(state):
@@ -5181,7 +5183,10 @@ def _native_resume_interrupt_queue(
         interrupt = dataset_state.current_interrupt
         if interrupt is None or interrupt.status != "open" or interrupt.name not in supported:
             continue
-        actions = _available_dataset_actions(dataset_state)
+        actions = _available_dataset_actions(
+            dataset_state,
+            blocked_reason=_blocked_dataset_progress_reason(state, dataset),
+        )
         if not actions:
             continue
         queue.append(
