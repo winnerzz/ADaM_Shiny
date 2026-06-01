@@ -3443,6 +3443,142 @@ class GraphGatewayTests(unittest.TestCase):
         state.datasets["ADSL"].artifacts = []
         self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
 
+    def test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_path_equivalence") / "PSY201"
+        run_id = "run_lg2_native_study_loop_dependency_path_equivalence"
+        output_dir = study_dir / "runs" / run_id / "outputs"
+        output_dir.mkdir(parents=True)
+        adsl_output = output_dir / "adsl.csv"
+        adsl_output.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        output_sha = f"sha256:{sha256_file(adsl_output)}"
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="pending",
+            requested_datasets=["ADAE"],
+            target_datasets=["ADSL", "ADAE"],
+            runnable_datasets=["ADSL", "ADAE"],
+            dependency_plan={
+                "dataset_dependencies": {"ADSL": [], "ADAE": ["ADSL"]},
+                "execution_batches": [["ADSL"], ["ADAE"]],
+            },
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "available": True,
+                    "artifact_path": "outputs/adsl.csv",
+                    "artifact_sha256": output_sha,
+                    "artifact_source": "run_output",
+                    "resolution_status": "available",
+                    "allowed_actions": [],
+                    "selected_action": "use_existing_dataset",
+                    "reason": "Run-relative dependency path should match graph-owned absolute artifact path.",
+                }
+            ],
+            datasets={
+                "ADSL": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADSL",
+                    status="completed",
+                    execution_state={
+                        "status": "completed",
+                        "terminal_failure": False,
+                        "partial_output_usable": True,
+                        "output_path": str(adsl_output.as_posix()),
+                    },
+                    artifacts=[
+                        ArtifactRef(
+                            artifact_id="output_adam_psy201_run_lg2_native_study_loop_dependency_path_equivalence_adsl",
+                            kind="output_adam",
+                            path=str(adsl_output.as_posix()),
+                            sha256=output_sha,
+                            dataset="ADSL",
+                            format="csv",
+                            role="output",
+                        )
+                    ],
+                ),
+                "ADAE": DatasetRunState(study_id="PSY201", run_id=run_id, dataset="ADAE"),
+            },
+        )
+
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_path"] = "outputs/wrong_adsl.csv"
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+
+    def test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_outside_path") / "PSY201"
+        run_id = "run_lg2_native_study_loop_dependency_outside_path"
+        good_output = study_dir / "runs" / run_id / "outputs" / "adsl.csv"
+        decoy_output = study_dir.parent / "decoy" / "runs" / run_id / "outputs" / "adsl.csv"
+        good_output.parent.mkdir(parents=True)
+        decoy_output.parent.mkdir(parents=True)
+        good_output.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        decoy_output.write_text("USUBJID,TRTSDT\n99,2099-01-01\n", encoding="utf-8")
+        good_sha = f"sha256:{sha256_file(good_output)}"
+        decoy_sha = f"sha256:{sha256_file(decoy_output)}"
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="pending",
+            requested_datasets=["ADAE"],
+            target_datasets=["ADSL", "ADAE"],
+            runnable_datasets=["ADSL", "ADAE"],
+            dependency_plan={
+                "dataset_dependencies": {"ADSL": [], "ADAE": ["ADSL"]},
+                "execution_batches": [["ADSL"], ["ADAE"]],
+            },
+            dependency_resolution=[
+                {
+                    "target_dataset": "ADAE",
+                    "required_dataset": "ADSL",
+                    "available": True,
+                    "artifact_path": str(decoy_output.as_posix()),
+                    "artifact_sha256": decoy_sha,
+                    "artifact_source": "run_output",
+                    "resolution_status": "available",
+                    "allowed_actions": [],
+                    "selected_action": "use_existing_dataset",
+                    "reason": "Dependency record points outside the graph-owned run directory.",
+                }
+            ],
+            datasets={
+                "ADSL": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADSL",
+                    status="completed",
+                    execution_state={
+                        "status": "completed",
+                        "terminal_failure": False,
+                        "partial_output_usable": True,
+                        "output_path": str(good_output.as_posix()),
+                    },
+                    artifacts=[
+                        ArtifactRef(
+                            artifact_id="output_adam_psy201_run_lg2_native_study_loop_dependency_outside_path_adsl",
+                            kind="output_adam",
+                            path=str(good_output.as_posix()),
+                            sha256=good_sha,
+                            dataset="ADSL",
+                            format="csv",
+                            role="output",
+                        )
+                    ],
+                ),
+                "ADAE": DatasetRunState(study_id="PSY201", run_id=run_id, dataset="ADAE"),
+            },
+        )
+
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_path"] = "../decoy/runs/run_lg2_native_study_loop_dependency_outside_path/outputs/adsl.csv"
+        self.assertFalse(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+        state.dependency_resolution[0]["artifact_path"] = str(good_output.as_posix())
+        state.dependency_resolution[0]["artifact_sha256"] = good_sha
+        self.assertTrue(_native_study_loop_dependency_outputs_available(state, "ADAE"))
+
     def test_gateway_progress_hides_study_loop_result_after_inputs_change(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_stale_progress") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

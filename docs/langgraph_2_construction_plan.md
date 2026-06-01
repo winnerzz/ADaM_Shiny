@@ -7574,6 +7574,51 @@ Subagent review:
   - later refine `skipped_datasets.blocked_by` to list only still-missing
     dependencies instead of all declared dependencies.
 
+### 2026-06-01 - LG2.3 Runtime Dependency Artifact Path Equivalence Slice
+
+Completed:
+
+- Addressed the non-blocking review suggestion from the prior runtime dependency
+  gate slice.
+- The native study-loop runtime dependency gate now resolves dependency
+  artifact paths against the graph run directory before comparing them.
+- It treats these forms as the same artifact when they point to the same file
+  under `runs/{run_id}`:
+  - absolute graph artifact path;
+  - `outputs/{dataset}.csv`;
+  - `runs/{run_id}/outputs/{dataset}.csv`.
+- The gate still fails closed if a path resolves outside the run directory, the
+  file does not exist, the artifact hash does not match, or the graph-owned
+  `output_adam` artifact is missing.
+- Added a focused regression proving a run-relative dependency record can match
+  an absolute graph-owned `output_adam` artifact, while a wrong relative path
+  remains rejected.
+- Added outside-path regression coverage so a dependency record pointing at a
+  different directory with the same `runs/{run_id}` suffix, or a relative path
+  escaping the graph run directory, cannot satisfy the runtime dependency gate.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_requires_run_output_artifact_hash tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same -v
+Ran 3 tests in 0.256s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 2 tests in 0.012s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 275 tests in 29.197s - OK (skipped=3)
+```
+
+Subagent review:
+
+- 2026-06-01, Gibbs, `gpt-5.5`, read-only review: GO.
+- Non-blocking suggestion absorbed in this slice: added outside-path regression
+  coverage to lock the intended run-directory boundary.
+- Remaining non-blocking idea: if this boundary needs more hardening later,
+  pass the actual `study_dir/runs/{run_id}` into the runtime dependency gate
+  instead of deriving it from graph artifact paths.
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model Slice
 
 Completed:

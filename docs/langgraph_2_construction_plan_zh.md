@@ -7007,6 +7007,46 @@ Ran 273 tests in 29.974s - OK (skipped=3)
   - 后续可补 run-relative path 和 absolute artifact path 等价性的覆盖；
   - 后续可把 `skipped_datasets.blocked_by` 细化为只列仍缺失的依赖，而不是所有声明依赖。
 
+### 2026-06-01 - LG2.3 Runtime Dependency Artifact 路径等价性切片
+
+已完成：
+
+- 吸收上一段 runtime dependency gate 切片里子 agent 的非阻断建议。
+- native study-loop runtime dependency gate 现在会先基于 graph run directory 解析
+  dependency artifact path，再比较路径。
+- 当以下形式都指向同一个 `runs/{run_id}` 下的文件时，系统会把它们当成同一个
+  artifact：
+  - graph artifact 中记录的绝对路径；
+  - `outputs/{dataset}.csv`；
+  - `runs/{run_id}/outputs/{dataset}.csv`。
+- 如果路径解析到 run directory 外、文件不存在、hash 不匹配，或者 graph-owned
+  `output_adam` artifact 缺失，闸门仍然 fail closed。
+- 新增 focused regression，证明 run-relative dependency record 可以匹配绝对路径
+  graph-owned `output_adam` artifact；错误的相对路径仍会被拒绝。
+- 新增 outside-path regression，证明 dependency record 即使指向另一个目录下相同
+  `runs/{run_id}` 后缀，或试图用相对路径逃出 graph run directory，也不能满足
+  runtime dependency gate。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_requires_run_output_artifact_hash tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same -v
+Ran 3 tests in 0.256s - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_treats_run_relative_and_absolute_paths_as_same tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_loop_dependency_output_gate_rejects_paths_outside_graph_run_dir -v
+Ran 2 tests in 0.012s - OK
+
+python -B -m unittest tests.test_graph_gateway tests.test_api_phase8 -v
+Ran 275 tests in 29.197s - OK (skipped=3)
+```
+
+子 agent 审查：
+
+- 2026-06-01，Gibbs，`gpt-5.5`，只读审查结论：GO。
+- 本切片已吸收非阻断建议：补 outside-path regression，锁住 run-directory 边界。
+- 剩余非阻断想法：如果后续要继续加固，可以把真实 `study_dir/runs/{run_id}` 传入
+  runtime dependency gate，而不是完全从 graph artifact path 推导。
+
 ### 2026-06-01 - LG2.7 Terminal-Failure Action Read-Model 切片
 
 已完成：

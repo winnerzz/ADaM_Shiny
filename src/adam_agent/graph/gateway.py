@@ -4418,24 +4418,51 @@ def _native_study_loop_runtime_dependency_record_is_current(
     artifact_sha256 = str(record.get("artifact_sha256") or "").strip()
     if not artifact_path or not artifact_sha256:
         return False
-    normalized_record_path = str(Path(artifact_path).as_posix())
-    execution_output = dataset_state.execution_state.get("output_path")
-    if execution_output and str(Path(str(execution_output)).as_posix()) != normalized_record_path:
+    run_dir = _native_study_loop_runtime_dependency_run_dir(dataset_state)
+    record_path = _resolve_run_artifact_path(run_dir, artifact_path)
+    if record_path is None:
         return False
+    execution_output = dataset_state.execution_state.get("output_path")
+    if execution_output:
+        execution_path = _resolve_run_artifact_path(run_dir, str(execution_output))
+        if execution_path is None or not _paths_equivalent(execution_path, record_path):
+            return False
     matched_artifact = None
     for artifact in dataset_state.artifacts:
         if artifact.kind != "output_adam":
             continue
         if artifact.dataset and artifact.dataset.strip().upper() != dependency:
             continue
-        if str(Path(str(artifact.path)).as_posix()) != normalized_record_path:
+        graph_artifact_path = _resolve_run_artifact_path(run_dir, str(artifact.path))
+        if graph_artifact_path is None or not _paths_equivalent(graph_artifact_path, record_path):
             continue
         matched_artifact = artifact
         break
     if matched_artifact is None or matched_artifact.sha256 != artifact_sha256:
         return False
-    path = Path(artifact_path)
-    return path.exists() and path.is_file()
+    return record_path.exists() and record_path.is_file()
+
+
+def _native_study_loop_runtime_dependency_run_dir(dataset_state: DatasetRunState) -> Path:
+    run_dir_suffix = Path("runs") / dataset_state.run_id
+    path_values: list[str] = []
+    execution_output = dataset_state.execution_state.get("output_path")
+    if execution_output:
+        path_values.append(str(execution_output))
+    path_values.extend(str(artifact.path) for artifact in dataset_state.artifacts)
+    for value in path_values:
+        candidate = Path(value)
+        normalized_parts = Path(str(value).replace("\\", "/")).parts
+        for index in range(len(normalized_parts) - 1):
+            if normalized_parts[index].lower() == "runs" and normalized_parts[index + 1] == dataset_state.run_id:
+                if candidate.is_absolute():
+                    return Path(*candidate.parts[: index + 2])
+                return Path(*normalized_parts[: index + 2])
+    return run_dir_suffix
+
+
+def _paths_equivalent(left: Path, right: Path) -> bool:
+    return str(left.resolve(strict=False).as_posix()) == str(right.resolve(strict=False).as_posix())
 
 
 def _native_study_loop_dependencies_for_dataset(state: StudyRunState, target: str) -> list[str]:
