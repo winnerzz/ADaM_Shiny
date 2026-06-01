@@ -453,6 +453,21 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
         self.assertFalse(runtime_persistence["native_interrupt_resume"])
         self.assertEqual(runtime_persistence["native_interrupt_resume_scope"], "none")
+        self.assertEqual(
+            progress["native_resume"],
+            {
+                "available": False,
+                "scope": "none",
+                "boundary": "graph_state_projection_only",
+                "endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
+                "default_review_path": "split_flow_review_endpoints",
+                "restart_recovery_source": "graph_state_json",
+                "message": (
+                    "Durable native LangGraph interrupt resume is not enabled for this run. "
+                    "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
+                ),
+            },
+        )
 
     def test_checkpointing_boundary_defaults_to_nonpersistent_memory(self) -> None:
         study_dir = _workspace_dir("lg2_checkpointing_boundary") / "PSY201"
@@ -566,6 +581,35 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot["study_id"], "PSY201")
         self.assertEqual(snapshot["run_id"], "run_sqlite_restart")
         self.assertEqual(snapshot["current_interrupt"], "dependency_review")
+
+    def test_sqlite_progress_marks_native_resume_when_package_available(self) -> None:
+        study_dir = _workspace_dir("lg2_checkpointing_sqlite_progress") / "PSY201"
+        study_dir.mkdir(parents=True)
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, "run_sqlite_progress")
+
+        try:
+            gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            gateway.start_dependency_plan(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_sqlite_progress",
+                target_datasets=["ADAE"],
+            )
+            progress = gateway.progress_summary(study_dir=study_dir, run_id="run_sqlite_progress")
+        finally:
+            gateway.close()
+
+        self.assertTrue(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["scope"], "native_pilot_interrupts_only")
+        self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
+        self.assertEqual(progress["native_resume"]["restart_recovery_source"], "langgraph_sqlite_checkpointer")
+        self.assertIn("available for pilot graph interrupts", progress["native_resume"]["message"])
 
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"

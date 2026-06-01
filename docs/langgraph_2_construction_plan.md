@@ -7790,6 +7790,68 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Progress Read-Model Slice
+
+Completed:
+
+- Added a stable `native_resume` object to `GET /runs/{run_id}/progress`.
+- The field is derived from canonical `graph_state.runtime_persistence`:
+  - `available`
+  - `scope`
+  - `boundary`
+  - `endpoint`
+  - `default_review_path`
+  - `restart_recovery_source`
+  - `message`
+- The default memory checkpointer path reports:
+  - `available == false`
+  - `scope == "none"`
+  - `boundary == "graph_state_projection_only"`
+  - `default_review_path == "split_flow_review_endpoints"`
+- The UI Study Progress panel now adds a plain `Recovery` step:
+  - when native resume is unavailable, it tells users to use the visible review
+    buttons and says restart recovery reads saved graph state;
+  - when durable native resume is available, it says the scope in
+    human-readable wording.
+
+Current boundary:
+
+- This is only a read-model and UI clarity slice.
+- It adds no button, no new workflow command, and no state transition path.
+- The explicit native resume endpoint still fails closed with the default
+  memory checkpointer.
+
+Subagent review:
+
+- 2026-06-01, Harvey, `gpt-5.5`, read-only review: GO.
+- Confirmed:
+  - `native_resume` stays consistent with `runtime_persistence`;
+  - UI wording does not imply default native resume is available;
+  - no product workflow path or GraphGateway bypass was introduced;
+  - tests cover the default unavailable path.
+- Non-blocking suggestion: add a positive progress read-model test for the
+  optional SQLite checkpointer path. This was absorbed as a skip-if-unavailable
+  test and does not fake local durable resume support.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 4 tests in 0.253s - OK (skipped=1)
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 122 tests in 9.583s - OK (skipped=3)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 127 tests in 17.797s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.7 Native Resume Boundary Read-Model Slice
 
 Completed:

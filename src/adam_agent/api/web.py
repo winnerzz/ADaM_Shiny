@@ -2829,7 +2829,7 @@ INDEX_HTML = r"""<!doctype html>
           ${escapeHtml(step.label)}
           <span>${escapeHtml(step.detail)}</span>
         </div>
-      `).join('');
+      `).join('') + nativeResumeProgressNote();
     }
 
     function studyProgressSummary(targets, runnable, blocked) {
@@ -2877,6 +2877,20 @@ INDEX_HTML = r"""<!doctype html>
       if (progress?.output_quality_rollup?.completion_quality === 'review_only_complete') return 'review only';
       if (progress?.output_quality_rollup?.completion_quality === 'mixed_output_quality_complete') return 'mixed output';
       return progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+    }
+
+    function nativeResumeProgressNote() {
+      const resume = state.runProgress?.native_resume;
+      if (!resume) return '';
+      const detail = resume.available
+        ? `Native resume: available for ${humanNativeResumeScope(resume.scope)}.`
+        : 'Native resume: off. Use the visible review buttons; restart recovery reads saved graph state.';
+      return `
+        <div class="progress-step ${resume.available ? 'done' : ''}">
+          Recovery
+          <span>${escapeHtml(detail)}</span>
+        </div>
+      `;
     }
 
     function studyQualityText(rollup) {

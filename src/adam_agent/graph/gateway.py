@@ -3764,6 +3764,7 @@ class GraphGateway:
             "blocked_datasets": list(graph_state.blocked_datasets),
             "review_queue": review_queue,
             "study_loop_result": _study_loop_progress_result(graph_state, review_queue=review_queue),
+            "native_resume": _native_resume_progress(graph_state),
             "datasets": datasets,
             "runtime_persistence": dict(graph_state.runtime_persistence),
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
@@ -4934,6 +4935,31 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
         "native_resume_scope": resume_scope,
         "resume_boundary": "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only",
         "message": _study_loop_progress_message(started=started, blocked=blocked, review_queue=review_queue),
+    }
+
+
+def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
+    native_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
+    resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
+    boundary = "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only"
+    endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
+    if native_resume_available:
+        message = "Durable native LangGraph interrupt resume is available for pilot graph interrupts."
+        recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "langgraph_checkpointer")
+    else:
+        message = (
+            "Durable native LangGraph interrupt resume is not enabled for this run. "
+            "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
+        )
+        recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "graph_state_json")
+    return {
+        "available": native_resume_available,
+        "scope": resume_scope,
+        "boundary": boundary,
+        "endpoint": endpoint,
+        "default_review_path": "split_flow_review_endpoints",
+        "restart_recovery_source": recovery_source,
+        "message": message,
     }
 
 

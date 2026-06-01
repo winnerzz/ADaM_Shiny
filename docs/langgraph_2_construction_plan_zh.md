@@ -7284,6 +7284,65 @@ git diff --check
 OK; Windows LF/CRLF warnings only.
 ```
 
+### 2026-06-01 - LG2.7 Native Resume Progress Read-Model 切片
+
+已完成：
+
+- 在 `GET /runs/{run_id}/progress` 中新增稳定的 `native_resume` 对象。
+- 该字段只从 canonical `graph_state.runtime_persistence` 派生：
+  - `available`
+  - `scope`
+  - `boundary`
+  - `endpoint`
+  - `default_review_path`
+  - `restart_recovery_source`
+  - `message`
+- 默认 memory checkpointer 路径会报告：
+  - `available == false`
+  - `scope == "none"`
+  - `boundary == "graph_state_projection_only"`
+  - `default_review_path == "split_flow_review_endpoints"`
+- UI 的 Study Progress 面板新增一个清晰的 `Recovery` 步骤：
+  - native resume 不可用时，提示用户使用可见 review buttons，并说明重启恢复读取
+    已保存的 graph state；
+  - durable native resume 可用时，用用户可读措辞说明可用范围。
+
+当前边界：
+
+- 这是 read-model 和 UI clarity 切片。
+- 不新增按钮、不新增 workflow command、不新增状态转换路径。
+- 显式 native resume endpoint 在默认 memory checkpointer 下仍然 fail closed。
+
+子 agent 审查：
+
+- 2026-06-01，Harvey，`gpt-5.5`，只读审查结论：GO。
+- 它确认：
+  - `native_resume` 和 `runtime_persistence` 保持一致；
+  - UI 文案没有暗示默认 native resume 已可用；
+  - 没有引入新的 product workflow path，也没有绕过 GraphGateway；
+  - 测试覆盖了默认不可用路径。
+- 非阻断建议：为可选 SQLite checkpointer 的正向 progress read-model 分支增加测试。
+  已吸收为 skip-if-unavailable 测试，不伪造当前本地 durable resume 支持。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 4 tests in 0.253s - OK (skipped=1)
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 122 tests in 9.583s - OK (skipped=3)
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 127 tests in 17.797s - OK
+
+python -B -m compileall -q src tests
+OK
+
+git diff --check
+OK; Windows LF/CRLF warnings only.
+```
+
 ### 2026-06-01 - LG2.1/LG2.8 Native Resume Endpoint Fail-Closed 切片
 
 已完成：
