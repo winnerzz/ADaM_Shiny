@@ -1004,7 +1004,11 @@ class GraphGateway:
             dataset=target,
             phase="waiting_for_human_gate",
             current_interrupt=current_interrupt,
-            durable_resume_available=self.native_interrupt_resume_available(),
+            native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                graph_state,
+                runtime_resume_available=self.native_interrupt_resume_available(),
+                active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+            ),
             llm_provider=llm_provider,
             llm_exposure=llm_exposure,
             repair_or_revision_continued=followup_context is not None,
@@ -1492,7 +1496,11 @@ class GraphGateway:
             dataset=target,
             phase=phase,
             current_interrupt=current_interrupt,
-            durable_resume_available=self.native_interrupt_resume_available(),
+            native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                graph_state,
+                runtime_resume_available=self.native_interrupt_resume_available(),
+                active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+            ),
             llm_provider=llm_provider,
             llm_exposure=llm_exposure,
             last_interrupt=last_interrupt,
@@ -3275,7 +3283,7 @@ class GraphGateway:
                 dataset=target,
                 phase=phase,
                 current_interrupt=current_interrupt,
-                durable_resume_available=False,
+                native_interrupt_resume_available=False,
                 last_interrupt="code_review",
                 decision=str(prior_contract.get("decision") or "approve"),
                 approved=True,
@@ -3954,7 +3962,14 @@ class GraphGateway:
                     "decision": normalized_decision,
                     "terminal_failure": True,
                     "next_action": str(reviewed_dataset.execution_state.get("next_action") or ""),
-                    "durable_resume_available": self.native_interrupt_resume_available(),
+                    **_native_dataset_full_run_resume_capability_metadata(
+                        next_state,
+                        native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                            next_state,
+                            runtime_resume_available=self.native_interrupt_resume_available(),
+                            active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+                        ),
+                    ),
                 }
             )
             runtime_extra["native_dataset_full_run"] = previous
@@ -5654,6 +5669,21 @@ def _native_resume_runtime_bound_to_state(
     )
 
 
+def _native_full_run_native_interrupt_resume_available_for_state(
+    state: StudyRunState,
+    *,
+    runtime_resume_available: bool,
+    active_checkpoint_path: str | None,
+) -> bool:
+    """Return whether the current runtime is bound to this run's native interrupt checkpoints."""
+
+    return _native_resume_runtime_bound_to_state(
+        state,
+        runtime_resume_available=runtime_resume_available,
+        active_checkpoint_path=active_checkpoint_path,
+    )
+
+
 def _native_resume_interrupt_queue(
     state: StudyRunState,
     *,
@@ -5816,7 +5846,7 @@ def _native_dataset_full_run_metadata(
     dataset: str,
     phase: str,
     current_interrupt: str | None,
-    durable_resume_available: bool,
+    native_interrupt_resume_available: bool,
     llm_provider: dict[str, Any] | None = None,
     llm_exposure: dict[str, Any] | None = None,
     **updates: Any,
@@ -5836,7 +5866,10 @@ def _native_dataset_full_run_metadata(
             "contract": "single_dataset_spec_code_review_execute",
             "boundary": "lg3_backend_contract",
             "execution_requires_explicit_resume": True,
-            "durable_resume_available": durable_resume_available,
+            **_native_dataset_full_run_resume_capability_metadata(
+                state,
+                native_interrupt_resume_available=native_interrupt_resume_available,
+            ),
         }
     )
     if current_interrupt is not None:
@@ -5849,6 +5882,32 @@ def _native_dataset_full_run_metadata(
         payload["llm_exposure"] = dict(llm_exposure)
     payload.update(updates)
     return payload
+
+
+def _native_dataset_full_run_resume_capability_metadata(
+    state: StudyRunState,
+    *,
+    native_interrupt_resume_available: bool,
+) -> dict[str, Any]:
+    """Describe LG3 resume capability without treating compatibility resume as native durability."""
+
+    can_resume_native_interrupt = bool(native_interrupt_resume_available)
+    return {
+        "resume_mode": "graph_state_full_run_compatibility",
+        "compatibility_resume_available": True,
+        "graph_state_resume_available": True,
+        "resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume",
+        "native_resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
+        "durable_resume_available": False,
+        "durable_full_run_resume_available": False,
+        "durable_full_run_resume_boundary": "not_implemented",
+        "durable_native_interrupt_resume_available": can_resume_native_interrupt,
+        "durable_native_interrupt_checkpointer_bound": can_resume_native_interrupt,
+        "durable_native_resume_scope": str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none"),
+        "durable_native_interrupt_resume_boundary": "durable_native_interrupt_resume"
+        if can_resume_native_interrupt
+        else "graph_state_projection_only",
+    }
 
 
 def _llm_provider_audit_payload(provider: dict[str, Any]) -> dict[str, Any]:

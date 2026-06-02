@@ -10165,3 +10165,84 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.8 Native Full-Run Capability Contract Slice
+
+Completed:
+
+- Clarified the LG3 `native_dataset_full_run` resume metadata so the product
+  no longer suggests that the compatibility resume endpoint is the same thing
+  as durable native LangGraph full-run resume.
+- `native_dataset_full_run` now separates three ideas:
+  - graph-state full-run compatibility resume through
+    `POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume`;
+  - durable native interrupt resume through
+    `POST /runs/{run_id}/datasets/{dataset}/native-resume`, available only when
+    the active Gateway runtime and checkpointer are bound to the current run;
+  - future durable native full-run resume, currently not implemented.
+- The LG3 full-run contract now always records:
+  - `resume_mode = graph_state_full_run_compatibility`
+  - `compatibility_resume_available = true`
+  - `graph_state_resume_available = true`
+  - `durable_resume_available = false`
+  - `durable_full_run_resume_available = false`
+  - `durable_full_run_resume_boundary = not_implemented`
+- Added runtime-bound fields for the existing durable native interrupt pilot:
+  - `durable_native_interrupt_resume_available`
+  - `durable_native_interrupt_checkpointer_bound`
+  - `durable_native_resume_scope`
+  - `durable_native_interrupt_resume_boundary`
+- Updated gateway and API tests to assert that LG3 full-run metadata does not
+  overclaim durable full-run resume after start, code review, explicit
+  execution, and paused execution paths.
+
+Boundary:
+
+- This does not implement durable native full-run resume.
+- This does not change the existing compatibility resume endpoint; it still
+  resumes from the canonical `graph_state.json` product state.
+- This does not change UI behavior, dependency planning, LLM calls, R
+  execution, static rules, reference ADaM handling, or ADSL routing.
+- The durable native interrupt pilot remains separate from the LG3 full-run
+  compatibility contract.
+
+Subagent review:
+
+- Read-only `gpt-5.5` review by Tesla returned GO with no blocking findings.
+- The review confirmed that the slice separates:
+  - `native-full-run/resume` as graph-state compatibility resume;
+  - durable native full-run resume as `false` / `not_implemented`;
+  - durable native interrupt resume as a separate runtime/checkpointer-bound
+    capability.
+- Residual non-blocking risks:
+  - `compatibility_resume_available=true` is a contract-level capability flag,
+    not proof that an action is currently possible; callers still need to obey
+    `phase`, `current_interrupt`, and `next_action`;
+  - positive coverage for `durable_native_interrupt_resume_available=true`
+    inside `native_dataset_full_run` metadata is light, though native-resume
+    runtime binding is covered elsewhere.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_code_without_durable_resume -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 158 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```

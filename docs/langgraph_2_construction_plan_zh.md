@@ -9485,3 +9485,84 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.8 Native Full-Run 能力契约澄清切片
+
+已完成：
+
+- 澄清 LG3 `native_dataset_full_run` 的 resume metadata，避免产品状态把
+  compatibility resume endpoint 误说成 durable native LangGraph full-run
+  resume。
+- `native_dataset_full_run` 现在明确区分三件事：
+  - graph-state full-run compatibility resume：通过
+    `POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume`；
+  - durable native interrupt resume：通过
+    `POST /runs/{run_id}/datasets/{dataset}/native-resume`，只有当前 Gateway
+    runtime 和 checkpointer 与该 run 绑定时才可用；
+  - 未来真正的 durable native full-run resume：当前未实现。
+- LG3 full-run contract 现在固定记录：
+  - `resume_mode = graph_state_full_run_compatibility`
+  - `compatibility_resume_available = true`
+  - `graph_state_resume_available = true`
+  - `durable_resume_available = false`
+  - `durable_full_run_resume_available = false`
+  - `durable_full_run_resume_boundary = not_implemented`
+- 为已有 durable native interrupt pilot 增加 runtime-bound 字段：
+  - `durable_native_interrupt_resume_available`
+  - `durable_native_interrupt_checkpointer_bound`
+  - `durable_native_resume_scope`
+  - `durable_native_interrupt_resume_boundary`
+- 更新 gateway 和 API 回归测试，覆盖 start、code review、显式 execution、
+  paused execution 等路径，确保 LG3 full-run metadata 不会过度承诺 durable
+  full-run resume。
+
+边界：
+
+- 不实现 durable native full-run resume。
+- 不改变现有 compatibility resume endpoint；它仍然从 canonical
+  `graph_state.json` 产品状态恢复。
+- 不改变 UI 行为、dependency planning、LLM 调用、R execution、static rules、
+  reference ADaM handling 或 ADSL routing。
+- durable native interrupt pilot 仍然与 LG3 full-run compatibility contract
+  分开表达。
+
+子 agent 审查：
+
+- Tesla 使用 `gpt-5.5` 只读审查后返回 GO，没有阻断问题。
+- 审查确认本切片明确区分：
+  - `native-full-run/resume` 是 graph-state compatibility resume；
+  - durable native full-run resume 固定为 `false` / `not_implemented`；
+  - durable native interrupt resume 是单独的、依赖当前 runtime/checkpointer
+    绑定的能力。
+- 保留两个非阻断风险：
+  - `compatibility_resume_available=true` 是契约级能力标记，不代表当前动作
+    一定可执行；调用方仍必须遵守 `phase`、`current_interrupt` 和
+    `next_action`；
+  - `native_dataset_full_run` metadata 内
+    `durable_native_interrupt_resume_available=true` 的正向覆盖较轻，不过
+    native-resume runtime binding 已在其他测试中覆盖。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_code_without_durable_resume -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 158 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

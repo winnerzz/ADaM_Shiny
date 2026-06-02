@@ -3316,7 +3316,17 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["boundary"], "lg3_backend_contract")
         self.assertEqual(contract["contract"], "single_dataset_spec_code_review_execute")
         self.assertTrue(contract["execution_requires_explicit_resume"])
+        self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
+        self.assertTrue(contract["compatibility_resume_available"])
+        self.assertTrue(contract["graph_state_resume_available"])
+        self.assertEqual(contract["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume")
+        self.assertEqual(contract["native_resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
         self.assertFalse(contract["durable_resume_available"])
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertEqual(contract["durable_full_run_resume_boundary"], "not_implemented")
+        self.assertFalse(contract["durable_native_interrupt_resume_available"])
+        self.assertEqual(contract["durable_native_resume_scope"], "none")
+        self.assertEqual(contract["durable_native_interrupt_resume_boundary"], "graph_state_projection_only")
         self.assertFalse(contract["repair_or_revision_continued"])
         self.assertIn("native_dataset_product_loop_interrupt", result.graph_state.runtime_persistence)
         self.assertFalse(
@@ -3404,6 +3414,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(contract["approved"])
         self.assertTrue(contract["executed_after_approval"])
         self.assertEqual(contract["last_interrupt"], "code_review")
+        self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
+        self.assertTrue(contract["compatibility_resume_available"])
+        self.assertFalse(contract["durable_resume_available"])
+        self.assertFalse(contract["durable_full_run_resume_available"])
         self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
         self.assertTrue(
             (
@@ -3569,6 +3583,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(contract["executed_after_approval"])
         self.assertFalse(contract["terminal_failure"])
         self.assertFalse(contract["durable_resume_available"])
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertEqual(contract["durable_full_run_resume_boundary"], "not_implemented")
         self.assertNotIn("next_action", contract)
 
     def test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume(self) -> None:
@@ -3633,6 +3649,8 @@ class GraphGatewayTests(unittest.TestCase):
         contract = executed.graph_state.runtime_persistence["native_dataset_full_run"]
         self.assertEqual(contract["phase"], "executed")
         self.assertFalse(contract["durable_resume_available"])
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertFalse(contract["durable_native_interrupt_resume_available"])
 
     def test_gateway_lg3_paused_full_run_explicit_execution_failure_updates_contract(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_pause_then_fail") / "PSY201"
