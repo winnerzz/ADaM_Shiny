@@ -9209,6 +9209,17 @@ Passed，只有 CRLF conversion warnings
 
 子 agent 审查：
 
+- Carson 第一次 `gpt-5.5` 只读审查发现两个 P2：
+  - paused approval 后再显式执行，可能丢失 repair/revise follow-up context；
+  - 如果配置了 persistent checkpointer，显式 `/execute-approved-code` metadata
+    可能误称 durable native resume 可用。
+- 已修复：显式执行时会从已有 LG3 contract 继承
+  `terminal_failure_followup`，保留旧的 `repair_or_revision_continued` 标记，
+  并强制 explicit execution metadata 写 `durable_resume_available=false`。
+- Carson 后续只读复审返回 GO，没有剩余 P1/P2 blocker。
+
+子 agent 审查：
+
 - 第一轮 `gpt-5.5` 只读审查发现一个 P1：浏览器会识别 study-level
   `native_study_product_loop.full_run_datasets[DATASET]` contract，但 gateway
   resume guard 当时只识别顶层 `native_dataset_full_run` contract。
@@ -9222,3 +9233,52 @@ Passed，只有 CRLF conversion warnings
 - 保留一个非阻塞后续收窄项：service 当前在 approve 时会先解析 LLM config，
   即使 code approval 本身不需要 LLM call。它不会调用 LLM，也不会运行 R；本切片
   不让 service 预读 graph internals，以保持 thin-service 边界。
+
+### 2026-06-02 - LG3.3 显式执行 Contract 连续性切片
+
+已完成：
+
+- 修复 UI 的 LG3 两步路径：
+  1. 先通过 `/native-full-run/resume` 批准 generated code，并传
+     `execute_after_approval=false`；
+  2. 后续再通过 `/execute-approved-code` 显式执行 approved code。
+- `GraphGateway.execute_approved_code()` 现在如果发现执行前存在同 dataset 的
+  `native_dataset_full_run` contract，会在执行后保留并更新该 metadata。
+  - 显式执行成功时记录 `phase=executed`；
+  - 显式执行失败时记录 `phase=terminal_failure`，并保留 terminal-failure
+    interrupt 可见；
+  - 普通 split-flow execution 不会获得 LG3 metadata。
+- 显式执行 metadata 不再声称 durable native resume。即使配置了 persistent
+  checkpointer，这条 `/execute-approved-code` 路径也写
+  `durable_resume_available=false`，因为它是显式产品动作，不是 native interrupt
+  resume。
+- repair/revise follow-up 的上下文会跨过“先暂停批准、再显式执行”路径保留下来。
+
+边界：
+
+- 不改变 UI endpoint 选择：code approval 仍然暂停，显式 Run action 仍然调用
+  `/execute-approved-code`。
+- 不在默认 memory checkpointer 下启用 durable native resume。
+- 不改变 LLM 调用、R 执行逻辑、static rules、reference ADaM 处理或 ADSL 路由。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_failure_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_repair_followup_execution_preserves_context -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_paused_code_approval_then_explicit_execution_updates_contract -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 163 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

@@ -3216,6 +3216,7 @@ class GraphGateway:
         validation_report_path = str(result.get("validation_report_path") or "") or None
         diagnostics_path = str(result.get("diagnostics_path") or "") or None
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        previous_graph_state = graph_state
         dataset_state = graph_state.datasets.get(target)
         generation_quality = dict(dataset_state.code_state.get("generation_quality") or {}) if dataset_state else {}
         gateway_result = self.record_execution(
@@ -3243,6 +3244,43 @@ class GraphGateway:
             agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
+        if _has_native_dataset_full_run_contract(previous_graph_state, target):
+            phase = "terminal_failure" if terminal_failure else "executed"
+            current_interrupt = "terminal_failure" if terminal_failure else None
+            prior_contract = previous_graph_state.runtime_persistence.get("native_dataset_full_run") or {}
+            followup_context = _native_dataset_full_run_terminal_followup_context(previous_graph_state, target)
+            if followup_context is None and isinstance(prior_contract.get("terminal_failure_followup"), dict):
+                followup_context = dict(prior_contract["terminal_failure_followup"])
+            runtime_extra = _runtime_persistence_extras(previous_graph_state)
+            runtime_extra.update(_runtime_persistence_extras(gateway_result.graph_state))
+            runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
+                previous_graph_state,
+                dataset=target,
+                phase=phase,
+                current_interrupt=current_interrupt,
+                durable_resume_available=False,
+                last_interrupt="code_review",
+                decision=str(prior_contract.get("decision") or "approve"),
+                approved=True,
+                code_generation_continued=False,
+                executed_after_approval=True,
+                terminal_failure=terminal_failure,
+                repair_or_revision_continued=bool(prior_contract.get("repair_or_revision_continued"))
+                or followup_context is not None,
+                **({"terminal_failure_followup": followup_context} if followup_context is not None else {}),
+            )
+            self._persist_graph_state(
+                root,
+                gateway_result.graph_state,
+                node="native_dataset_full_run_explicit_execution",
+                runtime_persistence_extra=runtime_extra,
+            )
+            projection = project_graph_state_to_workflow(
+                root,
+                gateway_result.graph_state,
+                node="graph_gateway_native_dataset_full_run_explicit_execution",
+            )
+            gateway_result = GraphGatewayResult(graph_state=gateway_result.graph_state, workflow_projection=projection)
         return GraphGatewayExecutionResult(
             graph_state=gateway_result.graph_state,
             workflow_projection=gateway_result.workflow_projection,

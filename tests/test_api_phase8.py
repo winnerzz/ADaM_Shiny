@@ -6217,6 +6217,68 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse(contract["executed_after_approval"])
         self.assertFalse((study_dir / "runs" / "run_native_full_run_resume_code" / "outputs" / "adae.csv").exists())
 
+    def test_native_full_run_paused_code_approval_then_explicit_execution_updates_contract(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_native_full_run_pause_then_execute")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_native_full_run_pause_then_execute/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+        approved = client.post(
+            "/runs/run_native_full_run_pause_then_execute/datasets/ADAE/native-full-run/resume",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "approve",
+                "reviewer": "tester",
+                "notes": "Approve code but leave execution to the explicit UI action.",
+                "execute_after_approval": False,
+            },
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        approved_state, _ = _assert_compatibility_projection(self, approved.json())
+        self.assertEqual(approved_state["runtime_persistence"]["native_dataset_full_run"]["phase"], "reviewed")
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass", "errors": [], "warnings": []},
+                "output_path": "runs/run_native_full_run_pause_then_execute/outputs/adae.csv",
+                "validation_report_path": "runs/run_native_full_run_pause_then_execute/validation/adae_validation_report.json",
+                "diagnostics_path": "",
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "agent_node_inputs": [],
+                "agent_node_outputs": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            executed = client.post(
+                "/runs/run_native_full_run_pause_then_execute/datasets/ADAE/execute-approved-code",
+                json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+            )
+
+        self.assertEqual(executed.status_code, 200, executed.text)
+        payload = executed.json()
+        self.assertEqual(payload["status"], "completed")
+        graph_state, _ = _assert_compatibility_projection(self, payload)
+        contract = graph_state["runtime_persistence"]["native_dataset_full_run"]
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "executed")
+        self.assertEqual(contract["last_interrupt"], "code_review")
+        self.assertTrue(contract["approved"])
+        self.assertTrue(contract["executed_after_approval"])
+        self.assertFalse(contract["terminal_failure"])
+        self.assertNotIn("next_action", contract)
+
     def test_native_full_run_resume_accepts_study_loop_full_run_dataset_contract(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_full_run_resume_study_contract")
         client = TestClient(create_app())

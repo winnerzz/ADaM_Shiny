@@ -9864,6 +9864,20 @@ Passed, with CRLF conversion warnings only
 
 Subagent review:
 
+- Initial `gpt-5.5` read-only review by Carson found two P2 issues:
+  - explicit execution could drop repair/revise follow-up context after a
+    paused approval;
+  - explicit `/execute-approved-code` could claim durable native resume if a
+    persistent checkpointer was configured.
+- Fixed by inheriting prior `terminal_failure_followup` metadata from the LG3
+  contract when explicit execution runs, preserving the prior
+  `repair_or_revision_continued` flag, and forcing
+  `durable_resume_available=false` for explicit execution metadata.
+- Follow-up read-only review by Carson returned GO, with no remaining P1/P2
+  blockers.
+
+Subagent review:
+
 - Initial `gpt-5.5` read-only review found one P1: the browser recognized
   study-level `native_study_product_loop.full_run_datasets[DATASET]` contracts,
   but the gateway resume guard recognized only the top-level
@@ -9879,3 +9893,56 @@ Subagent review:
   does not need an LLM call. This does not call the LLM or run R, and keeping
   the service from pre-reading graph internals preserves the thin-service
   boundary in this slice.
+
+### 2026-06-02 - LG3.3 Explicit Execution Contract Continuity Slice
+
+Completed:
+
+- Fixed the UI two-step LG3 path:
+  1. approve generated code through `/native-full-run/resume` with
+     `execute_after_approval=false`;
+  2. later execute the approved code through `/execute-approved-code`.
+- `GraphGateway.execute_approved_code()` now preserves and updates the existing
+  same-dataset `native_dataset_full_run` metadata when the execution belongs to
+  an LG3 full-run contract.
+  - successful explicit execution records `phase=executed`;
+  - failed explicit execution records `phase=terminal_failure` and keeps the
+    terminal-failure interrupt visible;
+  - ordinary split-flow execution still does not receive LG3 metadata.
+- Explicit execution metadata does not claim durable native resume. It writes
+  `durable_resume_available=false` even if a persistent checkpointer is
+  configured, because `/execute-approved-code` is an explicit product action,
+  not native interrupt resume.
+- Repair/revise follow-up context is preserved across the paused approval and
+  later explicit execution path.
+
+Boundary:
+
+- This does not change the UI endpoint choice: code approval still pauses; the
+  explicit Run action still calls `/execute-approved-code`.
+- This does not enable durable native resume under the default memory
+  checkpointer.
+- This does not alter LLM calls, R execution behavior, static rules, reference
+  ADaM handling, or ADSL routing.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_failure_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_repair_followup_execution_preserves_context -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_paused_code_approval_then_explicit_execution_updates_contract -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 163 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```
