@@ -10371,7 +10371,7 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg
 Ran 3 tests - OK
 
 python -B -m unittest tests.test_graph_gateway -v
-Ran 159 tests - OK, skipped 4 optional SQLite tests
+Ran 160 tests - OK, skipped 4 optional SQLite tests
 
 python -B -m unittest tests.test_api_phase8 -v
 Ran 168 tests - OK
@@ -10384,4 +10384,44 @@ Passed
 
 git diff --check
 Passed, with CRLF conversion warnings only
+```
+
+### 2026-06-02 - LG3.11 Native Resume Service Fail-Closed Boundary Slice
+
+Completed:
+
+- Tightened the service-layer `/native-resume` boundary so default memory mode
+  fails closed before calling `GraphGateway.resume_native_dataset_interrupt()`.
+- Preserved the existing public behavior: memory-mode native resume still
+  returns the same fail-closed message telling callers to use split-flow review
+  endpoints or enable a durable LangGraph checkpointer.
+- Kept LLM config resolution only on the durable-checkpointer path. This
+  prevents a memory-mode native-resume request from loading provider settings
+  or touching LLM configuration before the durable runtime gate is proven open.
+- Strengthened the existing service regression so a fake memory-mode gateway
+  fails the test if `resume_native_dataset_interrupt()` is called.
+
+Boundary:
+
+- This does not enable durable native resume.
+- This does not change `native-full-run/resume`, which remains the LG3
+  graph-state compatibility review endpoint.
+- This does not change the Gateway's internal fail-closed guard; it keeps a
+  second line of defense for direct Gateway callers.
+- This does not change LLM generation, R execution, dependency planning, static
+  checks, UI routing, or sandbox behavior.
+
+Subagent review:
+
+- Read-only review by Pascal returned GO with no blocking P1/P2 findings.
+- Pascal confirmed the service now fails closed before LLM config resolution
+  and before calling Gateway native resume in memory mode. It also confirmed
+  `native-full-run/resume` remains separate and the docs do not claim durable
+  native resume.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer -v
+Ran 3 tests - OK
 ```

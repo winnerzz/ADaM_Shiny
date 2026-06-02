@@ -9684,7 +9684,7 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg
 Ran 3 tests - OK
 
 python -B -m unittest tests.test_graph_gateway -v
-Ran 159 tests - OK，4 个可选 SQLite tests skipped
+Ran 160 tests - OK，4 个可选 SQLite tests skipped
 
 python -B -m unittest tests.test_api_phase8 -v
 Ran 168 tests - OK
@@ -9697,4 +9697,42 @@ Passed
 
 git diff --check
 Passed，只有 CRLF conversion warnings
+```
+
+### 2026-06-02 - LG3.11 Native Resume Service Fail-Closed Boundary 切片
+
+已完成：
+
+- 收紧 service 层 `/native-resume` 边界：默认 memory mode 会在调用
+  `GraphGateway.resume_native_dataset_interrupt()` 前直接 fail closed。
+- 保留现有公开行为：memory-mode native resume 仍返回同一类 fail-closed
+  信息，提示调用方使用 split-flow review endpoints，或启用 durable
+  LangGraph checkpointer。
+- LLM config 只在 durable-checkpointer path 上解析。这样 memory-mode
+  native-resume request 不会在 durable runtime gate 证明打开前加载 provider
+  settings 或触碰 LLM 配置。
+- 加强现有 service 回归测试：fake memory-mode gateway 如果被调用
+  `resume_native_dataset_interrupt()`，测试会失败。
+
+边界：
+
+- 不启用 durable native resume。
+- 不改变 `native-full-run/resume`；它仍是 LG3 graph-state compatibility
+  review endpoint。
+- 不改变 Gateway 内部 fail-closed guard；直接调用 Gateway 时仍保留第二道防线。
+- 不改变 LLM generation、R execution、dependency planning、static checks、
+  UI routing 或 sandbox 行为。
+
+子 agent 审查：
+
+- Pascal 只读审查返回 GO，没有 P1/P2 阻塞问题。
+- Pascal 确认 service 在 memory mode 下会先 fail closed，不会先解析 LLM config，
+  也不会调用 Gateway native resume。它也确认 `native-full-run/resume` 仍是独立
+  路径，文档没有宣称 durable native resume 已上线。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer -v
+Ran 3 tests - OK
 ```

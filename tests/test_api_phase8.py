@@ -7170,6 +7170,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
 
         study_dir = _workspace_dir("phase8_native_resume_memory_before_llm") / "MY_STUDY"
         study_dir.mkdir(parents=True)
+        resume_called = False
 
         class FakeGateway:
             def close(self) -> None:
@@ -7179,7 +7180,9 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
                 return False
 
             def resume_native_dataset_interrupt(self, **kwargs: Any) -> Any:
-                raise ValueError("Native LangGraph interrupt resume is not enabled for this run.")
+                nonlocal resume_called
+                resume_called = True
+                raise AssertionError("Service must not call gateway native resume in memory mode.")
 
         request = SimpleNamespace(
             study_dir=str(study_dir),
@@ -7196,6 +7199,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         with patch("adam_agent.api.service._new_graph_gateway", return_value=FakeGateway()):
             with self.assertRaisesRegex(service.ApiServiceError, "Native LangGraph interrupt resume is not enabled"):
                 service.resume_native_dataset_interrupt("run_memory_before_llm", "ADAE", request)
+        self.assertFalse(resume_called)
 
     def test_native_study_loop_endpoint_reports_preserved_progress_on_restart(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_study_loop_restart_skip")
