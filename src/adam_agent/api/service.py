@@ -1354,6 +1354,53 @@ def _validated_run_dir(root: Path, run_id: str) -> Path:
 
 def _native_study_dataset_start_result(dataset: str, result: Any) -> NativeStudyDatasetStartResult:
     target = dataset.strip().upper()
+    if hasattr(result, "phase") and hasattr(result, "current_interrupt"):
+        dataset_state = getattr(result.graph_state, "datasets", {}).get(target)
+        spec_state = dataset_state.spec_state if dataset_state is not None else {}
+        code_state = dataset_state.code_state if dataset_state is not None else {}
+        code_path = _none_if_blank(str(code_state.get("code_path") or "") if isinstance(code_state, dict) else None)
+        draft_spec_path = _none_if_blank(
+            str(spec_state.get("draft_spec_path") or "") if isinstance(spec_state, dict) else None
+        )
+        current_interrupt = (
+            dataset_state.current_interrupt.name
+            if dataset_state is not None and dataset_state.current_interrupt is not None
+            else getattr(result, "current_interrupt", None)
+        )
+        warnings = list(getattr(result, "warnings", []) or []) + list(getattr(result, "dependency_warnings", []) or [])
+        if current_interrupt == "code_review":
+            static_artifact = code_state.get("static_check_artifact") if isinstance(code_state, dict) else None
+            static_check_path = _none_if_blank(
+                str(code_state.get("static_check_path") or "") if isinstance(code_state, dict) else None
+            )
+            if not static_check_path and isinstance(static_artifact, dict):
+                static_check_path = _none_if_blank(str(static_artifact.get("path") or ""))
+            return NativeStudyDatasetStartResult(
+                dataset=target,
+                status="code_review_required",
+                next_action="review_code",
+                result_type="code_review",
+                code_path=code_path,
+                draft_spec_path=draft_spec_path,
+                static_check_path=static_check_path,
+                warnings=warnings,
+            )
+        if current_interrupt == "draft_spec_review":
+            return NativeStudyDatasetStartResult(
+                dataset=target,
+                status="draft_spec_review_required",
+                next_action="review_draft_spec",
+                result_type="draft_spec_review",
+                draft_spec_path=draft_spec_path,
+                warnings=warnings,
+            )
+        return NativeStudyDatasetStartResult(
+            dataset=target,
+            status=dataset_state.status if dataset_state is not None else str(getattr(result, "phase", "") or "started"),
+            next_action=str(current_interrupt or ""),
+            result_type="native_full_run",
+            warnings=warnings,
+        )
     if hasattr(result, "code_path"):
         warnings = list(getattr(result, "warnings", []) or []) + list(getattr(result, "dependency_warnings", []) or [])
         return NativeStudyDatasetStartResult(
@@ -1387,6 +1434,13 @@ def _native_study_dataset_start_result(dataset: str, result: Any) -> NativeStudy
         draft_spec_path=getattr(result, "draft_spec_path", None),
         warnings=warnings,
     )
+
+
+def _none_if_blank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _native_study_start_message(

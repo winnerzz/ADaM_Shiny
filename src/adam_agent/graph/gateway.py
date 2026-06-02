@@ -130,6 +130,8 @@ class GraphGatewayNativeDatasetFullRunResult(GraphGatewayResult):
     current_interrupt: str | None
     decision: str
     approved: bool
+    warnings: list[str]
+    dependency_warnings: list[str]
     execution: GraphGatewayExecutionResult | None = None
 
 
@@ -154,7 +156,10 @@ class GraphGatewayNativeDatasetLoopDraftResult(GraphGatewayResult):
 class GraphGatewayNativeStudyLoopResult(GraphGatewayResult):
     """Internal native study-loop pilot result for starting multiple datasets."""
 
-    dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult]
+    dataset_results: dict[
+        str,
+        GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult | GraphGatewayNativeDatasetFullRunResult,
+    ]
     blocked_datasets: list[dict[str, Any]]
     started_datasets: list[str]
     skipped_datasets: list[dict[str, Any]]
@@ -981,6 +986,8 @@ class GraphGateway:
             target_context_builder=target_context_builder,
             rscript_path=rscript_path,
         )
+        warnings = list(getattr(started, "warnings", []) or [])
+        dependency_warnings = list(getattr(started, "dependency_warnings", []) or [])
         dataset_state = started.graph_state.datasets.get(target)
         current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
         graph_state = started.graph_state.model_copy(deep=True)
@@ -1015,6 +1022,8 @@ class GraphGateway:
             current_interrupt=current_interrupt,
             decision="",
             approved=False,
+            warnings=warnings,
+            dependency_warnings=dependency_warnings,
             execution=None,
         )
 
@@ -1035,7 +1044,7 @@ class GraphGateway:
         """Start the internal native multi-dataset product-loop pilot.
 
         This dispatch boundary refreshes the dependency plan, starts each
-        currently runnable dataset through the same native dataset-loop gate,
+        currently runnable dataset through the LG3 native full-run contract,
         and stops at draft-spec or code review. It never approves or executes a
         dataset on the user's behalf.
         """
@@ -1065,12 +1074,15 @@ class GraphGateway:
             )
         _handoff_spec_gap_dependency_warning_for_native_study_loop(self, root, plan_state)
 
-        dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult] = {}
+        dataset_results: dict[
+            str,
+            GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult | GraphGatewayNativeDatasetFullRunResult,
+        ] = {}
         started_datasets: list[str] = []
         run_dir = root / "runs" / run_id
         for dataset in _native_study_loop_dispatch_order(plan_state, run_dir=run_dir):
             try:
-                result = self.start_native_dataset_product_loop(
+                result = self.start_native_dataset_full_run(
                     study_dir=root,
                     study_id=study_id,
                     run_id=run_id,
@@ -1084,23 +1096,23 @@ class GraphGateway:
             except ValueError as exc:
                 graph_state = self.load_graph_state(study_dir=root, run_id=run_id).model_copy(deep=True)
                 _record_native_study_dataset_start_failure(graph_state, dataset=dataset, message=str(exc))
+                runtime_extra = _runtime_persistence_extras(graph_state)
+                runtime_extra["native_study_product_loop"] = _native_study_full_run_dispatch_metadata(
+                    state=graph_state,
+                    started_datasets=started_datasets,
+                    skipped_datasets=_native_study_loop_skipped_datasets(
+                        graph_state,
+                        run_dir=run_dir,
+                        exclude=started_datasets,
+                    ),
+                    failed_dataset=dataset,
+                    failed_reason=str(exc),
+                )
                 self._persist_graph_state(
                     root,
                     graph_state,
                     node="native_study_product_loop_dataset_start_failed",
-                    runtime_persistence_extra={
-                        "native_study_product_loop": {
-                            "started_datasets": started_datasets,
-                            "skipped_datasets": _native_study_loop_skipped_datasets(
-                                graph_state,
-                                run_dir=run_dir,
-                                exclude=started_datasets,
-                            ),
-                            "failed_dataset": dataset,
-                            "failed_reason": str(exc),
-                            "boundary": "study_product_loop_pilot_only",
-                        }
-                    },
+                    runtime_persistence_extra=runtime_extra,
                 )
                 project_graph_state_to_workflow(
                     root,
@@ -1474,6 +1486,8 @@ class GraphGateway:
             current_interrupt=current_interrupt,
             decision=final_decision,
             approved=approved,
+            warnings=[],
+            dependency_warnings=[],
             execution=execution,
         )
 
@@ -4425,24 +4439,26 @@ class GraphGateway:
         *,
         root: Path,
         state: StudyRunState,
-        dataset_results: dict[str, GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult],
+        dataset_results: dict[
+            str,
+            GraphGatewayCodeGenerationResult | GraphGatewayFinalizeInputsResult | GraphGatewayNativeDatasetFullRunResult,
+        ],
         started_datasets: list[str],
         skipped_datasets: list[dict[str, Any]],
         node: str,
     ) -> GraphGatewayNativeStudyLoopResult:
         _roll_up_study_state(state)
+        runtime_extra = _runtime_persistence_extras(state)
+        runtime_extra["native_study_product_loop"] = _native_study_full_run_dispatch_metadata(
+            state=state,
+            started_datasets=started_datasets,
+            skipped_datasets=skipped_datasets,
+        )
         self._persist_graph_state(
             root,
             state,
             node=node,
-            runtime_persistence_extra={
-                "native_study_product_loop": {
-                    "started_datasets": list(started_datasets),
-                    "skipped_datasets": list(skipped_datasets),
-                    "blocked_datasets": list(state.blocked_datasets),
-                    "boundary": "study_product_loop_pilot_only",
-                }
-            },
+            runtime_persistence_extra=runtime_extra,
         )
         projection = project_graph_state_to_workflow(root, state, node=f"graph_gateway_{node}")
         progress = self.progress_summary(study_dir=root, run_id=state.run_id)
@@ -5516,6 +5532,49 @@ def _runtime_persistence_extras(state: StudyRunState) -> dict[str, Any]:
         if key.startswith("native_") and isinstance(value, dict):
             extras[key] = dict(value)
     return extras
+
+
+def _native_study_full_run_dispatch_metadata(
+    *,
+    state: StudyRunState,
+    started_datasets: list[str],
+    skipped_datasets: list[dict[str, Any]],
+    failed_dataset: str | None = None,
+    failed_reason: str | None = None,
+) -> dict[str, Any]:
+    """Summarize a study-level dispatch that starts datasets through LG3."""
+
+    full_run_datasets: dict[str, dict[str, Any]] = {}
+    for dataset in _normalize_dataset_list(started_datasets):
+        dataset_state = state.datasets.get(dataset)
+        current_interrupt = (
+            dataset_state.current_interrupt.name
+            if dataset_state is not None and dataset_state.current_interrupt is not None
+            else None
+        )
+        full_run_datasets[dataset] = {
+            "dataset": dataset,
+            "contract": "single_dataset_spec_code_review_execute",
+            "boundary": "lg3_backend_contract",
+            "phase": "waiting_for_human_gate",
+            "current_interrupt": current_interrupt,
+            "execution_requires_explicit_resume": True,
+        }
+    payload: dict[str, Any] = {
+        "started_datasets": list(started_datasets),
+        "skipped_datasets": list(skipped_datasets),
+        "blocked_datasets": list(state.blocked_datasets),
+        "boundary": "study_lg3_full_run_dispatch",
+        "dispatch_status": "datasets_dispatched" if full_run_datasets else "no_dataset_dispatched",
+        "dataset_entry_contract": "single_dataset_spec_code_review_execute",
+        "full_run_datasets": full_run_datasets,
+    }
+    if failed_dataset:
+        payload["failed_dataset"] = failed_dataset.strip().upper()
+        payload["dispatch_status"] = "dataset_start_failed"
+    if failed_reason:
+        payload["failed_reason"] = failed_reason
+    return payload
 
 
 def _has_native_dataset_full_run_contract(state: StudyRunState, dataset: str) -> bool:

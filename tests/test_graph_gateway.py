@@ -22,8 +22,7 @@ try:
     from adam_agent.graph.checkpointing import build_checkpointer, default_sqlite_checkpointer_path, describe_checkpointer
     from adam_agent.graph.gateway import (
         GraphGateway,
-        GraphGatewayCodeGenerationResult,
-        GraphGatewayFinalizeInputsResult,
+        GraphGatewayNativeDatasetFullRunResult,
         _generation_quality_from_dataset_result,
         _native_study_loop_dependency_outputs_available,
         _resolve_run_artifact_path,
@@ -44,8 +43,7 @@ except ModuleNotFoundError:
     from adam_agent.graph.checkpointing import build_checkpointer, default_sqlite_checkpointer_path, describe_checkpointer
     from adam_agent.graph.gateway import (
         GraphGateway,
-        GraphGatewayCodeGenerationResult,
-        GraphGatewayFinalizeInputsResult,
+        GraphGatewayNativeDatasetFullRunResult,
         _generation_quality_from_dataset_result,
         _native_study_loop_dependency_outputs_available,
         _resolve_run_artifact_path,
@@ -4208,14 +4206,28 @@ class GraphGatewayTests(unittest.TestCase):
             [("ADAE", "code_review", False), ("ADCM", "code_review", False)],
         )
         self.assertIn("native_study_product_loop", result.graph_state.runtime_persistence)
+        self.assertIsInstance(result.dataset_results["ADAE"], GraphGatewayNativeDatasetFullRunResult)
+        self.assertIsInstance(result.dataset_results["ADCM"], GraphGatewayNativeDatasetFullRunResult)
         self.assertEqual(
             result.graph_state.runtime_persistence["native_study_product_loop"]["boundary"],
-            "study_product_loop_pilot_only",
+            "study_lg3_full_run_dispatch",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_study_product_loop"]["dataset_entry_contract"],
+            "single_dataset_spec_code_review_execute",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_study_product_loop"]["dispatch_status"],
+            "datasets_dispatched",
+        )
+        self.assertEqual(
+            set(result.graph_state.runtime_persistence["native_study_product_loop"]["full_run_datasets"]),
+            {"ADAE", "ADCM"},
         )
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_multi")
         self.assertEqual(progress["study_loop_result"]["source"], "graph_progress")
         self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
-        self.assertEqual(progress["study_loop_result"]["boundary"], "study_product_loop_pilot_only")
+        self.assertEqual(progress["study_loop_result"]["boundary"], "study_lg3_full_run_dispatch")
         self.assertFalse(progress["study_loop_result"]["native_resume_available"])
         self.assertEqual(progress["study_loop_result"]["native_resume_scope"], "none")
         self.assertEqual(progress["study_loop_result"]["resume_boundary"], "graph_state_projection_only")
@@ -4284,8 +4296,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(adcm_state.current_interrupt.name, "draft_spec_review")
         self.assertEqual(adcm_state.spec_state["status"], "draft_generated")
         self.assertFalse(adcm_state.code_state)
-        self.assertIsInstance(result.dataset_results["ADAE"], GraphGatewayCodeGenerationResult)
-        self.assertIsInstance(result.dataset_results["ADCM"], GraphGatewayFinalizeInputsResult)
+        self.assertIsInstance(result.dataset_results["ADAE"], GraphGatewayNativeDatasetFullRunResult)
+        self.assertIsInstance(result.dataset_results["ADCM"], GraphGatewayNativeDatasetFullRunResult)
+        self.assertEqual(result.dataset_results["ADAE"].current_interrupt, "code_review")
+        self.assertEqual(result.dataset_results["ADCM"].current_interrupt, "draft_spec_review")
         self.assertEqual(result.graph_state.dependency_review_status, "accepted")
         self.assertIsNotNone(result.graph_state.dependency_plan["dependency_planning_warning_records"])
         self.assertEqual(
@@ -4339,7 +4353,7 @@ class GraphGatewayTests(unittest.TestCase):
         )
         self.assertEqual(first.graph_state.dependency_review_status, "accepted")
 
-        with patch.object(gateway, "start_native_dataset_product_loop") as start_dataset_loop:
+        with patch.object(gateway, "start_native_dataset_full_run") as start_dataset_loop:
             second = gateway.start_native_study_product_loop(
                 study_dir=study_dir,
                 study_id="PSY201",
@@ -4454,6 +4468,9 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.current_interrupt.name, "dependency_review")
         self.assertEqual(result.graph_state.current_interrupt.dataset, None)
         self.assertTrue(any(block["dataset"] == "ADTTE" for block in result.blocked_datasets))
+        loop_metadata = result.graph_state.runtime_persistence["native_study_product_loop"]
+        self.assertEqual(loop_metadata["dispatch_status"], "no_dataset_dispatched")
+        self.assertEqual(loop_metadata["full_run_datasets"], {})
         self.assertFalse((study_dir / "runs" / "run_lg2_native_study_loop_dependency_block" / "code").exists())
 
     def test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart(self) -> None:
@@ -4482,7 +4499,7 @@ class GraphGatewayTests(unittest.TestCase):
             llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
         )
 
-        with patch.object(gateway, "start_native_dataset_product_loop") as start_dataset_loop:
+        with patch.object(gateway, "start_native_dataset_full_run") as start_dataset_loop:
             second = gateway.start_native_study_product_loop(
                 study_dir=study_dir,
                 study_id="PSY201",

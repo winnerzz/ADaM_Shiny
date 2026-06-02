@@ -9739,3 +9739,64 @@ Subagent review:
   `draft_spec_review` while stale generated-code cache and stale review-summary
   code are both present.
 - Follow-up read-only review by Dewey returned GO with no P1/P2 blockers.
+
+### 2026-06-02 - LG3.1 Study Loop Native Full-Run Dispatch Slice
+
+Completed:
+
+- The study-level `start_native_study_product_loop()` dispatch now starts each
+  runnable dataset through `start_native_dataset_full_run()` instead of the
+  lower-level native dataset product-loop entry.
+- The user-facing API remains the same: `/runs/native-study-loop` still reports
+  per-dataset review gates such as `review_draft_spec` or `review_code`.
+- Study-loop runtime metadata now records
+  `boundary=study_lg3_full_run_dispatch` plus a `full_run_datasets` summary so
+  multi-dataset dispatch has a study-level LG3 contract record.
+- The single-dataset `native_dataset_full_run` metadata remains the current or
+  last-started dataset contract. It is not used as the only source of truth for
+  study-level multi-dataset dispatch.
+- Existing restart behavior is preserved: datasets already waiting at a review
+  gate are skipped rather than regenerated or overwritten.
+
+Boundary:
+
+- This is not automatic batch completion.
+- This does not approve draft specs, approve code, execute R, repair code, or
+  revise specs on the user's behalf.
+- This does not enable durable native resume under the default memory
+  checkpointer.
+- The older low-level native dataset product-loop entry still exists as a
+  backend regression/pilot boundary, but the study-level product entry now
+  dispatches through LG3.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_preserves_mixed_spec_gates tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_restart_preserves_spec_gap_review_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_new_target_while_preserving_existing_progress tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_reports_preserved_progress_on_restart tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_preserves_full_run_draft_warnings tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_does_not_start_dependency_blocked_targets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 155 tests - OK
+```
+
+Subagent review:
+
+- 2026-06-02, Leibniz, `gpt-5.5`, read-only review initially found one P1:
+  study-loop API results could drop full-run warnings because
+  `GraphGatewayNativeDatasetFullRunResult` did not carry the lower-level
+  warnings/dependency warnings.
+- Fixed by carrying `warnings` and `dependency_warnings` on the LG3 full-run
+  result and by adding an API regression for missing-spec draft warnings.
+- Fixed two related P2s:
+  - API path fields now normalize blank strings to `None`;
+  - study-loop metadata now records `dispatch_status`, including
+    `no_dataset_dispatched` for dependency-blocked no-start runs.

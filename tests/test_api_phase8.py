@@ -5771,6 +5771,34 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn(("ADAE", "code_review"), loop_review_queue)
         self.assertIn(("ADCM", "code_review"), loop_review_queue)
 
+    def test_native_study_loop_endpoint_preserves_full_run_draft_warnings(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_native_study_loop_draft_warnings")
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/runs/native-study-loop",
+            json={
+                "study_dir": str(study_dir),
+                "run_id": "run_native_study_loop_draft_warnings",
+                "target_datasets": ["ADAE"],
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["started_datasets"], ["ADAE"])
+        self.assertEqual(len(payload["dataset_results"]), 1)
+        result = payload["dataset_results"][0]
+        self.assertEqual(result["dataset"], "ADAE")
+        self.assertEqual(result["next_action"], "review_draft_spec")
+        self.assertEqual(result["result_type"], "draft_spec_review")
+        self.assertTrue(result["draft_spec_path"].endswith("runs/run_native_study_loop_draft_warnings/specs/adae_draft_spec.json"))
+        self.assertTrue(
+            any("No approved input_spec" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+
     def test_native_full_run_endpoint_starts_single_dataset_at_code_review(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_native_full_run_endpoint")
         client = TestClient(create_app())

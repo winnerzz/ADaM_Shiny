@@ -9092,3 +9092,59 @@ Ran 6 tests - OK
   新增回归测试覆盖 native full-run 返回 draft review、浏览器已有旧 generated-code
   cache、review-summary 也含旧 code 的场景。
 - Dewey 后续只读复审返回 GO，没有 P1/P2 阻断问题。
+
+### 2026-06-02 - LG3.1 Study Loop 接入 Native Full-Run Dispatch 切片
+
+已完成：
+
+- study-level 的 `start_native_study_product_loop()` 现在会把每个 runnable
+  dataset 交给 `start_native_dataset_full_run()`，不再从 study-loop 直接走低层
+  native dataset product-loop 入口。
+- 用户侧 API 不变：`/runs/native-study-loop` 仍然返回每个 dataset 当前需要处理的
+  人工闸门，例如 `review_draft_spec` 或 `review_code`。
+- study-loop 的 runtime metadata 现在记录
+  `boundary=study_lg3_full_run_dispatch`，并增加 `full_run_datasets` 摘要。
+  这样多 dataset dispatch 有 study-level 的 LG3 合同记录。
+- 单 dataset 的 `native_dataset_full_run` metadata 仍然表示当前或最后启动的
+  dataset 合同；它不是 study-level 多 dataset dispatch 的唯一依据。
+- 重新启动 study-loop 时，如果某个 dataset 已经停在 review gate，系统仍然会跳过它，
+  不会重新生成或覆盖人工审核中的进度。
+
+边界：
+
+- 这不是自动完成整个批处理。
+- 这不会自动批准 draft spec、批准 code、执行 R、repair code 或 revise spec。
+- 这不会在默认 memory checkpointer 下启用 durable native resume。
+- 旧的低层 native dataset product-loop 入口仍作为 backend regression/pilot 边界保留；
+  但 study-level 产品入口已经改为通过 LG3 dispatch。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_preserves_mixed_spec_gates tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_restart_preserves_spec_gap_review_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_skips_existing_review_progress_on_restart tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_new_target_while_preserving_existing_progress tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_downstream_after_graph_output_dependency -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_native_full_run_endpoint_starts_single_dataset_at_code_review tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_reports_preserved_progress_on_restart tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_does_not_start_dependency_blocked_targets -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_study_loop_endpoint_preserves_full_run_draft_warnings tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_does_not_start_dependency_blocked_targets tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped=4 optional SQLite checkpointer tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 155 tests - OK
+```
+
+子 agent 审查：
+
+- 2026-06-02，Leibniz，`gpt-5.5`，只读审查先发现一个 P1：
+  study-loop API result 可能丢掉 full-run warnings，因为
+  `GraphGatewayNativeDatasetFullRunResult` 没有携带低层 warnings/dependency warnings。
+- 已修复：LG3 full-run result 现在携带 `warnings` 和 `dependency_warnings`；
+  新增 API 回归测试覆盖 missing-spec draft warnings 不丢失。
+- 同时修复两个相关 P2：
+  - API path 字段会把空字符串归一成 `None`；
+  - study-loop metadata 新增 `dispatch_status`，dependency-blocked 且没有启动 dataset
+    的场景会明确记录为 `no_dataset_dispatched`。
