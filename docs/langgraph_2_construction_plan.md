@@ -10518,3 +10518,105 @@ Ran 5 tests - OK
 python -B -m unittest tests.test_api_phase8 -v
 Ran 169 tests - OK
 ```
+
+### 2026-06-02 - LG3.14 Native Interrupt Resume UI Action Slice
+
+Completed:
+
+- Added a browser UI action for the existing durable native dataset interrupt
+  resume endpoint, but only when the graph progress read model exposes a
+  matching `native_resume.interrupt_queue` item with:
+  - `can_resume == true`;
+  - a matching dataset and interrupt;
+  - explicit `available_actions`.
+- The action source is strictly the current
+  `state.runProgress.native_resume.interrupt_queue`. `study_loop_result`
+  native-resume copies remain status/display data and cannot authorize buttons.
+- The action is rendered as `Saved graph resume` on review-queue and study-loop
+  rows. It uses human labels from the graph action list, such as `Approve Code`
+  or `Reject Code`.
+- The browser also applies a local action whitelist for supported native
+  interrupts, so unexpected future `available_actions` values cannot become
+  clickable UI actions by accident.
+- The UI still hides the raw native-resume endpoint string and
+  `explicit_resume_endpoint` metadata from rendered panels.
+- Added a handler that posts the chosen action to the existing
+  `/runs/{run_id}/datasets/{dataset}/native-resume` route and then reloads graph
+  read models and review summary.
+- Added UI regressions proving:
+  - default/status-only native resume still renders no button;
+  - `can_resume=false` queue items render no saved-graph action;
+  - `can_resume=true` queue items render saved-graph action buttons;
+  - unexpected queue actions are not rendered;
+  - stale `study_loop_result.native_resume_interrupts` cannot render or submit
+    a saved-graph action when current progress has no callable queue item;
+  - click-time submit revalidates that the selected decision is still listed in
+    the current queue item's `available_actions` and still passes the UI action
+    whitelist before posting;
+  - clicking the action posts to the existing endpoint with
+    `execute_after_approval=false`.
+
+Boundary:
+
+- This slice adds no backend route and does not change GraphGateway gates.
+- The service/Gateway fail-closed durable checkpointer guard remains the
+  authority. The UI action is only a caller for an already exposed, already
+  guarded endpoint.
+- The UI whitelist is a display guard, not an authority boundary. Backend
+  validation still decides whether the decision is accepted.
+- The UI action source is intentionally narrower than the study-loop display
+  model. Browser-cached command responses cannot authorize native-resume
+  buttons.
+- This does not implement durable native full-run resume. `native-full-run/resume`
+  remains the graph-state compatibility review path, while `/native-resume`
+  remains durable native interrupt resume for supported pilot interrupts.
+- This does not change LLM generation, R execution, dependency planning,
+  static checks, repair/spec-revision routing, or sandbox behavior.
+
+Subagent review:
+
+- Feynman (`gpt-5.5`) returned GO.
+- No P0/P1/P2 blockers found. The review confirmed that action rendering and
+  submit are gated from current `state.runProgress.native_resume.interrupt_queue`,
+  clicked decisions are revalidated against current `available_actions` plus the
+  UI whitelist, stale `study_loop_result.native_resume_interrupts` is not used
+  as an authority source, and raw `/native-resume` /
+  `explicit_resume_endpoint` text is not rendered in user panels.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_unavailable_reason_without_action -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 172 tests - OK
+
+git diff --check
+Passed, with CRLF conversion warnings only
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_revalidates_available_action_before_post tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 173 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 6 tests - OK, skipped 1 optional SQLite test
+
+python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
+Compiled 82 files - OK
+
+python -B -m compileall -q src tests
+Blocked by local Windows pyc write permissions on __pycache__ paths; source syntax
+was covered by the read-only compile() check above.
+```

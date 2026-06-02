@@ -3056,6 +3056,7 @@ INDEX_HTML = r"""<!doctype html>
       byId('humanReviewQueueList').innerHTML = items.length
         ? items.map((item) => reviewQueueItemHtml(item)).join('')
         : '<div class="muted">No dependency, draft-spec, code-review, or terminal-failure gate is open.</div>';
+      attachNativeResumeHandlers();
     }
 
     function humanReviewQueueItems() {
@@ -3211,6 +3212,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="review-queue-action">${escapeHtml(reviewQueueActionText(item))}</div>
             <div class="review-queue-detail">${escapeHtml(reviewQueueDetailText(item))}</div>
             ${reviewQueueActionHints(item)}
+            ${nativeResumeActionHtml(item.dataset, item.name)}
           </div>
         </div>
       `;
@@ -3305,6 +3307,7 @@ INDEX_HTML = r"""<!doctype html>
       list.innerHTML = rows.length
         ? rows.join('')
         : '<div class="muted">No new dataset needed a start action. Existing graph progress was preserved.</div>';
+      attachNativeResumeHandlers();
     }
 
     function humanNativeResumeScope(scope) {
@@ -3360,7 +3363,8 @@ INDEX_HTML = r"""<!doctype html>
             dataset,
             tone: 'warn',
             label,
-            detail: `${dataset} stopped at ${label}. Review this gate before any code approval or local R execution.${warnings}`
+            detail: `${dataset} stopped at ${label}. Review this gate before any code approval or local R execution.${warnings}`,
+            extraHtml: nativeResumeActionHtml(dataset, nextAction)
           });
         });
     }
@@ -3386,7 +3390,8 @@ INDEX_HTML = r"""<!doctype html>
           dataset,
           tone: 'info',
           label: 'Preserved',
-          detail: `${dataset} already has graph progress (${item.status || 'unknown'}). Start Runnable Datasets left it unchanged. Next action: ${nextAction}.${interrupt}`
+          detail: `${dataset} already has graph progress (${item.status || 'unknown'}). Start Runnable Datasets left it unchanged. Next action: ${nextAction}.${interrupt}`,
+          extraHtml: nativeResumeActionHtml(dataset, item.interrupt || item.name || item.next_action)
         });
       });
     }
@@ -3403,7 +3408,11 @@ INDEX_HTML = r"""<!doctype html>
           dataset: String(item.dataset || 'Study').toUpperCase(),
           tone: 'warn',
           label: readableInterruptName(item.name || item.interrupt || progressInterruptName(item.action)),
-          detail: item.reason || 'A review gate is open in graph progress.'
+          detail: item.reason || 'A review gate is open in graph progress.',
+          extraHtml: nativeResumeActionHtml(
+            String(item.dataset || '').toUpperCase(),
+            item.name || item.interrupt || progressInterruptName(item.action)
+          )
         }));
     }
 
@@ -3417,9 +3426,68 @@ INDEX_HTML = r"""<!doctype html>
           <div>
             <div class="study-loop-action">${escapeHtml(item.label || 'Review required')}</div>
             <div>${escapeHtml(item.detail || 'No detail recorded.')}</div>
+            ${item.extraHtml || ''}
           </div>
         </div>
       `;
+    }
+
+    function nativeResumeQueueItems() {
+      const progressQueue = state.runProgress?.native_resume?.interrupt_queue || [];
+      return Array.isArray(progressQueue) ? progressQueue : [];
+    }
+
+    function nativeResumeQueueItem(dataset, interruptName) {
+      const target = String(dataset || '').toUpperCase();
+      const interrupt = normalizeNativeResumeInterruptName(interruptName);
+      if (!target || !interrupt) return null;
+      return nativeResumeQueueItems().find((item) =>
+        String(item.dataset || '').toUpperCase() === target &&
+        normalizeNativeResumeInterruptName(item.interrupt || item.name || item.next_action) === interrupt &&
+        item.can_resume === true &&
+        Array.isArray(item.available_actions) &&
+        item.available_actions.length
+      ) || null;
+    }
+
+    function normalizeNativeResumeInterruptName(value) {
+      const raw = String(value || '').trim();
+      const names = {
+        review_draft_spec: 'draft_spec_review',
+        review_code: 'code_review',
+        review_terminal_failure: 'terminal_failure',
+        draft_spec_review: 'draft_spec_review',
+        code_review: 'code_review',
+        terminal_failure: 'terminal_failure'
+      };
+      return names[raw] || raw;
+    }
+
+    function nativeResumeActionHtml(dataset, interruptName) {
+      const item = nativeResumeQueueItem(dataset, interruptName);
+      if (!item) return '';
+      const target = String(item.dataset || dataset || '').toUpperCase();
+      const interrupt = normalizeNativeResumeInterruptName(item.interrupt || interruptName);
+      const buttons = item.available_actions.map((action) => {
+        const actionName = String(action.action || '').trim();
+        if (!actionName) return '';
+        if (!nativeResumeActionAllowed(interrupt, actionName)) return '';
+        const label = action.label || titleFromToken(actionName);
+        return `<button class="secondary" data-saved-graph-action="${escapeHtml(actionName)}" data-saved-graph-dataset="${escapeHtml(target)}" data-saved-graph-interrupt="${escapeHtml(interrupt)}">${escapeHtml(label)}</button>`;
+      }).filter(Boolean).join('');
+      if (!buttons) return '';
+      return `<div class="review-queue-actions saved-graph-actions">Saved graph resume: ${buttons}</div>`;
+    }
+
+    function nativeResumeActionAllowed(interruptName, actionName) {
+      const interrupt = normalizeNativeResumeInterruptName(interruptName);
+      const action = String(actionName || '').trim();
+      const allowed = {
+        draft_spec_review: ['approve', 'reject'],
+        code_review: ['approve', 'reject'],
+        terminal_failure: ['retry_execution', 'repair_code', 'revise_spec', 'request_inputs', 'skip_dataset']
+      }[interrupt] || [];
+      return allowed.includes(action);
     }
 
     function graphInterruptLabel() {
@@ -4444,6 +4512,82 @@ INDEX_HTML = r"""<!doctype html>
       for (const button of document.querySelectorAll('[data-terminal-action]')) {
         button.addEventListener('click', () => submitTerminalFailureReview(button.dataset.terminalDataset, button.dataset.terminalAction));
       }
+    }
+
+    function attachNativeResumeHandlers() {
+      for (const button of document.querySelectorAll('[data-saved-graph-action]')) {
+        if (button.dataset.savedGraphBound === '1') continue;
+        button.dataset.savedGraphBound = '1';
+        button.addEventListener('click', () => submitNativeResumeReview(
+          button.dataset.savedGraphDataset,
+          button.dataset.savedGraphAction,
+          button.dataset.savedGraphInterrupt
+        ));
+      }
+    }
+
+    async function submitNativeResumeReview(dataset, decision, interruptName) {
+      const target = String(dataset || state.selectedTarget || '').toUpperCase();
+      const item = nativeResumeQueueItem(target, interruptName);
+      const interrupt = normalizeNativeResumeInterruptName(interruptName);
+      const allowedNow = nativeResumeItemAllowsDecision(item, interrupt, decision);
+      if (!target || !decision || !item || !allowedNow) return;
+      beginOperation('Resuming saved graph gate', `Recording ${titleFromToken(decision)} for ${target} through durable LangGraph resume.`);
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/native-resume`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            reviewer: byId('reviewer').value.trim() || 'local_user',
+            decision,
+            notes: byId('reviewNotes').value.trim() || `Selected ${decision} from the saved graph resume gate.`,
+            execute_after_approval: false,
+            config_path: byId('configPath').value.trim() || null,
+            rscript_path: byId('rscriptPath').value.trim() || null,
+            ...llmOverridePayload()
+          })
+        });
+        if (normalizeNativeResumeInterruptName(payload.interrupt) === 'code_review') {
+          state.reviewByDataset[target] = {
+            ...payload,
+            approved: payload.decision === 'approve',
+            native_resume: true
+          };
+        }
+        if (normalizeNativeResumeInterruptName(payload.interrupt) === 'draft_spec_review') {
+          state.draftSpecReviewByDataset[target] = {
+            ...payload,
+            approved: payload.decision === 'approve',
+            native_resume: true
+          };
+        }
+        if (normalizeNativeResumeInterruptName(payload.interrupt) === 'terminal_failure') {
+          state.terminalFailureReviewByDataset[target] = {
+            action: payload.decision,
+            next_action: payload.next_action,
+            current_interrupt: payload.current_interrupt,
+            native_resume: true
+          };
+        }
+        await refreshGraphReadModels();
+        await loadReviewSummary(payload.run_id || runId());
+        addEvent('Saved graph gate resumed', `${target}: ${titleFromToken(payload.decision)} -> ${titleFromToken(payload.next_action || payload.status)}.`);
+        completeOperation('Saved graph gate resumed', `${target} next action: ${titleFromToken(payload.next_action || payload.status)}.`);
+        renderDraftSpecPane();
+        renderPane();
+        renderGraphAwareDashboard();
+        renderActionAvailability();
+      } catch (error) {
+        failOperation('Saved graph resume failed', error);
+      }
+    }
+
+    function nativeResumeItemAllowsDecision(item, interruptName, decision) {
+      if (!item || !Array.isArray(item.available_actions)) return false;
+      const action = String(decision || '').trim();
+      if (!nativeResumeActionAllowed(interruptName, action)) return false;
+      return item.available_actions.some((available) => String(available.action || '').trim() === action);
     }
 
     async function submitTerminalFailureReview(dataset, action) {

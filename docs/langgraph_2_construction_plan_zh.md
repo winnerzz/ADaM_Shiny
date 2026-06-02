@@ -9822,3 +9822,98 @@ Ran 5 tests - OK
 python -B -m unittest tests.test_api_phase8 -v
 Ran 169 tests - OK
 ```
+
+### 2026-06-02 - LG3.14 Native Interrupt Resume UI Action 切片
+
+已完成：
+
+- 浏览器 UI 接入已有的 durable native dataset interrupt resume endpoint，但只在
+  graph progress read model 明确给出匹配的
+  `native_resume.interrupt_queue` 项时显示动作：
+  - `can_resume == true`；
+  - dataset 和 interrupt 匹配；
+  - 存在明确的 `available_actions`。
+- 动作来源严格限定为当前
+  `state.runProgress.native_resume.interrupt_queue`。`study_loop_result` 中的
+  native-resume 拷贝只用于状态/展示，不能授权按钮。
+- 动作在 review queue 和 study-loop row 中显示为 `Saved graph resume`，
+  按钮文案来自 graph action list，例如 `Approve Code`、`Reject Code`。
+- 浏览器侧也增加了 supported native interrupts 的本地动作白名单，避免未来
+  `available_actions` 意外混入其他动作时被直接渲染成可点击按钮。
+- 渲染面板仍隐藏原始 native-resume endpoint 字符串和
+  `explicit_resume_endpoint` metadata。
+- 增加 handler：把用户选择的动作 POST 到已有
+  `/runs/{run_id}/datasets/{dataset}/native-resume` route，然后重新加载 graph
+  read models 和 review summary。
+- 增加 UI 回归：
+  - default/status-only native resume 仍不显示按钮；
+  - `can_resume=false` queue item 不显示 saved-graph action；
+  - `can_resume=true` queue item 显示 saved-graph action buttons；
+  - 意外的 queue action 不会被渲染；
+  - stale `study_loop_result.native_resume_interrupts` 在当前 progress 没有
+    callable queue item 时，不能渲染或提交 saved-graph action；
+  - 点击提交时会再次校验所选 decision 仍存在于当前 queue item 的
+    `available_actions`，且仍通过 UI 动作白名单，然后才会 POST；
+  - 点击动作会调用已有 endpoint，且 `execute_after_approval=false`。
+
+边界：
+
+- 本切片不新增后端 route，也不改变 GraphGateway gates。
+- service/Gateway 的 fail-closed durable checkpointer guard 仍是权限来源；
+  UI action 只是调用一个已经存在、已经受保护的 endpoint。
+- UI 白名单只是显示层 guard，不是权限边界；后端校验仍决定是否接受该
+  decision。
+- UI 动作来源故意比 study-loop 展示模型更窄。浏览器缓存的 command response
+  不能授权 native-resume buttons。
+- 不实现 durable native full-run resume。`native-full-run/resume` 仍是
+  graph-state compatibility review path，`/native-resume` 仍只是 supported pilot
+  interrupts 的 durable native interrupt resume。
+- 不改变 LLM generation、R execution、dependency planning、static checks、
+  repair/spec-revision routing 或 sandbox 行为。
+
+子 agent 审查：
+
+- Feynman（`gpt-5.5`）返回 GO。
+- 未发现 P0/P1/P2 阻塞项。审查确认：动作渲染和提交都只由当前
+  `state.runProgress.native_resume.interrupt_queue` 授权；点击时 decision 会
+  再次校验当前 `available_actions` 和 UI 白名单；stale
+  `study_loop_result.native_resume_interrupts` 不作为权限来源；用户面板不会渲染
+  原始 `/native-resume` 或 `explicit_resume_endpoint` 文本。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_serves_local_web_ui tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_unavailable_reason_without_action -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 172 tests - OK
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_revalidates_available_action_before_post tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_actions_ignore_stale_study_loop_queue tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_actions_only_for_callable_queue_item tests.test_api_phase8.Phase8ApiTests.test_index_native_resume_action_posts_existing_endpoint_when_callable -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 173 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 6 tests - OK，1 个可选 SQLite test skipped
+
+python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
+Compiled 82 files - OK
+
+python -B -m compileall -q src tests
+受本地 Windows pyc 写权限限制，在 __pycache__ 路径失败；源码语法已由上面的
+只读 compile() 检查覆盖。
+```

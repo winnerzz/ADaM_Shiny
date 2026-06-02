@@ -656,8 +656,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("/runs/native-study-loop", response.text)
         self.assertIn("startNativeStudyLoop", response.text)
         self.assertIn("This does not approve draft specs, approve code, or run R.", response.text)
-        self.assertNotIn("/native-resume", response.text)
-        self.assertNotIn("explicit_resume_endpoint", response.text)
+        self.assertIn("submitNativeResumeReview", response.text)
+        self.assertIn("nativeResumeQueueItem", response.text)
+        self.assertIn("Saved graph resume", response.text)
         self.assertIn("finalize-inputs", response.text)
         self.assertIn("finalizedInputsByDataset", response.text)
         self.assertIn("Audit Timeline", response.text)
@@ -722,6 +723,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("function studyStatusPill(progress, blocked, targets)", html)
         self.assertIn("function nativeResumeProgressNote()", html)
         self.assertIn("function nativeResumeUnavailableText(resume)", html)
+        self.assertIn("function nativeResumeActionHtml(dataset, interruptName)", html)
+        self.assertIn("function nativeResumeActionAllowed(interruptName, actionName)", html)
+        self.assertIn("function attachNativeResumeHandlers()", html)
         self.assertIn("This run uses saved graph state recovery, not a durable LangGraph checkpoint.", html)
         self.assertIn("current service is bound to a different checkpoint", html)
         self.assertNotIn("explicit_resume_endpoint", progress_body)
@@ -1130,6 +1134,399 @@ console.log(JSON.stringify({
         self.assertNotIn("native-resume", rendered)
         self.assertNotIn("explicit_resume_endpoint", rendered)
         self.assertNotIn("<button", rendered)
+
+    def test_index_renders_native_resume_actions_only_for_callable_queue_item(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_native_resume_action' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+applyRunProgress({
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: true,
+    scope: 'native_pilot_interrupts_only',
+    boundary: 'durable_native_interrupt_resume',
+    interrupt_queue: [
+      {
+        dataset: 'ADAE',
+        interrupt: 'code_review',
+        can_resume: true,
+        resume_endpoint: 'POST /runs/{run_id}/datasets/{dataset}/native-resume',
+        available_actions: [
+          {action: 'approve', label: 'Approve Code'},
+          {action: 'reject', label: 'Reject Code'},
+          {action: 'run_arbitrary_tool', label: 'Run Arbitrary Tool'}
+        ],
+        reason: 'Review generated R code.'
+      },
+      {
+        dataset: 'ADCM',
+        interrupt: 'code_review',
+        can_resume: false,
+        resume_endpoint: null,
+        available_actions: [{action: 'approve', label: 'Approve Code'}],
+        reason: 'Memory-mode visible gate.'
+      }
+    ]
+  },
+  review_queue: [
+    {dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'},
+    {dataset: 'ADCM', name: 'code_review', reason: 'Memory-mode visible gate.'}
+  ],
+  study_loop_result: {
+    source: 'graph_progress',
+    native_resume_available: true,
+    native_resume_scope: 'native_pilot_interrupts_only',
+    native_resume_has_queue_items: true,
+    native_resume_queue_item_count: 2,
+    native_resume_interrupts: [
+      {
+        dataset: 'ADAE',
+        interrupt: 'code_review',
+        can_resume: true,
+        available_actions: [{action: 'approve', label: 'Approve Code'}]
+      },
+      {
+        dataset: 'ADCM',
+        interrupt: 'code_review',
+        can_resume: false,
+        available_actions: [{action: 'approve', label: 'Approve Code'}]
+      }
+    ],
+    started_datasets: [],
+    blocked_datasets: [],
+    review_queue: [
+      {dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'},
+      {dataset: 'ADCM', name: 'code_review', reason: 'Memory-mode visible gate.'}
+    ]
+  }
+});
+renderHumanReviewQueue();
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  queueHtml: nodes.get('humanReviewQueueList').innerHTML,
+  loopHtml: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_action_render.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        rendered = " ".join([result["queueHtml"], result["loopHtml"]])
+        self.assertIn("Saved graph resume", rendered)
+        self.assertIn('data-saved-graph-dataset="ADAE"', rendered)
+        self.assertIn('data-saved-graph-action="approve"', rendered)
+        self.assertIn("Approve Code", rendered)
+        self.assertIn("Reject Code", rendered)
+        self.assertNotIn("Run Arbitrary Tool", rendered)
+        self.assertNotIn("run_arbitrary_tool", rendered)
+        self.assertNotIn('data-saved-graph-dataset="ADCM"', rendered)
+        self.assertNotIn("native-resume", rendered)
+        self.assertNotIn("explicit_resume_endpoint", rendered)
+
+    def test_index_native_resume_action_posts_existing_endpoint_when_callable(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+const calls = [];
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      let value = '';
+      if (id === 'studyDir') value = 'D:/tmp/study';
+      if (id === 'runId') value = 'run_ui_native_resume_click';
+      if (id === 'reviewer') value = 'alice';
+      nodes.set(id, {
+        value,
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async (url, options = {}) => {
+  calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+  if (url.includes('/native-resume')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_native_resume_click',
+      dataset: 'ADAE',
+      interrupt: 'code_review',
+      decision: 'approve',
+      status: 'needs_review',
+      current_interrupt: null,
+      executed: false,
+      next_action: 'execute_approved_code',
+      graph_state_path: 'runs/run_ui_native_resume_click/graph_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_native_resume_click', datasets: {}})};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({target_datasets: ['ADAE'], datasets: []})};
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_native_resume_click', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+nodes.get('runId').value = 'run_ui_native_resume_click';
+state.selectedTarget = 'ADAE';
+applyRunProgress({
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: true,
+    scope: 'native_pilot_interrupts_only',
+    boundary: 'durable_native_interrupt_resume',
+    interrupt_queue: [{
+      dataset: 'ADAE',
+      interrupt: 'code_review',
+      can_resume: true,
+      available_actions: [{action: 'approve', label: 'Approve Code'}]
+    }]
+  }
+});
+await submitNativeResumeReview('ADAE', 'approve', 'code_review');
+console.log(JSON.stringify({
+  nativeResumeCalls: calls.filter((item) => item.url.includes('/native-resume')),
+  review: state.reviewByDataset.ADAE,
+  operation: nodes.get('operationTitle').textContent
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_action_post.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(len(result["nativeResumeCalls"]), 1)
+        call = result["nativeResumeCalls"][0]
+        self.assertIn("/runs/run_ui_native_resume_click/datasets/ADAE/native-resume", call["url"])
+        self.assertEqual(call["body"]["study_dir"], "D:/tmp/study")
+        self.assertEqual(call["body"]["reviewer"], "alice")
+        self.assertEqual(call["body"]["decision"], "approve")
+        self.assertFalse(call["body"]["execute_after_approval"])
+        self.assertTrue(result["review"]["native_resume"])
+        self.assertEqual(result["operation"], "Saved graph gate resumed")
+
+    def test_index_native_resume_action_revalidates_available_action_before_post(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+const calls = [];
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      let value = '';
+      if (id === 'studyDir') value = 'D:/tmp/study';
+      if (id === 'runId') value = 'run_ui_native_resume_click_revalidate';
+      if (id === 'reviewer') value = 'alice';
+      nodes.set(id, {
+        value,
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async (url, options = {}) => {
+  calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+nodes.get('runId').value = 'run_ui_native_resume_click_revalidate';
+state.selectedTarget = 'ADAE';
+applyRunProgress({
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: true,
+    scope: 'native_pilot_interrupts_only',
+    boundary: 'durable_native_interrupt_resume',
+    interrupt_queue: [{
+      dataset: 'ADAE',
+      interrupt: 'code_review',
+      can_resume: true,
+      available_actions: [{action: 'approve', label: 'Approve Code'}]
+    }]
+  },
+  review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
+});
+renderHumanReviewQueue();
+await submitNativeResumeReview('ADAE', 'reject', 'code_review');
+console.log(JSON.stringify({
+  rendered: nodes.get('humanReviewQueueList').innerHTML,
+  nativeResumeCalls: calls.filter((item) => item.url.includes('/native-resume')),
+  operation: nodes.get('operationTitle')?.textContent || ''
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_action_revalidates_available_action.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIn("Approve Code", result["rendered"])
+        self.assertNotIn("Reject Code", result["rendered"])
+        self.assertEqual(result["nativeResumeCalls"], [])
+        self.assertNotEqual(result["operation"], "Saved graph gate resumed")
+
+    def test_index_native_resume_actions_ignore_stale_study_loop_queue(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+const calls = [];
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_native_resume_stale_loop' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async (url, options = {}) => {
+  calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+nodes.get('runId').value = 'run_ui_native_resume_stale_loop';
+state.selectedTarget = 'ADAE';
+applyRunProgress({
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: false,
+    scope: 'none',
+    boundary: 'graph_state_projection_only',
+    interrupt_queue: []
+  },
+  review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Current progress has no callable queue item.'}]
+});
+state.lastStudyLoopResult = {
+  source: 'command_response',
+  native_resume_available: true,
+  native_resume_interrupts: [{
+    dataset: 'ADAE',
+    interrupt: 'code_review',
+    can_resume: true,
+    available_actions: [{action: 'approve', label: 'Approve Code'}]
+  }],
+  started_datasets: [],
+  blocked_datasets: [],
+  review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Stale command-response queue item.'}]
+};
+renderHumanReviewQueue();
+renderStudyLoopResult();
+await submitNativeResumeReview('ADAE', 'approve', 'code_review');
+console.log(JSON.stringify({
+  queueHtml: nodes.get('humanReviewQueueList').innerHTML,
+  loopHtml: nodes.get('studyLoopResultList').innerHTML,
+  nativeResumeCalls: calls.filter((item) => item.url.includes('/native-resume'))
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_stale_loop_ignored.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        rendered = " ".join([result["queueHtml"], result["loopHtml"]])
+        self.assertNotIn("Saved graph resume", rendered)
+        self.assertNotIn("data-saved-graph-action", rendered)
+        self.assertEqual(result["nativeResumeCalls"], [])
 
     def test_index_renders_native_resume_unavailable_reason_without_action(self) -> None:
         client = TestClient(create_app())
