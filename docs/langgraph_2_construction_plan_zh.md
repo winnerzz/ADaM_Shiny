@@ -9436,3 +9436,52 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.7 Native Resume Checkpoint Path Normalization 切片
+
+已完成：
+
+- 加固 native-resume checkpoint path 比较：相同文件的相对路径和绝对路径写法会先
+  规范化，再做相等判断。
+- `_native_resume_checkpoint_paths_match()` 现在会对 run 记录 path 和当前 active
+  checkpoint path 都执行 `expanduser().resolve(strict=False)` 后再比较。
+- path normalization 失败时保持 fail closed：任一侧无法规范化，native resume
+  仍不可用。
+- 新增回归测试，证明 run 中记录的相对 checkpoint path 可以匹配当前 active 的
+  绝对 checkpoint path。
+- 保留 mismatch 回归：active checkpoint path 指向另一个位置时仍不能 resume，
+  也不能写入 review artifact。
+
+边界：
+
+- 不在默认 memory checkpointer 下启用 durable native resume。
+- 不放宽 checkpoint binding。它只避免把同一个 checkpoint path 的不同写法误拒。
+- 不改变 dependency planning、LLM 调用、R execution、static rules、
+  reference ADaM handling、ADSL routing 或 UI endpoint 选择。
+
+子 agent 审查：
+
+- Faraday 使用 `gpt-5.5` 只读审查后返回 GO，没有发现重大问题。
+- 保留的残余风险均为非阻断项：
+  - 相对 checkpoint path 仍按服务进程 cwd 解析；
+  - 保存的 `graph_state.json` 仍是可信状态源，而真实 native resume 仍依赖当前
+    live checkpointer state。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_checkpoint_path_match_normalizes_equivalent_paths tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 8 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 158 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

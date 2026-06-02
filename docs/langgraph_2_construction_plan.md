@@ -10113,3 +10113,55 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.7 Native Resume Checkpoint Path Normalization Slice
+
+Completed:
+
+- Hardened native-resume checkpoint path comparison so equivalent relative and
+  absolute path spellings normalize before equality checks.
+- `_native_resume_checkpoint_paths_match()` now resolves both recorded and
+  active checkpoint paths with `expanduser().resolve(strict=False)` before
+  comparing them.
+- Path normalization fails closed: if either side cannot be normalized, native
+  resume remains unavailable.
+- Added a regression proving a run-recorded relative checkpoint path can match
+  the active absolute checkpoint path for the same file.
+- Preserved the mismatch regression proving a different active checkpoint path
+  cannot resume the run and cannot write review artifacts.
+
+Boundary:
+
+- This does not enable durable native resume under the default memory
+  checkpointer.
+- This does not relax checkpoint binding. It only avoids rejecting equivalent
+  spellings of the same checkpoint path.
+- No change to dependency planning, LLM calls, R execution, static rules,
+  reference ADaM handling, ADSL routing, or UI endpoint selection.
+
+Subagent review:
+
+- Read-only `gpt-5.5` review by Faraday returned GO with no major issues found.
+- Residual risks remain non-blocking:
+  - relative checkpoint paths resolve against the service process cwd;
+  - saved `graph_state.json` remains the trusted state source, while actual
+    native resume still depends on the live checkpointer state.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_checkpoint_path_match_normalizes_equivalent_paths tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 8 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 158 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```

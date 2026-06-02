@@ -3015,6 +3015,53 @@ class GraphGatewayTests(unittest.TestCase):
         resume_code.assert_not_called()
         self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
 
+    def test_progress_native_resume_checkpoint_path_match_normalizes_equivalent_paths(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_resume_path_equivalent") / "PSY201"
+        study_dir.mkdir(parents=True)
+        run_id = "run_lg2_native_resume_path_equivalent"
+        checkpoint_path = study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite"
+        graph_state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            graph_state,
+            node="test_seed_native_resume_path_equivalent",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(checkpoint_path.relative_to(Path.cwd()).as_posix()),
+            },
+        )
+
+        with (
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(checkpoint_path.as_posix())),
+        ):
+            progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+
+        self.assertTrue(progress["native_resume"]["available"])
+        self.assertTrue(progress["native_resume"]["checkpoint_paths_match"])
+        queue = progress["native_resume"]["interrupt_queue"]
+        self.assertEqual(queue[0]["dataset"], "ADAE")
+        self.assertTrue(queue[0]["can_resume"])
+        self.assertEqual(queue[0]["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
+
     def test_gateway_native_dataset_product_loop_reject_does_not_execute(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_dataset_product_loop_reject") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

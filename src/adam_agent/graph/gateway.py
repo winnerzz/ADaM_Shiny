@@ -5620,7 +5620,20 @@ def _native_resume_checkpoint_paths_match(recorded_path: Any, active_path: str |
         return True
     if not active_path:
         return False
-    return Path(str(recorded_path)).expanduser() == Path(str(active_path)).expanduser()
+    recorded = _normalize_native_resume_checkpoint_path(str(recorded_path))
+    active = _normalize_native_resume_checkpoint_path(active_path)
+    if recorded is None or active is None:
+        return False
+    return recorded == active
+
+
+def _normalize_native_resume_checkpoint_path(path: str) -> Path | None:
+    """Normalize checkpoint paths for conservative equality checks."""
+
+    try:
+        return Path(path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _native_resume_runtime_bound_to_state(
