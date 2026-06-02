@@ -9614,12 +9614,85 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg
 Ran 4 tests - OK
 
 python -B -m unittest tests.test_graph_gateway -v
-Ran 159 tests - OK，4 个可选 SQLite tests skipped
+Ran 160 tests - OK，4 个可选 SQLite tests skipped
 
 python -B -m compileall -q src tests
 Passed
 
 python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```
+
+### 2026-06-02 - LG3.10 Full-Run Compatibility Resume Gate 切片
+
+已完成：
+
+- 把 LG3 full-run resume metadata 拆成两个含义：
+  - `compatibility_resume_available=true` 表示 LG3 full-run review gate 的
+    graph-state compatibility endpoint 存在；
+  - `compatibility_resume_currently_available=true` 表示当前 graph state
+    确实停在可支持的 draft/code review gate。
+- 增加 `compatibility_resume_boundary`、reason 和 supported interrupt list，
+  让调用方能解释为什么一个历史 full-run contract 当前不能作为动作入口。
+- 同步覆盖单 dataset LG3 full-run metadata 和 study-loop
+  `full_run_datasets` metadata。
+- 当 study-loop 中某个 dataset 被 resume 后，对应的
+  `native_study_product_loop.full_run_datasets[DATASET]` nested contract 也会
+  同步更新，避免已审批 dataset 仍保留过期的
+  `compatibility_resume_currently_available=true` 信号。
+- 浏览器 UI 改用 `nativeFullRunResumeAvailable()` 决定 draft/code approval
+  是否走 `native-full-run/resume`，不再把任意历史 LG3 contract 当作可点击
+  resume gate。
+- 暂时保留旧的 `hasNativeFullRunContract()` 名称作为 UI 兼容别名，后续可逐步
+  改成更准确的命名。
+
+边界：
+
+- 不实现 durable native full-run resume。
+- 不改变 LLM generation、R execution、dependency planning、
+  terminal-failure repair routing、static rules 或 sandbox 行为。
+- `native-full-run/resume` 仍然是 graph-state compatibility resume，不是
+  durable LangGraph full-run resume。
+- code review 已批准、已执行、已完成，或进入 terminal-failure triage 后，
+  历史 LG3 contract 仍保留用于审计，但 UI 不再把它当作当前可执行动作。
+
+子 agent 审查：
+
+- Pascal 第一次 `gpt-5.5` 只读审查返回 NO-GO，指出一个 P2：
+  study-loop nested full-run contract 在某个 dataset 审批后可能保留过期的
+  actionable resume metadata。
+- 已修复：LG3 full-run resume 或 terminal-failure review 更新顶层 dataset
+  contract 时，会同步更新对应的 nested study-loop contract。
+- Pascal 后续只读复审返回 GO，没有 P1/P2 阻塞问题。复审确认 stale nested
+  contract 问题已覆盖，terminal-failure path 使用同一个同步 helper，浏览器
+  UI 也会先检查 `compatibility_resume_currently_available`，再决定是否调用
+  `native-full-run/resume`。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing tests.test_api_phase8.Phase8ApiTests.test_index_does_not_use_lg3_resume_when_contract_marks_resume_unavailable tests.test_api_phase8.Phase8ApiTests.test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_resume_updates_study_loop_nested_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_does_not_use_lg3_resume_when_contract_marks_resume_unavailable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 159 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 168 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py src\adam_agent\api\web.py tests\test_api_phase8.py
 Passed
 
 git diff --check

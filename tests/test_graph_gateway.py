@@ -3318,6 +3318,9 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(contract["execution_requires_explicit_resume"])
         self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
         self.assertTrue(contract["compatibility_resume_available"])
+        self.assertTrue(contract["compatibility_resume_currently_available"])
+        self.assertEqual(contract["compatibility_resume_boundary"], "current_graph_state_review_gate")
+        self.assertEqual(contract["compatibility_resume_supported_interrupts"], ["draft_spec_review", "code_review"])
         self.assertTrue(contract["graph_state_resume_available"])
         self.assertEqual(contract["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume")
         self.assertEqual(contract["native_resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
@@ -3386,6 +3389,7 @@ class GraphGatewayTests(unittest.TestCase):
         contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
         self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
         self.assertTrue(contract["compatibility_resume_available"])
+        self.assertTrue(contract["compatibility_resume_currently_available"])
         self.assertTrue(contract["graph_state_resume_available"])
         self.assertFalse(contract["durable_resume_available"])
         self.assertFalse(contract["durable_full_run_resume_available"])
@@ -3472,6 +3476,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["last_interrupt"], "code_review")
         self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
         self.assertTrue(contract["compatibility_resume_available"])
+        self.assertFalse(contract["compatibility_resume_currently_available"])
+        self.assertEqual(contract["compatibility_resume_boundary"], "historical_contract_only")
         self.assertFalse(contract["durable_resume_available"])
         self.assertFalse(contract["durable_full_run_resume_available"])
         self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
@@ -4289,6 +4295,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(triage_contract["decision"], "repair_code")
         self.assertEqual(triage_contract["next_action"], "repair_generated_code")
         self.assertTrue(triage_contract["terminal_failure"])
+        self.assertFalse(triage_contract["compatibility_resume_currently_available"])
+        self.assertEqual(triage_contract["compatibility_resume_boundary"], "terminal_failure_review_endpoint")
 
     def test_gateway_lg3_native_full_run_repair_followup_preserves_contract(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_repair_followup") / "PSY201"
@@ -4845,6 +4853,16 @@ class GraphGatewayTests(unittest.TestCase):
             set(result.graph_state.runtime_persistence["native_study_product_loop"]["full_run_datasets"]),
             {"ADAE", "ADCM"},
         )
+        for dataset in ("ADAE", "ADCM"):
+            full_run_contract = result.graph_state.runtime_persistence["native_study_product_loop"][
+                "full_run_datasets"
+            ][dataset]
+            self.assertTrue(full_run_contract["compatibility_resume_currently_available"])
+            self.assertEqual(full_run_contract["compatibility_resume_boundary"], "current_graph_state_review_gate")
+            self.assertEqual(
+                full_run_contract["compatibility_resume_supported_interrupts"],
+                ["draft_spec_review", "code_review"],
+            )
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_multi")
         self.assertEqual(progress["study_loop_result"]["source"], "graph_progress")
         self.assertEqual(progress["requested_datasets"], ["ADAE", "ADCM"])
@@ -4883,6 +4901,55 @@ class GraphGatewayTests(unittest.TestCase):
             {(item["dataset"], item["name"]) for item in progress["study_loop_result"]["review_queue"]},
             {(item["dataset"], item["name"]) for item in progress["review_queue"]},
         )
+
+    def test_gateway_lg3_resume_updates_study_loop_nested_full_run_contract(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_study_loop_nested_contract_after_resume") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,ASPIRIN\n", encoding="utf-8")
+        for dataset, variable, domain in (("adae", "AETERM", "AE"), ("adcm", "CMTRT", "CM")):
+            (spec_dir / f"{dataset}.json").write_text(
+                json.dumps(
+                    {
+                        "dataset": dataset.upper(),
+                        "variables": [{"variable": variable, "source_domains": [domain]}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        gateway = GraphGateway()
+        gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_nested_contract_resume",
+            target_datasets=["ADAE", "ADCM"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        result = gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id="run_lg3_nested_contract_resume",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve ADAE but leave ADCM in code review.",
+            execute_after_approval=False,
+        )
+
+        full_run_datasets = result.graph_state.runtime_persistence["native_study_product_loop"]["full_run_datasets"]
+        self.assertEqual(full_run_datasets["ADAE"]["phase"], "reviewed")
+        self.assertIsNone(full_run_datasets["ADAE"]["current_interrupt"])
+        self.assertFalse(full_run_datasets["ADAE"]["compatibility_resume_currently_available"])
+        self.assertEqual(full_run_datasets["ADAE"]["compatibility_resume_boundary"], "historical_contract_only")
+        self.assertNotIn("next_action", full_run_datasets["ADAE"])
+        self.assertEqual(full_run_datasets["ADCM"]["phase"], "waiting_for_human_gate")
+        self.assertEqual(full_run_datasets["ADCM"]["current_interrupt"], "code_review")
+        self.assertTrue(full_run_datasets["ADCM"]["compatibility_resume_currently_available"])
+        self.assertEqual(result.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
 
     def test_gateway_native_study_product_loop_preserves_mixed_spec_gates(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_mixed_spec") / "PSY201"

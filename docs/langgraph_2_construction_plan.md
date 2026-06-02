@@ -9861,7 +9861,6 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
-
 Subagent review:
 
 - Initial `gpt-5.5` read-only review by Carson found two P2 issues:
@@ -10298,12 +10297,89 @@ python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg
 Ran 4 tests - OK
 
 python -B -m unittest tests.test_graph_gateway -v
-Ran 159 tests - OK, skipped 4 optional SQLite tests
+Ran 160 tests - OK, skipped 4 optional SQLite tests
 
 python -B -m compileall -q src tests
 Passed
 
 python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```
+
+### 2026-06-02 - LG3.10 Full-Run Compatibility Resume Gate Slice
+
+Completed:
+
+- Split LG3 full-run resume metadata into two meanings:
+  - `compatibility_resume_available=true` means the graph-state compatibility
+    endpoint exists for LG3 full-run review gates;
+  - `compatibility_resume_currently_available=true` means the current graph
+    state is actually waiting at a supported draft/code review gate.
+- Added a `compatibility_resume_boundary`, reason, and supported interrupt list
+  so callers can explain why a historical full-run contract is not currently
+  actionable.
+- Applied the same metadata to single-dataset LG3 full-run records and
+  study-loop `full_run_datasets` records.
+- When a study-loop dataset is resumed, the matching nested
+  `native_study_product_loop.full_run_datasets[DATASET]` contract is now
+  updated as well. This prevents an already-approved dataset from keeping a
+  stale `compatibility_resume_currently_available=true` signal.
+- Updated the browser UI to use `nativeFullRunResumeAvailable()` for draft/code
+  approval routing instead of treating any historical LG3 contract as an
+  actionable resume gate.
+- Preserved the old `hasNativeFullRunContract()` name as a narrow UI alias for
+  compatibility while the surrounding UI tests migrate to the clearer wording.
+
+Boundary:
+
+- This does not implement durable native full-run resume.
+- This does not change LLM generation, R execution, dependency planning,
+  terminal-failure repair routing, static rules, or sandbox behavior.
+- `native-full-run/resume` remains graph-state compatibility resume, not
+  durable LangGraph full-run resume.
+- Once a code review is approved, executed, completed, or routed through
+  terminal-failure triage, the historical LG3 contract remains auditable but is
+  no longer used as a UI action signal.
+
+Subagent review:
+
+- First read-only `gpt-5.5` review by Pascal returned NO-GO with one P2:
+  study-loop nested full-run contracts could keep stale actionable resume
+  metadata after one dataset was approved.
+- Fixed by synchronizing the matching nested study-loop contract whenever the
+  LG3 full-run resume or terminal-failure review updates the top-level
+  dataset contract.
+- Follow-up read-only review by Pascal returned GO with no blocking P1/P2
+  findings. It confirmed the stale nested-contract issue is covered, the
+  terminal-failure path uses the same sync helper, and the browser UI now
+  honors `compatibility_resume_currently_available` before calling
+  `native-full-run/resume`.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing tests.test_api_phase8.Phase8ApiTests.test_index_does_not_use_lg3_resume_when_contract_marks_resume_unavailable tests.test_api_phase8.Phase8ApiTests.test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_terminal_failure_records_contract_boundary -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_resume_updates_study_loop_nested_full_run_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_api_phase8.Phase8ApiTests.test_index_does_not_use_lg3_resume_when_contract_marks_resume_unavailable -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 159 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 168 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py src\adam_agent\api\web.py tests\test_api_phase8.py
 Passed
 
 git diff --check

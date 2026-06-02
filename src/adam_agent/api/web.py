@@ -2255,24 +2255,41 @@ INDEX_HTML = r"""<!doctype html>
       return ['generate_code', 'repair_generated_code', 'revise_approved_spec'].includes(String(progress?.next_action || ''));
     }
 
-    function hasNativeFullRunContract(target) {
+    function nativeFullRunResumeAvailable(target) {
       const normalized = String(target || '').toUpperCase();
+      const progress = datasetProgressFor(normalized);
       if (state.graphState) {
-        return runtimeHasNativeFullRunContract(state.graphState.runtime_persistence || {}, normalized);
+        return runtimeHasNativeFullRunContract(state.graphState.runtime_persistence || {}, normalized, progress);
       }
-      return runtimeHasNativeFullRunContract(state.runProgress?.runtime_persistence || {}, normalized);
+      return runtimeHasNativeFullRunContract(state.runProgress?.runtime_persistence || {}, normalized, progress);
     }
 
-    function runtimeHasNativeFullRunContract(runtime, normalized) {
+    function hasNativeFullRunContract(target) {
+      return nativeFullRunResumeAvailable(target);
+    }
+
+    function runtimeHasNativeFullRunContract(runtime, normalized, progress) {
       const contract = runtime?.native_dataset_full_run || {};
       if (String(contract.dataset || '').toUpperCase() === normalized
         && String(contract.contract || '') === 'single_dataset_spec_code_review_execute'
         && String(contract.boundary || '') === 'lg3_backend_contract') {
-        return true;
+        return nativeFullRunCompatibilityGateOpen(contract, normalized, progress);
       }
       const studyContract = runtime?.native_study_product_loop?.full_run_datasets?.[normalized] || {};
       return String(studyContract.contract || '') === 'single_dataset_spec_code_review_execute'
-        && String(studyContract.boundary || '') === 'lg3_backend_contract';
+        && String(studyContract.boundary || '') === 'lg3_backend_contract'
+        && nativeFullRunCompatibilityGateOpen(studyContract, normalized, progress);
+    }
+
+    function nativeFullRunCompatibilityGateOpen(contract, normalized, progress) {
+      if (contract && Object.prototype.hasOwnProperty.call(contract, 'compatibility_resume_currently_available')) {
+        return contract.compatibility_resume_currently_available === true;
+      }
+      if (['review_draft_spec', 'review_code'].includes(String(progress?.next_action || ''))) return true;
+      const graphDataset = state.graphState?.datasets?.[normalized] || {};
+      const interrupt = graphDataset.current_interrupt || {};
+      return ['draft_spec_review', 'code_review'].includes(String(interrupt.name || ''))
+        && String(interrupt.status || 'open') === 'open';
     }
 
     function nativeFullRunReviewRequestBody(extra = {}) {
@@ -2791,7 +2808,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!draft) return;
       beginOperation('Approving draft spec', `Recording approval for ${draft.dataset} draft spec in this run.`);
       try {
-        const useNativeFullRun = hasNativeFullRunContract(draft.dataset);
+        const useNativeFullRun = nativeFullRunResumeAvailable(draft.dataset);
         const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'draft-spec-review'}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -4027,7 +4044,7 @@ INDEX_HTML = r"""<!doctype html>
       );
       setPill('codeStatus', 'review');
       try {
-        const useNativeFullRun = hasNativeFullRunContract(generated.dataset);
+        const useNativeFullRun = nativeFullRunResumeAvailable(generated.dataset);
         state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'code-review'}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},

@@ -1512,6 +1512,12 @@ class GraphGateway:
             repair_or_revision_continued=followup_context is not None,
             **({"terminal_failure_followup": followup_context} if followup_context is not None else {}),
         )
+        _sync_native_study_full_run_dataset_contract(
+            runtime_extra,
+            dataset=target,
+            phase=phase,
+            current_interrupt=current_interrupt,
+        )
         self._persist_graph_state(
             root,
             graph_state,
@@ -3962,6 +3968,10 @@ class GraphGateway:
                     "decision": normalized_decision,
                     "terminal_failure": True,
                     "next_action": str(reviewed_dataset.execution_state.get("next_action") or ""),
+                    **_native_dataset_full_run_compatibility_resume_gate(
+                        phase="terminal_failure_triaged",
+                        current_interrupt=current_interrupt,
+                    ),
                     **_native_dataset_full_run_resume_capability_metadata(
                         next_state,
                         native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
@@ -3973,6 +3983,12 @@ class GraphGateway:
                 }
             )
             runtime_extra["native_dataset_full_run"] = previous
+            _sync_native_study_full_run_dataset_contract(
+                runtime_extra,
+                dataset=target,
+                phase="terminal_failure_triaged",
+                current_interrupt=current_interrupt,
+            )
             self._persist_graph_state(
                 root,
                 next_state,
@@ -5753,6 +5769,10 @@ def _native_study_full_run_dispatch_metadata(
             if dataset_state is not None and dataset_state.current_interrupt is not None
             else None
         )
+        compatibility_resume = _native_dataset_full_run_compatibility_resume_gate(
+            phase="waiting_for_human_gate",
+            current_interrupt=current_interrupt,
+        )
         full_run_datasets[dataset] = {
             "dataset": dataset,
             "contract": "single_dataset_spec_code_review_execute",
@@ -5760,6 +5780,7 @@ def _native_study_full_run_dispatch_metadata(
             "phase": "waiting_for_human_gate",
             "current_interrupt": current_interrupt,
             "execution_requires_explicit_resume": True,
+            **compatibility_resume,
         }
     payload: dict[str, Any] = {
         "started_datasets": list(started_datasets),
@@ -5866,6 +5887,10 @@ def _native_dataset_full_run_metadata(
             "contract": "single_dataset_spec_code_review_execute",
             "boundary": "lg3_backend_contract",
             "execution_requires_explicit_resume": True,
+            **_native_dataset_full_run_compatibility_resume_gate(
+                phase=phase,
+                current_interrupt=current_interrupt,
+            ),
             **_native_dataset_full_run_resume_capability_metadata(
                 state,
                 native_interrupt_resume_available=native_interrupt_resume_available,
@@ -5907,6 +5932,72 @@ def _native_dataset_full_run_resume_capability_metadata(
         "durable_native_interrupt_resume_boundary": "durable_native_interrupt_resume"
         if can_resume_native_interrupt
         else "graph_state_projection_only",
+    }
+
+
+def _sync_native_study_full_run_dataset_contract(
+    runtime_extra: dict[str, Any],
+    *,
+    dataset: str,
+    phase: str,
+    current_interrupt: str | None,
+) -> None:
+    """Keep study-loop nested full-run metadata aligned with the dataset state."""
+
+    target = dataset.strip().upper()
+    study_loop = runtime_extra.get("native_study_product_loop")
+    if not isinstance(study_loop, dict):
+        return
+    full_run_datasets = study_loop.get("full_run_datasets")
+    if not isinstance(full_run_datasets, dict):
+        return
+    contract = full_run_datasets.get(target)
+    if not isinstance(contract, dict):
+        return
+    contract.update(
+        {
+            "dataset": target,
+            "phase": phase,
+            "current_interrupt": current_interrupt,
+            **_native_dataset_full_run_compatibility_resume_gate(
+                phase=phase,
+                current_interrupt=current_interrupt,
+            ),
+        }
+    )
+    if current_interrupt is not None:
+        contract["next_action"] = current_interrupt
+    else:
+        contract.pop("next_action", None)
+
+
+def _native_dataset_full_run_compatibility_resume_gate(
+    *,
+    phase: str,
+    current_interrupt: str | None,
+) -> dict[str, Any]:
+    """Describe whether the graph-state full-run compatibility resume is actionable now."""
+
+    supported = ["draft_spec_review", "code_review"]
+    interrupt = str(current_interrupt or "").strip()
+    currently_available = phase == "waiting_for_human_gate" and interrupt in supported
+    if currently_available:
+        reason = "Current graph state is waiting at a draft/code review gate."
+        boundary = "current_graph_state_review_gate"
+    elif interrupt == "terminal_failure":
+        reason = "Terminal failure uses the terminal-failure-review endpoint, not native-full-run/resume."
+        boundary = "terminal_failure_review_endpoint"
+    elif interrupt:
+        reason = f"Current interrupt {interrupt} is not supported by native-full-run/resume."
+        boundary = "unsupported_current_interrupt"
+    else:
+        reason = "No open draft/code review gate exists; the full-run contract is historical audit state only."
+        boundary = "historical_contract_only"
+    return {
+        "compatibility_resume_currently_available": currently_available,
+        "compatibility_resume_boundary": boundary,
+        "compatibility_resume_reason": reason,
+        "compatibility_resume_supported_interrupts": supported,
     }
 
 
