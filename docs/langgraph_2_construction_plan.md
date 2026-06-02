@@ -9686,3 +9686,56 @@ Subagent review:
   - response fields are read from gateway-owned state/projection;
   - tests cover contract metadata, no R execution, and LLM override pass-through;
   - no UI exposure was added.
+
+### 2026-06-01 - LG3.1 UI Generate Native Full-Run Entry Slice
+
+Completed:
+
+- The browser `Generate R Code` button now prefers
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run`.
+- The user-visible action stays the same: generation stops at a human review
+  gate and does not approve or run R.
+- The UI handles the native full-run response by current interrupt:
+  - `draft_spec_review`: render the draft-spec review pane and wait for human
+    draft-spec approval;
+  - `code_review`: refresh graph state/progress/review-summary, load generated
+    R code, and wait for human code approval.
+- Draft-spec review is now treated as a graph gate, not as a local generated-code
+  cache condition. When the current graph state/progress says the target is in
+  `draft_spec_review`, the UI clears any stale generated-code cache for that
+  target and blocks review-summary code recovery until the graph reaches a code
+  review action.
+- The `revise_approved_spec` path still uses the existing `draft-spec` endpoint
+  because it is a separate terminal-failure follow-up gate.
+- The old `generate-code` API remains for backend compatibility and regression
+  coverage, but the main UI generation action no longer calls it directly.
+
+Boundary:
+
+- This is not automatic dataset completion.
+- This is not durable native resume enablement. Native resume remains
+  fail-closed under the default memory checkpointer.
+- This does not approve draft specs, approve code, execute R, or perform
+  automatic repair.
+- It only moves the single-dataset product entry used by the browser from a
+  split-flow generate step to the LG3 graph-owned full-run contract.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_generate_button_starts_native_full_run tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_clears_stale_code_when_new_artifact_text_missing tests.test_api_phase8.Phase8ApiTests.test_index_generate_button_handles_native_full_run_draft_gate tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_draft_gate_clears_stale_generated_code tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_draft_gate_points_to_draft_review -v
+Ran 6 tests - OK
+```
+
+Subagent review:
+
+- Initial read-only review by Peirce returned NO-GO with one P2: a
+  `draft_spec_review` response with no `code_path` could leave stale
+  `state.generatedByDataset[target]` in the browser and show the code-review
+  pane.
+- Fixed by making draft-spec review a graph-state gate across
+  `applyGraphState()`, `graphAllowsReviewSummaryCodeRecovery()`, and
+  `renderPane()`. Added a regression where native full-run returns
+  `draft_spec_review` while stale generated-code cache and stale review-summary
+  code are both present.
+- Follow-up read-only review by Dewey returned GO with no P1/P2 blockers.

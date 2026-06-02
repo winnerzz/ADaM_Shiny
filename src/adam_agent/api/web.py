@@ -2094,7 +2094,9 @@ INDEX_HTML = r"""<!doctype html>
           };
         }
         const code = datasetState.code_state || {};
-        if (code.code_path && code.status) {
+        if (graphDatasetInDraftSpecReview(datasetState)) {
+          delete state.generatedByDataset[target];
+        } else if (code.code_path && code.status) {
           const existingGenerated = state.generatedByDataset[target] || {};
           state.generatedByDataset[target] = {
             ...existingGenerated,
@@ -2167,6 +2169,19 @@ INDEX_HTML = r"""<!doctype html>
 
     function generatedFor(dataset) {
       return dataset ? state.generatedByDataset[dataset] || null : null;
+    }
+
+    function graphDatasetInDraftSpecReview(datasetState) {
+      const interrupt = datasetState?.current_interrupt || {};
+      return String(interrupt.name || '') === 'draft_spec_review'
+        && String(interrupt.status || 'open') === 'open';
+    }
+
+    function targetInDraftSpecReview(target) {
+      const progress = datasetProgressFor(target);
+      if (String(progress?.next_action || '') === 'review_draft_spec') return true;
+      const graphDataset = state.graphState?.datasets?.[target] || {};
+      return graphDatasetInDraftSpecReview(graphDataset);
     }
 
     function canApproveGeneratedCode(dataset) {
@@ -2381,6 +2396,14 @@ INDEX_HTML = r"""<!doctype html>
               ? graphProgressMissingReason
             : progressBlocked
               ? progressBlockReason
+            : approveCodeGate?.ready && !codeApprovalReady
+              ? !generated
+                ? 'Generate R code first.'
+                : generated.status === 'stale'
+                  ? 'Generated code is stale because inputs changed; regenerate before approval.'
+                  : !generated.generated_code
+                    ? 'Generated-code metadata exists, but the code text is not loaded in this browser. Reload the run review before approving.'
+                    : approveCodeGate.reason
             : approveCodeGate
               ? approveCodeGate.reason
             : blocked
@@ -2508,6 +2531,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function codeStatusForActiveDataset() {
       if (!state.selectedTarget) return 'not generated';
+      const activeProgress = datasetProgressFor(state.selectedTarget);
+      if (String(activeProgress?.next_action || '') === 'review_draft_spec') return 'draft review';
       const execution = executionFor(state.selectedTarget);
       if (execution) return execution.status;
       const generated = generatedFor(state.selectedTarget);
@@ -3824,15 +3849,15 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       beginOperation(
-        revisingSpec ? 'Generating revised draft spec' : 'Generating R code',
+        revisingSpec ? 'Generating revised draft spec' : 'Starting dataset generation',
         revisingSpec
           ? `Calling the selected LLM/spec drafter for ${state.selectedTarget}. Review and approve the revised draft before generating R code.`
-          : `Calling the selected LLM/code generator for ${state.selectedTarget}. This may take a few minutes.`
+          : `Starting the graph-owned ${state.selectedTarget} flow. It will stop at draft-spec review or code review before any R execution.`
       );
       setPill('codeStatus', 'running');
       try {
         const overrides = llmOverridePayload();
-        const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';
+        const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';
         const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/${endpoint}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -3856,25 +3881,65 @@ INDEX_HTML = r"""<!doctype html>
           setStep(4);
           return;
         }
-        state.generated = payload;
-        state.generatedByDataset[payload.dataset] = payload;
-        state.review = reviewFor(payload.dataset);
-        state.execution = executionFor(payload.dataset);
-        await refreshGraphReadModels();
+        await applyNativeFullRunStart(payload);
         state.selectedView = 'summary';
         setActiveTab();
-        setPill('codeStatus', 'review');
-        addEvent('R code generated', `${payload.dataset} code is ready for review.`);
-        completeOperation('R code generated', `${payload.dataset} code is ready for review. R has not been executed yet.`);
+        const interruptName = payload.current_interrupt?.name || payload.next_action || '';
+        const waitingForDraft = interruptName === 'draft_spec_review';
+        setPill('codeStatus', waitingForDraft ? 'draft review' : 'review');
+        addEvent(
+          waitingForDraft ? 'Draft spec generated' : 'R code generated',
+          waitingForDraft
+            ? `${payload.dataset} draft spec is ready for review. R has not been generated yet.`
+            : `${payload.dataset} code is ready for review.`
+        );
+        completeOperation(
+          waitingForDraft ? 'Draft spec ready' : 'R code generated',
+          waitingForDraft
+            ? `${payload.dataset} draft spec is ready for human review.`
+            : `${payload.dataset} code is ready for review. R has not been executed yet.`
+        );
+        renderDraftSpecPane();
         renderGraphAwareDashboard();
         renderActionAvailability();
-        setStep(5);
+        setStep(waitingForDraft ? 4 : 5);
         renderPane();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('R code generation failed', error);
       }
+    }
+
+    async function applyNativeFullRunStart(payload) {
+      const target = String(payload.dataset || state.selectedTarget || '').toUpperCase();
+      const previousGenerated = target ? state.generatedByDataset[target] || {} : {};
+      const interruptName = String(payload.current_interrupt?.name || payload.next_action || '');
+      await refreshGraphReadModels();
+      if (target) state.selectedTarget = target;
+      if (target && interruptName === 'draft_spec_review') {
+        delete state.generatedByDataset[target];
+      } else if (payload.code_path) {
+        const existingGenerated = state.generatedByDataset[target] || {};
+        const sameCodeArtifact = previousGenerated.code_path === payload.code_path;
+        state.generatedByDataset[target] = {
+          ...existingGenerated,
+          study_id: payload.study_id,
+          run_id: payload.run_id,
+          dataset: target,
+          status: payload.status === 'needs_review' ? 'generated' : payload.status,
+          code_path: payload.code_path,
+          draft_spec_path: payload.draft_spec_path || null,
+          static_check_path: payload.static_check_path || null,
+          generated_code: sameCodeArtifact ? existingGenerated.generated_code || '' : '',
+          assumptions: sameCodeArtifact ? existingGenerated.assumptions || [] : [],
+          risk_points: sameCodeArtifact ? existingGenerated.risk_points || [] : [],
+          used_inputs: sameCodeArtifact ? existingGenerated.used_inputs || [] : [],
+          expected_outputs: sameCodeArtifact ? existingGenerated.expected_outputs || [] : []
+        };
+      }
+      await loadReviewSummary(payload.run_id || runId());
+      syncActiveDatasetState();
     }
 
     async function approveCode() {
@@ -4014,6 +4079,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function graphAllowsReviewSummaryCodeRecovery(target) {
+      if (targetInDraftSpecReview(target)) return false;
       const progress = datasetProgressFor(target);
       const nextAction = String(progress?.next_action || '');
       if (['review_code', 'execute_approved_code', 'retry_approved_execution'].includes(nextAction)) return true;
@@ -4042,6 +4108,11 @@ INDEX_HTML = r"""<!doctype html>
       const datasetReview = selectedDatasetReview();
       if (state.selectedView === 'summary') {
         const failurePanel = terminalFailurePanel(generated?.dataset || state.selectedTarget);
+        if (targetInDraftSpecReview(state.selectedTarget)) {
+          pane.innerHTML = `${failurePanel}<p class="note warn">Review the generated draft spec above before R code can be generated. Nothing has been sent to R yet.</p>`;
+          attachTerminalFailureHandlers();
+          return;
+        }
         if (!generated) {
           pane.innerHTML = `${failurePanel}<p class="note">Generate code after choosing a target. Nothing has been sent to R yet.</p>`;
           attachTerminalFailureHandlers();

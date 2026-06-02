@@ -1703,13 +1703,735 @@ console.log(JSON.stringify({
         self.assertIn("Graph next action:", gate_body)
         self.assertIn("Graph next action is", gate_body)
         self.assertIn("function graphAllowsCodeGeneration(progress)", html)
-        self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'generate-code';", html)
+        self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';", html)
+        self.assertIn("async function applyNativeFullRunStart(payload)", html)
+        self.assertIn("native-full-run", html)
         self.assertIn("R will not run in this step.", approve_body)
         self.assertIn("/code-review", approve_body)
         self.assertNotIn("/execute-approved-code", approve_body)
         self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", run_body)
         self.assertIn("/execute-approved-code", run_body)
         self.assertNotIn("/code-review", run_body)
+
+    def test_index_generate_button_starts_native_full_run(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_native_full_run' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('configPath').value = 'studies/_template/configs/mock_downstream.json';
+node('modelMode').value = 'mock';
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push(url);
+  if (url === '/runs/prepare') {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        runnable_datasets: ['ADAE'],
+        blocked_datasets: [],
+        dependency_review_status: 'accepted',
+        dependency_decisions: []
+      })
+    };
+  }
+  if (url.includes('/native-full-run')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run',
+        dataset: 'ADAE',
+        phase: 'waiting_for_human_gate',
+        status: 'needs_review',
+        current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'},
+        next_action: 'code_review',
+        code_path: 'runs/run_ui_native_full_run/code/build_adae.R',
+        static_check_path: 'runs/run_ui_native_full_run/static_checks/adae_static_check.json',
+        graph_state_path: 'runs/run_ui_native_full_run/graph_state.json'
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        runnable_datasets: ['ADAE'],
+        blocked_datasets: [],
+        dependency_review_status: 'accepted',
+        datasets: {
+          ADAE: {
+            status: 'needs_review',
+            spec_state: {status: 'input_spec_ready', input_spec_path: 'inputs/input_spec/ads_adae_full.csv'},
+            code_state: {
+              status: 'generated',
+              code_path: 'runs/run_ui_native_full_run/code/build_adae.R',
+              static_check_path: 'runs/run_ui_native_full_run/static_checks/adae_static_check.json'
+            },
+            current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run',
+        status: 'needs_review',
+        next_action: 'review_code',
+        action_label: 'Review generated R code before execution.',
+        dependency_review_status: 'accepted',
+        target_datasets: ['ADAE'],
+        runnable_datasets: ['ADAE'],
+        blocked_datasets: [],
+        datasets: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          next_action: 'review_code',
+          action_label: 'Review generated R code before execution.',
+          code_status: 'generated',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run',
+        dataset_reviews: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          generated_code_path: 'runs/run_ui_native_full_run/code/build_adae.R',
+          generated_code: 'adae <- ae',
+          assumptions: ['native full-run code review gate'],
+          expected_outputs: ['ADAE']
+        }]
+      })
+    };
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_native_full_run',
+    status: 'generated',
+    code_path: 'runs/run_ui_native_full_run/code/old_build_adae.R',
+    generated_code: 'old code must be cleared'
+  }
+};
+state.plan = {
+  requested_datasets: ['ADAE'],
+  target_datasets: ['ADAE'],
+  runnable_datasets: ['ADAE'],
+  blocked_datasets: [],
+  dependency_review_status: 'accepted'
+};
+state.runProgress = {
+  datasets: [{
+    dataset: 'ADAE',
+    next_action: 'generate_code',
+    action_label: 'Generate R code from the approved spec evidence.',
+    blocked: false
+  }]
+};
+state.inputSummary = {specs: [{dataset: 'ADAE', file_name: 'ads_adae_full.csv'}]};
+await generateCode();
+console.log(JSON.stringify({
+  nativeCalled: calls.some((item) => item.includes('/native-full-run')),
+  legacyGenerateCalled: calls.some((item) => item.includes('/generate-code')),
+  generatedCode: state.generatedByDataset.ADAE?.generated_code || '',
+  generatedCodePath: state.generatedByDataset.ADAE?.code_path || '',
+  selectedView: state.selectedView,
+  codeStatus: nodes.get('codeStatus').textContent,
+  reviewPane: nodes.get('reviewPane').innerHTML,
+  operationTitle: nodes.get('operationTitle').textContent
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_full_run_generate.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["nativeCalled"])
+        self.assertFalse(result["legacyGenerateCalled"])
+        self.assertEqual(result["generatedCode"], "adae <- ae")
+        self.assertTrue(result["generatedCodePath"].endswith("code/build_adae.R"))
+        self.assertEqual(result["selectedView"], "summary")
+        self.assertEqual(result["codeStatus"], "review")
+        self.assertIn("R code is ready for ADAE", result["reviewPane"])
+        self.assertEqual(result["operationTitle"], "R code generated")
+
+    def test_index_native_full_run_clears_stale_code_when_new_artifact_text_missing(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_native_full_run_stale_code' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('modelMode').value = 'mock';
+const calls = [];
+global.fetch = async (path) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/native-full-run')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_stale_code',
+        dataset: 'ADAE',
+        phase: 'waiting_for_human_gate',
+        status: 'needs_review',
+        current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'},
+        next_action: 'code_review',
+        code_path: 'runs/run_ui_native_full_run_stale_code/code/build_adae_new.R',
+        static_check_path: 'runs/run_ui_native_full_run_stale_code/static_checks/adae_static_check.json'
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_stale_code',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        datasets: {
+          ADAE: {
+            status: 'needs_review',
+            spec_state: {status: 'input_spec_ready', input_spec_path: 'inputs/input_spec/ads_adae_full.csv'},
+            code_state: {status: 'generated', code_path: 'runs/run_ui_native_full_run_stale_code/code/build_adae_new.R'},
+            current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    return {
+      ok: true,
+      json: async () => ({
+        datasets: [{
+          dataset: 'ADAE',
+          next_action: 'review_code',
+          action_label: 'Review generated R code before execution.',
+          code_status: 'generated',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_stale_code',
+        dataset_reviews: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          generated_code_path: 'runs/run_ui_native_full_run_stale_code/code/build_adae_new.R'
+        }]
+      })
+    };
+  }
+  if (url.includes('/code-review')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'generate_code', action_label: 'Generate R code.', blocked: false}]};
+state.inputSummary = {specs: [{dataset: 'ADAE', file_name: 'ads_adae_full.csv'}]};
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_native_full_run_stale_code',
+    status: 'generated',
+    code_path: 'runs/run_ui_native_full_run_stale_code/code/old_build_adae.R',
+    generated_code: 'old code must not survive'
+  }
+};
+await generateCode();
+const availability = actionAvailability();
+await approveCode();
+console.log(JSON.stringify({
+  generatedCode: state.generatedByDataset.ADAE?.generated_code || '',
+  codePath: state.generatedByDataset.ADAE?.code_path || '',
+  approveReady: availability.approveCode.ready,
+  codeReviewPosted: calls.some((item) => item.includes('/code-review')),
+  reviewPane: nodes.get('reviewPane').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_full_run_clears_stale_code.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["generatedCode"], "")
+        self.assertTrue(result["codePath"].endswith("code/build_adae_new.R"))
+        self.assertFalse(result["approveReady"])
+        self.assertFalse(result["codeReviewPosted"])
+        self.assertIn("Generated-code metadata exists", result["reviewPane"])
+
+    def test_index_generate_button_handles_native_full_run_draft_gate(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_native_full_run_draft' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('modelMode').value = 'mock';
+const stepCalls = [];
+const calls = [];
+const draftVariables = [{variable: 'AETERM', type: 'text', source_domains: ['AE'], derivation: 'copy AE.AETERM', risk_level: 'low'}];
+global.fetch = async (path) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/native-full-run')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_draft',
+        dataset: 'ADAE',
+        phase: 'waiting_for_human_gate',
+        status: 'needs_review',
+        current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'},
+        next_action: 'draft_spec_review',
+        draft_spec_path: 'runs/run_ui_native_full_run_draft/specs/adae_draft_spec.json',
+        graph_state_path: 'runs/run_ui_native_full_run_draft/graph_state.json'
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_draft',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        datasets: {
+          ADAE: {
+            status: 'needs_review',
+            spec_state: {
+              status: 'draft_generated',
+              draft_spec_path: 'runs/run_ui_native_full_run_draft/specs/adae_draft_spec.json',
+              variables: draftVariables,
+              warnings: ['Review draft before code generation.']
+            },
+            current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    return {
+      ok: true,
+      json: async () => ({
+        datasets: [{
+          dataset: 'ADAE',
+          next_action: 'review_draft_spec',
+          action_label: 'Review generated draft spec before code generation.',
+          spec_status: 'draft_generated',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_native_full_run_draft', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+const originalSetStep = setStep;
+setStep = (index) => { stepCalls.push(index); originalSetStep(index); };
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'generate_code', action_label: 'Generate R code.', blocked: false}]};
+state.inputSummary = {specs: []};
+await generateCode();
+console.log(JSON.stringify({
+  nativeCalled: calls.some((item) => item.includes('/native-full-run')),
+  legacyGenerateCalled: calls.some((item) => item.includes('/generate-code')),
+  draftVariable: state.draftSpecByDataset.ADAE?.variables?.[0]?.variable || '',
+  generatedExists: Boolean(state.generatedByDataset.ADAE),
+  codeStatus: nodes.get('codeStatus').textContent,
+  operationTitle: nodes.get('operationTitle').textContent,
+  draftPane: nodes.get('draftSpecPane').innerHTML,
+  reviewPane: nodes.get('reviewPane').innerHTML,
+  lastStep: stepCalls.at(-1)
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_full_run_generate_draft_gate.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["nativeCalled"])
+        self.assertFalse(result["legacyGenerateCalled"])
+        self.assertEqual(result["draftVariable"], "AETERM")
+        self.assertFalse(result["generatedExists"])
+        self.assertEqual(result["codeStatus"], "draft review")
+        self.assertEqual(result["operationTitle"], "Draft spec ready")
+        self.assertIn("Draft spec for ADAE", result["draftPane"])
+        self.assertIn("Review the generated draft spec above before R code can be generated", result["reviewPane"])
+        self.assertEqual(result["lastStep"], 4)
+
+    def test_index_native_full_run_draft_gate_clears_stale_generated_code(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_native_full_run_draft_stale' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('modelMode').value = 'mock';
+const calls = [];
+const draftVariables = [{variable: 'AETERM', type: 'text', source_domains: ['AE'], derivation: 'copy AE.AETERM', risk_level: 'low'}];
+global.fetch = async (path) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/native-full-run')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_draft_stale',
+        dataset: 'ADAE',
+        phase: 'waiting_for_human_gate',
+        status: 'needs_review',
+        current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'},
+        next_action: 'draft_spec_review',
+        draft_spec_path: 'runs/run_ui_native_full_run_draft_stale/specs/adae_draft_spec.json'
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_draft_stale',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        datasets: {
+          ADAE: {
+            status: 'needs_review',
+            spec_state: {
+              status: 'draft_generated',
+              draft_spec_path: 'runs/run_ui_native_full_run_draft_stale/specs/adae_draft_spec.json',
+              variables: draftVariables,
+              warnings: []
+            },
+            code_state: {status: 'generated', code_path: 'runs/run_ui_native_full_run_draft_stale/code/old_build_adae.R'},
+            current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    return {
+      ok: true,
+      json: async () => ({
+        datasets: [{
+          dataset: 'ADAE',
+          next_action: 'review_draft_spec',
+          action_label: 'Review generated draft spec before code generation.',
+          spec_status: 'draft_generated',
+          code_status: 'generated',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_native_full_run_draft_stale',
+        dataset_reviews: [{
+          dataset: 'ADAE',
+          status: 'needs_review',
+          generated_code_path: 'runs/run_ui_native_full_run_draft_stale/code/old_build_adae.R',
+          generated_code: 'old code must not be shown while draft spec is under review'
+        }]
+      })
+    };
+  }
+  if (url.includes('/code-review')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'generate_code', action_label: 'Generate R code.', blocked: false}]};
+state.inputSummary = {specs: []};
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_native_full_run_draft_stale',
+    status: 'generated',
+    code_path: 'runs/run_ui_native_full_run_draft_stale/code/old_build_adae.R',
+    generated_code: 'old code must not survive draft gate'
+  }
+};
+await generateCode();
+const availability = actionAvailability();
+await approveCode();
+console.log(JSON.stringify({
+  generatedExists: Boolean(state.generatedByDataset.ADAE),
+  approveReady: availability.approveCode.ready,
+  codeStatus: nodes.get('codeStatus').textContent,
+  codeReviewPosted: calls.some((item) => item.includes('/code-review')),
+  reviewPane: nodes.get('reviewPane').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_full_run_draft_gate_clears_stale_code.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertFalse(result["generatedExists"])
+        self.assertFalse(result["approveReady"])
+        self.assertEqual(result["codeStatus"], "draft review")
+        self.assertFalse(result["codeReviewPosted"])
+        self.assertIn("Review the generated draft spec above before R code can be generated", result["reviewPane"])
+        self.assertNotIn("R code is ready for ADAE", result["reviewPane"])
+
+    def test_index_native_full_run_draft_gate_points_to_draft_review(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ok: true, json: async () => ({})});
+""" + script + r"""
+state.selectedTarget = 'ADAE';
+state.runProgress = {
+  datasets: [{
+    dataset: 'ADAE',
+    next_action: 'review_draft_spec',
+    action_label: 'Review generated draft spec before code generation.',
+    spec_status: 'draft_generated',
+    blocked: false
+  }]
+};
+state.draftSpecByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    variables: [{variable: 'AETERM', type: 'text', source_domains: ['AE'], derivation: 'copy AE.AETERM', risk_level: 'low'}],
+    warnings: []
+  }
+};
+state.generatedByDataset = {};
+state.selectedView = 'summary';
+renderDraftSpecPane();
+renderPane();
+console.log(JSON.stringify({
+  draftPane: nodes.get('draftSpecPane').innerHTML,
+  reviewPane: nodes.get('reviewPane').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_full_run_draft_gate.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIn("Draft spec for ADAE", result["draftPane"])
+        self.assertIn("Review the generated draft spec above before R code can be generated", result["reviewPane"])
+        self.assertNotIn("Generate code after choosing a target", result["reviewPane"])
 
     def test_index_code_approval_and_execution_are_separate_ui_actions(self) -> None:
         client = TestClient(create_app())

@@ -9047,3 +9047,48 @@ OK
   - response 字段来自 gateway-owned state/projection；
   - 测试覆盖 contract metadata、无 R 执行和 LLM override 传递；
   - 没有新增 UI 暴露。
+
+### 2026-06-01 - LG3.1 UI Generate 接入 Native Full-Run 切片
+
+已完成：
+
+- 浏览器里的 `Generate R Code` 按钮现在优先调用
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run`。
+- 用户看到的按钮语义保持不变：生成后仍停在人工 review gate，不自动批准、不执行 R。
+- UI 根据 native full-run 返回的当前 interrupt 分两种展示：
+  - `draft_spec_review`：显示 draft spec review pane，等待人工批准 draft spec；
+  - `code_review`：刷新 graph state/progress/review-summary，加载生成的 R code，等待人工批准 code。
+- `draft_spec_review` 现在被当作 graph gate，而不是浏览器本地 generated-code cache
+  状态。只要当前 graph state/progress 说明目标 dataset 处在 draft-spec review，
+  UI 就会清掉该 target 的旧 generated-code cache，并阻止 review-summary 把旧 code
+  恢复成可审核代码。
+- 保留 `revise_approved_spec` 场景下的旧 `draft-spec` 入口，因为它是 terminal-failure
+  后要求重新起草 spec 的独立人工闸门。
+- 旧 `generate-code` API 没有删除，仍作为 backend compatibility 和回归测试入口存在；
+  但主 UI 的普通生成动作已经不再直接调用它。
+
+边界：
+
+- 这不是 UI 自动运行整个 dataset。
+- 这不是 durable native resume 启用；默认 memory checkpointer 下 native resume 仍 fail closed。
+- 这不会批准 draft spec、批准 code、执行 R 或自动 repair。
+- 这只是把单 dataset 的第一个产品入口从浏览器 split-flow generate step 移到
+  LG3 graph-owned full-run contract。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_generate_button_starts_native_full_run tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_clears_stale_code_when_new_artifact_text_missing tests.test_api_phase8.Phase8ApiTests.test_index_generate_button_handles_native_full_run_draft_gate tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_draft_gate_clears_stale_generated_code tests.test_api_phase8.Phase8ApiTests.test_index_native_full_run_draft_gate_points_to_draft_review -v
+Ran 6 tests - OK
+```
+
+子 agent 审查：
+
+- Peirce 第一次只读审查返回 NO-GO，发现一个 P2：当 native full-run 返回
+  `draft_spec_review` 且没有 `code_path` 时，浏览器里旧的
+  `state.generatedByDataset[target]` 可能残留，导致 UI 继续显示 code-review pane。
+- 已修复：让 `draft_spec_review` 成为 `applyGraphState()`、
+  `graphAllowsReviewSummaryCodeRecovery()` 和 `renderPane()` 都必须服从的 graph gate。
+  新增回归测试覆盖 native full-run 返回 draft review、浏览器已有旧 generated-code
+  cache、review-summary 也含旧 code 的场景。
+- Dewey 后续只读复审返回 GO，没有 P1/P2 阻断问题。
