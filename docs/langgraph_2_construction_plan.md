@@ -10048,3 +10048,68 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.6 Native Resume Runtime Binding Slice
+
+Completed:
+
+- Bound the native LangGraph resume read model to the current `GraphGateway`
+  runtime instead of trusting saved `graph_state.runtime_persistence` alone.
+- `progress_summary()` now computes native-resume availability from:
+  - the run's saved `native_interrupt_resume` marker;
+  - the active gateway's durable resume capability;
+  - the active durable checkpointer path when the run recorded one.
+- Added read-model diagnostics:
+  - `runtime_can_resume`
+  - `checkpoint_paths_match`
+- `study_loop_result` now receives the same native-resume read model used by
+  the top-level `/progress` payload, so the UI does not receive conflicting
+  resume signals.
+- `resume_native_dataset_interrupt()` now fails before writing review artifacts
+  if the current service is not opened with a durable checkpointer bound to the
+  run's recorded checkpoint path.
+- Added regressions for stale or forged durable runtime metadata:
+  - a memory gateway cannot make a run appear native-resumable just because
+    saved state says `native_interrupt_resume=true`;
+  - a different active durable checkpoint path cannot resume a run recorded
+    against another checkpoint path;
+  - LG3 full-run compatibility still works when the active runtime is explicitly
+    bound to the recorded checkpoint path.
+
+Boundary:
+
+- This does not enable durable native resume under the default memory
+  checkpointer.
+- This does not promote saved `runtime_persistence` into a second source of
+  truth. It is evidence, and the current Gateway runtime must still match it.
+- SQLite optional behavior remains local single-process only. It is not a
+  production durable resume claim.
+- No change to dependency planning, LLM calls, R execution, static rules,
+  reference ADaM handling, or ADSL routing.
+
+Subagent review:
+
+- Read-only `gpt-5.5` review by Planck returned GO with no major issues found.
+- Residual non-blocking risk: checkpoint path comparison uses
+  `Path(...).expanduser()` equality rather than full Windows path normalization.
+  That can reject equivalent paths with different spelling, but it fails closed
+  rather than enabling a wrong native resume.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 7 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 157 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```

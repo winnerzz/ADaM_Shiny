@@ -9376,3 +9376,63 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.6 Native Resume Runtime Binding 切片
+
+已完成：
+
+- 把 native LangGraph resume 的 read model 绑定到当前 `GraphGateway`
+  runtime，而不是只相信保存下来的 `graph_state.runtime_persistence`。
+- `progress_summary()` 现在用三项共同判断 native resume 是否真的可用：
+  - run 保存的 `native_interrupt_resume` 标记；
+  - 当前 Gateway 是否真的具备 durable resume 能力；
+  - 如果 run 记录了 durable checkpoint path，当前 Gateway 的 checkpoint path
+    必须与之匹配。
+- 新增 read model 诊断字段：
+  - `runtime_can_resume`
+  - `checkpoint_paths_match`
+- `study_loop_result` 现在复用 top-level `/progress` 里的同一份
+  native-resume read model，避免 UI 同时看到两套互相冲突的 resume 信号。
+- `resume_native_dataset_interrupt()` 现在会在写入 review artifact 前先失败关闭：
+  如果当前服务没有用 durable checkpointer 打开，或 checkpointer path 与该 run
+  记录的不一致，就不能走 native-resume。
+- 新增回归测试覆盖 stale/forged durable runtime metadata：
+  - memory Gateway 不能因为保存状态里写着 `native_interrupt_resume=true`
+    就显示为可 native resume；
+  - active durable checkpoint path 与 run 记录 path 不同时不能 resume；
+  - LG3 full-run compatibility 在显式绑定到记录 path 时仍然可用。
+
+边界：
+
+- 不在默认 memory checkpointer 下启用 durable native resume。
+- 不把保存的 `runtime_persistence` 提升为第二个事实来源。它只能作为证据，
+  当前 Gateway runtime 仍必须匹配。
+- SQLite optional 行为仍然只是本地单进程恢复能力，不声明为生产 durable resume。
+- 不改变 dependency planning、LLM 调用、R execution、static rules、
+  reference ADaM handling 或 ADSL routing。
+
+子 agent 审查：
+
+- Planck 使用 `gpt-5.5` 只读审查后返回 GO，没有发现重大问题。
+- 保留一个非阻塞风险：checkpoint path 比较使用 `Path(...).expanduser()`
+  相等判断，而不是完整 Windows 路径规范化。这可能拒绝某些不同写法但等价的
+  path，但它是 fail closed，不会放行错误 native resume。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_resume_fails_closed_without_durable_checkpointer tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_preserves_full_run_contract -v
+Ran 7 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 157 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

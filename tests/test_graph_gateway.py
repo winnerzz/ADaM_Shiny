@@ -490,24 +490,22 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(runtime_persistence["langgraph_checkpointer_persistent"])
         self.assertFalse(runtime_persistence["native_interrupt_resume"])
         self.assertEqual(runtime_persistence["native_interrupt_resume_scope"], "none")
+        native_resume = progress["native_resume"]
+        self.assertFalse(native_resume["available"])
+        self.assertEqual(native_resume["scope"], "none")
+        self.assertEqual(native_resume["boundary"], "graph_state_projection_only")
         self.assertEqual(
-            progress["native_resume"],
-            {
-                "available": False,
-                "scope": "none",
-                "boundary": "graph_state_projection_only",
-                "explicit_resume_endpoint": "POST /runs/{run_id}/datasets/{dataset}/native-resume",
-                "default_review_path": "split_flow_review_endpoints",
-                "restart_recovery_source": "graph_state_json",
-                "interrupt_queue": [],
-                "has_queue_items": False,
-                "queue_item_count": 0,
-                "message": (
-                    "Durable native LangGraph interrupt resume is not enabled for this run. "
-                    "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
-                ),
-            },
+            native_resume["explicit_resume_endpoint"],
+            "POST /runs/{run_id}/datasets/{dataset}/native-resume",
         )
+        self.assertEqual(native_resume["default_review_path"], "split_flow_review_endpoints")
+        self.assertEqual(native_resume["restart_recovery_source"], "graph_state_json")
+        self.assertEqual(native_resume["interrupt_queue"], [])
+        self.assertFalse(native_resume["has_queue_items"])
+        self.assertEqual(native_resume["queue_item_count"], 0)
+        self.assertFalse(native_resume["runtime_can_resume"])
+        self.assertTrue(native_resume["checkpoint_paths_match"])
+        self.assertIn("Durable native LangGraph interrupt resume is not enabled", native_resume["message"])
         self.assertNotIn("endpoint", progress["native_resume"])
 
     def test_checkpointing_boundary_defaults_to_nonpersistent_memory(self) -> None:
@@ -785,17 +783,27 @@ class GraphGatewayTests(unittest.TestCase):
                 "native_interrupt_resume": True,
                 "native_interrupt_resume_scope": "native_pilot_interrupts_only",
                 "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(
+                    (
+                        study_dir
+                        / "runs"
+                        / "run_lg2_native_resume_queue_durable_study_gate"
+                        / "langgraph_checkpoints.sqlite"
+                    ).as_posix()
+                ),
             },
         )
 
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_durable_study_gate")
 
-        self.assertTrue(progress["native_resume"]["available"])
-        self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
+        self.assertFalse(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
+        self.assertFalse(progress["native_resume"]["runtime_can_resume"])
+        self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
         self.assertFalse(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
-        self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
+        self.assertIn("current service is not opened with a durable checkpointer", progress["native_resume"]["message"])
 
     def test_progress_durable_native_resume_queue_still_respects_stale_plan(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_durable_stale_plan") / "PSY201"
@@ -827,17 +835,78 @@ class GraphGatewayTests(unittest.TestCase):
                 "native_interrupt_resume": True,
                 "native_interrupt_resume_scope": "native_pilot_interrupts_only",
                 "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(
+                    (
+                        study_dir
+                        / "runs"
+                        / "run_lg2_native_resume_queue_durable_stale_plan"
+                        / "langgraph_checkpoints.sqlite"
+                    ).as_posix()
+                ),
             },
         )
 
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_resume_queue_durable_stale_plan")
 
-        self.assertTrue(progress["native_resume"]["available"])
+        self.assertFalse(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
+        self.assertFalse(progress["native_resume"]["runtime_can_resume"])
+        self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
         self.assertFalse(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
         self.assertEqual(progress["datasets"][0]["available_actions"], [])
-        self.assertIn("Resolve any visible study-level or dependency gate first", progress["native_resume"]["message"])
+        self.assertIn("current service is not opened with a durable checkpointer", progress["native_resume"]["message"])
+
+    def test_progress_native_resume_requires_current_durable_gateway_binding(self) -> None:
+        study_dir = _workspace_dir("lg2_native_resume_queue_stale_durable_state") / "PSY201"
+        study_dir.mkdir(parents=True)
+        run_id = "run_lg2_native_resume_queue_stale_durable_state"
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_stale_native_resume_runtime",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(
+                    (study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite").as_posix()
+                ),
+            },
+        )
+
+        progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+
+        queue = progress["native_resume"]["interrupt_queue"]
+        self.assertFalse(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
+        self.assertFalse(progress["native_resume"]["runtime_can_resume"])
+        self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
+        self.assertTrue(progress["native_resume"]["has_queue_items"])
+        self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
+        self.assertEqual(queue[0]["dataset"], "ADAE")
+        self.assertFalse(queue[0]["can_resume"])
+        self.assertIsNone(queue[0]["resume_endpoint"])
+        self.assertEqual(queue[0]["default_review_path"], "split_flow_review_endpoints")
+        self.assertIn("current service is not opened with a durable checkpointer", progress["native_resume"]["message"])
 
     def test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_sqlite") / "PSY201"
@@ -2893,6 +2962,59 @@ class GraphGatewayTests(unittest.TestCase):
             ).exists()
         )
 
+    def test_gateway_native_resume_rejects_recorded_checkpoint_path_mismatch(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_resume_path_mismatch") / "PSY201"
+        study_dir.mkdir(parents=True)
+        run_id = "run_lg2_native_resume_path_mismatch"
+        graph_state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        recorded_checkpoint_path = study_dir / "runs" / run_id / "recorded" / "langgraph_checkpoints.sqlite"
+        active_checkpoint_path = study_dir / "runs" / run_id / "active" / "langgraph_checkpoints.sqlite"
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            graph_state,
+            node="test_seed_native_resume_path_mismatch",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(recorded_checkpoint_path.as_posix()),
+            },
+        )
+
+        with (
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(active_checkpoint_path.as_posix())),
+            patch.object(gateway, "resume_native_code_review") as resume_code,
+        ):
+            with self.assertRaisesRegex(ValueError, "current checkpointer configuration"):
+                gateway.resume_native_dataset_interrupt(
+                    study_dir=study_dir,
+                    run_id=run_id,
+                    dataset="ADAE",
+                    decision="approve",
+                    reviewer="tester",
+                    notes="A different checkpointer path must not resume this run.",
+                )
+
+        resume_code.assert_not_called()
+        self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
+
     def test_gateway_native_dataset_product_loop_reject_does_not_execute(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_dataset_product_loop_reject") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
@@ -3676,9 +3798,32 @@ class GraphGatewayTests(unittest.TestCase):
             llm_provider={"provider": "mock", "model": "mock-model"},
             llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
         )
+        checkpoint_path = (
+            study_dir
+            / "runs"
+            / "run_lg3_native_resume_full_run_contract"
+            / "langgraph_checkpoints.sqlite"
+        )
+        graph_state = gateway.load_graph_state(
+            study_dir=study_dir,
+            run_id="run_lg3_native_resume_full_run_contract",
+        )
+        gateway._persist_graph_state(
+            study_dir,
+            graph_state,
+            node="test_seed_lg3_native_resume_runtime",
+            runtime_persistence_extra={
+                "native_dataset_full_run": graph_state.runtime_persistence["native_dataset_full_run"],
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(checkpoint_path.as_posix()),
+            },
+        )
 
         with (
             patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(checkpoint_path.as_posix())),
             patch.object(gateway, "execute_approved_code") as execute_approved,
         ):
             result = gateway.resume_native_dataset_interrupt(

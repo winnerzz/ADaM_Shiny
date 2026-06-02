@@ -296,6 +296,13 @@ class GraphGateway:
             return False
         return bool(self._checkpointer_bundle.persistent)
 
+    def _native_interrupt_checkpoint_path(self) -> str | None:
+        """Return the active persistent checkpoint path, if the gateway has one."""
+
+        if self._checkpointer_bundle is None or not self._checkpointer_bundle.persistent:
+            return None
+        return self._checkpointer_bundle.checkpoint_path
+
     def __enter__(self) -> GraphGateway:
         return self
 
@@ -1547,6 +1554,16 @@ class GraphGateway:
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        if not _native_resume_runtime_bound_to_state(
+            graph_state,
+            runtime_resume_available=self.native_interrupt_resume_available(),
+            active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+        ):
+            raise ValueError(
+                "Native LangGraph interrupt resume is not available for this run with the current "
+                "checkpointer configuration. Use the split-flow review endpoints, or reopen the run "
+                "with the recorded durable LangGraph checkpointer."
+            )
         dataset_state = graph_state.datasets.get(target)
         interrupt = dataset_state.current_interrupt if dataset_state is not None else None
         if interrupt is None or interrupt.status != "open":
@@ -4153,6 +4170,11 @@ class GraphGateway:
         run_dir = root / "runs" / run_id
         workflow_state_path = run_dir / "workflow_state.json"
         review_queue = _human_review_queue_items(graph_state, datasets)
+        native_resume = _native_resume_progress(
+            graph_state,
+            runtime_resume_available=self.native_interrupt_resume_available(),
+            active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+        )
         return {
             "study_id": graph_state.study_id,
             "run_id": graph_state.run_id,
@@ -4168,8 +4190,12 @@ class GraphGateway:
             "runnable_datasets": list(graph_state.runnable_datasets),
             "blocked_datasets": list(graph_state.blocked_datasets),
             "review_queue": review_queue,
-            "study_loop_result": _study_loop_progress_result(graph_state, review_queue=review_queue),
-            "native_resume": _native_resume_progress(graph_state),
+            "study_loop_result": _study_loop_progress_result(
+                graph_state,
+                review_queue=review_queue,
+                native_resume=native_resume,
+            ),
+            "native_resume": native_resume,
             "datasets": datasets,
             "runtime_persistence": dict(graph_state.runtime_persistence),
             "graph_state_path": str((run_dir / "graph_state.json").as_posix()),
@@ -5490,7 +5516,12 @@ def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any
     return items
 
 
-def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict[str, Any]]) -> dict[str, Any]:
+def _study_loop_progress_result(
+    state: StudyRunState,
+    *,
+    review_queue: list[dict[str, Any]],
+    native_resume: dict[str, Any],
+) -> dict[str, Any]:
     if bool(state.dependency_plan.get("plan_stale")) or state.dependency_review_status == "stale":
         return {}
     loop = dict(state.runtime_persistence.get("native_study_product_loop") or {})
@@ -5499,7 +5530,6 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
     started = _normalize_dataset_list([str(dataset) for dataset in loop.get("started_datasets", [])])
     skipped = list(loop.get("skipped_datasets") or [])
     blocked = list(loop.get("blocked_datasets") or state.blocked_datasets)
-    native_resume = _native_resume_progress(state)
     return {
         "source": "graph_progress",
         "boundary": loop.get("boundary", "study_product_loop_pilot_only"),
@@ -5517,9 +5547,25 @@ def _study_loop_progress_result(state: StudyRunState, *, review_queue: list[dict
     }
 
 
-def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
-    native_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
+def _native_resume_progress(
+    state: StudyRunState,
+    *,
+    runtime_resume_available: bool | None = None,
+    active_checkpoint_path: str | None = None,
+) -> dict[str, Any]:
+    state_resume_available = bool(state.runtime_persistence.get("native_interrupt_resume"))
     resume_scope = str(state.runtime_persistence.get("native_interrupt_resume_scope") or "none")
+    configured_checkpoint_path = state.runtime_persistence.get("langgraph_checkpoint_path")
+    checkpoint_paths_match = _native_resume_checkpoint_paths_match(
+        configured_checkpoint_path,
+        active_checkpoint_path,
+    )
+    runtime_can_resume = bool(runtime_resume_available) if runtime_resume_available is not None else state_resume_available
+    native_resume_available = _native_resume_runtime_bound_to_state(
+        state,
+        runtime_resume_available=runtime_can_resume,
+        active_checkpoint_path=active_checkpoint_path,
+    )
     boundary = "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only"
     explicit_resume_endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
     interrupt_queue = _native_resume_interrupt_queue(state, native_resume_available=native_resume_available)
@@ -5533,10 +5579,23 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
             )
         recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "langgraph_checkpointer")
     else:
-        message = (
-            "Durable native LangGraph interrupt resume is not enabled for this run. "
-            "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
-        )
+        if state_resume_available and not runtime_can_resume:
+            message = (
+                "This run records a durable LangGraph checkpointer, but the current service is not opened "
+                "with a durable checkpointer for this run. Use split-flow review endpoints or reopen the "
+                "run with the recorded checkpointer configuration."
+            )
+        elif state_resume_available and not checkpoint_paths_match:
+            message = (
+                "This run records a durable LangGraph checkpointer, but the current service checkpoint path "
+                "does not match the run checkpoint path. Use split-flow review endpoints or reopen the run "
+                "with the recorded checkpointer configuration."
+            )
+        else:
+            message = (
+                "Durable native LangGraph interrupt resume is not enabled for this run. "
+                "Use the split-flow review endpoints; default restart recovery reads saved graph_state.json."
+            )
         recovery_source = str(state.runtime_persistence.get("restart_recovery_source") or "graph_state_json")
     return {
         "available": native_resume_available,
@@ -5549,7 +5608,37 @@ def _native_resume_progress(state: StudyRunState) -> dict[str, Any]:
         "has_queue_items": bool(interrupt_queue),
         "queue_item_count": len(interrupt_queue),
         "message": message,
+        "runtime_can_resume": runtime_can_resume,
+        "checkpoint_paths_match": checkpoint_paths_match,
     }
+
+
+def _native_resume_checkpoint_paths_match(recorded_path: Any, active_path: str | None) -> bool:
+    """Return whether the service is using the same persistent checkpoint path as the run."""
+
+    if recorded_path in {None, ""}:
+        return True
+    if not active_path:
+        return False
+    return Path(str(recorded_path)).expanduser() == Path(str(active_path)).expanduser()
+
+
+def _native_resume_runtime_bound_to_state(
+    state: StudyRunState,
+    *,
+    runtime_resume_available: bool,
+    active_checkpoint_path: str | None,
+) -> bool:
+    """Return whether the current gateway can resume this specific run's native checkpoints."""
+
+    if not bool(state.runtime_persistence.get("native_interrupt_resume")):
+        return False
+    if not runtime_resume_available:
+        return False
+    return _native_resume_checkpoint_paths_match(
+        state.runtime_persistence.get("langgraph_checkpoint_path"),
+        active_checkpoint_path,
+    )
 
 
 def _native_resume_interrupt_queue(
