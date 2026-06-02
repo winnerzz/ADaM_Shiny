@@ -142,6 +142,8 @@ class GraphGatewayNativeDatasetResumeResult(GraphGatewayResult):
     interrupt: str
     decision: str
     execution: GraphGatewayExecutionResult | None = None
+    resume_path: str = ""
+    full_run_resume_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -1542,6 +1544,164 @@ class GraphGateway:
             execution=execution,
         )
 
+    def _resume_lg3_full_run_via_native_interrupt(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        dataset: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+        execute_after_approval: bool = False,
+        llm_provider: dict[str, Any] | None = None,
+        llm_exposure: dict[str, Any] | None = None,
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayNativeDatasetResumeResult:
+        """Resume an LG3 full-run gate through the durable native interrupt entrypoint.
+
+        This intentionally stays separate from `resume_native_dataset_full_run()`,
+        which is a graph-state compatibility resume endpoint for historical LG3
+        full-run contracts.
+        """
+
+        target = dataset.strip().upper()
+        root = Path(study_dir).expanduser()
+        previous_graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        dataset_state = previous_graph_state.datasets.get(target)
+        interrupt = dataset_state.current_interrupt if dataset_state is not None else None
+        if interrupt is None or interrupt.status != "open":
+            raise ValueError(f"No open LG3 native full-run interrupt exists for {target}.")
+        normalized_decision = decision.strip().lower()
+        execution: GraphGatewayExecutionResult | None = None
+        code_generation_continued = False
+        full_run_resume_path = ""
+        if interrupt.name == "draft_spec_review":
+            if normalized_decision == "approve" and (llm_provider is None or llm_exposure is None):
+                raise ValueError(
+                    "LG3 draft-spec approval requires llm_provider and llm_exposure so code generation can continue."
+                )
+            draft_result = self.resume_native_dataset_product_loop_draft_spec(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_decision,
+                reviewer=reviewer,
+                notes=notes,
+                llm_provider=llm_provider or {},
+                llm_exposure=llm_exposure or {},
+                llm_client_builder=llm_client_builder,
+                target_context_builder=target_context_builder,
+                rscript_path=rscript_path,
+            )
+            graph_state = draft_result.graph_state
+            projection = draft_result.workflow_projection
+            final_decision = draft_result.draft_review.decision
+            code_generation_continued = draft_result.code_generation is not None
+            full_run_resume_path = "native_draft_spec_review"
+            last_interrupt = "draft_spec_review"
+        elif interrupt.name == "code_review":
+            code_result = self.resume_native_dataset_product_loop(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_decision,
+                reviewer=reviewer,
+                notes=notes,
+                execute_after_approval=execute_after_approval,
+                rscript_path=rscript_path,
+            )
+            graph_state = code_result.graph_state
+            projection = code_result.workflow_projection
+            final_decision = code_result.decision
+            execution = code_result.execution
+            full_run_resume_path = "native_code_review"
+            last_interrupt = "code_review"
+        elif interrupt.name == "terminal_failure":
+            terminal_result = self.resume_native_terminal_failure_review(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_decision,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            graph_state = terminal_result.graph_state
+            projection = terminal_result.workflow_projection
+            final_decision = terminal_result.decision
+            full_run_resume_path = "native_terminal_failure"
+            last_interrupt = "terminal_failure"
+        else:
+            raise ValueError(f"Unsupported LG3 native full-run interrupt for {target}: {interrupt.name}.")
+
+        current_dataset_state = graph_state.datasets.get(target)
+        current_interrupt = (
+            current_dataset_state.current_interrupt.name
+            if current_dataset_state is not None and current_dataset_state.current_interrupt is not None
+            else None
+        )
+        if execution is not None and execution.terminal_failure:
+            phase = "terminal_failure"
+        elif last_interrupt == "terminal_failure":
+            phase = "terminal_failure_triaged"
+        elif current_interrupt:
+            phase = "waiting_for_human_gate"
+        elif last_interrupt == "code_review":
+            phase = "executed" if execution is not None else "reviewed"
+        else:
+            phase = "reviewed"
+        runtime_extra = _runtime_persistence_extras(previous_graph_state)
+        runtime_extra.update(_runtime_persistence_extras(graph_state))
+        runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
+            previous_graph_state,
+            dataset=target,
+            phase=phase,
+            current_interrupt=current_interrupt,
+            native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                graph_state,
+                runtime_resume_available=self.native_interrupt_resume_available(),
+                active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+            ),
+            llm_provider=llm_provider,
+            llm_exposure=llm_exposure,
+            last_interrupt=last_interrupt,
+            decision=normalized_decision,
+            approved=normalized_decision == "approve",
+            code_generation_continued=code_generation_continued,
+            executed_after_approval=execution is not None,
+            terminal_failure=bool(execution.terminal_failure) if execution is not None else False,
+            resume_path="durable_native_interrupt",
+            full_run_resume_path=full_run_resume_path,
+        )
+        _sync_native_study_full_run_dataset_contract(
+            runtime_extra,
+            dataset=target,
+            phase=phase,
+            current_interrupt=current_interrupt,
+        )
+        self._persist_graph_state(
+            root,
+            graph_state,
+            node="native_dataset_full_run_native_interrupt_resumed",
+            runtime_persistence_extra=runtime_extra,
+        )
+        projection = project_graph_state_to_workflow(
+            root,
+            graph_state,
+            node="graph_gateway_native_dataset_full_run_native_interrupt_resumed",
+        )
+        return GraphGatewayNativeDatasetResumeResult(
+            graph_state=graph_state,
+            workflow_projection=projection,
+            interrupt=interrupt.name,
+            decision=final_decision,
+            execution=execution,
+            resume_path="durable_native_interrupt",
+            full_run_resume_path=full_run_resume_path,
+        )
+
     def resume_native_dataset_interrupt(
         self,
         *,
@@ -1584,7 +1744,7 @@ class GraphGateway:
             raise ValueError(f"No open native dataset interrupt exists for {target}.")
         if interrupt.name == "draft_spec_review":
             if _has_lg3_full_run_resume_contract(graph_state, target):
-                draft_result = self.resume_native_dataset_full_run(
+                full_run_result = self._resume_lg3_full_run_via_native_interrupt(
                     study_dir=root,
                     run_id=run_id,
                     dataset=target,
@@ -1598,6 +1758,7 @@ class GraphGateway:
                     target_context_builder=target_context_builder,
                     rscript_path=rscript_path,
                 )
+                return full_run_result
             else:
                 draft_result = self.resume_native_draft_spec_review(
                     study_dir=root,
@@ -1616,7 +1777,7 @@ class GraphGateway:
             )
         if interrupt.name == "code_review":
             if _has_lg3_full_run_resume_contract(graph_state, target):
-                code_result = self.resume_native_dataset_full_run(
+                full_run_result = self._resume_lg3_full_run_via_native_interrupt(
                     study_dir=root,
                     run_id=run_id,
                     dataset=target,
@@ -1626,6 +1787,7 @@ class GraphGateway:
                     execute_after_approval=execute_after_approval,
                     rscript_path=rscript_path,
                 )
+                return full_run_result
             else:
                 code_result = self.resume_native_dataset_product_loop(
                     study_dir=root,

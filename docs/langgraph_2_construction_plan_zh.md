@@ -9917,3 +9917,71 @@ python -B -m compileall -q src tests
 受本地 Windows pyc 写权限限制，在 __pycache__ 路径失败；源码语法已由上面的
 只读 compile() 检查覆盖。
 ```
+
+### 2026-06-02 - LG3.15 Native Interrupt Resume 与 Full-Run Compatibility 分离切片
+
+已完成：
+
+- 将 LG3 full-run contract 下的 `/native-resume` 恢复逻辑改为调用真正的
+  native DatasetGraph interrupt resume helper：
+  - `draft_spec_review` 走
+    `resume_native_dataset_product_loop_draft_spec()`；
+  - `code_review` 走 `resume_native_dataset_product_loop()` /
+    `resume_native_code_review()`；
+  - `terminal_failure` 仍走 native terminal-failure review helper。
+- 保留 `/native-full-run/resume` 作为 LG3 graph-state compatibility review
+  path，不把它混同为 durable native interrupt resume。
+- 在 `GraphGatewayNativeDatasetResumeResult` 和
+  `native_dataset_full_run` runtime metadata 中记录：
+  - `resume_path="durable_native_interrupt"`；
+  - `full_run_resume_path="native_draft_spec_review"` 或
+    `"native_code_review"`。
+- 新增回归测试证明：
+  - durable `/native-resume` 的 LG3 `code_review` 不会调用
+    `resume_native_dataset_full_run()` 兼容路径；
+  - durable `/native-resume` 的 LG3 `draft_spec_review` 不会调用
+    `resume_native_dataset_full_run()` 兼容路径；
+  - graph state 和 runtime metadata 会保留明确的 native resume 路径记录。
+
+边界：
+
+- 本切片不实现完整 durable native full-run resume。
+- `/native-full-run/resume` 仍是 compatibility path，用于 LG3 full-run
+  contract 的 graph-state-backed review resume。
+- `/native-resume` 只在 service/Gateway 已证明当前 checkpointer binding 可用、
+  且当前 graph state 有匹配 open interrupt 时，才代表 durable native
+  interrupt resume。
+- 不改变 LLM generation、R execution、dependency planning、static checks、
+  repair/spec-revision routing、sandbox 行为或 UI action gate。
+
+子 agent 审查：
+
+- Maxwell（`gpt-5.5`）只读审查返回 GO。
+- 未发现阻塞性业务或逻辑问题。审查确认 `/native-resume` 仍受 durable
+  checkpointer binding、当前 graph state 和 open interrupt 共同约束；LG3
+  full-run contract 通过 `/native-resume` 时已经走 native DatasetGraph
+  resume helper，而不是 `resume_native_dataset_full_run()` compatibility path；
+  文档没有夸大 durable full-run resume 能力。
+- 已吸收非阻断建议：新增测试断言 `resume_mode` 仍是
+  `graph_state_full_run_compatibility`、`durable_full_run_resume_available`
+  仍为 `False`，并覆盖 nested
+  `native_study_product_loop.full_run_datasets[dataset]` metadata 同步。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+Ran 163 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_draft_spec_resume_path -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 173 tests - OK
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+
+python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
+Compiled 82 files - OK
+```

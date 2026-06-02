@@ -10620,3 +10620,73 @@ python -B -m compileall -q src tests
 Blocked by local Windows pyc write permissions on __pycache__ paths; source syntax
 was covered by the read-only compile() check above.
 ```
+
+### 2026-06-02 - LG3.15 Native Interrupt Resume / Full-Run Compatibility Split
+
+Completed:
+
+- Changed the `/native-resume` path for LG3 full-run contracts so it calls the
+  native DatasetGraph interrupt resume helpers:
+  - `draft_spec_review` uses
+    `resume_native_dataset_product_loop_draft_spec()`;
+  - `code_review` uses `resume_native_dataset_product_loop()` /
+    `resume_native_code_review()`;
+  - `terminal_failure` continues to use the native terminal-failure review
+    helper.
+- Kept `/native-full-run/resume` as the LG3 graph-state compatibility review
+  path instead of treating it as durable native interrupt resume.
+- Added explicit metadata to `GraphGatewayNativeDatasetResumeResult` and
+  `native_dataset_full_run` runtime persistence:
+  - `resume_path="durable_native_interrupt"`;
+  - `full_run_resume_path="native_draft_spec_review"` or
+    `"native_code_review"`.
+- Added regression coverage proving:
+  - durable `/native-resume` LG3 `code_review` does not call the
+    `resume_native_dataset_full_run()` compatibility path;
+  - durable `/native-resume` LG3 `draft_spec_review` does not call the
+    `resume_native_dataset_full_run()` compatibility path;
+  - graph state and runtime metadata preserve the explicit native resume path.
+
+Boundary:
+
+- This slice does not implement full durable native full-run resume.
+- `/native-full-run/resume` remains the compatibility path for LG3 full-run
+  graph-state-backed review resume.
+- `/native-resume` only represents durable native interrupt resume when the
+  service/Gateway has proven the current checkpointer binding is available and
+  the current graph state has a matching open interrupt.
+- This does not change LLM generation, R execution, dependency planning, static
+  checks, repair/spec-revision routing, sandbox behavior, or UI action gates.
+
+Subagent review:
+
+- Read-only review by Maxwell (`gpt-5.5`) returned GO.
+- No blocking business or logic issue was found. The review confirmed that
+  `/native-resume` remains guarded by durable checkpointer binding, current
+  graph state, and a matching open interrupt; LG3 full-run contracts resumed
+  through `/native-resume` now use native DatasetGraph resume helpers instead
+  of the `resume_native_dataset_full_run()` compatibility path; and the docs do
+  not overclaim durable full-run resume.
+- Non-blocking suggestions were absorbed: tests now assert that `resume_mode`
+  remains `graph_state_full_run_compatibility`,
+  `durable_full_run_resume_available` remains `False`, and nested
+  `native_study_product_loop.full_run_datasets[dataset]` metadata stays synced.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_graph_gateway -v
+Ran 163 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_draft_spec_resume_path -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 173 tests - OK
+
+git diff --check
+Passed, with CRLF conversion warnings only
+
+python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
+Compiled 82 files - OK
+```

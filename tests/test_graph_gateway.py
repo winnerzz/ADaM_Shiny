@@ -4039,6 +4039,169 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(contract["approved"])
         self.assertFalse(contract["executed_after_approval"])
 
+    def test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_resume_full_run_native_code_path") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        run_id = "run_lg3_native_resume_full_run_native_code_path"
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        checkpoint_path = study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite"
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        full_run_contract = dict(graph_state.runtime_persistence["native_dataset_full_run"])
+        gateway._persist_graph_state(
+            study_dir,
+            graph_state,
+            node="test_seed_lg3_native_resume_runtime",
+            runtime_persistence_extra={
+                "native_dataset_full_run": full_run_contract,
+                "native_study_product_loop": {
+                    "boundary": "native_study_product_loop",
+                    "full_run_datasets": {"ADAE": dict(full_run_contract)},
+                },
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(checkpoint_path.as_posix()),
+            },
+        )
+
+        with (
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(checkpoint_path.as_posix())),
+            patch.object(gateway, "resume_native_code_review", wraps=gateway.resume_native_code_review) as native_code,
+            patch.object(
+                gateway,
+                "resume_native_dataset_full_run",
+                wraps=gateway.resume_native_dataset_full_run,
+            ) as compatibility_resume,
+        ):
+            result = gateway.resume_native_dataset_interrupt(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+                notes="Durable native resume should use DatasetGraph code_review resume.",
+                execute_after_approval=False,
+            )
+
+        native_code.assert_called_once()
+        compatibility_resume.assert_not_called()
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.resume_path, "durable_native_interrupt")
+        self.assertEqual(result.full_run_resume_path, "native_code_review")
+        self.assertEqual(result.interrupt, "code_review")
+        self.assertEqual(dataset_state.code_state["status"], "approved")
+        self.assertEqual(contract["phase"], "reviewed")
+        self.assertEqual(contract["last_interrupt"], "code_review")
+        self.assertEqual(contract["resume_path"], "durable_native_interrupt")
+        self.assertEqual(contract["full_run_resume_path"], "native_code_review")
+        self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertFalse(contract["executed_after_approval"])
+        nested_contract = result.graph_state.runtime_persistence["native_study_product_loop"]["full_run_datasets"][
+            "ADAE"
+        ]
+        self.assertEqual(nested_contract["phase"], "reviewed")
+        self.assertIsNone(nested_contract["current_interrupt"])
+        self.assertFalse(nested_contract["compatibility_resume_currently_available"])
+        self.assertEqual(nested_contract["compatibility_resume_boundary"], "historical_contract_only")
+
+    def test_gateway_lg3_native_resume_entrypoint_uses_native_draft_spec_resume_path(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_resume_full_run_native_draft_path") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set ae; run;\n", encoding="utf-8")
+        run_id = "run_lg3_native_resume_full_run_native_draft_path"
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        checkpoint_path = study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite"
+        graph_state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        gateway._persist_graph_state(
+            study_dir,
+            graph_state,
+            node="test_seed_lg3_native_resume_runtime",
+            runtime_persistence_extra={
+                "native_dataset_full_run": graph_state.runtime_persistence["native_dataset_full_run"],
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(checkpoint_path.as_posix()),
+            },
+        )
+
+        with (
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(checkpoint_path.as_posix())),
+            patch.object(
+                gateway,
+                "resume_native_dataset_product_loop_draft_spec",
+                wraps=gateway.resume_native_dataset_product_loop_draft_spec,
+            ) as native_draft,
+            patch.object(
+                gateway,
+                "resume_native_dataset_full_run",
+                wraps=gateway.resume_native_dataset_full_run,
+            ) as compatibility_resume,
+        ):
+            result = gateway.resume_native_dataset_interrupt(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                decision="approve",
+                reviewer="tester",
+                notes="Durable native resume should use DatasetGraph draft_spec resume.",
+                execute_after_approval=False,
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        native_draft.assert_called_once()
+        compatibility_resume.assert_not_called()
+        dataset_state = result.graph_state.datasets["ADAE"]
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.resume_path, "durable_native_interrupt")
+        self.assertEqual(result.full_run_resume_path, "native_draft_spec_review")
+        self.assertEqual(result.interrupt, "draft_spec_review")
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(contract["phase"], "waiting_for_human_gate")
+        self.assertEqual(contract["current_interrupt"], "code_review")
+        self.assertEqual(contract["last_interrupt"], "draft_spec_review")
+        self.assertTrue(contract["code_generation_continued"])
+        self.assertEqual(contract["resume_path"], "durable_native_interrupt")
+        self.assertEqual(contract["full_run_resume_path"], "native_draft_spec_review")
+        self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertFalse(contract["executed_after_approval"])
+
     def test_gateway_lg3_native_dataset_full_run_reject_does_not_execute(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_reject") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
