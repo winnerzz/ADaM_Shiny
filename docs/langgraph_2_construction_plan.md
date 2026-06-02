@@ -9946,3 +9946,53 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.4 UI Progress Requested-Target Recovery Slice
+
+Completed:
+
+- Extended the graph-owned `/progress` read model with `requested_datasets`.
+- `RunProgressResponse` now accepts `requested_datasets`, so the API contract
+  can distinguish user-requested ADaM outputs from system-added dependency
+  targets.
+- The browser now restores `selectedTargetsForPlan` from
+  `progress.requested_datasets` when graph-state recovery is unavailable.
+- `applyRunProgress()` and `applyGraphState()` now default the active detail
+  target to a user-requested dataset when requested datasets exist.
+  - If the browser had stale active target `ADSL`, and the run requested
+    `ADAE, ADCM` while `ADSL` is only a system dependency, the active target is
+    reset to `ADAE`.
+  - `ADSL` can still appear as a dependency/history card, but it is not treated
+    as the user's primary requested output.
+- Added UI regressions for both progress-only recovery and graph-state recovery.
+
+Boundary:
+
+- This does not change dependency planning, LLM calls, draft-spec generation,
+  code review, R execution, static rules, or reference ADaM handling.
+- This does not add ADSL-specific product logic. The rule is generic:
+  requested datasets drive the active requested-output view; target datasets
+  remain the broader dependency/run graph.
+- This does not enable durable native resume.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae tests.test_api_phase8.Phase8ApiTests.test_index_recovers_planned_targets_from_progress_when_graph_state_unavailable tests.test_api_phase8.Phase8ApiTests.test_index_apply_graph_state_prefers_requested_target_over_dependency_target tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 164 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```

@@ -2024,11 +2024,21 @@ INDEX_HTML = r"""<!doctype html>
     function applyRunProgress(progress) {
       state.runProgress = progress || null;
       const progressTargets = (progress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const requestedTargets = (progress?.requested_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
       if (progressTargets.length) {
         for (const target of progressTargets) recordTargetSource(target, 'progress');
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...progressTargets])).sort();
       }
-      if (progressTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
+      if (requestedTargets.length) {
+        state.selectedTargetsForPlan = Array.from(new Set(requestedTargets)).sort();
+      }
+      const activeTarget = String(state.selectedTarget || '').toUpperCase();
+      if (requestedTargets.length) {
+        const requestedTargetSet = new Set(requestedTargets);
+        if (!activeTarget || !requestedTargetSet.has(activeTarget)) {
+          state.selectedTarget = requestedTargets[0];
+        }
+      } else if (progressTargets.length && (!activeTarget || !progressTargets.includes(activeTarget))) {
         state.selectedTarget = progressTargets[0];
       }
       if (progress && Object.prototype.hasOwnProperty.call(progress, 'study_loop_result')) {
@@ -2050,12 +2060,18 @@ INDEX_HTML = r"""<!doctype html>
         for (const target of graphTargets) recordTargetSource(target, 'graph_state');
         state.targetCandidates = Array.from(new Set([...(state.targetCandidates || []), ...graphTargets])).sort();
       }
-      const requestedTargets = graph?.requested_datasets || [];
+      const requestedTargets = (graph?.requested_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
       if (requestedTargets.length) {
         for (const target of requestedTargets) recordTargetSource(target, 'graph_state');
-        state.selectedTargetsForPlan = requestedTargets.map((target) => String(target || '').toUpperCase()).filter(Boolean);
+        state.selectedTargetsForPlan = requestedTargets;
       }
-      if (graphTargets.length && (!state.selectedTarget || !state.targetCandidates.includes(state.selectedTarget))) {
+      const activeGraphTarget = String(state.selectedTarget || '').toUpperCase();
+      if (requestedTargets.length) {
+        const requestedGraphTargetSet = new Set(requestedTargets);
+        if (!activeGraphTarget || !requestedGraphTargetSet.has(activeGraphTarget)) {
+          state.selectedTarget = requestedTargets[0];
+        }
+      } else if (graphTargets.length && (!activeGraphTarget || !graphTargets.includes(activeGraphTarget))) {
         state.selectedTarget = graphTargets[0];
       }
       for (const [dataset, datasetState] of Object.entries(graph?.datasets || {})) {

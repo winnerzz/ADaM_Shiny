@@ -246,6 +246,7 @@ class RunProgressResponse(StrictBaseModel):
     current_interrupt: dict[str, Any] | None = None
     dependency_review_status: str | None = None
     plan_stale: bool = False
+    requested_datasets: list[str] = Field(default_factory=list)
     target_datasets: list[str] = Field(default_factory=list)
     runnable_datasets: list[str] = Field(default_factory=list)
     blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)

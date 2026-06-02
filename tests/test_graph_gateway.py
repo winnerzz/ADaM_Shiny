@@ -4581,6 +4581,7 @@ class GraphGatewayTests(unittest.TestCase):
         )
         progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_study_loop_multi")
         self.assertEqual(progress["study_loop_result"]["source"], "graph_progress")
+        self.assertEqual(progress["requested_datasets"], ["ADAE", "ADCM"])
         self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE", "ADCM"])
         self.assertEqual(progress["study_loop_result"]["boundary"], "study_lg3_full_run_dispatch")
         self.assertFalse(progress["study_loop_result"]["native_resume_available"])

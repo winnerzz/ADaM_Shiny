@@ -732,6 +732,10 @@ class Phase8ApiTests(unittest.TestCase):
         apply_progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
         self.assertIn("Object.prototype.hasOwnProperty.call(progress, 'study_loop_result')", apply_progress_body)
         self.assertIn("state.runProgress = progress || null;", apply_progress_body)
+        self.assertIn("const requestedTargets = (progress?.requested_datasets || [])", apply_progress_body)
+        self.assertIn("state.selectedTargetsForPlan = Array.from(new Set(requestedTargets)).sort();", apply_progress_body)
+        self.assertIn("const activeTarget = String(state.selectedTarget || '').toUpperCase();", apply_progress_body)
+        self.assertIn("const requestedTargetSet = new Set(requestedTargets);", apply_progress_body)
         self.assertIn("state.lastStudyLoopResult = progress.study_loop_result && Object.keys(progress.study_loop_result).length", apply_progress_body)
         refresh_body = html.split("async function refreshRunProgress()", 1)[1].split("async function refreshGraphReadModels()", 1)[0]
         self.assertIn("applyRunProgress(progress);", refresh_body)
@@ -960,6 +964,85 @@ console.log(JSON.stringify({
         self.assertIn("This does not approve draft specs, approve code, or run R.", result["detail"])
         self.assertIn("ADAE", result["html"])
         self.assertIn("Code review", result["html"])
+
+    def test_index_recovers_planned_targets_from_progress_when_graph_state_unavailable(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_progress_requested_targets' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.selectedTargetsForPlan = [];
+state.targetCandidates = ['ADSL'];
+state.selectedTarget = 'ADSL';
+applyRunProgress({
+  requested_datasets: ['ADAE', 'ADCM'],
+  target_datasets: ['ADSL', 'ADAE', 'ADCM'],
+  runnable_datasets: ['ADAE', 'ADCM'],
+  blocked_datasets: [],
+  datasets: [
+    {dataset: 'ADAE', status: 'needs_review', next_action: 'review_code', code_status: 'generated'},
+    {dataset: 'ADCM', status: 'needs_review', next_action: 'review_draft_spec', spec_status: 'draft_generated'}
+  ],
+  study_loop_result: {
+    source: 'graph_progress',
+    started_datasets: ['ADAE', 'ADCM'],
+    blocked_datasets: [],
+    review_queue: []
+  }
+});
+state.plan = {
+  requested_datasets: ['ADAE', 'ADCM'],
+  runnable_datasets: ['ADAE', 'ADCM'],
+  blocked_datasets: []
+};
+renderDatasetBoard(state.runProgress.target_datasets, state.runProgress.runnable_datasets, state.runProgress.blocked_datasets);
+console.log(JSON.stringify({
+  selectedTargets: state.selectedTargetsForPlan,
+  selectedTarget: state.selectedTarget,
+  html: nodes.get('datasetBoard').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_progress_requested_targets.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["selectedTargets"], ["ADAE", "ADCM"])
+        self.assertEqual(result["selectedTarget"], "ADAE")
+        self.assertIn("ADAE: planned in this run", result["html"])
+        self.assertIn("ADCM: planned in this run", result["html"])
+        self.assertIn("ADSL: view-only history/candidate", result["html"])
 
     def test_index_renders_native_resume_available_as_status_not_action(self) -> None:
         client = TestClient(create_app())
@@ -1500,9 +1583,10 @@ console.log(JSON.stringify({
         self.assertIn("if (state.selectedTargetsForPlan.length) preparePlan();", auto_body)
         self.assertIn("state.selectedTarget = targets[0];", render_body)
         self.assertIn("targetCanAutoPlan(state.selectedTarget)", render_body)
-        self.assertIn("state.selectedTarget = progressTargets[0];", progress_body)
+        self.assertIn("state.selectedTarget = requestedTargets[0];", progress_body)
         self.assertIn("state.graphState = graph || null;", graph_body)
-        self.assertIn("state.selectedTarget = graphTargets[0];", graph_body)
+        self.assertIn("const requestedGraphTargetSet = new Set(requestedTargets);", graph_body)
+        self.assertIn("state.selectedTarget = requestedTargets[0];", graph_body)
         self.assertNotIn("includes('ADAE') ? 'ADAE'", auto_body + render_body + progress_body + graph_body)
 
     def test_index_refresh_graph_state_uses_apply_graph_state(self) -> None:
@@ -3401,6 +3485,75 @@ console.log(JSON.stringify({
         self.assertIn("graph.dependency_decisions", plan_body)
         self.assertIn("dependency_review_status", plan_body)
 
+    def test_index_apply_graph_state_prefers_requested_target_over_dependency_target(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_graph_requested_target' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+function setPill() {}
+function renderPlan() {}
+""" + script + r"""
+state.targetCandidates = ['ADSL'];
+state.selectedTarget = 'ADSL';
+applyGraphState({
+  study_id: 'PSY201',
+  run_id: 'run_ui_graph_requested_target',
+  requested_datasets: ['ADAE', 'ADCM'],
+  target_datasets: ['ADSL', 'ADAE', 'ADCM'],
+  runnable_datasets: ['ADAE', 'ADCM'],
+  blocked_datasets: [],
+  dependency_review_status: 'accepted',
+  datasets: {
+    ADAE: {status: 'needs_review', spec_state: {status: 'input_spec_ready'}, code_state: {status: 'generated', code_path: 'runs/x/code/build_adae.R'}},
+    ADCM: {status: 'needs_review', spec_state: {status: 'draft_generated', draft_spec_path: 'runs/x/spec/adcm.json'}, code_state: {}}
+  }
+});
+console.log(JSON.stringify({
+  selectedTarget: state.selectedTarget,
+  selectedTargets: state.selectedTargetsForPlan,
+  candidates: state.targetCandidates
+}));
+"""
+        script_path = TMP_ROOT / "ui_graph_requested_target.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["selectedTarget"], "ADAE")
+        self.assertEqual(result["selectedTargets"], ["ADAE", "ADCM"])
+        self.assertEqual(result["candidates"], ["ADAE", "ADCM", "ADSL"])
+
     def test_index_keeps_planning_selection_separate_from_active_target_view(self) -> None:
         client = TestClient(create_app())
 
@@ -3412,7 +3565,7 @@ console.log(JSON.stringify({
         self.assertNotIn("selected.unshift(state.selectedTarget)", selected_targets_body)
         self.assertNotIn("!selected.includes(state.selectedTarget)", selected_targets_body)
         apply_graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function generatedFor(dataset)", 1)[0]
-        self.assertIn("const requestedTargets = graph?.requested_datasets || [];", apply_graph_body)
+        self.assertIn("const requestedTargets = (graph?.requested_datasets || []).map", apply_graph_body)
         self.assertNotIn("selectedTargetsForPlan = Array.from(new Set([...selectedTargets(), ...graphTargets", apply_graph_body)
         self.assertNotIn("selectedTargetsForPlan = graphTargets", apply_graph_body)
         self.assertIn("function plannedTargetsForDisplay(plan, fallbackTargets = null)", html)
@@ -3916,6 +4069,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["status"], "needs_review")
         self.assertEqual(payload["current_interrupt"]["name"], "code_review")
         self.assertEqual(payload["next_action"], "review_code")
+        self.assertEqual(payload["requested_datasets"], ["ADAE"])
+        self.assertEqual(payload["target_datasets"], ["ADAE"])
         self.assertTrue(payload["graph_state_path"].endswith("graph_state.json"))
         self.assertEqual(payload["native_resume"]["available"], False)
         self.assertEqual(payload["native_resume"]["scope"], "none")

@@ -9282,3 +9282,49 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.4 UI Progress Requested-Target Recovery 切片
+
+已完成：
+
+- 在 graph-owned `/progress` read model 中加入 `requested_datasets`。
+- `RunProgressResponse` 现在接收 `requested_datasets`，所以 API 合同可以区分：
+  用户真正请求生成的 ADaM outputs，以及系统因依赖关系加入的 dependency targets。
+- 浏览器在 graph-state recovery 不可用、只有 progress read model 可用时，会从
+  `progress.requested_datasets` 恢复 `selectedTargetsForPlan`。
+- `applyRunProgress()` 和 `applyGraphState()` 现在会优先把 active detail target
+  恢复到用户请求的 dataset。
+  - 如果浏览器旧状态停在 `ADSL`，而当前 run 请求的是 `ADAE, ADCM`，且 `ADSL`
+    只是系统依赖，active target 会重置为 `ADAE`。
+  - `ADSL` 仍可作为 dependency/history card 展示，但不会被当作用户主请求输出。
+- 新增 UI 回归测试，覆盖 progress-only recovery 和 graph-state recovery 两条路径。
+
+边界：
+
+- 不改变 dependency planning、LLM 调用、draft-spec generation、code review、
+  R execution、static rules 或 reference ADaM handling。
+- 不新增 ADSL 特殊产品逻辑。规则是通用的：requested datasets 决定用户请求输出视图；
+  target datasets 仍表示更大的 dependency/run graph。
+- 不启用 durable native resume。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_does_not_default_target_selection_to_adae tests.test_api_phase8.Phase8ApiTests.test_index_recovers_planned_targets_from_progress_when_graph_state_unavailable tests.test_api_phase8.Phase8ApiTests.test_index_apply_graph_state_prefers_requested_target_over_dependency_target tests.test_api_phase8.Phase8ApiTests.test_index_keeps_planning_selection_separate_from_active_target_view tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_study_product_loop_starts_multiple_runnable_datasets tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_summary_reports_graph_owned_next_actions -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 164 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

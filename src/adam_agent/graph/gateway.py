@@ -4163,6 +4163,7 @@ class GraphGateway:
             "current_interrupt": _interrupt_payload(graph_state.current_interrupt),
             "dependency_review_status": graph_state.dependency_review_status,
             "plan_stale": bool(graph_state.dependency_plan.get("plan_stale")),
+            "requested_datasets": list(graph_state.requested_datasets),
             "target_datasets": list(graph_state.target_datasets),
             "runnable_datasets": list(graph_state.runnable_datasets),
             "blocked_datasets": list(graph_state.blocked_datasets),
