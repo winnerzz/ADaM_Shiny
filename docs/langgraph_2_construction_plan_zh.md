@@ -9782,3 +9782,43 @@ Ran 8 tests - OK，2 个可选 SQLite tests skipped
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
 Ran 1 test - OK
 ```
+
+### 2026-06-02 - LG3.13 Native Resume UI Reason Wording 切片
+
+已完成：
+
+- 浏览器 UI 开始消费 `native_resume.runtime_binding_status` /
+  `resume_unavailable_reason`，用于解释 recovery status。
+- Recovery progress step 现在能区分：
+  - saved graph-state recovery（`run_not_durable`）；
+  - run 有 durable checkpoint，但当前服务是 non-durable service
+    （`service_not_durable`）；
+  - durable service 绑定到了另一个 checkpoint（`checkpoint_path_mismatch`）。
+- Study Loop Result panel 复用同一个 reason wording 来解释可见的
+  native-resume queue status。
+- 增加 UI 回归：checkpoint-path mismatch 只显示为 status text，同时页面仍隐藏
+  `native-resume` endpoint text、explicit endpoint metadata 和按钮。
+
+边界：
+
+- 这只是 UI wording/read-model consumption。
+- 不增加 native-resume buttons 或 controls。
+- 不改变 `native-full-run/resume`、durable native resume gates、
+  LLM generation、R execution、dependency planning、static checks 或 sandbox
+  行为。
+
+子 agent 审查：
+
+- Pascal 只读审查返回 GO，没有阻塞性的 P1/P2 问题。
+- Pascal 确认这只是 status wording：没有暴露 native-resume button/action，
+  没有改变 route 行为，文档也没有夸大 durable native resume 能力。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_unavailable_reason_without_action -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 169 tests - OK
+```

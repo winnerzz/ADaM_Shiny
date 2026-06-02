@@ -2998,7 +2998,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!resume) return '';
       const detail = resume.available
         ? `Native resume: available for ${humanNativeResumeScope(resume.scope)}.`
-        : 'Native resume: off. Use the visible review buttons; restart recovery reads saved graph state.';
+        : nativeResumeUnavailableText(resume);
       return `
         <div class="progress-step ${resume.available ? 'done' : ''}">
           Recovery
@@ -3314,6 +3314,20 @@ INDEX_HTML = r"""<!doctype html>
       return titleFromToken(normalized);
     }
 
+    function nativeResumeUnavailableText(resume) {
+      const reason = String(resume?.resume_unavailable_reason || resume?.runtime_binding_status || '').trim();
+      if (reason === 'service_not_durable') {
+        return 'Native resume: off. This run records a durable checkpoint, but the current service was not opened with it. Use the visible review buttons.';
+      }
+      if (reason === 'checkpoint_path_mismatch') {
+        return 'Native resume: off. The current service is bound to a different checkpoint. Use the visible review buttons.';
+      }
+      if (reason === 'run_not_durable') {
+        return 'Native resume: off. This run uses saved graph state recovery, not a durable LangGraph checkpoint. Use the visible review buttons.';
+      }
+      return 'Native resume: off. Use the visible review buttons; restart recovery reads saved graph state.';
+    }
+
     function studyLoopNativeResumeQueueText(result) {
       const count = Number(result?.native_resume_queue_item_count || 0);
       const hasQueueItems = Boolean(
@@ -3327,7 +3341,7 @@ INDEX_HTML = r"""<!doctype html>
         : 'Review gates are visible in native resume queue.';
       const boundaryText = result?.native_resume_available
         ? 'Use explicit resume controls only when they are shown; this panel is status-only.'
-        : 'Use the visible review buttons; native resume is not callable in the default memory mode.';
+        : nativeResumeUnavailableText(result).replace(/^Native resume: off\. /, '');
       return `${countText} ${boundaryText}`;
     }
 

@@ -721,7 +721,9 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("graphInterruptLabel()", progress_body)
         self.assertIn("function studyStatusPill(progress, blocked, targets)", html)
         self.assertIn("function nativeResumeProgressNote()", html)
-        self.assertIn("Native resume: off. Use the visible review buttons; restart recovery reads saved graph state.", html)
+        self.assertIn("function nativeResumeUnavailableText(resume)", html)
+        self.assertIn("This run uses saved graph state recovery, not a durable LangGraph checkpoint.", html)
+        self.assertIn("current service is bound to a different checkpoint", html)
         self.assertNotIn("explicit_resume_endpoint", progress_body)
         self.assertNotIn("native-resume", progress_body)
         self.assertIn("function studyQualityText(rollup)", html)
@@ -795,7 +797,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Durable native resume is available", loop_body)
         self.assertIn("function studyLoopNativeResumeQueueText(result)", loop_body)
         self.assertIn("visible in native resume queue", loop_body)
-        self.assertIn("native resume is not callable in the default memory mode", loop_body)
+        self.assertIn("nativeResumeUnavailableText(result)", loop_body)
         self.assertIn("this panel is status-only", loop_body)
         self.assertIn("function humanNativeResumeScope(scope)", loop_body)
         self.assertIn("pilot graph interrupts only", loop_body)
@@ -845,6 +847,8 @@ state.lastStudyLoopResult = {
   native_resume_has_queue_items: true,
   native_resume_queue_item_count: 2,
   native_resume_available: false,
+  runtime_binding_status: 'run_not_durable',
+  resume_unavailable_reason: 'run_not_durable',
   started_datasets: ['ADAE'],
   dataset_results: [
     {dataset: 'ADAE', next_action: 'review_code', warnings: ['Static warning needs review.']}
@@ -884,7 +888,7 @@ console.log(JSON.stringify({
         self.assertIn("Recorded from the latest Start Runnable Datasets command.", result["detail"])
         self.assertNotIn("durable LangGraph checkpoint resume is not enabled", result["detail"])
         self.assertIn("2 review gates visible in native resume queue.", result["detail"])
-        self.assertIn("native resume is not callable in the default memory mode.", result["detail"])
+        self.assertIn("This run uses saved graph state recovery, not a durable LangGraph checkpoint.", result["detail"])
         self.assertEqual(result["status"], "review")
         self.assertIn("ADAE", result["html"])
         self.assertIn("Review Code", result["html"])
@@ -1123,6 +1127,89 @@ console.log(JSON.stringify({
         self.assertIn("Durable native resume is available for pilot graph interrupts only.", rendered)
         self.assertIn("1 review gate visible in native resume queue.", rendered)
         self.assertIn("this panel is status-only.", rendered)
+        self.assertNotIn("native-resume", rendered)
+        self.assertNotIn("explicit_resume_endpoint", rendered)
+        self.assertNotIn("<button", rendered)
+
+    def test_index_renders_native_resume_unavailable_reason_without_action(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_native_resume_reason' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+const progress = {
+  target_datasets: ['ADAE'],
+  native_resume: {
+    available: false,
+    scope: 'native_pilot_interrupts_only',
+    boundary: 'graph_state_projection_only',
+    runtime_binding_status: 'checkpoint_path_mismatch',
+    resume_unavailable_reason: 'checkpoint_path_mismatch',
+    explicit_resume_endpoint: 'POST /runs/{run_id}/datasets/{dataset}/native-resume'
+  },
+  study_loop_result: {
+    source: 'graph_progress',
+    native_resume_available: false,
+    native_resume_scope: 'native_pilot_interrupts_only',
+    runtime_binding_status: 'checkpoint_path_mismatch',
+    resume_unavailable_reason: 'checkpoint_path_mismatch',
+    native_resume_has_queue_items: true,
+    native_resume_queue_item_count: 1,
+    message: 'Existing progress recovered.',
+    started_datasets: [],
+    skipped_datasets: [{dataset: 'ADAE', reason: 'existing_graph_progress', next_action: 'review_code'}],
+    blocked_datasets: [],
+    review_queue: [{dataset: 'ADAE', name: 'code_review', reason: 'Review generated R code.'}]
+  }
+};
+applyRunProgress(progress);
+renderStudyProgress(state.targetCandidates, [], []);
+renderStudyLoopResult();
+console.log(JSON.stringify({
+  progressHtml: nodes.get('studyProgressSteps').innerHTML,
+  detail: nodes.get('studyLoopResultDetail').textContent,
+  loopHtml: nodes.get('studyLoopResultList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_native_resume_unavailable_reason.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        rendered = " ".join([result["progressHtml"], result["detail"], result["loopHtml"]])
+        self.assertIn("current service is bound to a different checkpoint", rendered)
+        self.assertIn("1 review gate visible in native resume queue.", rendered)
         self.assertNotIn("native-resume", rendered)
         self.assertNotIn("explicit_resume_endpoint", rendered)
         self.assertNotIn("<button", rendered)

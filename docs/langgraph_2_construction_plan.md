@@ -10476,3 +10476,45 @@ Ran 8 tests - OK, skipped 2 optional SQLite tests
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
 Ran 1 test - OK
 ```
+
+### 2026-06-02 - LG3.13 Native Resume UI Reason Wording Slice
+
+Completed:
+
+- Updated the browser UI to consume `native_resume.runtime_binding_status` /
+  `resume_unavailable_reason` when explaining recovery status.
+- The Recovery progress step now distinguishes:
+  - saved graph-state recovery (`run_not_durable`);
+  - a run with a durable checkpoint opened through a non-durable service
+    (`service_not_durable`);
+  - a durable service bound to a different checkpoint (`checkpoint_path_mismatch`).
+- The Study Loop Result panel now reuses the same reason wording for visible
+  native-resume queue status.
+- Added a UI regression proving a checkpoint-path mismatch is shown as status
+  text while the page still hides `native-resume` endpoint text, explicit
+  endpoint metadata, and buttons.
+
+Boundary:
+
+- This is UI wording/read-model consumption only.
+- This does not add native-resume buttons or controls.
+- This does not change `native-full-run/resume`, durable native resume gates,
+  LLM generation, R execution, dependency planning, static checks, or sandbox
+  behavior.
+
+Subagent review:
+
+- Read-only review by Pascal returned GO with no blocking P1/P2 findings.
+- Pascal confirmed this is status wording only: no native-resume button/action
+  is exposed, no route behavior changes, and the docs do not overclaim durable
+  native resume.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_exposes_graph_owned_progress_panel tests.test_api_phase8.Phase8ApiTests.test_index_exposes_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_study_loop_result_summary tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_available_as_status_not_action tests.test_api_phase8.Phase8ApiTests.test_index_renders_native_resume_unavailable_reason_without_action -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 169 tests - OK
+```
