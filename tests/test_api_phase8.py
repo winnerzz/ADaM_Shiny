@@ -1944,6 +1944,295 @@ console.log(JSON.stringify({
         self.assertTrue(result["reviewApproved"])
         self.assertTrue(result["graphStillHasContract"])
 
+    def test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_lg3_progress_contract' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('reviewer').value = 'tester';
+node('modelMode').value = 'mock';
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/native-full-run/resume')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_lg3_progress_contract',
+      dataset: 'ADAE',
+      phase: 'reviewed',
+      last_interrupt: 'code_review',
+      current_interrupt: null,
+      decision: 'approve',
+      approved: true,
+      executed: false,
+      terminal_failure: false,
+      graph_state_path: 'runs/run_ui_lg3_progress_contract/graph_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: false, json: async () => ({detail: 'graph_state unavailable in this browser test'})};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({
+      requested_datasets: ['ADAE'],
+      target_datasets: ['ADAE'],
+      runtime_persistence: {
+        native_dataset_full_run: {
+          dataset: 'ADAE',
+          contract: 'single_dataset_spec_code_review_execute',
+          boundary: 'lg3_backend_contract'
+        }
+      },
+      datasets: [{
+        dataset: 'ADAE',
+        status: 'ready_to_execute',
+        next_action: 'execute_approved_code',
+        action_label: 'Run the approved R code locally.',
+        code_status: 'approved',
+        blocked: false
+      }]
+    })};
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_lg3_progress_contract', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.graphState = null;
+state.runProgress = {
+  requested_datasets: ['ADAE'],
+  target_datasets: ['ADAE'],
+  runtime_persistence: {
+    native_dataset_full_run: {
+      dataset: 'ADAE',
+      contract: 'single_dataset_spec_code_review_execute',
+      boundary: 'lg3_backend_contract'
+    }
+  },
+  datasets: [{
+    dataset: 'ADAE',
+    next_action: 'review_code',
+    action_label: 'Review generated R code before execution.',
+    code_status: 'generated',
+    blocked: false
+  }]
+};
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_lg3_progress_contract',
+    status: 'generated',
+    code_path: 'runs/run_ui_lg3_progress_contract/code/build_adae.R',
+    generated_code: 'adae <- ae'
+  }
+};
+await approveCode();
+console.log(JSON.stringify({
+  nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
+  legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
+  graphStateLoaded: state.graphState !== null,
+  progressStillHasContract: hasNativeFullRunContract('ADAE'),
+  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true
+}));
+"""
+        script_path = TMP_ROOT / "ui_lg3_progress_contract_resume.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["nativeResumeCalled"])
+        self.assertFalse(result["legacyCodeReviewCalled"])
+        self.assertFalse(result["graphStateLoaded"])
+        self.assertTrue(result["progressStillHasContract"])
+        self.assertTrue(result["reviewNativeFullRun"])
+
+    def test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_stale_lg3_progress' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('reviewer').value = 'tester';
+node('modelMode').value = 'mock';
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/code-review')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_stale_lg3_progress',
+      dataset: 'ADAE',
+      decision: 'approve',
+      approved: true,
+      graph_state_path: 'runs/run_ui_stale_lg3_progress/graph_state.json',
+      workflow_state_path: 'runs/run_ui_stale_lg3_progress/workflow_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_stale_lg3_progress',
+      target_datasets: ['ADAE'],
+      runtime_persistence: {},
+      datasets: {
+        ADAE: {
+          status: 'pending',
+          code_state: {status: 'approved', code_path: 'runs/run_ui_stale_lg3_progress/code/build_adae.R'}
+        }
+      }
+    })};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({
+      requested_datasets: ['ADAE'],
+      target_datasets: ['ADAE'],
+      runtime_persistence: {
+        native_dataset_full_run: {
+          dataset: 'ADAE',
+          contract: 'single_dataset_spec_code_review_execute',
+          boundary: 'lg3_backend_contract'
+        }
+      },
+      datasets: [{
+        dataset: 'ADAE',
+        status: 'ready_to_execute',
+        next_action: 'execute_approved_code',
+        action_label: 'Run the approved R code locally.',
+        code_status: 'approved',
+        blocked: false
+      }]
+    })};
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_stale_lg3_progress', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.graphState = {runtime_persistence: {}};
+state.runProgress = {
+  requested_datasets: ['ADAE'],
+  target_datasets: ['ADAE'],
+  runtime_persistence: {
+    native_dataset_full_run: {
+      dataset: 'ADAE',
+      contract: 'single_dataset_spec_code_review_execute',
+      boundary: 'lg3_backend_contract'
+    }
+  },
+  datasets: [{
+    dataset: 'ADAE',
+    next_action: 'review_code',
+    action_label: 'Review generated R code before execution.',
+    code_status: 'generated',
+    blocked: false
+  }]
+};
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_stale_lg3_progress',
+    status: 'generated',
+    code_path: 'runs/run_ui_stale_lg3_progress/code/build_adae.R',
+    generated_code: 'adae <- ae'
+  }
+};
+await approveCode();
+console.log(JSON.stringify({
+  nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
+  legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
+  graphStillLoaded: state.graphState !== null,
+  hasContractAfterRefresh: hasNativeFullRunContract('ADAE'),
+  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true
+}));
+"""
+        script_path = TMP_ROOT / "ui_stale_lg3_progress_contract.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertFalse(result["nativeResumeCalled"])
+        self.assertTrue(result["legacyCodeReviewCalled"])
+        self.assertTrue(result["graphStillLoaded"])
+        self.assertFalse(result["hasContractAfterRefresh"])
+        self.assertFalse(result["reviewNativeFullRun"])
+
     def test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists(self) -> None:
         client = TestClient(create_app())
 

@@ -9328,3 +9328,51 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.5 UI Full-Run Contract Progress 恢复切片
+
+已完成：
+
+- 修复浏览器审批路径：当 `GET /graph-state` 不可用，但 `GET /progress`
+  仍带有 graph-owned full-run contract 时，UI 继续使用 LG3 resume 路径。
+- `hasNativeFullRunContract()` 现在按这个优先级读取合同 metadata：
+  - 如果 graph state 可用，只信 `state.graphState.runtime_persistence`；
+  - 只有 graph state 不可用时，才回退读取 `state.runProgress.runtime_persistence`。
+- 这样 progress-only 恢复场景下，code approval 会继续调用
+  `/native-full-run/resume`，不会掉回旧的 `/code-review`。
+- 新增 stale progress regression：如果 graph state 存在但没有 LG3 contract，
+  旧 progress metadata 不能覆盖它。UI 会走 legacy compatibility path，
+  而不是假装 graph contract 仍然存在。
+
+边界：
+
+- 这不是新增一个产品状态源。只要 graph state 能加载，它仍是事实来源。
+- 不在默认 memory checkpointer 下启用 durable native resume。
+- 不改变 dependency planning、LLM 调用、R execution、static rules、
+  reference ADaM handling 或 ADSL routing。
+
+子 agent 审查：
+
+- 初次 `gpt-5.5` 只读审查结论为 GO。
+- 审查建议补一个负向回归：graph state 必须优先于 stale progress metadata。
+  该修正已在最终验证前落实。
+- 最终 `gpt-5.5` 只读复审结论为 GO，没有发现 LG3.5 切片的重大业务或逻辑漏洞。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing tests.test_api_phase8.Phase8ApiTests.test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

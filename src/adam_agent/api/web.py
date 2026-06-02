@@ -2257,13 +2257,20 @@ INDEX_HTML = r"""<!doctype html>
 
     function hasNativeFullRunContract(target) {
       const normalized = String(target || '').toUpperCase();
-      const contract = state.graphState?.runtime_persistence?.native_dataset_full_run || {};
+      if (state.graphState) {
+        return runtimeHasNativeFullRunContract(state.graphState.runtime_persistence || {}, normalized);
+      }
+      return runtimeHasNativeFullRunContract(state.runProgress?.runtime_persistence || {}, normalized);
+    }
+
+    function runtimeHasNativeFullRunContract(runtime, normalized) {
+      const contract = runtime?.native_dataset_full_run || {};
       if (String(contract.dataset || '').toUpperCase() === normalized
         && String(contract.contract || '') === 'single_dataset_spec_code_review_execute'
         && String(contract.boundary || '') === 'lg3_backend_contract') {
         return true;
       }
-      const studyContract = state.graphState?.runtime_persistence?.native_study_product_loop?.full_run_datasets?.[normalized] || {};
+      const studyContract = runtime?.native_study_product_loop?.full_run_datasets?.[normalized] || {};
       return String(studyContract.contract || '') === 'single_dataset_spec_code_review_execute'
         && String(studyContract.boundary || '') === 'lg3_backend_contract';
     }

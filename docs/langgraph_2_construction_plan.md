@@ -9996,3 +9996,55 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.5 UI Full-Run Contract Recovery From Progress Slice
+
+Completed:
+
+- Recovered the LG3 browser approval path when `GET /graph-state` is unavailable
+  but `GET /progress` still exposes the graph-owned full-run contract.
+- `hasNativeFullRunContract()` now reads contract metadata from:
+  - canonical `state.graphState.runtime_persistence` when graph state is
+    available;
+  - `state.runProgress.runtime_persistence` only when graph state is missing.
+- This keeps code approval on `/native-full-run/resume` for progress-only LG3
+  recovery instead of falling back to legacy `/code-review`.
+- Added a regression for stale progress metadata: if graph state exists and has
+  no LG3 contract, progress metadata cannot override it. The UI then uses the
+  legacy compatibility path rather than pretending the graph contract exists.
+
+Boundary:
+
+- This does not create a new source of product truth. Graph state remains the
+  source of truth whenever it can be loaded.
+- This does not enable durable native resume under the default memory
+  checkpointer.
+- This does not change dependency planning, LLM calls, R execution, static
+  rules, reference ADaM handling, or ADSL routing.
+
+Subagent review:
+
+- Initial read-only `gpt-5.5` review returned GO.
+- The reviewer requested one negative regression: graph state must outrank stale
+  progress metadata. That refinement was implemented before final verification.
+- Final read-only `gpt-5.5` review returned GO with no major business or logic
+  flaws found in the LG3.5 slice.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing tests.test_api_phase8.Phase8ApiTests.test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 167 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 155 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```
