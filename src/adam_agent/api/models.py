@@ -181,6 +181,39 @@ class NativeDatasetResumeResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class NativeDatasetFullRunResumeRequest(StrictBaseModel):
+    """Resume an LG3 full-run human gate through the compatibility gateway."""
+
+    study_dir: NonEmptyStr
+    reviewer: str = "local_user"
+    decision: str
+    notes: str = ""
+    execute_after_approval: bool = False
+    rscript_path: str | None = None
+    config_path: str | None = None
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class NativeDatasetFullRunResumeResponse(StrictBaseModel):
+    """Result from resuming one LG3 full-run draft/code review gate."""
+
+    study_id: str
+    run_id: str
+    dataset: str
+    phase: str
+    last_interrupt: str | None = None
+    current_interrupt: dict[str, Any] | None = None
+    decision: str
+    approved: bool
+    executed: bool = False
+    terminal_failure: bool = False
+    next_action: str = ""
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str
+    workflow_state_path: str | None = None
+
+
 class DatasetProgressItem(StrictBaseModel):
     """Graph-owned next-step summary for one dataset."""
 

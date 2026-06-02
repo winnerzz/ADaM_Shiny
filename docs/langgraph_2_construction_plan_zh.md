@@ -9148,3 +9148,77 @@ Ran 155 tests - OK
   - API path 字段会把空字符串归一成 `None`；
   - study-loop metadata 新增 `dispatch_status`，dependency-blocked 且没有启动 dataset
     的场景会明确记录为 `no_dataset_dispatched`。
+
+### 2026-06-02 - LG3.2 Full-Run Review Resume 兼容切片
+
+已完成：
+
+- 新增一个很窄的 LG3 full-run review resume API：
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume`。
+- 这个新 endpoint 只允许已经在 canonical graph state 里带有 LG3 full-run
+  contract 的 dataset 使用。普通 split-flow run 调用它会 fail closed，不能借它
+  形成第二条审核路径。
+- `GraphGateway.resume_native_dataset_full_run()` 不再依赖 in-memory
+  DatasetGraph `Command(resume=...)` checkpoint 来完成跨 HTTP 请求的 review
+  continuation。
+  - draft-spec approval 会先写正式 draft-spec review artifact，然后重新进入
+    product node，生成代码并停在 `code_review`。
+  - code approval 会先写正式 code-review artifact；除非调用方显式传入
+    `execute_after_approval=true`，否则不会执行 R。
+- 浏览器现在在 active dataset 具有 LG3 full-run contract 时，会用这个
+  LG3 full-run resume endpoint 处理 draft-spec approval 和 code approval。
+  contract 来源可以是：
+  - 单 dataset 的 `native_dataset_full_run`；
+  - study-level 的 `native_study_product_loop.full_run_datasets` 摘要。
+- 旧 `/draft-spec-review` 和 `/code-review` endpoint 仍保留给非 LG3 兼容流。
+
+边界：
+
+- 这不是 durable native LangGraph checkpoint resume。默认 memory checkpointer
+  下，既有 `/native-resume` endpoint 仍然 fail closed。
+- 这不会自动批准任何人工 gate。
+- UI 的 code approval 按钮不会运行 R。approved R execution 仍是后续显式动作；
+  只有后端调用方明确传入 `execute_after_approval=true` 时才会执行。
+- 这是 LG3 full-run contract 的 graph-state-backed 兼容 resume，不代表完整
+  native interrupt/checkpointer resume 已经完成。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_accepts_study_loop_full_run_dataset_contract tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_code_without_durable_resume tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_rejects_non_lg3_split_flow -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 162 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```
+
+子 agent 审查：
+
+- 第一轮 `gpt-5.5` 只读审查发现一个 P1：浏览器会识别 study-level
+  `native_study_product_loop.full_run_datasets[DATASET]` contract，但 gateway
+  resume guard 当时只识别顶层 `native_dataset_full_run` contract。
+- 已通过新增 `_has_lg3_full_run_resume_contract()` 修复，并在 review resume
+  写入下一版 graph state 时保留进入审核前的 native runtime persistence，避免
+  丢失 study-loop 调度信息。
+- 后续 `gpt-5.5` 只读复审由 Newton 返回 GO，没有 P1/P2 blocker。复审还额外
+  跑了 4 个 focused tests，覆盖：code approval 不依赖 durable resume、
+  study-loop dataset contract resume、draft approval 继续到 code review，以及
+  默认 memory checkpointer 下 `/native-resume` fail closed。
+- 保留一个非阻塞后续收窄项：service 当前在 approve 时会先解析 LLM config，
+  即使 code approval 本身不需要 LLM call。它不会调用 LLM，也不会运行 R；本切片
+  不让 service 预读 graph internals，以保持 thin-service 边界。

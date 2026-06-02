@@ -9800,3 +9800,82 @@ Subagent review:
   - API path fields now normalize blank strings to `None`;
   - study-loop metadata now records `dispatch_status`, including
     `no_dataset_dispatched` for dependency-blocked no-start runs.
+
+### 2026-06-02 - LG3.2 Full-Run Review Resume Compatibility Slice
+
+Completed:
+
+- Added a narrow LG3 full-run review resume API:
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run/resume`.
+- The new endpoint resumes only datasets that already have an LG3 full-run
+  contract in canonical graph state. It rejects ordinary split-flow runs rather
+  than creating a second review path.
+- `GraphGateway.resume_native_dataset_full_run()` no longer depends on an
+  in-memory DatasetGraph `Command(resume=...)` checkpoint for cross-request
+  review continuation.
+  - Draft-spec approval writes the formal draft-spec review artifact, then
+    re-enters the product node to generate code and stop at `code_review`.
+  - Code approval writes the formal code-review artifact and does not execute R
+    unless `execute_after_approval=true` is explicitly supplied.
+- The browser now uses this LG3 full-run resume endpoint for draft-spec and
+  code approval when the active dataset is covered by either:
+  - the single-dataset `native_dataset_full_run` contract; or
+  - the study-level `native_study_product_loop.full_run_datasets` summary.
+- The old `/draft-spec-review` and `/code-review` endpoints remain for
+  non-LG3 compatibility flows.
+
+Boundary:
+
+- This is not durable native LangGraph checkpoint resume. The existing
+  `/native-resume` endpoint still fails closed under the default memory
+  checkpointer.
+- This does not auto-approve any review gate.
+- This does not run R from the UI code-approval button. Approved R execution
+  remains an explicit later action unless backend callers deliberately set
+  `execute_after_approval=true`.
+- This is a graph-state-backed compatibility resume for the LG3 full-run
+  contract, not a claim that complete native interrupt/checkpointer resume is
+  finished.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_accepts_study_loop_full_run_dataset_contract tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_code_without_durable_resume tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_rejects_non_lg3_split_flow -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_repair_execution_keeps_followup_context tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_revise_draft_review_keeps_followup_context -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_index_primary_actions_follow_graph_progress_next_action tests.test_api_phase8.Phase8ApiTests.test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists tests.test_api_phase8.Phase8ApiTests.test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 151 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 162 tests - OK
+
+python -B -m compileall -q src tests
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```
+
+Subagent review:
+
+- Initial `gpt-5.5` read-only review found one P1: the browser recognized
+  study-level `native_study_product_loop.full_run_datasets[DATASET]` contracts,
+  but the gateway resume guard recognized only the top-level
+  `native_dataset_full_run` contract.
+- Fixed by adding `_has_lg3_full_run_resume_contract()` and by preserving prior
+  native runtime persistence when the review resume writes the next graph state.
+- Follow-up `gpt-5.5` read-only review by Newton returned GO, with no P1/P2
+  blockers. The reviewer also ran four focused tests covering code approval
+  without durable resume, study-loop dataset contract resume, draft approval
+  continuation, and memory-checkpointer `/native-resume` fail-closed behavior.
+- Non-blocking note kept for later narrowing: service currently resolves LLM
+  config on approve before delegating to the gateway, even when a code approval
+  does not need an LLM call. This does not call the LLM or run R, and keeping
+  the service from pre-reading graph internals preserves the thin-service
+  boundary in this slice.

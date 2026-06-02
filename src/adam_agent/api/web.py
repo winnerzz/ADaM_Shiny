@@ -2239,6 +2239,32 @@ INDEX_HTML = r"""<!doctype html>
       return ['generate_code', 'repair_generated_code', 'revise_approved_spec'].includes(String(progress?.next_action || ''));
     }
 
+    function hasNativeFullRunContract(target) {
+      const normalized = String(target || '').toUpperCase();
+      const contract = state.graphState?.runtime_persistence?.native_dataset_full_run || {};
+      if (String(contract.dataset || '').toUpperCase() === normalized
+        && String(contract.contract || '') === 'single_dataset_spec_code_review_execute'
+        && String(contract.boundary || '') === 'lg3_backend_contract') {
+        return true;
+      }
+      const studyContract = state.graphState?.runtime_persistence?.native_study_product_loop?.full_run_datasets?.[normalized] || {};
+      return String(studyContract.contract || '') === 'single_dataset_spec_code_review_execute'
+        && String(studyContract.boundary || '') === 'lg3_backend_contract';
+    }
+
+    function nativeFullRunReviewRequestBody(extra = {}) {
+      return JSON.stringify({
+        study_dir: studyDir(),
+        reviewer: byId('reviewer').value.trim() || 'local_user',
+        decision: 'approve',
+        notes: byId('reviewNotes').value.trim(),
+        config_path: byId('configPath').value.trim() || null,
+        rscript_path: byId('rscriptPath').value.trim() || null,
+        ...llmOverridePayload(),
+        ...extra
+      });
+    }
+
     function actionAvailability() {
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
@@ -2742,22 +2768,42 @@ INDEX_HTML = r"""<!doctype html>
       if (!draft) return;
       beginOperation('Approving draft spec', `Recording approval for ${draft.dataset} draft spec in this run.`);
       try {
-        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/draft-spec-review`, {
+        const useNativeFullRun = hasNativeFullRunContract(draft.dataset);
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'draft-spec-review'}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            study_dir: studyDir(),
-            reviewer: byId('reviewer').value.trim() || 'local_user',
-            decision: 'approve',
-            notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'
-          })
+          body: useNativeFullRun
+            ? nativeFullRunReviewRequestBody({notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'})
+            : JSON.stringify({
+                study_dir: studyDir(),
+                reviewer: byId('reviewer').value.trim() || 'local_user',
+                decision: 'approve',
+                notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'
+              })
         });
-        state.draftSpecReviewByDataset[payload.dataset] = payload;
+        state.draftSpecReviewByDataset[payload.dataset] = {
+          ...payload,
+          approved: payload.approved !== false,
+          native_full_run: useNativeFullRun
+        };
         await refreshGraphReadModels();
-        setPill('codeStatus', 'not generated');
-        addEvent('Draft spec approved', `${payload.dataset} draft spec can now be used for R code generation.`);
-        completeOperation('Draft spec approved', `${payload.dataset} can now use the approved draft spec for code generation.`);
+        await loadReviewSummary(runId());
+        const stillWaitingForDraft = targetInDraftSpecReview(payload.dataset);
+        setPill('codeStatus', stillWaitingForDraft ? 'draft review' : generatedFor(payload.dataset) ? 'review' : 'not generated');
+        addEvent(
+          'Draft spec approved',
+          useNativeFullRun
+            ? `${payload.dataset} draft spec was approved through the LG3 full-run gate.`
+            : `${payload.dataset} draft spec can now be used for R code generation.`
+        );
+        completeOperation(
+          useNativeFullRun && generatedFor(payload.dataset) ? 'Code review ready' : 'Draft spec approved',
+          useNativeFullRun && generatedFor(payload.dataset)
+            ? `${payload.dataset} continued to generated-code review. R has not been executed.`
+            : `${payload.dataset} can now use the approved draft spec for code generation.`
+        );
         renderDraftSpecPane();
+        renderPane();
         renderActionAvailability();
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
@@ -3958,17 +4004,24 @@ INDEX_HTML = r"""<!doctype html>
       );
       setPill('codeStatus', 'review');
       try {
-        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/code-review`, {
+        const useNativeFullRun = hasNativeFullRunContract(generated.dataset);
+        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'code-review'}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            study_dir: studyDir(),
-            reviewer: byId('reviewer').value.trim() || 'local_user',
-            decision: 'approve',
-            notes: byId('reviewNotes').value.trim()
-          })
+          body: useNativeFullRun
+            ? nativeFullRunReviewRequestBody({execute_after_approval: false})
+            : JSON.stringify({
+                study_dir: studyDir(),
+                reviewer: byId('reviewer').value.trim() || 'local_user',
+                decision: 'approve',
+                notes: byId('reviewNotes').value.trim()
+              })
         });
-        state.reviewByDataset[generated.dataset] = state.review;
+        state.reviewByDataset[generated.dataset] = {
+          ...state.review,
+          approved: state.review.approved !== false,
+          native_full_run: useNativeFullRun
+        };
         await refreshGraphReadModels();
         setPill('codeStatus', 'approved');
         addEvent('Code approved', `${generated.dataset} code was approved. R has not been executed yet.`);

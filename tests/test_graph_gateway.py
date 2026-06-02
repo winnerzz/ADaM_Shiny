@@ -3234,7 +3234,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["phase"], "executed")
         self.assertTrue(contract["approved"])
         self.assertTrue(contract["executed_after_approval"])
-        self.assertIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
+        self.assertEqual(contract["last_interrupt"], "code_review")
+        self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
         self.assertTrue(
             (
                 study_dir

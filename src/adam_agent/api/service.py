@@ -31,6 +31,7 @@ from adam_agent.api.models import (
     GenerateCodeResponse,
     LLMConnectionTestResponse,
     NativeDatasetFullRunStartResponse,
+    NativeDatasetFullRunResumeResponse,
     NativeDatasetResumeResponse,
     NativeStudyDatasetStartResult,
     NativeStudyStartResponse,
@@ -638,6 +639,73 @@ def resume_native_dataset_interrupt(run_id: str, dataset: str, request: Any) -> 
         if dataset_state is not None and dataset_state.current_interrupt is not None
         else None,
         executed=executed,
+        next_action=next_action,
+        **_gateway_projection_paths(result),
+    )
+
+
+def resume_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> NativeDatasetFullRunResumeResponse:
+    """Resume an LG3 full-run review gate without enabling durable native resume."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    decision = request.decision.strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise ApiServiceError("LG3 full-run review decision must be approve or reject.")
+    provider_config: Any | None = None
+    exposure: Any | None = None
+    if decision == "approve":
+        config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_dir.name, run_id=run_id)
+        provider_config = _provider_config_from_override(
+            getattr(request, "llm_provider_override", None),
+            fallback=config.llm_provider,
+        )
+        exposure = _exposure_config_from_override(
+            getattr(request, "llm_exposure_override", None),
+            fallback=config.llm_exposure,
+        )
+    try:
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset=target,
+                decision=decision,
+                reviewer=request.reviewer,
+                notes=request.notes,
+                execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
+                llm_provider=provider_config.__dict__ if provider_config is not None else None,
+                llm_exposure=exposure.model_dump(mode="json") if exposure is not None else None,
+                llm_client_builder=build_llm_client if provider_config is not None else None,
+                target_context_builder=build_target_llm_context if provider_config is not None else None,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    dataset_state = result.graph_state.datasets.get(target)
+    current_interrupt = (
+        dataset_state.current_interrupt.model_dump(mode="json")
+        if dataset_state is not None and dataset_state.current_interrupt is not None
+        else None
+    )
+    next_action = str(current_interrupt.get("name") if isinstance(current_interrupt, dict) else "")
+    execution = result.execution
+    return NativeDatasetFullRunResumeResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        dataset=target,
+        phase=result.phase,
+        last_interrupt=str(
+            (result.graph_state.runtime_persistence.get("native_dataset_full_run") or {}).get("last_interrupt") or ""
+        )
+        or None,
+        current_interrupt=current_interrupt,
+        decision=result.decision,
+        approved=result.approved,
+        executed=execution is not None,
+        terminal_failure=bool(execution.terminal_failure) if execution is not None else False,
         next_action=next_action,
         **_gateway_projection_paths(result),
     )
