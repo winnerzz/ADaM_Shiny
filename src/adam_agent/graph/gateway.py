@@ -5597,6 +5597,12 @@ def _native_resume_progress(
         runtime_resume_available=runtime_can_resume,
         active_checkpoint_path=active_checkpoint_path,
     )
+    runtime_binding_status = _native_resume_runtime_binding_status(
+        state_resume_available=state_resume_available,
+        runtime_can_resume=runtime_can_resume,
+        checkpoint_paths_match=checkpoint_paths_match,
+        native_resume_available=native_resume_available,
+    )
     boundary = "durable_native_interrupt_resume" if native_resume_available else "graph_state_projection_only"
     explicit_resume_endpoint = "POST /runs/{run_id}/datasets/{dataset}/native-resume"
     interrupt_queue = _native_resume_interrupt_queue(state, native_resume_available=native_resume_available)
@@ -5641,7 +5647,29 @@ def _native_resume_progress(
         "message": message,
         "runtime_can_resume": runtime_can_resume,
         "checkpoint_paths_match": checkpoint_paths_match,
+        "runtime_binding_status": runtime_binding_status,
+        "resume_unavailable_reason": "" if native_resume_available else runtime_binding_status,
     }
+
+
+def _native_resume_runtime_binding_status(
+    *,
+    state_resume_available: bool,
+    runtime_can_resume: bool,
+    checkpoint_paths_match: bool,
+    native_resume_available: bool,
+) -> str:
+    """Return a compact read-model reason for native-resume availability."""
+
+    if native_resume_available:
+        return "bound"
+    if not state_resume_available:
+        return "run_not_durable"
+    if not runtime_can_resume:
+        return "service_not_durable"
+    if not checkpoint_paths_match:
+        return "checkpoint_path_mismatch"
+    return "unavailable"
 
 
 def _native_resume_checkpoint_paths_match(recorded_path: Any, active_path: str | None) -> bool:

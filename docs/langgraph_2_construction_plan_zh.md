@@ -9736,3 +9736,49 @@ Passed，只有 CRLF conversion warnings
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer -v
 Ran 3 tests - OK
 ```
+
+### 2026-06-02 - LG3.12 Native Resume Read-Model Reason 切片
+
+已完成：
+
+- 在 native-resume read model 中增加明确原因字段：
+  - `runtime_binding_status`；
+  - `resume_unavailable_reason`。
+- status 会区分：
+  - `run_not_durable`：当前 run 没有 durable native checkpointer 记录；
+  - `service_not_durable`：run 记录了 durable native resume，但当前服务没有用
+    durable checkpointer 打开；
+  - `checkpoint_path_mismatch`：服务启用了 durable resume，但没有绑定到该 run
+    记录的 checkpoint path；
+  - `bound`：当前服务已经绑定到记录的 durable checkpoint。
+- 保留 `runtime_can_resume` 和 `checkpoint_paths_match` 给技术调用方，同时给
+  UI/API 用户一个不需要读取本地 checkpoint path 的单一原因码。
+- 增加 gateway 覆盖：default memory mode、durable-record/service-memory mode、
+  checkpoint-path mismatch，以及安装可选 SQLite package 时的 SQLite-bound mode。
+- 增加 API 覆盖：确认 `/progress` 在默认 memory path 下暴露这些新原因字段。
+
+边界：
+
+- 这只是 read-model clarity。
+- 不启用 durable native resume。
+- 不额外暴露本地 checkpoint path；仍只使用已有 runtime persistence metadata。
+- 不改变 `native-full-run/resume`、LLM generation、R execution、
+  dependency planning、static checks、UI routing 或 sandbox 行为。
+
+子 agent 审查：
+
+- Pascal 只读审查返回 GO，没有 P1/P2 阻塞问题。
+- Pascal 确认这是 read-model-only：真实 native resume 仍由
+  `_native_resume_runtime_bound_to_state()` 和
+  `resume_native_dataset_interrupt()` 控制。新增字段只从既有布尔值派生，
+  不启用 resume controls，也不额外暴露 checkpoint path 细节。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_reports_checkpoint_path_mismatch_reason tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 8 tests - OK，2 个可选 SQLite tests skipped
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 1 test - OK
+```

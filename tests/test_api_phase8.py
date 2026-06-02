@@ -4523,6 +4523,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["native_resume"]["available"], False)
         self.assertEqual(payload["native_resume"]["scope"], "none")
         self.assertEqual(payload["native_resume"]["boundary"], "graph_state_projection_only")
+        self.assertEqual(payload["native_resume"]["runtime_binding_status"], "run_not_durable")
+        self.assertEqual(payload["native_resume"]["resume_unavailable_reason"], "run_not_durable")
         self.assertEqual(
             payload["native_resume"]["explicit_resume_endpoint"],
             "POST /runs/{run_id}/datasets/{dataset}/native-resume",

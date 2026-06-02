@@ -647,6 +647,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(progress["native_resume"]["available"])
         self.assertEqual(progress["native_resume"]["scope"], "native_pilot_interrupts_only")
         self.assertEqual(progress["native_resume"]["boundary"], "durable_native_interrupt_resume")
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "bound")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "")
         self.assertEqual(
             progress["native_resume"]["explicit_resume_endpoint"],
             "POST /runs/{run_id}/datasets/{dataset}/native-resume",
@@ -689,6 +691,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(queue[0]["default_review_path"], "split_flow_review_endpoints")
         self.assertEqual([item["action"] for item in queue[0]["available_actions"]], ["approve", "reject"])
         self.assertFalse(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "run_not_durable")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "run_not_durable")
         self.assertTrue(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(progress["study_loop_result"], {})
@@ -800,6 +804,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
         self.assertFalse(progress["native_resume"]["runtime_can_resume"])
         self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "service_not_durable")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "service_not_durable")
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
         self.assertFalse(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
@@ -852,6 +858,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
         self.assertFalse(progress["native_resume"]["runtime_can_resume"])
         self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "service_not_durable")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "service_not_durable")
         self.assertEqual(progress["native_resume"]["interrupt_queue"], [])
         self.assertFalse(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 0)
@@ -900,6 +908,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["native_resume"]["boundary"], "graph_state_projection_only")
         self.assertFalse(progress["native_resume"]["runtime_can_resume"])
         self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "service_not_durable")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "service_not_durable")
         self.assertTrue(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(queue[0]["dataset"], "ADAE")
@@ -907,6 +917,57 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(queue[0]["resume_endpoint"])
         self.assertEqual(queue[0]["default_review_path"], "split_flow_review_endpoints")
         self.assertIn("current service is not opened with a durable checkpointer", progress["native_resume"]["message"])
+
+    def test_progress_native_resume_reports_checkpoint_path_mismatch_reason(self) -> None:
+        study_dir = _workspace_dir("lg3_native_resume_checkpoint_mismatch_reason") / "PSY201"
+        study_dir.mkdir(parents=True)
+        run_id = "run_lg3_native_resume_checkpoint_mismatch_reason"
+        recorded_path = study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite"
+        active_path = study_dir / "runs" / run_id / "other_langgraph_checkpoints.sqlite"
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(name="code_review", dataset="ADAE", reason="Review ADAE code."),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_native_resume_checkpoint_mismatch_reason",
+            runtime_persistence_extra={
+                "native_interrupt_resume": True,
+                "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+                "restart_recovery_source": "langgraph_sqlite_checkpointer",
+                "langgraph_checkpoint_path": str(recorded_path.as_posix()),
+            },
+        )
+
+        with (
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(active_path.as_posix())),
+        ):
+            progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+
+        queue = progress["native_resume"]["interrupt_queue"]
+        self.assertFalse(progress["native_resume"]["available"])
+        self.assertTrue(progress["native_resume"]["runtime_can_resume"])
+        self.assertFalse(progress["native_resume"]["checkpoint_paths_match"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "checkpoint_path_mismatch")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "checkpoint_path_mismatch")
+        self.assertEqual(queue[0]["dataset"], "ADAE")
+        self.assertFalse(queue[0]["can_resume"])
+        self.assertIn("checkpoint path does not match", progress["native_resume"]["message"])
 
     def test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available(self) -> None:
         study_dir = _workspace_dir("lg2_native_resume_queue_sqlite") / "PSY201"
@@ -948,6 +1009,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertTrue(queue[0]["can_resume"])
         self.assertEqual(queue[0]["resume_endpoint"], "POST /runs/{run_id}/datasets/{dataset}/native-resume")
         self.assertTrue(progress["native_resume"]["available"])
+        self.assertEqual(progress["native_resume"]["runtime_binding_status"], "bound")
+        self.assertEqual(progress["native_resume"]["resume_unavailable_reason"], "")
         self.assertTrue(progress["native_resume"]["has_queue_items"])
         self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(progress["study_loop_result"], {})

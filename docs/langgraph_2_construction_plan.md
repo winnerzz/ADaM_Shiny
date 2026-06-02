@@ -10425,3 +10425,54 @@ Verification so far:
 python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_closed_without_durable_checkpointer tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_passes_llm_config_for_draft_continuation tests.test_api_phase8.Phase8ApiTests.test_native_resume_endpoint_fails_before_llm_config_when_memory_checkpointer -v
 Ran 3 tests - OK
 ```
+
+### 2026-06-02 - LG3.12 Native Resume Read-Model Reason Slice
+
+Completed:
+
+- Added explicit native-resume read-model reason fields:
+  - `runtime_binding_status`;
+  - `resume_unavailable_reason`.
+- The status distinguishes:
+  - `run_not_durable`: this run has no durable native checkpointer record;
+  - `service_not_durable`: the run records durable native resume, but the
+    current service is not opened with a durable checkpointer;
+  - `checkpoint_path_mismatch`: the service has durable resume enabled, but it
+    is not bound to the run's recorded checkpoint path;
+  - `bound`: the current service is bound to the recorded durable checkpoint.
+- Kept `runtime_can_resume` and `checkpoint_paths_match` for technical callers,
+  while giving UI/API users a single reason code that does not require reading
+  local checkpoint paths.
+- Added gateway coverage for default memory mode, durable-record/service-memory
+  mode, checkpoint-path mismatch, and optional SQLite-bound mode when the
+  package is installed.
+- Added API coverage proving `/progress` exposes the new reason fields for the
+  default memory path.
+
+Boundary:
+
+- This is read-model clarity only.
+- This does not enable durable native resume.
+- This does not expose local checkpoint paths beyond the already existing
+  runtime persistence metadata.
+- This does not change `native-full-run/resume`, LLM generation, R execution,
+  dependency planning, static checks, UI routing, or sandbox behavior.
+
+Subagent review:
+
+- Read-only review by Pascal returned GO with no blocking P1/P2 findings.
+- Pascal confirmed the change is read-model-only: actual native resume remains
+  gated by `_native_resume_runtime_bound_to_state()` and
+  `resume_native_dataset_interrupt()`. The new fields are derived from existing
+  booleans, do not enable resume controls, and do not expose new checkpoint
+  path detail.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_progress_reports_runtime_persistence_boundary tests.test_graph_gateway.GraphGatewayTests.test_progress_reports_native_resume_queue_without_enabling_memory_resume tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_study_gate tests.test_graph_gateway.GraphGatewayTests.test_progress_durable_native_resume_queue_still_respects_stale_plan tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_requires_current_durable_gateway_binding tests.test_graph_gateway.GraphGatewayTests.test_progress_native_resume_reports_checkpoint_path_mismatch_reason tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_when_package_available tests.test_graph_gateway.GraphGatewayTests.test_sqlite_progress_marks_native_resume_queue_as_resumable_when_package_available -v
+Ran 8 tests - OK, skipped 2 optional SQLite tests
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_progress_endpoint_reports_graph_owned_next_actions -v
+Ran 1 test - OK
+```
