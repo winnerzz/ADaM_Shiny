@@ -9566,3 +9566,62 @@ Passed
 git diff --check
 Passed，只有 CRLF conversion warnings
 ```
+
+### 2026-06-02 - LG3.9 Bound Native Interrupt Metadata 覆盖补强切片
+
+已完成：
+
+- 补上 LG3.8 遗留的正向测试缺口：验证
+  `durable_native_interrupt_resume_available=true` 的投影路径。
+- 新增 gateway 回归测试：在 runtime-bound durable native interrupt 测试替身下
+  启动 LG3 native full-run：
+  - run 保存的 metadata 写明 `native_interrupt_resume=true`；
+  - run 保存的 checkpoint path 与当前 Gateway active checkpoint path 匹配；
+  - 当前 Gateway 报告 native interrupt resume 可用。
+- 测试证明 LG3 full-run contract 只把 native interrupt pilot 字段标为可用：
+  - `durable_native_interrupt_resume_available=true`；
+  - `durable_native_interrupt_checkpointer_bound=true`；
+  - `durable_native_interrupt_resume_boundary=durable_native_interrupt_resume`。
+- 同一个测试也证明 full-run durable resume 仍然不被声明：
+  - `durable_resume_available=false`；
+  - `durable_full_run_resume_available=false`；
+  - `durable_full_run_resume_boundary=not_implemented`。
+
+边界：
+
+- 本切片只是覆盖补强。不新增 endpoint、UI 行为、durable native full-run
+  实现、dependency planning 行为、LLM 调用路径、R execution 路径、static rule、
+  reference ADaM 行为或 ADSL routing 改动。
+- runtime-bound test double 不是生产 checkpointer 声明。已有可选 SQLite tests
+  仍然在安装 `langgraph-checkpoint-sqlite` 时覆盖真实 package-backed 路径。
+
+子 agent 审查：
+
+- Pascal 使用 `gpt-5.5` 只读审查后返回 GO，没有 P1/P2 问题。
+- 审查确认新增测试会经过真实的 `start_native_dataset_full_run()` metadata
+  builder，只 mock helper contract 所需的 runtime-bound native interrupt 条件。
+- Pascal 也确认测试和文档保留了关键边界：native interrupt resume 可以标记为
+  available，但 durable native full-run resume 仍然保持 `false` /
+  `not_implemented`。
+
+验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 159 tests - OK，4 个可选 SQLite tests skipped
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py
+Passed
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+```

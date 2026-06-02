@@ -10246,3 +10246,66 @@ Passed
 git diff --check
 Passed, with CRLF conversion warnings only
 ```
+
+### 2026-06-02 - LG3.9 Bound Native Interrupt Metadata Coverage Slice
+
+Completed:
+
+- Closed the LG3.8 residual test gap around the positive
+  `durable_native_interrupt_resume_available=true` projection.
+- Added a gateway regression that starts an LG3 native full-run under a
+  runtime-bound durable native interrupt test double:
+  - saved run metadata says `native_interrupt_resume=true`;
+  - saved checkpoint path matches the active Gateway checkpoint path;
+  - active Gateway reports native interrupt resume available.
+- The test proves the LG3 full-run contract marks only the native interrupt
+  pilot fields as available:
+  - `durable_native_interrupt_resume_available=true`;
+  - `durable_native_interrupt_checkpointer_bound=true`;
+  - `durable_native_interrupt_resume_boundary=durable_native_interrupt_resume`.
+- The same test also proves the full-run durable resume claim remains false:
+  - `durable_resume_available=false`;
+  - `durable_full_run_resume_available=false`;
+  - `durable_full_run_resume_boundary=not_implemented`.
+
+Boundary:
+
+- This is coverage hardening only. It does not add a new endpoint, UI behavior,
+  durable native full-run implementation, dependency planning behavior, LLM
+  call path, R execution path, static rule, reference ADaM behavior, or ADSL
+  routing change.
+- The runtime-bound test double is intentionally not a production checkpointer
+  claim. Existing optional SQLite tests still cover the package-backed path when
+  `langgraph-checkpoint-sqlite` is installed.
+
+Subagent review:
+
+- Read-only `gpt-5.5` review by Pascal returned GO with no P1/P2 findings.
+- The review confirmed the new test drives `start_native_dataset_full_run()`
+  through the real metadata builder while mocking only the runtime-bound native
+  interrupt conditions required by the helper contract.
+- Pascal also confirmed that the test and docs preserve the key distinction:
+  native interrupt resume may be marked available while durable native full-run
+  resume remains `false` / `not_implemented`.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume -v
+Ran 1 test - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_full_run_explicit_execution_updates_contract tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume -v
+Ran 4 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 159 tests - OK, skipped 4 optional SQLite tests
+
+python -B -m compileall -q src tests
+Passed
+
+python -B -m py_compile src\adam_agent\graph\gateway.py tests\test_graph_gateway.py
+Passed
+
+git diff --check
+Passed, with CRLF conversion warnings only
+```

@@ -3339,6 +3339,62 @@ class GraphGatewayTests(unittest.TestCase):
             ).exists()
         )
 
+    def test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_native_full_run_bound_native_interrupt") / "PSY201"
+        run_id = "run_lg3_native_full_run_bound_native_interrupt"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        checkpoint_path = study_dir / "runs" / run_id / "langgraph_checkpoints.sqlite"
+        runtime_payload = {
+            "source_of_truth": "graph_state_json",
+            "graph_state_path": str((study_dir / "runs" / run_id / "graph_state.json").as_posix()),
+            "workflow_projection_path": str((study_dir / "runs" / run_id / "workflow_state.json").as_posix()),
+            "checkpoint_ledger_path": str((study_dir / "runs" / run_id / "graph_checkpoints.sqlite").as_posix()),
+            "checkpoint_ledger_role": "product_audit_ledger",
+            "langgraph_checkpoint_path": str(checkpoint_path.as_posix()),
+            "langgraph_checkpointer_type": "TestPersistentCheckpointer",
+            "langgraph_checkpointer_backend": "sqlite",
+            "langgraph_checkpointer_persistent": True,
+            "native_interrupt_resume": True,
+            "native_interrupt_resume_scope": "native_pilot_interrupts_only",
+            "restart_recovery_source": "test_runtime_bound_checkpointer",
+            "notes": ["Test double for runtime-bound native interrupt metadata."],
+        }
+        gateway = GraphGateway()
+
+        with (
+            patch("adam_agent.graph.gateway.describe_checkpointer", side_effect=lambda **_: dict(runtime_payload)),
+            patch.object(gateway, "native_interrupt_resume_available", return_value=True),
+            patch.object(gateway, "_native_interrupt_checkpoint_path", return_value=str(checkpoint_path.as_posix())),
+        ):
+            result = gateway.start_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(contract["resume_mode"], "graph_state_full_run_compatibility")
+        self.assertTrue(contract["compatibility_resume_available"])
+        self.assertTrue(contract["graph_state_resume_available"])
+        self.assertFalse(contract["durable_resume_available"])
+        self.assertFalse(contract["durable_full_run_resume_available"])
+        self.assertEqual(contract["durable_full_run_resume_boundary"], "not_implemented")
+        self.assertTrue(contract["durable_native_interrupt_resume_available"])
+        self.assertTrue(contract["durable_native_interrupt_checkpointer_bound"])
+        self.assertEqual(contract["durable_native_resume_scope"], "native_pilot_interrupts_only")
+        self.assertEqual(contract["durable_native_interrupt_resume_boundary"], "durable_native_interrupt_resume")
+
     def test_gateway_lg3_native_dataset_full_run_approval_executes(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_execute") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
