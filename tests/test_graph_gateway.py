@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import os
 import sqlite3
 import sys
 import unittest
@@ -166,6 +167,16 @@ def _seed_adae_terminal_failure_after_review(
 
 
 class GraphGatewayTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_backend = os.environ.get("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND")
+        os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = "memory"
+
+    def tearDown(self) -> None:
+        if self._old_backend is None:
+            os.environ.pop("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND", None)
+        else:
+            os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = self._old_backend
+
     def test_output_quality_classification_matrix(self) -> None:
         cases = [
             (
@@ -3404,6 +3415,201 @@ class GraphGatewayTests(unittest.TestCase):
                 / "adae_code_review.json"
             ).exists()
         )
+
+    def test_gateway_submit_graph_command_approves_current_code_review_gate(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_graph_command_code_review") / "PSY201"
+        run_id = "run_lg3_gateway_graph_command_code_review"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        result = gateway.submit_graph_command(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            interrupt="code_review",
+            action="approve",
+            reviewer="qa_user",
+            notes="Approved through graph command.",
+        )
+
+        self.assertEqual(result.scope, "dataset")
+        self.assertEqual(result.dataset, "ADAE")
+        self.assertEqual(result.interrupt, "code_review")
+        self.assertEqual(result.action, "approve")
+        self.assertTrue(result.approved)
+        self.assertEqual(result.next_action, "execute_approved_code")
+        self.assertEqual(result.graph_state.datasets["ADAE"].code_state["status"], "approved")
+        self.assertTrue(result.review_artifact_path.endswith("runs/run_lg3_gateway_graph_command_code_review/review/adae_code_review.json"))
+
+    def test_gateway_submit_graph_command_respects_study_level_interrupt_precedence(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_graph_command_study_gate") / "PSY201"
+        run_id = "run_lg3_gateway_graph_command_study_gate"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            current_interrupt=InterruptState(name="dependency_review", reason="Review dependency plan first."),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(
+                        name="code_review",
+                        dataset="ADAE",
+                        reason="Review ADAE code.",
+                    ),
+                )
+            },
+        )
+        gateway = GraphGateway()
+        gateway._persist_graph_state(study_dir, state, node="test_seed_graph_command_study_gate")
+
+        with self.assertRaisesRegex(ValueError, "Resolve study-level interrupt dependency_review"):
+            gateway.submit_graph_command(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                interrupt="code_review",
+                action="approve",
+                reviewer="qa_user",
+            )
+
+        reloaded = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(reloaded.current_interrupt.name, "dependency_review")
+        self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "code_review")
+        self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
+
+    def test_gateway_submit_graph_command_rejects_dependency_review_blocking_statuses(self) -> None:
+        for status, plan_stale in [("stale", True), ("rejected", False)]:
+            with self.subTest(status=status):
+                study_dir = _workspace_dir(f"lg3_gateway_graph_command_{status}_gate") / "PSY201"
+                run_id = f"run_lg3_gateway_graph_command_{status}_gate"
+                study_dir.mkdir(parents=True)
+                state = StudyRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    status="needs_review",
+                    target_datasets=["ADAE"],
+                    runnable_datasets=["ADAE"],
+                    dependency_review_status=status,
+                    dependency_plan={"plan_stale": plan_stale},
+                    datasets={
+                        "ADAE": DatasetRunState(
+                            study_id="PSY201",
+                            run_id=run_id,
+                            dataset="ADAE",
+                            status="needs_review",
+                            current_interrupt=InterruptState(
+                                name="code_review",
+                                dataset="ADAE",
+                                reason="Review ADAE code.",
+                            ),
+                        )
+                    },
+                )
+                gateway = GraphGateway()
+                gateway._persist_graph_state(study_dir, state, node="test_seed_graph_command_dependency_status_gate")
+
+                with self.assertRaisesRegex(ValueError, "Resolve dependency_review"):
+                    gateway.submit_graph_command(
+                        study_dir=study_dir,
+                        run_id=run_id,
+                        dataset="ADAE",
+                        interrupt="code_review",
+                        action="approve",
+                        reviewer="qa_user",
+                    )
+
+                reloaded = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+                self.assertEqual(reloaded.dependency_review_status, status)
+                self.assertEqual(reloaded.datasets["ADAE"].current_interrupt.name, "code_review")
+                self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
+
+    def test_gateway_submit_graph_command_rejects_reserved_execute_after_approval(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_graph_command_reserved_execute") / "PSY201"
+        run_id = "run_lg3_gateway_graph_command_reserved_execute"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "execute_after_approval is reserved"):
+            gateway.submit_graph_command(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                interrupt="code_review",
+                action="approve",
+                reviewer="qa_user",
+                execute_after_approval=True,
+            )
+
+    def test_gateway_submit_graph_command_rejects_wrong_interrupt(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_graph_command_wrong_interrupt") / "PSY201"
+        run_id = "run_lg3_gateway_graph_command_wrong_interrupt"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "does not match current interrupt code_review"):
+            gateway.submit_graph_command(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADAE",
+                interrupt="draft_spec_review",
+                action="approve",
+                reviewer="qa_user",
+            )
 
     def test_gateway_lg3_native_full_run_metadata_marks_bound_native_interrupt_resume(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_bound_native_interrupt") / "PSY201"

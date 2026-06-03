@@ -147,6 +147,24 @@ class GraphGatewayNativeDatasetResumeResult(GraphGatewayResult):
 
 
 @dataclass(frozen=True)
+class GraphGatewayCommandResult(GraphGatewayResult):
+    """Result from the unified graph command boundary."""
+
+    scope: str
+    dataset: str | None
+    interrupt: str
+    action: str
+    status: str
+    next_action: str
+    current_interrupt: dict[str, Any] | None
+    available_actions: list[dict[str, str]]
+    review_artifact_path: str | None = None
+    approved: bool | None = None
+    executed: bool = False
+    terminal_failure: bool = False
+
+
+@dataclass(frozen=True)
 class GraphGatewayNativeDatasetLoopDraftResult(GraphGatewayResult):
     """Internal native dataset-loop draft-spec continuation result."""
 
@@ -641,6 +659,109 @@ class GraphGateway:
             approved=normalized_decision == "approve",
             current_interrupt=current_interrupt,
         )
+
+    def submit_graph_command(
+        self,
+        *,
+        study_dir: str | Path,
+        run_id: str,
+        action: str,
+        reviewer: str,
+        notes: str = "",
+        dataset: str | None = None,
+        interrupt: str | None = None,
+        approved_dependency_datasets: list[str] | None = None,
+        execute_after_approval: bool = False,
+        llm_provider: dict[str, Any] | None = None,
+        llm_exposure: dict[str, Any] | None = None,
+        llm_client_builder: Any | None = None,
+        target_context_builder: Any | None = None,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayCommandResult:
+        """Apply one human graph command through the current open interrupt."""
+
+        if execute_after_approval:
+            raise ValueError(
+                "execute_after_approval is reserved for native full-run resume. "
+                "Graph command currently applies the human review only."
+            )
+        if rscript_path or llm_provider is not None or llm_exposure is not None or llm_client_builder is not None or target_context_builder is not None:
+            raise ValueError(
+                "Graph command continuation settings are reserved for future graph-owned execution/code continuation. "
+                "Use the native full-run resume or split-flow endpoints for those actions."
+            )
+        root = Path(study_dir).expanduser()
+        normalized_action = action.strip().lower()
+        target = dataset.strip().upper() if dataset else None
+        graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        command_interrupt = _resolve_graph_command_interrupt(graph_state, target, interrupt)
+        _assert_graph_command_action_allowed(command_interrupt.name, normalized_action)
+        if command_interrupt.name == "dependency_review":
+            if target:
+                raise ValueError("dependency_review is a study-level command and must not include dataset.")
+            result = self.review_dependency(
+                study_dir=root,
+                run_id=run_id,
+                decision=normalized_action,
+                reviewer=reviewer,
+                notes=notes,
+                approved_dependency_datasets=approved_dependency_datasets or [],
+            )
+            return _graph_command_result_from_dependency(
+                result,
+                action=normalized_action,
+                interrupt=command_interrupt.name,
+            )
+        if not target:
+            raise ValueError(f"{command_interrupt.name} requires a dataset.")
+        if command_interrupt.name == "draft_spec_review":
+            result = self.review_draft_spec(
+                study_dir=root,
+                study_id=graph_state.study_id,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_action,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            return _graph_command_result_from_draft_spec(
+                result,
+                dataset=target,
+                action=normalized_action,
+                interrupt=command_interrupt.name,
+            )
+        if command_interrupt.name == "code_review":
+            result = self.review_code(
+                study_dir=root,
+                study_id=graph_state.study_id,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_action,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            return _graph_command_result_from_code_review(
+                result,
+                dataset=target,
+                action=normalized_action,
+                interrupt=command_interrupt.name,
+            )
+        if command_interrupt.name == "terminal_failure":
+            result = self.review_terminal_failure(
+                study_dir=root,
+                run_id=run_id,
+                dataset=target,
+                decision=normalized_action,
+                reviewer=reviewer,
+                notes=notes,
+            )
+            return _graph_command_result_from_terminal_failure(
+                result,
+                dataset=target,
+                action=normalized_action,
+                interrupt=command_interrupt.name,
+            )
+        raise ValueError(f"Graph command does not support interrupt: {command_interrupt.name}.")
 
     def review_code(
         self,
@@ -5652,6 +5773,155 @@ def _available_actions_for_interrupt(name: str) -> list[dict[str, str]]:
     return [dict(item) for item in REVIEW_GATE_ACTIONS_BY_INTERRUPT.get(name, ())]
 
 
+def _resolve_graph_command_interrupt(
+    state: StudyRunState,
+    dataset: str | None,
+    interrupt: str | None,
+) -> InterruptState:
+    expected = _normalize_graph_command_interrupt_name(interrupt or "")
+    study_interrupt = _open_study_interrupt(state)
+    if dataset:
+        if study_interrupt is not None:
+            raise ValueError(
+                f"Resolve study-level interrupt {study_interrupt.name} before submitting dataset graph commands."
+            )
+        if _study_next_action_requires_dependency_review(state):
+            raise ValueError("Resolve dependency_review before submitting dataset graph commands.")
+        target = dataset.strip().upper()
+        dataset_state = state.datasets.get(target)
+        if dataset_state is None:
+            raise ValueError(f"Dataset is not part of this graph run: {target}")
+        current = dataset_state.current_interrupt
+    else:
+        current = study_interrupt or state.current_interrupt
+    if current is None or current.status != "open":
+        scope = dataset.strip().upper() if dataset else "study"
+        raise ValueError(f"No open graph interrupt exists for {scope}.")
+    if expected and current.name != expected:
+        raise ValueError(f"Graph command interrupt {expected} does not match current interrupt {current.name}.")
+    return current
+
+
+def _normalize_graph_command_interrupt_name(value: str) -> str:
+    raw = value.strip()
+    return {
+        "review_dependency_plan": "dependency_review",
+        "review_draft_spec": "draft_spec_review",
+        "review_code": "code_review",
+        "review_terminal_failure": "terminal_failure",
+    }.get(raw, raw)
+
+
+def _assert_graph_command_action_allowed(interrupt_name: str, action: str) -> None:
+    allowed = {item["action"] for item in _available_actions_for_interrupt(interrupt_name)}
+    if action not in allowed:
+        allowed_text = ", ".join(sorted(allowed)) or "none"
+        raise ValueError(f"Action {action} is not allowed for {interrupt_name}. Allowed actions: {allowed_text}.")
+
+
+def _graph_command_result_from_dependency(
+    result: GraphGatewayDependencyReviewResult,
+    *,
+    action: str,
+    interrupt: str,
+) -> GraphGatewayCommandResult:
+    current = result.graph_state.current_interrupt
+    datasets = [_dataset_progress_item(result.graph_state, dataset) for dataset in _progress_dataset_order(result.graph_state)]
+    next_item = _study_next_action(
+        result.graph_state,
+        datasets,
+        output_quality_rollup=study_output_quality_rollup(datasets, target_datasets=result.graph_state.target_datasets),
+    )
+    return GraphGatewayCommandResult(
+        graph_state=result.graph_state,
+        workflow_projection=result.workflow_projection,
+        scope="study",
+        dataset=None,
+        interrupt=interrupt,
+        action=action,
+        status=result.graph_state.status,
+        next_action=next_item["next_action"],
+        current_interrupt=_interrupt_payload(current),
+        available_actions=_available_actions_for_interrupt(current.name) if current and current.status == "open" else [],
+        approved=result.approved,
+    )
+
+
+def _graph_command_result_from_draft_spec(
+    result: GraphGatewayDraftSpecReviewResult,
+    *,
+    dataset: str,
+    action: str,
+    interrupt: str,
+) -> GraphGatewayCommandResult:
+    dataset_state = result.graph_state.datasets[dataset]
+    next_item = _dataset_next_action(dataset_state, blocked_reason="")
+    return GraphGatewayCommandResult(
+        graph_state=result.graph_state,
+        workflow_projection=result.workflow_projection,
+        scope="dataset",
+        dataset=dataset,
+        interrupt=interrupt,
+        action=action,
+        status=dataset_state.status,
+        next_action=next_item["next_action"],
+        current_interrupt=_interrupt_payload(dataset_state.current_interrupt),
+        available_actions=_available_dataset_actions(dataset_state),
+        review_artifact_path=result.review_path,
+        approved=result.approved,
+    )
+
+
+def _graph_command_result_from_code_review(
+    result: GraphGatewayCodeReviewResult,
+    *,
+    dataset: str,
+    action: str,
+    interrupt: str,
+) -> GraphGatewayCommandResult:
+    dataset_state = result.graph_state.datasets[dataset]
+    next_item = _dataset_next_action(dataset_state, blocked_reason="")
+    return GraphGatewayCommandResult(
+        graph_state=result.graph_state,
+        workflow_projection=result.workflow_projection,
+        scope="dataset",
+        dataset=dataset,
+        interrupt=interrupt,
+        action=action,
+        status=dataset_state.status,
+        next_action=next_item["next_action"],
+        current_interrupt=_interrupt_payload(dataset_state.current_interrupt),
+        available_actions=_available_dataset_actions(dataset_state),
+        review_artifact_path=result.review_path,
+        approved=result.approved,
+    )
+
+
+def _graph_command_result_from_terminal_failure(
+    result: GraphGatewayTerminalFailureReviewResult,
+    *,
+    dataset: str,
+    action: str,
+    interrupt: str,
+) -> GraphGatewayCommandResult:
+    dataset_state = result.graph_state.datasets[dataset]
+    next_item = _dataset_next_action(dataset_state, blocked_reason="")
+    return GraphGatewayCommandResult(
+        graph_state=result.graph_state,
+        workflow_projection=result.workflow_projection,
+        scope="dataset",
+        dataset=dataset,
+        interrupt=interrupt,
+        action=action,
+        status=dataset_state.status,
+        next_action=result.next_action or next_item["next_action"],
+        current_interrupt=_interrupt_payload(dataset_state.current_interrupt),
+        available_actions=_available_dataset_actions(dataset_state),
+        approved=None,
+        terminal_failure=True,
+    )
+
+
 def _human_review_queue_items(state: StudyRunState, datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -6234,8 +6504,11 @@ def _study_loop_progress_message(
     return "No new dataset was started; existing graph progress was preserved."
 
 
+DEPENDENCY_REVIEW_BLOCKING_STATUSES = {"blocked", "warning", "review_required", "rejected", "stale"}
+
+
 def _study_next_action_requires_dependency_review(state: StudyRunState) -> bool:
-    return state.dependency_review_status in {"blocked", "warning", "review_required", "stale"} or bool(
+    return state.dependency_review_status in DEPENDENCY_REVIEW_BLOCKING_STATUSES or bool(
         state.dependency_plan.get("plan_stale")
     )
 

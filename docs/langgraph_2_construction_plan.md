@@ -10690,3 +10690,121 @@ Passed, with CRLF conversion warnings only
 python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
 Compiled 82 files - OK
 ```
+
+### 2026-06-03 - LG4.1 Graph Command / Local Durable Default Slice
+
+Completed:
+
+- Added a unified human-command API contract:
+  - `GraphCommandRequest`;
+  - `GraphCommandResponse`;
+  - `POST /runs/{run_id}/graph-command`.
+- Added `GraphGateway.submit_graph_command()` as the backend command boundary
+  for current graph-owned human gates.
+- The command boundary now reads the canonical `graph_state.json`, verifies the
+  current open interrupt, checks that the requested action is allowed for that
+  interrupt, then dispatches to the existing graph-owned review methods:
+  - study `dependency_review`;
+  - dataset `draft_spec_review`;
+  - dataset `code_review`;
+  - dataset `terminal_failure`.
+- The new command path deliberately reuses the existing review methods instead
+  of writing state directly. This keeps review artifacts, hashes, validation
+  gates, human commands, and workflow projections in one place.
+- Changed the service-owned GraphGateway default backend from implicit
+  `memory` to local `sqlite` intent:
+  - unset `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND` now derives a per-run
+    `runs/{run_id}/langgraph_checkpoints.sqlite` path;
+  - `default`, `local`, `durable`, and empty values also map to sqlite;
+  - explicit `memory` remains available for tests and local development;
+  - sqlite still fails closed if the optional `langgraph-checkpoint-sqlite`
+    package is not installed.
+- API tests now set `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=memory` explicitly so
+  old compatibility tests do not silently rely on the product default.
+
+Boundary:
+
+- This slice does not switch the browser UI main flow to `/graph-command`.
+- This slice does not make generate-code or execute-R graph commands. It only
+  unifies human gate commands that already exist in graph-owned state.
+- It does not implement full native product run, multi-dataset continuation
+  after approval, repair execution, spec revision execution, or production
+  sandboxing.
+- The local SQLite checkpointer remains a local single-process durability
+  option, not a production multi-worker recovery guarantee.
+- In the current local environment, `langgraph-checkpoint-sqlite` is not
+  installed, so the product default sqlite path fails closed unless the optional
+  dependency is installed or tests explicitly choose memory mode.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_run_scoped_sqlite_backend -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_run_scoped_sqlite_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution -v
+Ran 4 tests - OK
+
+python -B - <<read-only AST parse over src and tests>>
+ast-parse ok
+```
+
+Known local verification limitation:
+
+```text
+python -m compileall -q src tests
+Blocked by local Windows pyc write permissions on existing __pycache__ paths.
+The read-only AST parse above covered source syntax without writing pyc files.
+```
+
+Subagent review follow-up:
+
+- Initial read-only subagent review returned NO-GO because `/graph-command`
+  could approve a dataset-level interrupt while a study-level
+  `dependency_review` interrupt was still open.
+- Fixed by enforcing study-level interrupt precedence inside
+  `_resolve_graph_command_interrupt()`:
+  - if a study gate is open, dataset graph commands fail closed;
+  - if dependency review is still required or stale, dataset graph commands
+    fail closed before dispatch.
+- Fixed an interface ambiguity: `/graph-command` now rejects reserved
+  continuation settings such as `execute_after_approval=true`, provider
+  overrides, target-context builders, and `rscript_path`. Phase A graph command
+  only applies the human review; execution and code continuation remain in the
+  native full-run/split-flow endpoints until the next native graph slice.
+- Added focused product-default coverage showing old split-flow
+  `generate-code` also uses the new sqlite default and fails closed when
+  `langgraph-checkpoint-sqlite` is not installed.
+- Second subagent review returned GO and found no P0/P1. It suggested a cheap
+  P2 hardening: treat `dependency_review_status="rejected"` as a dependency
+  blocker for `/graph-command`, even if an old or migrated state no longer has
+  an open study interrupt. This was absorbed by centralizing the dependency
+  review blocking status set and adding stale/rejected regression coverage.
+
+Additional focused verification:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_respects_study_level_interrupt_precedence tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_dependency_review_blocking_statuses tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_reserved_execute_after_approval tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_dataset_command_while_study_gate_is_open tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_dependency_review_status_without_open_study_interrupt tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_reserved_execute_after_approval tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate tests.test_api_phase8.Phase8ApiTests.test_split_flow_generate_code_uses_default_sqlite_and_fails_closed_when_unavailable -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 179 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 168 tests - OK, skipped 4 optional SQLite tests
+
+git diff --check
+Passed, with CRLF conversion warnings only
+
+python - <<read Python files and compile(source, path, 'exec') without writing pyc>
+compiled source ok
+```

@@ -29,6 +29,7 @@ from adam_agent.api.models import (
     FilePreview,
     FinalizeInputsResponse,
     GenerateCodeResponse,
+    GraphCommandResponse,
     LLMConnectionTestResponse,
     NativeDatasetFullRunStartResponse,
     NativeDatasetFullRunResumeResponse,
@@ -122,6 +123,7 @@ DEFAULT_TABLE_PAGE_SIZE = 25
 MAX_TABLE_PAGE_SIZE = 200
 _GRAPH_STATE_UNSET = object()
 SERVICE_CHECKPOINTER_BACKEND_ENV = "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"
+DEFAULT_SERVICE_CHECKPOINTER_BACKEND = "sqlite"
 
 
 # Keep service-layer GraphGateway construction centralized here. Endpoint
@@ -137,7 +139,9 @@ def _new_graph_gateway(
     Future persistence backends belong behind this boundary.
     """
 
-    backend = os.environ.get(SERVICE_CHECKPOINTER_BACKEND_ENV, "memory").strip().lower() or "memory"
+    backend = os.environ.get(SERVICE_CHECKPOINTER_BACKEND_ENV, DEFAULT_SERVICE_CHECKPOINTER_BACKEND).strip().lower()
+    if backend in {"", "default", "local", "durable"}:
+        backend = DEFAULT_SERVICE_CHECKPOINTER_BACKEND
     if backend == "memory":
         return GraphGateway()
     if backend == "sqlite":
@@ -736,6 +740,69 @@ def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResp
         approved=result.approved,
         current_interrupt=result.current_interrupt,
         **_gateway_projection_paths(result),
+    )
+
+
+def submit_graph_command(run_id: str, request: Any) -> GraphCommandResponse:
+    """Submit one human action to the graph without selecting a split-flow endpoint."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    payload = getattr(request, "payload", {}) or {}
+    approved_dependencies = [
+        str(item).strip().upper()
+        for item in payload.get("approved_dependency_datasets", [])
+        if str(item).strip()
+    ] if isinstance(payload, dict) else []
+    provider_config = None
+    exposure = None
+    if getattr(request, "llm_provider_override", None) is not None or getattr(request, "llm_exposure_override", None) is not None:
+        config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_dir.name, run_id=run_id)
+        provider_config = _provider_config_from_override(
+            getattr(request, "llm_provider_override", None),
+            fallback=config.llm_provider,
+        )
+        exposure = _exposure_config_from_override(
+            getattr(request, "llm_exposure_override", None),
+            fallback=config.llm_exposure,
+        )
+    try:
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.submit_graph_command(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset=getattr(request, "dataset", None),
+                interrupt=getattr(request, "interrupt", None),
+                action=request.action,
+                reviewer=request.reviewer,
+                notes=request.notes,
+                approved_dependency_datasets=approved_dependencies,
+                execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
+                llm_provider=provider_config.__dict__ if provider_config is not None else None,
+                llm_exposure=exposure.model_dump(mode="json") if exposure is not None else None,
+                llm_client_builder=build_llm_client if provider_config is not None else None,
+                target_context_builder=build_target_llm_context if provider_config is not None else None,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        raise ApiServiceError(str(exc)) from exc
+    return GraphCommandResponse(
+        study_id=result.graph_state.study_id,
+        run_id=run_id,
+        scope=result.scope,
+        dataset=result.dataset,
+        interrupt=result.interrupt,
+        action=result.action,
+        status=result.status,
+        next_action=result.next_action,
+        current_interrupt=result.current_interrupt,
+        available_actions=result.available_actions,
+        review_artifact_path=result.review_artifact_path,
+        approved=result.approved,
+        executed=result.executed,
+        terminal_failure=result.terminal_failure,
+        **_gateway_compatibility_metadata(result),
     )
 
 

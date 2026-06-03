@@ -26,6 +26,8 @@ from adam_agent.api.models import (
     FinalizeInputsResponse,
     GenerateCodeRequest,
     GenerateCodeResponse,
+    GraphCommandRequest,
+    GraphCommandResponse,
     LLMConnectionTestRequest,
     LLMConnectionTestResponse,
     NativeDatasetFullRunStartRequest,
@@ -76,6 +78,7 @@ from adam_agent.api.service import (
     save_uploaded_file_bytes,
     start_native_dataset_full_run,
     start_native_study_product_loop,
+    submit_graph_command,
     summarize_study_inputs,
     test_llm_connection,
 )
@@ -215,6 +218,13 @@ def create_app() -> FastAPI:
     def dependency_review(run_id: str, request: DependencyReviewRequest) -> DependencyReviewResponse:
         try:
             return persist_dependency_review(run_id, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/graph-command", response_model=GraphCommandResponse)
+    def graph_command(run_id: str, request: GraphCommandRequest) -> GraphCommandResponse:
+        try:
+            return submit_graph_command(run_id, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

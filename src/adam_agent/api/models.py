@@ -214,6 +214,45 @@ class NativeDatasetFullRunResumeResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class GraphCommandRequest(StrictBaseModel):
+    """Submit one human graph action without choosing a split-flow endpoint."""
+
+    study_dir: NonEmptyStr
+    action: str
+    dataset: str | None = None
+    interrupt: str | None = None
+    reviewer: str = "local_user"
+    notes: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    execute_after_approval: bool = False
+    rscript_path: str | None = None
+    config_path: str | None = None
+    llm_provider_override: "LLMProviderOverride | None" = None
+    llm_exposure_override: "LLMExposureOverride | None" = None
+
+
+class GraphCommandResponse(StrictBaseModel):
+    """Graph-owned result after applying one human command."""
+
+    study_id: str
+    run_id: str
+    scope: str
+    dataset: str | None = None
+    interrupt: str
+    action: str
+    status: str
+    next_action: str = ""
+    current_interrupt: dict[str, Any] | None = None
+    available_actions: list[dict[str, str]] = Field(default_factory=list)
+    review_artifact_path: str | None = None
+    approved: bool | None = None
+    executed: bool = False
+    terminal_failure: bool = False
+    workflow_control: str = "graph_gateway_compatibility_shim"
+    graph_state_path: str
+    workflow_state_path: str | None = None
+
+
 class DatasetProgressItem(StrictBaseModel):
     """Graph-owned next-step summary for one dataset."""
 

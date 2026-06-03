@@ -6,6 +6,7 @@ import ast
 import csv
 import inspect
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -87,6 +88,16 @@ def _assert_run_projection(testcase: unittest.TestCase, study_dir: Path, run_id:
 
 
 class Phase8ApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_backend = os.environ.get("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND")
+        os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = "memory"
+
+    def tearDown(self) -> None:
+        if self._old_backend is None:
+            os.environ.pop("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND", None)
+        else:
+            os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = self._old_backend
+
     def test_health_endpoint(self) -> None:
         client = TestClient(create_app())
 
@@ -245,17 +256,23 @@ class Phase8ApiTests(unittest.TestCase):
 
             gateway.close.assert_called_once_with()
 
-    def test_service_gateway_factory_defaults_to_memory_backend(self) -> None:
+    def test_service_gateway_factory_defaults_to_run_scoped_sqlite_backend(self) -> None:
         from adam_agent.api import service
 
+        study_dir = _workspace_dir("phase8_service_gateway_default_sqlite") / "MY_STUDY"
+        study_dir.mkdir(parents=True)
         with patch.dict("os.environ", {}, clear=True), patch("adam_agent.api.service.GraphGateway") as gateway_cls:
             gateway = service._new_graph_gateway(
-                study_dir="D:/tmp/study",
+                study_dir=study_dir,
                 run_id="run_factory_default",
             )
 
         self.assertIs(gateway, gateway_cls.return_value)
-        gateway_cls.assert_called_once_with()
+        gateway_cls.assert_called_once()
+        _, kwargs = gateway_cls.call_args
+        self.assertEqual(kwargs["checkpointer_backend"], "sqlite")
+        sqlite_path = str(kwargs["sqlite_checkpointer_path"]).replace("\\", "/")
+        self.assertTrue(sqlite_path.endswith("runs/run_factory_default/langgraph_checkpoints.sqlite"))
 
     def test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled(self) -> None:
         from adam_agent.api import service
@@ -331,6 +348,34 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "graph_state.json").exists())
         self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "workflow_state.json").exists())
         self.assertFalse((study_dir / "runs" / "run_sqlite_unavailable" / "langgraph_checkpoints.sqlite").exists())
+
+    def test_split_flow_generate_code_uses_default_sqlite_and_fails_closed_when_unavailable(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_split_flow_sqlite_unavailable")
+        client = TestClient(create_app())
+        original_find_spec = __import__("importlib").util.find_spec
+
+        def find_spec_without_sqlite(name: str) -> Any:
+            if name == "langgraph.checkpoint.sqlite":
+                return None
+            return original_find_spec(name)
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("adam_agent.graph.checkpointing.importlib.util.find_spec", side_effect=find_spec_without_sqlite),
+        ):
+            response = client.post(
+                "/runs/run_split_flow_sqlite_unavailable/datasets/ADAE/generate-code",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("SQLite LangGraph checkpointer is not installed", response.json()["detail"])
+        self.assertFalse((study_dir / "runs" / "run_split_flow_sqlite_unavailable" / "graph_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_split_flow_sqlite_unavailable" / "workflow_state.json").exists())
+        self.assertFalse((study_dir / "runs" / "run_split_flow_sqlite_unavailable" / "langgraph_checkpoints.sqlite").exists())
 
     def test_prepare_endpoint_fails_closed_when_postgres_checkpointer_unavailable(self) -> None:
         study_dir = _workspace_dir("phase8_service_gateway_postgres_api_unavailable") / "MY_STUDY"
@@ -7244,6 +7289,216 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(graph_state["datasets"]["ADAE"]["current_interrupt"]["name"], "code_review")
         self.assertEqual(workflow_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
         self.assertFalse((study_dir / "runs" / "run_native_full_run_endpoint" / "outputs" / "adae.csv").exists())
+
+    def test_graph_command_approves_current_code_review_gate(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_graph_command_code_review")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_graph_command_code_review/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+
+        response = client.post(
+            "/runs/run_graph_command_code_review/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "code_review",
+                "action": "approve",
+                "reviewer": "qa_user",
+                "notes": "Approved through unified graph command.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["scope"], "dataset")
+        self.assertEqual(payload["dataset"], "ADAE")
+        self.assertEqual(payload["interrupt"], "code_review")
+        self.assertEqual(payload["action"], "approve")
+        self.assertTrue(payload["approved"])
+        self.assertEqual(payload["next_action"], "execute_approved_code")
+        self.assertTrue(payload["review_artifact_path"].endswith("runs/run_graph_command_code_review/review/adae_code_review.json"))
+        graph_state = client.get(
+            "/runs/run_graph_command_code_review/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        state = graph_state.json()
+        self.assertEqual(state["datasets"]["ADAE"]["code_state"]["status"], "approved")
+        self.assertEqual(state["datasets"]["ADAE"]["human_commands"][-1]["reviewer"], "qa_user")
+
+    def test_graph_command_rejects_dataset_command_while_study_gate_is_open(self) -> None:
+        from adam_agent.schemas.graph_state import DatasetRunState, InterruptState, StudyRunState
+
+        study_dir = _workspace_dir("phase8_graph_command_study_gate") / "PSY201"
+        run_id = "run_graph_command_study_gate"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            current_interrupt=InterruptState(name="dependency_review", reason="Review dependency plan first."),
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(
+                        name="code_review",
+                        dataset="ADAE",
+                        reason="Review ADAE code.",
+                    ),
+                )
+            },
+        )
+        GraphGateway()._persist_graph_state(study_dir, state, node="test_seed_api_graph_command_study_gate")
+        client = TestClient(create_app())
+
+        response = client.post(
+            f"/runs/{run_id}/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "code_review",
+                "action": "approve",
+                "reviewer": "qa_user",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Resolve study-level interrupt dependency_review", response.json()["detail"])
+        graph_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)})
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        persisted = graph_state.json()
+        self.assertEqual(persisted["current_interrupt"]["name"], "dependency_review")
+        self.assertEqual(persisted["datasets"]["ADAE"]["current_interrupt"]["name"], "code_review")
+        self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
+
+    def test_graph_command_rejects_dependency_review_status_without_open_study_interrupt(self) -> None:
+        from adam_agent.schemas.graph_state import DatasetRunState, InterruptState, StudyRunState
+
+        study_dir = _workspace_dir("phase8_graph_command_rejected_dependency") / "PSY201"
+        run_id = "run_graph_command_rejected_dependency"
+        study_dir.mkdir(parents=True)
+        state = StudyRunState(
+            study_id="PSY201",
+            run_id=run_id,
+            status="needs_review",
+            target_datasets=["ADAE"],
+            runnable_datasets=["ADAE"],
+            dependency_review_status="rejected",
+            datasets={
+                "ADAE": DatasetRunState(
+                    study_id="PSY201",
+                    run_id=run_id,
+                    dataset="ADAE",
+                    status="needs_review",
+                    current_interrupt=InterruptState(
+                        name="code_review",
+                        dataset="ADAE",
+                        reason="Review ADAE code.",
+                    ),
+                )
+            },
+        )
+        GraphGateway()._persist_graph_state(study_dir, state, node="test_seed_api_graph_command_rejected_dependency")
+        client = TestClient(create_app())
+
+        response = client.post(
+            f"/runs/{run_id}/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "code_review",
+                "action": "approve",
+                "reviewer": "qa_user",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Resolve dependency_review", response.json()["detail"])
+        graph_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)})
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        persisted = graph_state.json()
+        self.assertEqual(persisted["dependency_review_status"], "rejected")
+        self.assertEqual(persisted["datasets"]["ADAE"]["current_interrupt"]["name"], "code_review")
+        self.assertFalse((study_dir / "runs" / run_id / "review" / "adae_code_review.json").exists())
+
+    def test_graph_command_rejects_reserved_execute_after_approval(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_graph_command_reserved_execute")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_graph_command_reserved_execute/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+
+        response = client.post(
+            "/runs/run_graph_command_reserved_execute/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "code_review",
+                "action": "approve",
+                "reviewer": "qa_user",
+                "execute_after_approval": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("execute_after_approval is reserved", response.json()["detail"])
+        graph_state = client.get(
+            "/runs/run_graph_command_reserved_execute/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        self.assertEqual(graph_state.json()["datasets"]["ADAE"]["code_state"]["status"], "generated")
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_graph_command_reserved_execute"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
+    def test_graph_command_rejects_action_that_does_not_match_current_gate(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_graph_command_wrong_gate")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_graph_command_wrong_gate/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+
+        response = client.post(
+            "/runs/run_graph_command_wrong_gate/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "draft_spec_review",
+                "action": "approve",
+                "reviewer": "qa_user",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("does not match current interrupt code_review", response.json()["detail"])
 
     def test_native_resume_endpoint_fails_closed_without_durable_checkpointer(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_resume_memory_block")

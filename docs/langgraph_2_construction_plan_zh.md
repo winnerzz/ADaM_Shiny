@@ -9985,3 +9985,116 @@ Passed，只有 CRLF conversion warnings
 python -c "<read Python files and compile(source, path, 'exec') without writing pyc>"
 Compiled 82 files - OK
 ```
+
+### 2026-06-03 - LG4.1 Graph Command / 本地 Durable 默认切片
+
+已完成：
+
+- 新增统一 human-command API contract：
+  - `GraphCommandRequest`；
+  - `GraphCommandResponse`；
+  - `POST /runs/{run_id}/graph-command`。
+- 新增 `GraphGateway.submit_graph_command()`，作为当前 graph-owned human gate
+  的后端统一命令边界。
+- 新命令边界会读取 canonical `graph_state.json`，确认当前 open interrupt，
+  检查用户提交的 action 是否属于该 interrupt 的允许动作，然后分发到已有的
+  graph-owned review 方法：
+  - study `dependency_review`；
+  - dataset `draft_spec_review`；
+  - dataset `code_review`；
+  - dataset `terminal_failure`。
+- 新 command path 故意复用已有 review 方法，而不是直接写状态。这样 review
+  artifact、hash、校验 gate、human command 和 workflow projection 仍然在同一处
+  维护。
+- 将 service-owned GraphGateway 的默认后端从隐式 `memory` 改为本地 `sqlite`
+  意图：
+  - 未设置 `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND` 时，会使用每个 run 自己的
+    `runs/{run_id}/langgraph_checkpoints.sqlite`；
+  - `default`、`local`、`durable` 和空值也映射到 sqlite；
+  - 显式 `memory` 仍保留给测试和本地开发；
+  - 如果没有安装可选 `langgraph-checkpoint-sqlite` 包，sqlite 会 fail closed，
+    不会悄悄退回 memory。
+- API tests 现在显式设置 `ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=memory`，避免旧
+  compatibility tests 隐式依赖产品默认 memory 行为。
+
+边界：
+
+- 本切片没有把浏览器 UI 主流程切换到 `/graph-command`。
+- 本切片没有把 generate-code 或 execute-R 做成 graph command；它只统一已经存在
+  于 graph-owned state 的人工审核 gate。
+- 不实现完整 native product run、多 dataset 审批后继续推进、repair execution、
+  spec revision execution 或生产级 sandbox。
+- 本地 SQLite checkpointer 仍只是 local single-process durability，不是生产
+  multi-worker 恢复保证。
+- 当前本机环境没有安装 `langgraph-checkpoint-sqlite`，所以产品默认 sqlite path
+  会在缺少依赖时 fail closed；安装可选依赖或显式选择 memory 后才能继续相应路径。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt -v
+Ran 2 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_run_scoped_sqlite_backend -v
+Ran 3 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_defaults_to_run_scoped_sqlite_backend tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled tests.test_api_phase8.Phase8ApiTests.test_service_gateway_factory_falls_back_to_memory_without_run_context tests.test_api_phase8.Phase8ApiTests.test_prepare_endpoint_fails_closed_when_sqlite_checkpointer_unavailable tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_starts_at_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution -v
+Ran 4 tests - OK
+
+python -B - <<read-only AST parse over src and tests>>
+ast-parse ok
+```
+
+已知本地验证限制：
+
+```text
+python -m compileall -q src tests
+受本地 Windows 既有 __pycache__ 写权限限制失败。上面的只读 AST parse 已覆盖源码
+语法检查，且不会写 pyc 文件。
+```
+
+子 agent 审核后的闭环：
+
+- 初始只读子 agent 审核给出 NO-GO，原因是 `/graph-command` 在 study 级
+  `dependency_review` interrupt 仍然 open 时，仍可能直接批准 dataset 级
+  interrupt。
+- 已在 `_resolve_graph_command_interrupt()` 中强制 study gate 优先：
+  - 只要 study 级 gate 仍然 open，dataset graph command 会 fail closed；
+  - 只要 dependency review 仍然 required 或 stale，dataset graph command 会在
+    分发前 fail closed。
+- 已修复一个接口语义歧义：`/graph-command` 现在会拒绝保留字段，例如
+  `execute_after_approval=true`、provider override、target-context builder 和
+  `rscript_path`。Phase A 的 graph command 只负责提交人工审核；审批后执行 R 或
+  继续生成代码仍留在 native full-run / split-flow endpoint，等下一切片再并入图。
+- 已增加 focused 测试，证明旧 split-flow 的 `generate-code` 在产品默认配置下也会
+  使用新的 sqlite 默认，并在缺少 `langgraph-checkpoint-sqlite` 时 fail closed。
+- 第二次子 agent 复审返回 GO，未发现 P0/P1。它建议吸收一个便宜的 P2 hardening：
+  即使旧状态或迁移状态里没有 open study interrupt，只要
+  `dependency_review_status="rejected"`，`/graph-command` 也不能继续批准 dataset
+  级 gate。已通过集中 dependency review blocking status set 修复，并补了
+  stale/rejected 回归测试。
+
+新增 focused 验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_approves_current_code_review_gate tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_respects_study_level_interrupt_precedence tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_dependency_review_blocking_statuses tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_reserved_execute_after_approval tests.test_graph_gateway.GraphGatewayTests.test_gateway_submit_graph_command_rejects_wrong_interrupt -v
+Ran 5 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_graph_command_approves_current_code_review_gate tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_dataset_command_while_study_gate_is_open tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_dependency_review_status_without_open_study_interrupt tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_reserved_execute_after_approval tests.test_api_phase8.Phase8ApiTests.test_graph_command_rejects_action_that_does_not_match_current_gate tests.test_api_phase8.Phase8ApiTests.test_split_flow_generate_code_uses_default_sqlite_and_fails_closed_when_unavailable -v
+Ran 6 tests - OK
+
+python -B -m unittest tests.test_api_phase8 -v
+Ran 179 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 168 tests - OK，跳过 4 个可选 SQLite 测试
+
+git diff --check
+Passed，只有 CRLF conversion warnings
+
+python - <<read Python files and compile(source, path, 'exec') without writing pyc>
+compiled source ok
+```
