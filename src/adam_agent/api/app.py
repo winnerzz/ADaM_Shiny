@@ -214,6 +214,8 @@ def create_app() -> FastAPI:
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Compatibility endpoint for older clients. The browser product flow records
+    # dependency decisions through /graph-command.
     @app.post("/runs/{run_id}/dependency-review", response_model=DependencyReviewResponse)
     def dependency_review(run_id: str, request: DependencyReviewRequest) -> DependencyReviewResponse:
         try:

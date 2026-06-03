@@ -142,11 +142,38 @@ Request:
 Response includes requested targets, planned targets, runnable datasets, blocked
 datasets, dependency decisions, warnings, and graph/projection paths.
 
-If the dependency plan needs user input, use `POST /runs/{run_id}/dependency-review`.
+If the dependency plan needs user input, new product clients should record the
+decision through `POST /runs/{run_id}/graph-command`.
+
+### POST /runs/{run_id}/graph-command
+
+Records a human decision for a graph-owned review gate. For the study-level
+dependency-review gate, omit `dataset` because the decision belongs to the
+whole run rather than one ADaM dataset.
+
+Request:
+
+```json
+{
+  "study_dir": "D:/path/to/PSY201",
+  "interrupt": "dependency_review",
+  "action": "approve",
+  "reviewer": "local_user",
+  "notes": "Accept dependency plan for this test.",
+  "payload": {
+    "approved_dependency_datasets": ["ADSL"]
+  }
+}
+```
+
+`/graph-command` is the product review command path. It records the human
+decision only; it does not accept execution settings, R paths, or LLM provider
+overrides.
 
 ### POST /runs/{run_id}/dependency-review
 
-Records a human decision for the graph-native dependency-review gate.
+Compatibility endpoint for older clients that still post dependency decisions
+directly. New UI/product code should not call this endpoint.
 
 Request:
 
@@ -159,6 +186,12 @@ Request:
   "approved_dependency_datasets": ["ADSL"]
 }
 ```
+
+### POST /runs/{run_id}/datasets/{dataset}/native-resume
+
+Durable native checkpoint resume endpoint. Use it only when the graph read model
+explicitly marks native resume as available for the current run and dataset.
+Normal browser review actions should use `/graph-command`.
 
 ## Dataset Split Flow
 

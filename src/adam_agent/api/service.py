@@ -709,7 +709,11 @@ def resume_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> N
 
 
 def persist_dependency_review(run_id: str, request: Any) -> DependencyReviewResponse:
-    """Persist a human decision for the graph-native dependency review gate."""
+    """Compatibility path for old dependency-review clients.
+
+    New browser/product flows submit human decisions through
+    ``submit_graph_command()`` so all review gates share one command contract.
+    """
 
     study_dir = Path(request.study_dir).expanduser()
     if not study_dir.exists() or not study_dir.is_dir():

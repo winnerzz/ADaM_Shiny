@@ -10886,6 +10886,62 @@ Boundary:
 - This slice does not change LLM prompt content, generated-code parsing, static
   rules, R execution, repair/spec-revision routing, compare, or UI actions.
 
+### 2026-06-03 - LG4.5 Dependency Review Uses Graph Command
+
+Completed:
+
+- Browser Human Review Queue dependency-review buttons now call
+  `POST /runs/{run_id}/graph-command`.
+- The request omits `dataset` and does not include `execute_after_approval`, R
+  paths, config paths, or LLM provider overrides. It records only the human
+  review decision.
+- The UI renders dependency-review buttons only when the graph read model
+  advertises explicit `available_actions`.
+- The local queue display is cleared only after refreshing graph read models, so
+  a failed refresh does not hide server-side state.
+- `GraphCommandRequest` no longer accepts continuation/execution fields, and
+  service-layer `/graph-command` no longer loads LLM/R settings.
+
+Boundary:
+
+- `/dependency-review` remains as an old-client compatibility endpoint, but the
+  new UI/product path no longer depends on it.
+- `/native-resume` remains durable native checkpoint resume only.
+
+Verification:
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+Ran 184 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 168 tests - OK, skipped 4 optional SQLite tests
+```
+
+### 2026-06-03 - LG4.6 Double-Track Entrypoint Boundary Cleanup
+
+Completed:
+
+- Updated `docs/phase8_1_api_contract.md`: when a dependency plan needs human
+  review, new product clients should call `POST /runs/{run_id}/graph-command`.
+- Marked `/dependency-review` as an old-client compatibility endpoint. New
+  UI/product code should not call it.
+- Clarified `/native-resume` as durable native checkpoint resume only, available
+  only when the graph read model says it is available.
+- Added compatibility wording to `DependencyReviewRequest`,
+  `persist_dependency_review()`, and the FastAPI route comment.
+- Added UI/API contract coverage:
+  - the index HTML exposes `/graph-command`;
+  - the index HTML does not expose `/dependency-review`;
+  - the API contract must mark `/dependency-review` as compatibility.
+
+Boundary:
+
+- This slice does not remove `/dependency-review`, so older callers and legacy
+  tests keep working.
+- It does not expand `/native-resume` availability or change LLM, R execution,
+  compare, or static-rule behavior.
+
 Verification so far:
 
 ```text

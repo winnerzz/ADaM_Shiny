@@ -734,6 +734,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("skipped_graph_runs", response.text)
         self.assertIn("refreshGraphState", response.text)
         self.assertIn("refreshRunProgress", response.text)
+        self.assertIn("/graph-command", response.text)
         self.assertIn("/progress?study_dir=", response.text)
         self.assertIn("runProgress", response.text)
         self.assertIn("canApproveGeneratedCode", response.text)
@@ -741,6 +742,7 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("data-card-target", response.text)
         self.assertIn("resetActiveDatasetView", response.text)
         self.assertNotIn("resetGeneratedState", response.text)
+        self.assertNotIn("/dependency-review", response.text)
         self.assertNotIn("Create / Open Study", response.text)
         self.assertNotIn("Approve And Run Locally", response.text)
         self.assertNotIn("Run Approved Code In Sandbox", response.text)
@@ -1117,6 +1119,18 @@ console.log(JSON.stringify({
         self.assertEqual(result["operation"], "Graph review decision recorded")
         self.assertEqual(result["planStatus"], "approved")
         self.assertEqual(result["queueLength"], 0)
+
+    def test_phase8_api_contract_marks_dependency_review_as_compatibility(self) -> None:
+        contract = (ROOT / "docs" / "phase8_1_api_contract.md").read_text(encoding="utf-8")
+
+        self.assertIn("decision through `POST /runs/{run_id}/graph-command`", contract)
+        self.assertIn("Compatibility endpoint for older clients", contract)
+        self.assertIn("New UI/product code should not call this endpoint.", contract)
+        self.assertIn("Normal browser review actions should use `/graph-command`.", contract)
+        self.assertNotIn(
+            "If the dependency plan needs user input, use `POST /runs/{run_id}/dependency-review`.",
+            contract,
+        )
 
     def test_index_exposes_native_study_loop_result_summary(self) -> None:
         client = TestClient(create_app())

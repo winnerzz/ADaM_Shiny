@@ -294,7 +294,7 @@ class RunProgressResponse(StrictBaseModel):
 
 
 class DependencyReviewRequest(StrictBaseModel):
-    """Persist a human decision on the graph-native dependency plan."""
+    """Compatibility request for old clients that post dependency review directly."""
 
     study_dir: NonEmptyStr
     reviewer: str = "local_user"

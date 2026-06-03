@@ -10169,6 +10169,57 @@ Ran 4 tests - OK
 - 本切片不改变 LLM prompt 内容、generated-code parsing、static rules、R
   execution、repair/spec-revision routing、compare 或 UI action。
 
+### 2026-06-03 - LG4.5 Dependency Review 进入 Graph Command 主路径
+
+已完成：
+
+- 浏览器 Human Review Queue 中的 study 级 `dependency_review` 审核按钮现在调用
+  `POST /runs/{run_id}/graph-command`。
+- 该调用不传 `dataset`，也不传 `execute_after_approval`、R 路径、配置路径或
+  LLM provider override。它只记录人的审核决定。
+- UI 只有在 graph read model 明确给出 `available_actions` 时才显示
+  dependency-review 审核按钮，避免前端自己猜测可执行动作。
+- 提交审核后先刷新 graph read model，再清本地 queue 展示，避免刷新失败时误导用户。
+- `GraphCommandRequest` 去掉 continuation/execution 字段，service 层
+  `/graph-command` 不再加载 LLM/R 配置。
+
+边界：
+
+- `/dependency-review` 仍保留给旧客户端兼容，但新 UI/产品流不再依赖它。
+- `/native-resume` 仍只表示 durable native checkpoint resume。
+
+验证：
+
+```text
+python -B -m unittest tests.test_api_phase8 -v
+Ran 184 tests - OK
+
+python -B -m unittest tests.test_graph_gateway -v
+Ran 168 tests - OK, skipped 4 optional SQLite tests
+```
+
+### 2026-06-03 - LG4.6 双入口边界清理
+
+已完成：
+
+- 更新 `docs/phase8_1_api_contract.md`：dependency plan 需要人工审核时，新产品
+  客户端应调用 `POST /runs/{run_id}/graph-command`。
+- 明确 `/dependency-review` 是旧客户端兼容端点；新 UI/产品代码不应调用它。
+- 明确 `/native-resume` 只在 graph read model 标记 native resume 可用时使用，
+  普通浏览器审核动作仍走 `/graph-command`。
+- 在 `DependencyReviewRequest`、`persist_dependency_review()` 和 FastAPI route
+  附近补充兼容说明，避免后续维护时把旧入口当成主入口。
+- 增加 UI/API 合同测试：
+  - 首页 HTML 暴露 `/graph-command`；
+  - 首页 HTML 不暴露 `/dependency-review`；
+  - API 合同文档必须把 `/dependency-review` 标记为 compatibility。
+
+边界：
+
+- 本切片不删除 `/dependency-review`，避免破坏旧测试或旧客户端。
+- 本切片不扩大 `/native-resume` 可用范围，也不改变 LLM、R 执行、compare 或
+  static rules 行为。
+
 当前验证：
 
 ```text
