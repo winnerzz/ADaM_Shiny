@@ -34,6 +34,7 @@ from adam_agent.api.models import (
     NativeDatasetFullRunStartResponse,
     NativeDatasetFullRunResumeRequest,
     NativeDatasetFullRunResumeResponse,
+    NativeDatasetFullRunExecuteRequest,
     NativeDatasetResumeRequest,
     NativeDatasetResumeResponse,
     NativeStudyStartRequest,
@@ -73,6 +74,7 @@ from adam_agent.api.service import (
     read_run_json_artifact,
     read_run_progress,
     resume_native_dataset_full_run,
+    execute_native_dataset_full_run,
     resume_native_dataset_interrupt,
     run_study_from_request,
     save_uploaded_file_bytes,
@@ -211,6 +213,20 @@ def create_app() -> FastAPI:
     ) -> NativeDatasetFullRunResumeResponse:
         try:
             return resume_native_dataset_full_run(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post(
+        "/runs/{run_id}/datasets/{dataset}/native-full-run/execute",
+        response_model=ExecuteCodeResponse,
+    )
+    def native_dataset_full_run_execute(
+        run_id: str,
+        dataset: str,
+        request: NativeDatasetFullRunExecuteRequest,
+    ) -> ExecuteCodeResponse:
+        try:
+            return execute_native_dataset_full_run(run_id, dataset, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -214,6 +214,14 @@ class NativeDatasetFullRunResumeResponse(StrictBaseModel):
     workflow_state_path: str | None = None
 
 
+class NativeDatasetFullRunExecuteRequest(StrictBaseModel):
+    """Execute approved code for a dataset that has an LG3 full-run contract."""
+
+    study_dir: NonEmptyStr
+    study_id: str | None = None
+    rscript_path: str | None = None
+
+
 class GraphCommandRequest(StrictBaseModel):
     """Submit one human graph action without choosing a split-flow endpoint."""
 

@@ -10942,6 +10942,43 @@ Boundary:
 - It does not expand `/native-resume` availability or change LLM, R execution,
   compare, or static-rule behavior.
 
+### 2026-06-03 - LG4.7 LG3 Full-Run Execution Entrypoint
+
+Completed:
+
+- Added an LG3 full-run-only execution endpoint:
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute`.
+- The endpoint requires an existing LG3 full-run contract:
+  - without `lg3_backend_contract` in graph state, it fails closed;
+  - ordinary split-flow runs cannot use it to execute R.
+- Added `GraphGateway.execute_native_dataset_full_run()`, which only applies the
+  LG3 contract guard and then reuses the existing graph-owned
+  `execute_approved_code()` execution boundary.
+- The LG3 guard now requires the exact
+  `contract=single_dataset_spec_code_review_execute` marker, so stale metadata
+  with only `boundary=lg3_backend_contract` is rejected.
+- Execution metadata is synchronized for both LG3 contract shapes:
+  - top-level single-dataset `native_dataset_full_run`;
+  - study-loop nested `native_study_product_loop.full_run_datasets[dataset]`.
+  This keeps multi-dataset runs from losing one dataset's execution status while
+  another dataset remains at review.
+- Browser `Run Approved Code` now calls:
+  - `/native-full-run/execute` when the active dataset has an LG3 full-run
+    contract;
+  - `/execute-approved-code` for old compatibility/non-LG3 split-flow runs.
+- Updated the API contract to mark `/execute-approved-code` as compatibility
+  for non-LG3 split-flow execution and `/native-full-run/execute` as the
+  preferred execution path for LG3 dataset flow.
+
+Boundary:
+
+- This slice does not put R execution into `/graph-command`; graph command still
+  records human review only.
+- It does not enable durable `/native-resume` or change LLM generation,
+  repair/spec revision, compare, static rules, or sandbox mechanics.
+- The old `/execute-approved-code` endpoint remains for legacy split-flow and
+  compatibility tests.
+
 Verification so far:
 
 ```text

@@ -3578,30 +3578,42 @@ class GraphGateway:
             agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
-        if _has_native_dataset_full_run_contract(previous_graph_state, target):
+        if _has_lg3_full_run_resume_contract(previous_graph_state, target):
             phase = "terminal_failure" if terminal_failure else "executed"
             current_interrupt = "terminal_failure" if terminal_failure else None
-            prior_contract = previous_graph_state.runtime_persistence.get("native_dataset_full_run") or {}
+            prior_contract = _lg3_full_run_contract_payload(previous_graph_state, target)
             followup_context = _native_dataset_full_run_terminal_followup_context(previous_graph_state, target)
             if followup_context is None and isinstance(prior_contract.get("terminal_failure_followup"), dict):
                 followup_context = dict(prior_contract["terminal_failure_followup"])
             runtime_extra = _runtime_persistence_extras(previous_graph_state)
             runtime_extra.update(_runtime_persistence_extras(gateway_result.graph_state))
-            runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
-                previous_graph_state,
+            metadata_updates = {
+                "last_interrupt": "code_review",
+                "decision": str(prior_contract.get("decision") or "approve"),
+                "approved": True,
+                "code_generation_continued": False,
+                "executed_after_approval": True,
+                "terminal_failure": terminal_failure,
+                "repair_or_revision_continued": bool(prior_contract.get("repair_or_revision_continued"))
+                or followup_context is not None,
+            }
+            if followup_context is not None:
+                metadata_updates["terminal_failure_followup"] = followup_context
+            if _has_native_dataset_full_run_contract(previous_graph_state, target):
+                runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
+                    previous_graph_state,
+                    dataset=target,
+                    phase=phase,
+                    current_interrupt=current_interrupt,
+                    native_interrupt_resume_available=False,
+                    **metadata_updates,
+                )
+            _sync_native_study_full_run_dataset_contract(
+                runtime_extra,
                 dataset=target,
                 phase=phase,
                 current_interrupt=current_interrupt,
-                native_interrupt_resume_available=False,
-                last_interrupt="code_review",
-                decision=str(prior_contract.get("decision") or "approve"),
-                approved=True,
-                code_generation_continued=False,
-                executed_after_approval=True,
-                terminal_failure=terminal_failure,
-                repair_or_revision_continued=bool(prior_contract.get("repair_or_revision_continued"))
-                or followup_context is not None,
-                **({"terminal_failure_followup": followup_context} if followup_context is not None else {}),
+                updates=metadata_updates,
             )
             self._persist_graph_state(
                 root,
@@ -3626,6 +3638,38 @@ class GraphGateway:
             terminal_failure=terminal_failure,
             errors=list(result.get("execution_errors", [])),
             warnings=list(result.get("execution_warnings", [])),
+        )
+
+    def execute_native_dataset_full_run(
+        self,
+        *,
+        study_dir: str | Path,
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        rscript_path: str | None = None,
+    ) -> GraphGatewayExecutionResult:
+        """Execute approved R code only for a dataset with an LG3 full-run contract."""
+
+        root = Path(study_dir).expanduser()
+        target = dataset.strip().upper()
+        try:
+            graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError as exc:
+            raise ValueError(
+                "Graph state does not exist for this run. Start the dataset through the native-full-run endpoint before execution."
+            ) from exc
+        if not _has_lg3_full_run_resume_contract(graph_state, target):
+            raise ValueError(
+                f"No LG3 native full-run contract exists for {target}. "
+                "Use the compatibility execute-approved-code endpoint for non-LG3 split-flow runs."
+            )
+        return self.execute_approved_code(
+            study_dir=root,
+            study_id=study_id,
+            run_id=run_id,
+            dataset=target,
+            rscript_path=rscript_path,
         )
 
     def start_native_terminal_failure_review(
@@ -4256,10 +4300,10 @@ class GraphGateway:
         if reviewed_dataset.current_interrupt is not None and reviewed_dataset.current_interrupt.status == "open":
             current_interrupt = reviewed_dataset.current_interrupt.name
         graph_result = result
-        if _has_native_dataset_full_run_contract(graph_state, target):
+        if _has_lg3_full_run_resume_contract(graph_state, target):
             next_state = result.graph_state.model_copy(deep=True)
             runtime_extra = _runtime_persistence_extras(next_state)
-            previous = dict(graph_state.runtime_persistence.get("native_dataset_full_run") or {})
+            previous = _lg3_full_run_contract_payload(graph_state, target)
             previous.update(
                 {
                     "dataset": target,
@@ -4285,12 +4329,27 @@ class GraphGateway:
                     ),
                 }
             )
-            runtime_extra["native_dataset_full_run"] = previous
+            if _has_native_dataset_full_run_contract(graph_state, target):
+                runtime_extra["native_dataset_full_run"] = previous
             _sync_native_study_full_run_dataset_contract(
                 runtime_extra,
                 dataset=target,
                 phase="terminal_failure_triaged",
                 current_interrupt=current_interrupt,
+                updates={
+                    "last_interrupt": "terminal_failure",
+                    "decision": normalized_decision,
+                    "terminal_failure": True,
+                    "next_action": str(reviewed_dataset.execution_state.get("next_action") or ""),
+                    **_native_dataset_full_run_resume_capability_metadata(
+                        next_state,
+                        native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                            next_state,
+                            runtime_resume_available=self.native_interrupt_resume_available(),
+                            active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+                        ),
+                    ),
+                },
             )
             self._persist_graph_state(
                 root,
@@ -6283,32 +6342,43 @@ def _has_native_dataset_full_run_contract(state: StudyRunState, dataset: str) ->
     """Return whether the run was started through the LG3 full-run contract."""
 
     payload = state.runtime_persistence.get("native_dataset_full_run")
+    return _is_lg3_dataset_full_run_contract(payload, dataset)
+
+
+def _is_lg3_dataset_full_run_contract(payload: Any, dataset: str) -> bool:
+    target = dataset.strip().upper()
     if not isinstance(payload, dict):
         return False
     if str(payload.get("boundary") or "") != "lg3_backend_contract":
         return False
-    return str(payload.get("dataset") or "").strip().upper() == dataset.strip().upper()
+    if str(payload.get("contract") or "") != "single_dataset_spec_code_review_execute":
+        return False
+    return str(payload.get("dataset") or "").strip().upper() == target
+
+
+def _lg3_full_run_contract_payload(state: StudyRunState, dataset: str) -> dict[str, Any]:
+    """Return the LG3 full-run contract payload for a dataset, from either supported location."""
+
+    target = dataset.strip().upper()
+    top_level = state.runtime_persistence.get("native_dataset_full_run")
+    if _is_lg3_dataset_full_run_contract(top_level, target):
+        return dict(top_level)
+    study_loop = state.runtime_persistence.get("native_study_product_loop")
+    if not isinstance(study_loop, dict):
+        return {}
+    full_run_datasets = study_loop.get("full_run_datasets")
+    if not isinstance(full_run_datasets, dict):
+        return {}
+    nested = full_run_datasets.get(target)
+    if _is_lg3_dataset_full_run_contract(nested, target):
+        return dict(nested)
+    return {}
 
 
 def _has_lg3_full_run_resume_contract(state: StudyRunState, dataset: str) -> bool:
     """Return whether dataset review gates may use the LG3 full-run resume entry."""
 
-    target = dataset.strip().upper()
-    if _has_native_dataset_full_run_contract(state, target):
-        return True
-    study_loop = state.runtime_persistence.get("native_study_product_loop")
-    if not isinstance(study_loop, dict):
-        return False
-    full_run_datasets = study_loop.get("full_run_datasets")
-    if not isinstance(full_run_datasets, dict):
-        return False
-    payload = full_run_datasets.get(target)
-    if not isinstance(payload, dict):
-        return False
-    return (
-        str(payload.get("boundary") or "") == "lg3_backend_contract"
-        and str(payload.get("contract") or "") == "single_dataset_spec_code_review_execute"
-    )
+    return bool(_lg3_full_run_contract_payload(state, dataset))
 
 
 def _has_native_dataset_full_run_terminal_followup(state: StudyRunState, dataset: str) -> bool:
@@ -6319,10 +6389,8 @@ def _native_dataset_full_run_terminal_followup_context(
     state: StudyRunState,
     dataset: str,
 ) -> dict[str, Any] | None:
-    if not _has_native_dataset_full_run_contract(state, dataset):
-        return None
-    payload = state.runtime_persistence.get("native_dataset_full_run")
-    if not isinstance(payload, dict):
+    payload = _lg3_full_run_contract_payload(state, dataset)
+    if not payload:
         return None
     decision = str(payload.get("decision") or "").strip().lower()
     if (
@@ -6421,6 +6489,7 @@ def _sync_native_study_full_run_dataset_contract(
     dataset: str,
     phase: str,
     current_interrupt: str | None,
+    updates: dict[str, Any] | None = None,
 ) -> None:
     """Keep study-loop nested full-run metadata aligned with the dataset state."""
 
@@ -6439,16 +6508,21 @@ def _sync_native_study_full_run_dataset_contract(
             "dataset": target,
             "phase": phase,
             "current_interrupt": current_interrupt,
+            "contract": "single_dataset_spec_code_review_execute",
+            "boundary": "lg3_backend_contract",
             **_native_dataset_full_run_compatibility_resume_gate(
                 phase=phase,
                 current_interrupt=current_interrupt,
             ),
         }
     )
-    if current_interrupt is not None:
-        contract["next_action"] = current_interrupt
-    else:
-        contract.pop("next_action", None)
+    if updates:
+        contract.update(updates)
+    if not updates or "next_action" not in updates:
+        if current_interrupt is not None:
+            contract["next_action"] = current_interrupt
+        else:
+            contract.pop("next_action", None)
 
 
 def _native_dataset_full_run_compatibility_resume_gate(

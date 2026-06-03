@@ -2292,6 +2292,26 @@ INDEX_HTML = r"""<!doctype html>
       return nativeFullRunResumeAvailable(target);
     }
 
+    function hasNativeFullRunExecutionContract(target) {
+      const normalized = String(target || '').toUpperCase();
+      if (state.graphState) {
+        return runtimeHasNativeFullRunExecutionContract(state.graphState.runtime_persistence || {}, normalized);
+      }
+      return runtimeHasNativeFullRunExecutionContract(state.runProgress?.runtime_persistence || {}, normalized);
+    }
+
+    function runtimeHasNativeFullRunExecutionContract(runtime, normalized) {
+      const contract = runtime?.native_dataset_full_run || {};
+      if (String(contract.dataset || '').toUpperCase() === normalized
+        && String(contract.contract || '') === 'single_dataset_spec_code_review_execute'
+        && String(contract.boundary || '') === 'lg3_backend_contract') {
+        return true;
+      }
+      const studyContract = runtime?.native_study_product_loop?.full_run_datasets?.[normalized] || {};
+      return String(studyContract.contract || '') === 'single_dataset_spec_code_review_execute'
+        && String(studyContract.boundary || '') === 'lg3_backend_contract';
+    }
+
     function runtimeHasNativeFullRunContract(runtime, normalized, progress) {
       const contract = runtime?.native_dataset_full_run || {};
       if (String(contract.dataset || '').toUpperCase() === normalized
@@ -4238,7 +4258,9 @@ INDEX_HTML = r"""<!doctype html>
       );
       setPill('codeStatus', 'running');
       try {
-        state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/execute-approved-code`, {
+        const nativeFullRunExecution = hasNativeFullRunExecutionContract(generated.dataset);
+        const executionEndpoint = nativeFullRunExecution ? 'native-full-run/execute' : 'execute-approved-code';
+        state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/${executionEndpoint}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({

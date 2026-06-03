@@ -1124,6 +1124,41 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
     )
 
 
+def execute_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> ExecuteCodeResponse:
+    """Execute approved R code only for an existing LG3 full-run contract."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    study_id = request.study_id or study_dir.name
+    try:
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.execute_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                rscript_path=getattr(request, "rscript_path", None) or "",
+            )
+    except ValueError as exc:
+        raise ApiServiceError(str(exc)) from exc
+    return ExecuteCodeResponse(
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status=result.status,
+        validation_status=result.validation_status,
+        output_path=result.output_path,
+        validation_report_path=result.validation_report_path,
+        diagnostics_path=result.diagnostics_path,
+        terminal_failure=result.terminal_failure,
+        errors=result.errors,
+        warnings=result.warnings,
+        **_gateway_compatibility_metadata(result),
+    )
+
+
 def persist_terminal_failure_review(run_id: str, dataset: str, request: Any) -> TerminalFailureReviewResponse:
     """Persist human triage for a terminal execution failure."""
 

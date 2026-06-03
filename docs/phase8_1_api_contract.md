@@ -261,6 +261,24 @@ Request:
 
 Runs previously approved generated R code through the local R execution
 boundary. It does not generate new code and does not approve code by itself.
+This endpoint remains available for compatibility and non-LG3 split-flow runs.
+
+### POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute
+
+Runs approved generated R code for a dataset that was started through the LG3
+native full-run contract. The request shape matches `execute-approved-code`:
+
+```json
+{
+  "study_dir": "D:/path/to/PSY201",
+  "study_id": "PSY201",
+  "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"
+}
+```
+
+This endpoint fails closed if the dataset has no LG3 full-run contract in graph
+state. It is the preferred browser execution path after code was approved in an
+LG3/native-full-run dataset flow.
 
 ### POST /runs/{run_id}/datasets/{dataset}/terminal-failure-review
 

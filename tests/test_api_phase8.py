@@ -2775,6 +2775,7 @@ console.log(JSON.stringify({
         self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';", html)
         self.assertIn("async function applyNativeFullRunStart(payload)", html)
         self.assertIn("function hasNativeFullRunContract(target)", html)
+        self.assertIn("function hasNativeFullRunExecutionContract(target)", html)
         self.assertIn("native-full-run", html)
         self.assertIn("function graphCommandRequestBody", html)
         self.assertIn("R will not run in this step.", approve_body)
@@ -2784,7 +2785,8 @@ console.log(JSON.stringify({
         self.assertNotIn("/code-review", approve_body)
         self.assertNotIn("/execute-approved-code", approve_body)
         self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", run_body)
-        self.assertIn("/execute-approved-code", run_body)
+        self.assertIn("const executionEndpoint = nativeFullRunExecution ? 'native-full-run/execute' : 'execute-approved-code';", run_body)
+        self.assertIn("/${executionEndpoint}", run_body)
         self.assertNotIn("/code-review", run_body)
 
     def test_index_code_approval_uses_graph_command_when_lg3_contract_exists(self) -> None:
@@ -4416,6 +4418,158 @@ console.log(JSON.stringify({
         self.assertFalse(any("/execute-approved-code" in item for item in result["afterApprove"]))
         self.assertTrue(any("/execute-approved-code" in item for item in result["afterRun"]))
         self.assertTrue(result["approved"])
+        self.assertEqual(result["executionStatus"], "completed")
+
+    def test_index_run_approved_code_uses_native_full_run_execute_when_contract_exists(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_lg3_execute' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('rscriptPath').value = 'C:/Dev/R-4.5.2/bin/Rscript.exe';
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/native-full-run/execute')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_lg3_execute',
+      dataset: 'ADAE',
+      status: 'completed',
+      validation_status: 'pass',
+      terminal_failure: false,
+      graph_state_path: 'runs/run_ui_lg3_execute/graph_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_lg3_execute',
+      target_datasets: ['ADAE'],
+      runtime_persistence: {
+        native_dataset_full_run: {
+          dataset: 'ADAE',
+          contract: 'single_dataset_spec_code_review_execute',
+          boundary: 'lg3_backend_contract',
+          phase: 'executed'
+        }
+      },
+      datasets: {
+        ADAE: {
+          status: 'completed',
+          code_state: {status: 'approved', code_path: 'runs/run_ui_lg3_execute/code/build_adae.R'},
+          execution_state: {status: 'completed'}
+        }
+      }
+    })};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({
+      target_datasets: ['ADAE'],
+      runtime_persistence: {
+        native_dataset_full_run: {
+          dataset: 'ADAE',
+          contract: 'single_dataset_spec_code_review_execute',
+          boundary: 'lg3_backend_contract',
+          phase: 'executed'
+        }
+      },
+      datasets: [{
+        dataset: 'ADAE',
+        status: 'completed',
+        next_action: 'complete',
+        action_label: 'Dataset completed.',
+        code_status: 'approved',
+        execution_status: 'completed',
+        blocked: false
+      }]
+    })};
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_lg3_execute', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.graphState = {
+  runtime_persistence: {
+    native_dataset_full_run: {
+      dataset: 'ADAE',
+      contract: 'single_dataset_spec_code_review_execute',
+      boundary: 'lg3_backend_contract',
+      phase: 'reviewed'
+    }
+  },
+  datasets: {
+    ADAE: {
+      code_state: {status: 'approved', code_path: 'runs/run_ui_lg3_execute/code/build_adae.R'}
+    }
+  }
+};
+state.runProgress = {
+  datasets: [{dataset: 'ADAE', next_action: 'execute_approved_code', action_label: 'Run approved code.', code_status: 'approved', blocked: false}]
+};
+state.generatedByDataset = {
+  ADAE: {
+    dataset: 'ADAE',
+    run_id: 'run_ui_lg3_execute',
+    status: 'generated',
+    code_path: 'runs/run_ui_lg3_execute/code/build_adae.R',
+    generated_code: 'adae <- ae'
+  }
+};
+state.reviewByDataset = {ADAE: {dataset: 'ADAE', approved: true}};
+await runApprovedCode();
+console.log(JSON.stringify({
+  nativeExecuteCalled: calls.some((item) => item.includes('/native-full-run/execute')),
+  compatibilityExecuteCalled: calls.some((item) => item.includes('/execute-approved-code')),
+  executionStatus: state.executionByDataset.ADAE.status
+}));
+"""
+        script_path = TMP_ROOT / "ui_lg3_native_full_run_execute.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["nativeExecuteCalled"])
+        self.assertFalse(result["compatibilityExecuteCalled"])
         self.assertEqual(result["executionStatus"], "completed")
 
     def test_index_load_review_summary_recovers_generated_code_for_graph_review_gate(self) -> None:
@@ -8232,6 +8386,84 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             graph_state["runtime_persistence"]["native_code_review_resume"]["resume_source"],
             "graph_state_compatibility_fallback",
         )
+
+    def test_native_full_run_execute_endpoint_requires_lg3_contract(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_native_full_run_execute_requires_contract")
+        client = TestClient(create_app())
+        generated = client.post(
+            "/runs/run_native_full_run_execute_requires_contract/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+
+        response = client.post(
+            "/runs/run_native_full_run_execute_requires_contract/datasets/ADAE/native-full-run/execute",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("No LG3 native full-run contract exists", response.json()["detail"])
+
+    def test_native_full_run_execute_endpoint_runs_approved_lg3_contract(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_native_full_run_execute_endpoint")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_native_full_run_execute_endpoint/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+        approved = client.post(
+            "/runs/run_native_full_run_execute_endpoint/datasets/ADAE/native-full-run/resume",
+            json={
+                "study_dir": str(study_dir),
+                "decision": "approve",
+                "reviewer": "tester",
+                "notes": "Approve code before native full-run execute.",
+                "execute_after_approval": False,
+            },
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass", "errors": [], "warnings": []},
+                "output_path": "runs/run_native_full_run_execute_endpoint/outputs/adae.csv",
+                "validation_report_path": "runs/run_native_full_run_execute_endpoint/validation/adae_validation_report.json",
+                "diagnostics_path": "",
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "agent_node_inputs": [],
+                "agent_node_outputs": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            executed = client.post(
+                "/runs/run_native_full_run_execute_endpoint/datasets/ADAE/native-full-run/execute",
+                json={"study_dir": str(study_dir), "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+            )
+
+        self.assertEqual(executed.status_code, 200, executed.text)
+        payload = executed.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["validation_status"], "pass")
+        graph_state, _ = _assert_compatibility_projection(self, payload)
+        contract = graph_state["runtime_persistence"]["native_dataset_full_run"]
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertEqual(contract["phase"], "executed")
+        self.assertTrue(contract["executed_after_approval"])
+        self.assertNotIn("next_action", contract)
 
     def test_native_full_run_resume_accepts_study_loop_full_run_dataset_contract(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_full_run_resume_study_contract")

@@ -3939,7 +3939,7 @@ class GraphGatewayTests(unittest.TestCase):
                 "execution_errors": [],
                 "execution_warnings": [],
             }
-            executed = gateway.execute_approved_code(
+            executed = gateway.execute_native_dataset_full_run(
                 study_dir=study_dir,
                 study_id="PSY201",
                 run_id=run_id,
@@ -3958,6 +3958,105 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(contract["durable_full_run_resume_available"])
         self.assertEqual(contract["durable_full_run_resume_boundary"], "not_implemented")
         self.assertNotIn("next_action", contract)
+
+    def test_gateway_native_full_run_execute_rejects_non_lg3_contract(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_execute_rejects_non_lg3") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        code_dir = study_dir / "runs" / "run_non_lg3_execute" / "code"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        code_dir.mkdir(parents=True)
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(AETERM='HEADACHE'), 'outputs/adae.csv')\n", encoding="utf-8")
+        static_path, static_sha = _write_static_check_for_code(study_dir, "run_non_lg3_execute", "ADAE", code_path)
+        gateway = GraphGateway()
+        gateway.record_code_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_non_lg3_execute",
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            spec_source="input_spec",
+            spec_path=spec_dir / "adae.json",
+            spec_sha256=f"sha256:{sha256_file(spec_dir / 'adae.json')}",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        gateway.review_code(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_non_lg3_execute",
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        with self.assertRaisesRegex(ValueError, "No LG3 native full-run contract exists"):
+            gateway.execute_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_non_lg3_execute",
+                dataset="ADAE",
+            )
+
+    def test_gateway_native_full_run_execute_rejects_polluted_lg3_boundary_without_contract(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_execute_rejects_polluted_contract") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        run_id = "run_lg3_polluted_contract"
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        state.runtime_persistence["native_dataset_full_run"] = {
+            "dataset": "ADAE",
+            "boundary": "lg3_backend_contract",
+            "phase": "waiting_for_human_gate",
+        }
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_polluted_lg3_boundary_without_contract",
+            runtime_persistence_extra={"native_dataset_full_run": state.runtime_persistence["native_dataset_full_run"]},
+        )
+
+        with self.assertRaisesRegex(ValueError, "No LG3 native full-run contract exists"):
+            gateway.execute_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
 
     def test_gateway_lg3_paused_explicit_execution_does_not_claim_durable_resume(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_pause_execute_no_durable_claim") / "PSY201"
@@ -5432,6 +5531,103 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(full_run_datasets["ADAE"]["current_interrupt"])
         self.assertFalse(full_run_datasets["ADAE"]["compatibility_resume_currently_available"])
         self.assertEqual(full_run_datasets["ADAE"]["compatibility_resume_boundary"], "historical_contract_only")
+        self.assertNotIn("next_action", full_run_datasets["ADAE"])
+        self.assertEqual(full_run_datasets["ADCM"]["phase"], "waiting_for_human_gate")
+        self.assertEqual(full_run_datasets["ADCM"]["current_interrupt"], "code_review")
+        self.assertTrue(full_run_datasets["ADCM"]["compatibility_resume_currently_available"])
+        self.assertEqual(result.graph_state.datasets["ADCM"].current_interrupt.name, "code_review")
+
+    def test_gateway_lg3_native_execute_updates_study_loop_nested_full_run_contract(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_study_loop_nested_contract_after_execute") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (sdtm_dir / "cm.csv").write_text("USUBJID,CMTRT\n01,ASPIRIN\n", encoding="utf-8")
+        for dataset, variable, domain in (("adae", "AETERM", "AE"), ("adcm", "CMTRT", "CM")):
+            (spec_dir / f"{dataset}.json").write_text(
+                json.dumps(
+                    {
+                        "dataset": dataset.upper(),
+                        "variables": [{"variable": variable, "source_domains": [domain]}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        output_artifact = ArtifactRef(
+            artifact_id="output_adam_psy201_run_lg3_nested_execute_adae",
+            kind="output_adam",
+            path="runs/run_lg3_nested_contract_execute/outputs/adae.csv",
+            sha256=f"sha256:{'e' * 64}",
+            dataset="ADAE",
+            format="csv",
+            role="output",
+        )
+        validation_artifact = ArtifactRef(
+            artifact_id="validation_report_psy201_run_lg3_nested_execute_adae",
+            kind="validation_report",
+            path="runs/run_lg3_nested_contract_execute/validation/adae_validation_report.json",
+            sha256=f"sha256:{'f' * 64}",
+            dataset="ADAE",
+            format="json",
+            role="output",
+        )
+        gateway = GraphGateway()
+        run_id = "run_lg3_nested_contract_execute"
+        gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADAE", "ADCM"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve ADAE but leave execution to the explicit native endpoint.",
+            execute_after_approval=False,
+        )
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass", "errors": [], "warnings": []},
+                "output_path": output_artifact.path,
+                "validation_report_path": validation_artifact.path,
+                "diagnostics_path": "",
+                "real_run_artifacts": {"output_adam": output_artifact, "validation_report": validation_artifact},
+                "failure_records": [],
+                "agent_decisions": [],
+                "agent_node_inputs": [],
+                "agent_node_outputs": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            result = gateway.execute_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
+
+        full_run_datasets = result.graph_state.runtime_persistence["native_study_product_loop"]["full_run_datasets"]
+        self.assertEqual(full_run_datasets["ADAE"]["phase"], "executed")
+        self.assertTrue(full_run_datasets["ADAE"]["approved"])
+        self.assertTrue(full_run_datasets["ADAE"]["executed_after_approval"])
+        self.assertFalse(full_run_datasets["ADAE"]["terminal_failure"])
+        self.assertIsNone(full_run_datasets["ADAE"]["current_interrupt"])
+        self.assertFalse(full_run_datasets["ADAE"]["compatibility_resume_currently_available"])
+        self.assertEqual(full_run_datasets["ADAE"]["compatibility_resume_boundary"], "historical_contract_only")
+        self.assertEqual(full_run_datasets["ADAE"]["last_interrupt"], "code_review")
         self.assertNotIn("next_action", full_run_datasets["ADAE"])
         self.assertEqual(full_run_datasets["ADCM"]["phase"], "waiting_for_human_gate")
         self.assertEqual(full_run_datasets["ADCM"]["current_interrupt"], "code_review")

@@ -10220,6 +10220,39 @@ Ran 168 tests - OK, skipped 4 optional SQLite tests
 - 本切片不扩大 `/native-resume` 可用范围，也不改变 LLM、R 执行、compare 或
   static rules 行为。
 
+### 2026-06-03 - LG4.7 LG3 Full-Run 执行入口收敛
+
+已完成：
+
+- 新增 LG3 full-run 专属执行入口：
+  `POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute`。
+- 新入口只允许已有 LG3 full-run contract 的 dataset 使用：
+  - 如果 graph state 中没有 `lg3_backend_contract`，会 fail closed；
+  - 普通旧 split-flow run 不能借这个入口执行 R。
+- Gateway 新增 `execute_native_dataset_full_run()`，只负责 contract guard，然后复用
+  现有 graph-owned `execute_approved_code()` 执行边界。
+- LG3 guard 现在要求精确的
+  `contract=single_dataset_spec_code_review_execute` 标记。只有
+  `boundary=lg3_backend_contract` 的旧状态或污染状态不会被当作 LG3 contract。
+- 执行后的 metadata 会同时兼容两类 LG3 contract：
+  - 单 dataset 顶层 `native_dataset_full_run`；
+  - study-loop 嵌套的 `native_study_product_loop.full_run_datasets[dataset]`。
+  这样多 dataset run 中，一个 dataset 执行完成时，不会把另一个还在 review 的
+  dataset 状态冲掉。
+- 浏览器 `Run Approved Code` 现在会：
+  - 如果 active dataset 有 LG3 full-run contract，调用
+    `/native-full-run/execute`；
+  - 否则保留旧 `/execute-approved-code` 兼容路径。
+- API 合同文档明确 `/execute-approved-code` 是兼容/非 LG3 split-flow 执行入口，
+  `/native-full-run/execute` 是 LG3 dataset flow 的首选执行入口。
+
+边界：
+
+- 本切片不把 R execution 塞进 `/graph-command`。`/graph-command` 仍只记录人工审核。
+- 本切片不启用 durable `/native-resume`，不改变 LLM 生成、repair/spec revision、
+  compare、static rules 或 sandbox 机制。
+- 旧 `/execute-approved-code` 没有删除，仍保留给旧 split-flow 和兼容测试。
+
 当前验证：
 
 ```text
