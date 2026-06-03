@@ -2579,7 +2579,8 @@ console.log(JSON.stringify({
         graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
         self.assertNotIn("merged.add('ADAE')", infer_body)
         self.assertIn("const autoPlanned = available.filter(targetCanAutoPlan);", auto_body)
-        self.assertIn("state.selectedTarget = autoPlanned[0] || available[0] || null;", auto_body)
+        self.assertIn("const preferred = preferredInitialTarget(autoPlanned.length ? autoPlanned : available);", auto_body)
+        self.assertIn("if (normalized.includes('ADSL')) return 'ADSL';", auto_body)
         self.assertIn("if (state.selectedTargetsForPlan.length) preparePlan();", auto_body)
         self.assertIn("state.selectedTarget = targets[0];", render_body)
         self.assertIn("targetCanAutoPlan(state.selectedTarget)", render_body)
@@ -2685,8 +2686,8 @@ console.log(JSON.stringify({
         self.assertIn("recordTargetSource(dataset, 'input_spec')", infer_body)
         self.assertIn("recordTargetSource(token, 'legacy_code')", infer_body)
         self.assertIn("const autoPlanned = available.filter(targetCanAutoPlan);", auto_body)
-        self.assertIn("state.selectedTarget = autoPlanned[0] || available[0] || null;", auto_body)
-        self.assertIn("state.selectedTargetsForPlan = autoPlanned.length ? [autoPlanned[0]] : [];", auto_body)
+        self.assertIn("const preferred = preferredInitialTarget(autoPlanned.length ? autoPlanned : available);", auto_body)
+        self.assertIn("state.selectedTargetsForPlan = state.selectedTarget && targetCanAutoPlan(state.selectedTarget) ? [state.selectedTarget] : [];", auto_body)
         self.assertIn("targetSourceHint(target)", render_body)
         self.assertIn("Reference-only candidates stay unplanned until you explicitly select them.", summary_body)
         self.assertIn("const targetIsPlanned = Boolean(target && selectedTargets().includes(target));", action_body)
@@ -5743,7 +5744,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["current_interrupt"]["name"], "code_review")
         self.assertEqual(payload["next_action"], "review_code")
         self.assertEqual(payload["requested_datasets"], ["ADAE"])
-        self.assertEqual(payload["target_datasets"], ["ADAE"])
+        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
         self.assertTrue(payload["graph_state_path"].endswith("graph_state.json"))
         self.assertEqual(payload["native_resume"]["available"], False)
         self.assertEqual(payload["native_resume"]["scope"], "none")
@@ -5851,7 +5852,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["study_id"], "demo_adam")
-        self.assertEqual(payload["target_datasets"], ["ADAE"])
+        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
         self.assertIn(payload["execution_mode"], {"llm_downstream_provider", "llm_downstream_r_sandbox"})
         self.assertTrue((target / "input_sdtm" / "ae.csv").exists())
         self.assertTrue((target / "input_sdtm" / "dm.csv").exists())
@@ -6191,6 +6192,55 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn("Canonical graph state", detail)
         self.assertIn("Compare will not fall back", detail)
         self.assertFalse((run_dir / "compare" / "adae_compare_report.json").exists())
+
+    def test_compare_endpoint_supports_sas7bdat_reference_when_graph_state_exists(self) -> None:
+        study_dir = _workspace_dir("phase8_compare_sas7bdat_reference") / "PSY201"
+        run_id = "run_compare_sas7bdat_reference"
+        output_dir = study_dir / "runs" / run_id / "outputs"
+        reference_dir = study_dir / "reference_adam"
+        output_dir.mkdir(parents=True)
+        reference_dir.mkdir(parents=True)
+        (output_dir / "addm.csv").write_text("USUBJID,SITEID\n01,01\n02,01\n", encoding="utf-8")
+        (reference_dir / "addm.sas7bdat").write_text("binary placeholder", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADDM"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id).model_copy(deep=True)
+        state.datasets["ADDM"].status = "completed"
+        state.datasets["ADDM"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": str((output_dir / "addm.csv").as_posix()),
+        }
+        gateway._persist_graph_state(study_dir, state, node="test_seed_api_compare_sas7bdat_reference")
+        client = TestClient(create_app())
+
+        def fake_reader(path: Path) -> dict:
+            self.assertTrue(path.name.lower().endswith(".sas7bdat"))
+            return {
+                "status": "ok",
+                "columns": ["usubjid", "siteid"],
+                "rows": [{"usubjid": "01", "siteid": "01"}],
+            }
+
+        with patch("adam_agent.api.service._sas7bdat_table_reader", return_value=fake_reader):
+            compare = client.get(
+                f"/runs/{run_id}/datasets/ADDM/compare",
+                params={"study_dir": str(study_dir)},
+            )
+
+        self.assertEqual(compare.status_code, 200, compare.text)
+        payload = compare.json()
+        self.assertEqual(payload["status"], "differences")
+        self.assertEqual(payload["reference_file"], "addm.sas7bdat")
+        self.assertEqual(payload["row_count_generated"], 2)
+        self.assertEqual(payload["row_count_reference"], 1)
+        self.assertEqual(payload["generated_only_keys"], ["02"])
 
     def test_review_summary_reports_compare_without_mutating_graph_when_reference_disappears(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_compare_missing_refresh")
@@ -9899,6 +9949,121 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         adae_state = graph_state.json()["datasets"]["ADAE"]
         self.assertEqual(adae_state["current_interrupt"]["name"], "draft_spec_review")
         self.assertEqual(adae_state["spec_state"]["status"], "draft_generated")
+
+    def test_native_resume_approves_generated_draft_spec_without_500_when_sqlite_enabled(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_native_resume_draft_spec_sqlite")
+        client = TestClient(create_app())
+        run_id = "run_native_resume_draft_spec_sqlite"
+        with patch.dict("os.environ", {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite"}):
+            finalized = client.post(
+                f"/runs/{run_id}/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {"provider": "mock", "model": "mock"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+            self.assertEqual(finalized.status_code, 200, finalized.text)
+            self.assertEqual(finalized.json()["status"], "draft_spec_review_required")
+
+            response = client.post(
+                f"/runs/{run_id}/datasets/ADAE/native-resume",
+                json={
+                    "study_dir": str(study_dir),
+                    "reviewer": "api_tester",
+                    "decision": "approve",
+                    "notes": "Approve generated draft spec through UI native-resume path.",
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {"provider": "mock", "model": "mock"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["interrupt"], "draft_spec_review")
+        self.assertEqual(payload["decision"], "approve")
+        self.assertNotEqual(payload["status"], "failed")
+        self.assertIsNone(payload["current_interrupt"])
+        graph_state, workflow_state = _assert_run_projection(self, study_dir, run_id)
+        self.assertEqual(graph_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+        self.assertIsNone(graph_state["datasets"]["ADAE"]["current_interrupt"])
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+
+    def test_graph_command_approval_then_native_full_run_continues_to_code_review(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_graph_command_draft_to_full_run_sqlite")
+        client = TestClient(create_app())
+        run_id = "run_graph_command_draft_to_full_run_sqlite"
+        with patch.dict("os.environ", {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite"}):
+            finalized = client.post(
+                f"/runs/{run_id}/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {"provider": "mock", "model": "mock"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+            self.assertEqual(finalized.status_code, 200, finalized.text)
+            self.assertEqual(finalized.json()["status"], "draft_spec_review_required")
+
+            approved = client.post(
+                f"/runs/{run_id}/graph-command",
+                json={
+                    "study_dir": str(study_dir),
+                    "dataset": "ADAE",
+                    "interrupt": "draft_spec_review",
+                    "action": "approve",
+                    "reviewer": "api_tester",
+                    "notes": "Approve generated draft spec through unified graph command.",
+                },
+            )
+            self.assertEqual(approved.status_code, 200, approved.text)
+            self.assertEqual(approved.json()["status"], "pending")
+
+            response = client.post(
+                f"/runs/{run_id}/datasets/ADAE/native-full-run",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {"provider": "mock", "model": "mock"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["phase"], "waiting_for_human_gate")
+        self.assertEqual(payload["current_interrupt"]["name"], "code_review")
+        self.assertEqual(payload["next_action"], "code_review")
+        graph_state, workflow_state = _assert_run_projection(self, study_dir, run_id)
+        self.assertEqual(graph_state["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+        self.assertEqual(graph_state["datasets"]["ADAE"]["code_state"]["status"], "generated")
+        self.assertEqual(graph_state["datasets"]["ADAE"]["code_state"]["spec_source"], "approved_draft_spec")
+        self.assertEqual(workflow_state["datasets"]["ADAE"]["current_interrupt"], "code_review")
+
+    def test_finalize_inputs_with_input_spec_does_not_start_native_draft_spec_when_sqlite_enabled(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_finalize_existing_spec_sqlite")
+        client = TestClient(create_app())
+        run_id = "run_finalize_existing_spec_sqlite"
+        with patch.dict("os.environ", {"ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND": "sqlite"}):
+            response = client.post(
+                f"/runs/{run_id}/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "input_spec_ready")
+        self.assertFalse(payload["draft_spec_required"])
+        self.assertIsNone(payload["draft_spec"])
+        graph_state, _workflow_state = _assert_compatibility_projection(self, payload)
+        self.assertEqual(graph_state["datasets"]["ADAE"]["spec_state"]["status"], "input_spec_ready")
+        self.assertNotIn("native_draft_spec_review_interrupt", graph_state["runtime_persistence"])
 
     def test_finalize_inputs_accepts_mock_model_alias_from_ui(self) -> None:
         study_dir = _study_without_spec_with_auxiliary_evidence("phase8_finalize_mock_alias")

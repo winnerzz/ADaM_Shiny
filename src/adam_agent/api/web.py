@@ -348,6 +348,59 @@ INDEX_HTML = r"""<!doctype html>
       border-color: #efc4be;
       background: #fff8f7;
     }
+    .next-action-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 12px;
+      padding: 14px;
+      border: 1px solid #a7d8cf;
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      background: #f2fbf9;
+    }
+    .next-action-panel.warn {
+      border-color: #f0d19b;
+      border-left-color: #c98200;
+      background: #fff8ea;
+    }
+    .next-action-panel.fail {
+      border-color: #efc4be;
+      border-left-color: var(--danger);
+      background: #fff8f7;
+    }
+    .next-action-eyebrow {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .next-action-title {
+      margin-bottom: 4px;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+    .next-action-detail {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .next-action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 210px;
+    }
+    .next-action-buttons button {
+      white-space: nowrap;
+    }
     .operation-head {
       display: flex;
       align-items: flex-start;
@@ -656,6 +709,64 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       line-height: 1.4;
     }
+    .dependency-plain {
+      display: grid;
+      gap: 10px;
+    }
+    .dependency-plain-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .dependency-plain-card.active {
+      border-color: rgba(15, 118, 110, 0.42);
+      background: #fbfffe;
+    }
+    .dependency-plain-card.blocked {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    .dependency-plain-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .dependency-plain-title {
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .dependency-plain-body {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .dependency-plain-row {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdff;
+    }
+    .dependency-plain-row strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+    .trust-boundary {
+      padding: 9px 10px;
+      border: 1px solid #f0d19b;
+      border-radius: 7px;
+      background: #fff8ea;
+      color: #6f4700;
+      font-size: 12px;
+      line-height: 1.45;
+    }
     .dataset-board { display: grid; gap: 8px; }
     .dataset-card {
       padding: 11px;
@@ -917,6 +1028,59 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 8px;
       background: #fbfdff;
     }
+    .compare-verdict {
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid #b8dfc9;
+      border-radius: 8px;
+      background: #f2fbf5;
+      color: var(--text);
+    }
+    .compare-verdict.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+    }
+    .compare-verdict.fail {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    .compare-verdict strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 14px;
+    }
+    .compare-verdict span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .compare-mini-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .compare-mini {
+      min-height: 70px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .compare-mini strong {
+      display: block;
+      color: var(--text);
+      font-size: 20px;
+      line-height: 1.2;
+    }
+    .compare-mini span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
     ul.clean { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
     details { margin-top: 12px; }
     summary { cursor: pointer; font-weight: 700; font-size: 13px; }
@@ -930,9 +1094,13 @@ INDEX_HTML = r"""<!doctype html>
       header { align-items: flex-start; flex-direction: column; }
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
+      .next-action-panel { grid-template-columns: 1fr; }
+      .next-action-buttons { justify-content: flex-start; min-width: 0; }
       .review-queue-item { grid-template-columns: 1fr; }
       .study-loop-item { grid-template-columns: 1fr; }
       .status-meta-grid { grid-template-columns: 1fr; }
+      .compare-mini-grid { grid-template-columns: 1fr; }
+      .dependency-plain-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -977,6 +1145,17 @@ INDEX_HTML = r"""<!doctype html>
           <span class="pill warn" id="graphStatus">waiting</span>
         </div>
         <div class="section-body">
+          <div class="next-action-panel" id="primaryNextActionPanel">
+            <div>
+              <span class="next-action-eyebrow">Next Step</span>
+              <div class="next-action-title" id="primaryNextActionTitle">Load demo data or upload your study files</div>
+              <div class="next-action-detail" id="primaryNextActionDetail">The app needs study evidence before it can plan an ADaM generation run.</div>
+            </div>
+            <div class="next-action-buttons" id="primaryNextActionButtons">
+              <button data-primary-action="loadDemo" type="button">Load Demo</button>
+              <button class="secondary" data-primary-action="startUpload" type="button">Start Upload</button>
+            </div>
+          </div>
           <div class="operation-banner" id="operationBanner">
             <div class="operation-head">
               <div>
@@ -1880,10 +2059,17 @@ INDEX_HTML = r"""<!doctype html>
     function autoSelectFirstTarget(targets) {
       const available = targets.length ? targets : inferTargets(state.inputSummary);
       const autoPlanned = available.filter(targetCanAutoPlan);
-      state.selectedTarget = autoPlanned[0] || available[0] || null;
-      state.selectedTargetsForPlan = autoPlanned.length ? [autoPlanned[0]] : [];
+      const preferred = preferredInitialTarget(autoPlanned.length ? autoPlanned : available);
+      state.selectedTarget = preferred || autoPlanned[0] || available[0] || null;
+      state.selectedTargetsForPlan = state.selectedTarget && targetCanAutoPlan(state.selectedTarget) ? [state.selectedTarget] : [];
       renderTargetButtons(available);
       if (state.selectedTargetsForPlan.length) preparePlan();
+    }
+
+    function preferredInitialTarget(targets) {
+      const normalized = (targets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      if (normalized.includes('ADSL')) return 'ADSL';
+      return normalized[0] || null;
     }
 
     function renderTargetButtons(targets) {
@@ -2969,6 +3155,212 @@ INDEX_HTML = r"""<!doctype html>
       renderDatasetBoard(targets, runnable, blocked);
       renderAgentAuditPanel();
       renderActionAvailability();
+      renderPrimaryNextAction();
+    }
+
+    function renderPrimaryNextAction() {
+      const panel = byId('primaryNextActionPanel');
+      if (!panel) return;
+      const view = primaryNextActionView();
+      panel.className = `next-action-panel ${view.tone || ''}`.trim();
+      byId('primaryNextActionTitle').textContent = view.title;
+      byId('primaryNextActionDetail').textContent = view.detail;
+      byId('primaryNextActionButtons').innerHTML = view.buttons.map(primaryNextActionButtonHtml).join('');
+      attachPrimaryNextActionHandlers();
+    }
+
+    function primaryNextActionView() {
+      const inputCount = recognizedInputCount();
+      const selected = selectedTargets();
+      const target = state.selectedTarget || '';
+      const progress = datasetProgressFor(target);
+      const availability = actionAvailability();
+      const compare = target ? (state.compareResults[target] || datasetReviewFor(target)?.compare_summary) : null;
+      if (!inputCount) {
+        return {
+          title: 'Load demo data or upload your study files',
+          detail: 'Start with SDTM data. Specs are preferred. Reference ADaM can be uploaded for final comparison only.',
+          buttons: [
+            {label: 'Load Demo', action: 'loadDemo', primary: true},
+            {label: 'Start Upload', action: 'startUpload'}
+          ]
+        };
+      }
+      if (!selected.length || !target) {
+        return {
+          title: 'Choose the ADaM output you want to generate',
+          detail: 'Pick one or more ADaM datasets. The selected dataset becomes the active review panel below.',
+          buttons: [{label: 'Go To Output Selection', action: 'scrollTargets', primary: true}],
+          tone: 'warn'
+        };
+      }
+      if (!state.plan || state.runProgress?.plan_stale) {
+        return {
+          title: state.runProgress?.plan_stale ? 'Inputs changed, refresh the plan' : 'Build the dependency plan',
+          detail: 'The plan explains whether the selected output can run now or needs another ADaM dataset first.',
+          buttons: [{label: 'Prepare Plan', action: 'preparePlan', primary: true}],
+          tone: 'warn'
+        };
+      }
+      const dependencyBlocked = availability.finalize.reason && !availability.finalize.ready && (
+        String(progress?.next_action || '') === 'resolve_dependency' ||
+        Boolean(activeDependencyBlock())
+      );
+      if (dependencyBlocked) {
+        return {
+          title: `${target} is waiting for a dependency decision`,
+          detail: availability.finalize.reason,
+          buttons: [
+            {label: 'Review Dependency Plan', action: 'scrollDependency', primary: true},
+            {label: 'Refresh Progress', action: 'refreshProgress'}
+          ],
+          tone: 'fail'
+        };
+      }
+      if (availability.finalize.ready) {
+        return {
+          title: targetHasInputSpec(target)
+            ? `Confirm uploaded spec for ${target}`
+            : `Create or confirm a draft spec for ${target}`,
+          detail: availability.finalize.reason,
+          buttons: [{label: availability.finalize.label, action: 'finalizeInputs', primary: true}],
+          tone: targetHasInputSpec(target) ? '' : 'warn'
+        };
+      }
+      if (availability.approveDraft.ready || targetInDraftSpecReview(target)) {
+        return {
+          title: `Review the draft spec for ${target}`,
+          detail: 'No R code should be generated until this draft spec is approved or rejected.',
+          buttons: [
+            {label: 'Show Draft Spec', action: 'scrollDraft', primary: true},
+            {label: 'Approve Draft Spec', action: 'approveDraft'}
+          ],
+          tone: 'warn'
+        };
+      }
+      if (availability.startStudy.ready) {
+        return {
+          title: 'Start all runnable datasets at their review gates',
+          detail: availability.startStudy.reason,
+          buttons: [{label: 'Start Runnable Datasets', action: 'startStudy', primary: true}]
+        };
+      }
+      if (availability.generate.ready) {
+        return {
+          title: `Generate R code for ${target}`,
+          detail: 'This calls the selected code generator and stops before local R execution.',
+          buttons: [{label: availability.generate.label, action: 'generateCode', primary: true}]
+        };
+      }
+      if (availability.approveCode.ready) {
+        return {
+          title: `Review generated R code for ${target}`,
+          detail: 'Approve only after checking assumptions and risk points. Approval still does not run R.',
+          buttons: [
+            {label: 'Show R Code', action: 'showCode', primary: true},
+            {label: 'Approve Code', action: 'approveCode'}
+          ],
+          tone: 'warn'
+        };
+      }
+      if (availability.runApproved.ready) {
+        return {
+          title: `Run approved R code for ${target}`,
+          detail: 'This executes the approved code in the local R sandbox and writes the generated ADaM output.',
+          buttons: [{label: 'Run Approved Code', action: 'runApproved', primary: true}]
+        };
+      }
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) {
+        const compareText = compare
+          ? compare.status === 'match'
+            ? 'Reference compare matches on the checked keys and columns.'
+            : compare.status === 'differences'
+              ? 'Reference compare found differences. Treat this as review evidence, not automatic failure.'
+              : `Reference compare status: ${compare.status}.`
+          : 'Open Results to preview the generated table and run compare if reference ADaM exists.';
+        return {
+          title: `Inspect ${target} output`,
+          detail: compareText,
+          buttons: [
+            {label: 'Show Results', action: 'showOutput', primary: true},
+            {label: compare ? 'Run Compare Again' : 'Run Compare', action: 'runCompare'}
+          ],
+          tone: compare?.status === 'differences' ? 'warn' : ''
+        };
+      }
+      const gate = humanReviewQueueItems()[0];
+      if (gate) {
+        return {
+          title: `${gate.dataset || 'Study'} needs human review`,
+          detail: reviewQueueActionText(gate),
+          buttons: [{label: 'Show Review Queue', action: 'scrollReviewQueue', primary: true}],
+          tone: 'warn'
+        };
+      }
+      return {
+        title: 'Refresh the run state',
+        detail: 'The browser does not see an active next step. Refresh graph progress before continuing.',
+        buttons: [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
+        tone: 'warn'
+      };
+    }
+
+    function primaryNextActionButtonHtml(item) {
+      return `<button class="${item.primary ? '' : 'secondary'}" data-primary-action="${escapeHtml(item.action)}" type="button">${escapeHtml(item.label)}</button>`;
+    }
+
+    function attachPrimaryNextActionHandlers() {
+      for (const button of document.querySelectorAll('[data-primary-action]')) {
+        button.addEventListener('click', () => runPrimaryAction(button.dataset.primaryAction));
+      }
+    }
+
+    async function runPrimaryAction(action) {
+      if (action === 'loadDemo') return createDemoStudy();
+      if (action === 'startUpload') return startUploadWorkspace();
+      if (action === 'preparePlan') return preparePlan();
+      if (action === 'finalizeInputs') return finalizeInputsForDraftSpec();
+      if (action === 'approveDraft') return approveDraftSpec();
+      if (action === 'startStudy') return startNativeStudyLoop();
+      if (action === 'generateCode') return generateCode();
+      if (action === 'approveCode') return approveCode();
+      if (action === 'runApproved') return runApprovedCode();
+      if (action === 'refreshProgress') {
+        await refreshGraphReadModels();
+        renderGraphAwareDashboard();
+        return;
+      }
+      if (action === 'showCode') {
+        state.selectedView = 'code';
+        renderPane();
+        document.querySelector('[data-view="code"]')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+        return;
+      }
+      if (action === 'showOutput') {
+        state.selectedView = 'output';
+        state.selectedResultView = 'generated';
+        renderPane();
+        document.querySelector('[data-view="output"]')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+        return;
+      }
+      if (action === 'runCompare') {
+        const review = datasetReviewFor(state.selectedTarget);
+        if (review) {
+          state.selectedView = 'output';
+          state.selectedResultView = 'compare';
+          renderPane();
+          await refreshCompare(review);
+        }
+        return;
+      }
+      const scrollTargets = {
+        scrollTargets: 'targetButtons',
+        scrollDependency: 'dependencyGraph',
+        scrollDraft: 'draftSpecPane',
+        scrollReviewQueue: 'humanReviewQueuePanel'
+      };
+      const id = scrollTargets[action];
+      if (id) byId(id)?.scrollIntoView({behavior: 'smooth', block: 'center'});
     }
 
     function renderStudyProgress(targets, runnable, blocked) {
@@ -3647,7 +4039,7 @@ INDEX_HTML = r"""<!doctype html>
       const node = byId('dependencyGraph');
       const sdtm = (state.inputSummary?.sdtm || []).map((item) => item.dataset).filter(Boolean);
       if (!targets.length && !sdtm.length) {
-        node.innerHTML = '<div class="muted">Load inputs to build the study graph.</div>';
+        node.innerHTML = '<div class="muted">Load inputs to explain whether the selected ADaM output can run now.</div>';
         return;
       }
       const blockedNames = new Set((blocked || []).map((item) => item.dataset));
@@ -3660,27 +4052,29 @@ INDEX_HTML = r"""<!doctype html>
         const status = datasetStatus(target, runnable, blocked);
         const isBlocked = blockedNames.has(target);
         const decision = dependencyDecisionFor(target);
-        const dependencyRows = dependencies.length
-          ? dependencies.map((dependency) => dependencyFlowRowHtml(dependency, runnable, targets)).join('')
-          : `<div class="dependency-flow-row"><div class="dependency-flow-label">ADaM deps</div><div>No upstream ADaM dependency is currently detected. This is an evidence-based planning result, not a clinical guarantee.</div></div>`;
+        const dependencyText = dependencies.length
+          ? `${target} needs ${dependencies.join(', ')} before it can run.`
+          : `${target} has no upstream ADaM dependency detected from the current uploaded evidence.`;
+        const sourceText = dependencySourceEvidenceText(sdtm);
+        const actionText = nextActionText(target, status, isBlocked);
+        const boundaryText = dependencyTrustBoundaryText(target, dependencies, decision);
         return `
-          <div class="dependency-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''}">
-            <div class="dependency-title">
-              <span>${escapeHtml(target)} generation plan</span>
+          <div class="dependency-plain-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''}">
+            <div class="dependency-plain-head">
+              <span class="dependency-plain-title">${escapeHtml(target)}</span>
               <span class="pill ${isBlocked || status === 'failed' ? 'fail' : status === 'ready' || status === 'completed' || status === 'reference' ? '' : 'warn'}">${escapeHtml(status)}</span>
             </div>
-            <div class="dependency-summary">
-              <div class="dependency-summary-item"><strong>Source evidence</strong>${escapeHtml(dependencySourceEvidenceText(sdtm))}</div>
-              <div class="dependency-summary-item"><strong>Dependency decision</strong>${escapeHtml(dependencyDecisionSummary(target, decision, dependencies))}</div>
-              <div class="dependency-summary-item"><strong>Runtime meaning</strong>${escapeHtml(dependencyRuntimeSummary(target, status, isBlocked))}</div>
+            <div class="dependency-plain-body">
+              <div class="dependency-plain-row"><strong>What it means</strong><span>${escapeHtml(dependencyText)}</span></div>
+              <div class="dependency-plain-row"><strong>Why</strong><span>${escapeHtml(dependencyDecisionSummary(target, decision, dependencies))}</span></div>
+              <div class="dependency-plain-row"><strong>Evidence</strong><span>${escapeHtml(sourceText)}</span></div>
+              <div class="dependency-plain-row"><strong>Next action</strong><span>${escapeHtml(actionText)}</span></div>
+              <div class="trust-boundary">${escapeHtml(boundaryText)}</div>
             </div>
-            <div class="dependency-flow">${dependencyRows}</div>
-            <div class="dependency-action ${isBlocked ? 'blocked' : state.plan ? 'ready' : 'waiting'}">${escapeHtml(nextActionText(target, status, isBlocked))}</div>
-            <div class="dependency-note">${escapeHtml(decision?.reason || 'Prepare a dependency plan to explain why this target is ready or blocked.')}</div>
           </div>
         `;
       });
-      node.innerHTML = rows.join('') || '<div class="muted">No dependency graph yet.</div>';
+      node.innerHTML = `<div class="dependency-plain">${rows.join('') || '<div class="muted">No dependency plan yet.</div>'}</div>`;
     }
 
     function dependencySourceEvidenceText(sdtm) {
@@ -3694,6 +4088,17 @@ INDEX_HTML = r"""<!doctype html>
       if (decision?.source === 'input_spec_no_adam_dependency') return `${target} input spec does not show an upstream ADaM dependency.`;
       if (decision?.source === 'no_dependency_evidence') return `${target} has no upstream ADaM dependency evidence in the current uploaded materials; this must be confirmed in spec/code review.`;
       return `${target} dependency plan has not recorded an upstream ADaM dependency.`;
+    }
+
+    function dependencyTrustBoundaryText(target, dependencies, decision) {
+      const hasReference = hasReferenceAdamEvidence(target) || dependencies.some((dependency) => hasReferenceAdamEvidence(dependency));
+      if (hasReference) {
+        return 'Reference ADaM is used only to preview shape and compare final output. It does not decide derivation logic and does not replace an uploaded spec or reviewed draft spec.';
+      }
+      if (decision?.source === 'no_dependency_evidence') {
+        return 'No dependency evidence is not the same as clinical proof. The user still reviews the spec and generated code before local R execution.';
+      }
+      return 'This panel explains runtime order only. It does not prove the ADaM derivation is clinically correct.';
     }
 
     function dependencyRuntimeSummary(target, status, isBlocked) {
@@ -4537,28 +4942,81 @@ INDEX_HTML = r"""<!doctype html>
       const mismatchRows = (compare.mismatch_samples || []).map((item) => `
         <tr><td>${escapeHtml(item.key)}</td><td>${escapeHtml(item.column)}</td><td>${escapeHtml(item.generated)}</td><td>${escapeHtml(item.reference)}</td></tr>
       `).join('');
+      const verdict = compareVerdict(compare);
+      const rowDelta = compareRowDelta(compare);
+      const generatedOnlyKeys = (compare.generated_only_keys || []).length;
+      const referenceOnlyKeys = (compare.reference_only_keys || []).length;
       return `
-        <p class="note ${compare.status === 'match' ? 'strong' : 'warn'}">Compare status: ${escapeHtml(compare.status)}. ${escapeHtml(compare.note || '')}</p>
-        <div class="grid3">
-          <div class="metric"><span class="metric-value">${compare.row_count_generated ?? '-'}</span><span class="metric-label">generated rows</span></div>
-          <div class="metric"><span class="metric-value">${compare.row_count_reference ?? '-'}</span><span class="metric-label">reference rows</span></div>
-          <div class="metric"><span class="metric-value">${compare.mismatch_count ?? 0}</span><span class="metric-label">cell mismatches</span></div>
+        <div class="compare-verdict ${verdict.tone}">
+          <strong>${escapeHtml(verdict.title)}</strong>
+          <span>${escapeHtml(verdict.detail)}</span>
+        </div>
+        <div class="compare-mini-grid">
+          <div class="compare-mini"><strong>${compare.row_count_generated ?? '-'}</strong><span>generated rows</span></div>
+          <div class="compare-mini"><strong>${compare.row_count_reference ?? '-'}</strong><span>reference rows</span></div>
+          <div class="compare-mini"><strong>${rowDelta}</strong><span>row delta</span></div>
+          <div class="compare-mini"><strong>${compare.mismatch_count ?? 0}</strong><span>cell mismatches</span></div>
         </div>
         <div class="grid2" style="margin-top:12px;">
-          <div class="card"><h3>Column differences</h3><ul class="clean">
+          <div class="card"><h3>Column Check</h3><ul class="clean">
             <li>Generated only: ${escapeHtml((compare.generated_only_columns || []).join(', ') || 'none')}</li>
             <li>Reference only: ${escapeHtml((compare.reference_only_columns || []).join(', ') || 'none')}</li>
             <li>Keys used: ${escapeHtml((compare.key_columns || []).join(', ') || 'row order')}</li>
           </ul></div>
-          <div class="card"><h3>Row key differences</h3><ul class="clean">
-            <li>Generated only keys: ${escapeHtml((compare.generated_only_keys || []).slice(0, 8).join(', ') || 'none')}</li>
-            <li>Reference only keys: ${escapeHtml((compare.reference_only_keys || []).slice(0, 8).join(', ') || 'none')}</li>
+          <div class="card"><h3>Row Check</h3><ul class="clean">
+            <li>Generated-only keys: ${generatedOnlyKeys}${generatedOnlyKeys ? ` (${escapeHtml((compare.generated_only_keys || []).slice(0, 8).join(', '))}${generatedOnlyKeys > 8 ? ', ...' : ''})` : ''}</li>
+            <li>Reference-only keys: ${referenceOnlyKeys}${referenceOnlyKeys ? ` (${escapeHtml((compare.reference_only_keys || []).slice(0, 8).join(', '))}${referenceOnlyKeys > 8 ? ', ...' : ''})` : ''}</li>
           </ul></div>
         </div>
         <div class="button-row"><button class="secondary" id="refreshCompareButton">${escapeHtml(compareButtonLabel)}</button></div>
         <h3 style="margin-top:12px;">Mismatch Samples</h3>
         <div class="table-wrap"><table><thead><tr><th>Key</th><th>Column</th><th>Generated</th><th>Reference</th></tr></thead><tbody>${mismatchRows || '<tr><td class="muted" colspan="4">No mismatch samples.</td></tr>'}</tbody></table></div>
       `;
+    }
+
+    function compareVerdict(compare) {
+      const status = String(compare?.status || '').toLowerCase();
+      if (status === 'match') {
+        return {
+          title: 'Reference compare matched',
+          detail: 'The generated output matched the uploaded reference ADaM on the checked keys and columns. This is still comparison evidence, not clinical proof.',
+          tone: ''
+        };
+      }
+      if (status === 'differences') {
+        return {
+          title: 'Reference compare found differences',
+          detail: 'This usually means the generated output and reference ADaM are not the same table. Review row counts, row keys, and mismatch samples. A reference mismatch does not automatically prove the generated code is wrong.',
+          tone: 'warn'
+        };
+      }
+      if (status === 'missing_reference') {
+        return {
+          title: 'No reference ADaM was available',
+          detail: 'The generated output can be previewed and downloaded, but no reference comparison can be made.',
+          tone: 'warn'
+        };
+      }
+      if (status === 'not_supported') {
+        return {
+          title: 'Reference compare is not supported for this file',
+          detail: compare?.note || 'The current backend could not compare this reference format.',
+          tone: 'warn'
+        };
+      }
+      return {
+        title: `Compare status: ${status || 'unknown'}`,
+        detail: compare?.note || 'Review the generated output and reference evidence manually.',
+        tone: 'warn'
+      };
+    }
+
+    function compareRowDelta(compare) {
+      const generated = Number(compare?.row_count_generated);
+      const reference = Number(compare?.row_count_reference);
+      if (!Number.isFinite(generated) || !Number.isFinite(reference)) return '-';
+      const delta = generated - reference;
+      return delta > 0 ? `+${delta}` : String(delta);
     }
 
     function downloadsPane(review) {
@@ -4900,6 +5358,7 @@ INDEX_HTML = r"""<!doctype html>
     updateLlmModeControls();
     renderActionAvailability();
     updateHeaderStatusOverview();
+    renderPrimaryNextAction();
     checkHealth();
   </script>
 </body>

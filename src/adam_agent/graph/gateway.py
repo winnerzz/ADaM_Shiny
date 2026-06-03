@@ -52,7 +52,8 @@ from adam_agent.schemas.routing import FailureRecord
 from adam_agent.schemas.states import DatasetResultSummary
 from adam_agent.schemas.base import utc_now
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.compare import compare_dataset_files, reference_adam_path
+from adam_agent.tools.compare import TableReader, compare_dataset_files, reference_adam_path
+from adam_agent.tools.study_inputs import StudyInputScanner
 from adam_agent.tools.static_rules import StaticRuleError, validate_static_rule_report_artifact
 
 
@@ -715,15 +716,25 @@ class GraphGateway:
         if not target:
             raise ValueError(f"{command_interrupt.name} requires a dataset.")
         if command_interrupt.name == "draft_spec_review":
-            result = self.review_draft_spec(
-                study_dir=root,
-                study_id=graph_state.study_id,
-                run_id=run_id,
-                dataset=target,
-                decision=normalized_action,
-                reviewer=reviewer,
-                notes=notes,
-            )
+            if self._graph_command_can_resume_native_interrupt(graph_state):
+                result = self.resume_native_draft_spec_review(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
+            else:
+                result = self.review_draft_spec(
+                    study_dir=root,
+                    study_id=graph_state.study_id,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
             return _graph_command_result_from_draft_spec(
                 result,
                 dataset=target,
@@ -731,15 +742,25 @@ class GraphGateway:
                 interrupt=command_interrupt.name,
             )
         if command_interrupt.name == "code_review":
-            result = self.review_code(
-                study_dir=root,
-                study_id=graph_state.study_id,
-                run_id=run_id,
-                dataset=target,
-                decision=normalized_action,
-                reviewer=reviewer,
-                notes=notes,
-            )
+            if self._graph_command_can_resume_native_interrupt(graph_state):
+                result = self.resume_native_code_review(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
+            else:
+                result = self.review_code(
+                    study_dir=root,
+                    study_id=graph_state.study_id,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
             return _graph_command_result_from_code_review(
                 result,
                 dataset=target,
@@ -747,14 +768,24 @@ class GraphGateway:
                 interrupt=command_interrupt.name,
             )
         if command_interrupt.name == "terminal_failure":
-            result = self.review_terminal_failure(
-                study_dir=root,
-                run_id=run_id,
-                dataset=target,
-                decision=normalized_action,
-                reviewer=reviewer,
-                notes=notes,
-            )
+            if self._graph_command_can_resume_native_interrupt(graph_state):
+                result = self.resume_native_terminal_failure_review(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
+            else:
+                result = self.review_terminal_failure(
+                    study_dir=root,
+                    run_id=run_id,
+                    dataset=target,
+                    decision=normalized_action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
             return _graph_command_result_from_terminal_failure(
                 result,
                 dataset=target,
@@ -1007,7 +1038,7 @@ class GraphGateway:
             config=self._dataset_config(study_id, run_id, target),
         )
         if "__interrupt__" not in result:
-            raise ValueError(f"DatasetGraph did not stop at native code_review for {target}.")
+            self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native code_review")
         snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
         gateway_result = self._record_code_generation_from_dataset_result(
             root=root,
@@ -1083,7 +1114,7 @@ class GraphGateway:
             config=self._dataset_config(study_id, run_id, target),
         )
         if "__interrupt__" not in result:
-            raise ValueError(f"DatasetGraph did not stop at native dataset-loop interrupt for {target}.")
+            self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native dataset-loop interrupt")
         snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
         snapshot_values = dict(snapshot.values)
         if snapshot_values.get("current_interrupt") == "draft_spec_review":
@@ -2386,6 +2417,27 @@ class GraphGateway:
         )
         dependency_resolution = list(plan.dependency_resolution)
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
+        if (
+            self.native_interrupt_resume_available()
+            and not _input_spec_available_for_target(root, study_id, target)
+            and not _approved_draft_spec_artifacts_available(root, run_id, target)
+        ):
+            native_result = self.start_native_draft_spec_review(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                llm_provider=llm_provider,
+                llm_exposure=llm_exposure,
+                llm_client_builder=llm_client_builder,
+                target_context_builder=target_context_builder,
+                rscript_path=rscript_path,
+                force_new_draft_spec=force_new_draft_spec,
+                _precomputed_gate=plan,
+                _skip_start_validation=True,
+            )
+            if native_result.spec_source == "draft_spec":
+                return native_result
         result = compile_dataset_graph(
             llm_client_builder=llm_client_builder or build_llm_client,
             target_context_builder=target_context_builder or build_target_llm_context,
@@ -2525,19 +2577,22 @@ class GraphGateway:
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
         force_new_draft_spec: bool = False,
+        _precomputed_gate: GraphGatewayDependencyGateResult | None = None,
+        _skip_start_validation: bool = False,
     ) -> GraphGatewayFinalizeInputsResult:
         """Start an internal DatasetGraph native draft-spec review interrupt pilot."""
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
-        plan = self.dependency_gate_for_product_step(
+        plan = _precomputed_gate or self.dependency_gate_for_product_step(
             study_dir=root,
             study_id=study_id,
             run_id=run_id,
             dataset=target,
         )
         dependency_resolution = list(plan.dependency_resolution)
-        self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
+        if not _skip_start_validation:
+            self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="finalize_inputs")
         dataset_graph = compile_dataset_graph(
             checkpointer=self._checkpointer,
             llm_client_builder=llm_client_builder or build_llm_client,
@@ -2561,7 +2616,7 @@ class GraphGateway:
             config=self._dataset_config(study_id, run_id, target),
         )
         if "__interrupt__" not in result:
-            raise ValueError(f"DatasetGraph did not stop at native draft_spec_review for {target}.")
+            self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native draft_spec_review")
         snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
         gateway_result = self._record_draft_spec_generation_from_dataset_result(
             root=root,
@@ -4084,6 +4139,7 @@ class GraphGateway:
         study_dir: str | Path,
         run_id: str,
         dataset: str,
+        table_reader: TableReader | None = None,
     ) -> GraphGatewayCompareResult:
         """Compute generated-vs-reference compare and record it in graph state."""
 
@@ -4094,7 +4150,7 @@ class GraphGateway:
         dataset_state = graph_state.datasets.get(target)
         output_path = _generated_output_path_from_graph_state(run_dir, dataset_state)
         reference_path = reference_adam_path(root, target)
-        compare_summary = compare_dataset_files(target, output_path, reference_path)
+        compare_summary = compare_dataset_files(target, output_path, reference_path, table_reader=table_reader)
         result = self.record_compare(
             study_dir=root,
             study_id=graph_state.study_id,
@@ -4909,6 +4965,29 @@ class GraphGateway:
     def _dataset_config(study_id: str, run_id: str, dataset: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": f"{study_id}:{run_id}:{dataset.strip().upper()}"}}
 
+    def _graph_command_can_resume_native_interrupt(self, graph_state: StudyRunState) -> bool:
+        return _native_resume_runtime_bound_to_state(
+            graph_state,
+            runtime_resume_available=self.native_interrupt_resume_available(),
+            active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+        )
+
+    @staticmethod
+    def _raise_dataset_graph_start_error(result: dict[str, Any], *, target: str, expected_interrupt: str) -> None:
+        if result.get("status") == "failed":
+            message = str(result.get("real_run_error") or "").strip()
+            if message:
+                raise ValueError(message)
+            failure_type = str(result.get("failure_type") or "").strip()
+            if failure_type:
+                raise ValueError(f"DatasetGraph failed before {expected_interrupt} for {target}: {failure_type}.")
+        current_interrupt = str(result.get("current_interrupt") or "").strip()
+        if current_interrupt:
+            raise ValueError(
+                f"DatasetGraph stopped before {expected_interrupt} for {target}; current interrupt is {current_interrupt}."
+            )
+        raise ValueError(f"DatasetGraph did not stop at {expected_interrupt} for {target}.")
+
     def _load_or_create_state(
         self,
         *,
@@ -5562,6 +5641,35 @@ def _assert_approved_draft_spec_current(
             f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
             f"changed={diff.get('changed_files', [])}."
         )
+
+
+def _input_spec_available_for_target(study_dir: Path, study_id: str, target: str) -> bool:
+    """Return whether uploads contain an input_spec candidate for the target dataset."""
+
+    input_specs = StudyInputScanner(study_dir, study_id=study_id).scan().input_spec
+    target_key = target.strip().lower()
+    preferred_keys = {
+        target_key,
+        f"ads_{target_key}_full",
+        f"ads_{target_key}",
+        f"{target_key}_spec",
+        f"{target_key}_approved_spec",
+        f"{target_key}_input_spec",
+    }
+    for key in input_specs:
+        normalized = str(key).strip().lower()
+        if normalized in preferred_keys or target_key in normalized:
+            return True
+    return False
+
+
+def _approved_draft_spec_artifacts_available(study_dir: Path, run_id: str, target: str) -> bool:
+    """Return whether the run already has approved draft-spec artifacts to validate."""
+
+    target_lower = target.strip().lower()
+    approved_path = study_dir / "runs" / run_id / "approved_specs" / f"{target_lower}_approved_spec.json"
+    review_path = study_dir / "runs" / run_id / "reviews" / f"{target_lower}_draft_spec_review.json"
+    return approved_path.exists() and approved_path.is_file() and review_path.exists() and review_path.is_file()
 
 
 def _has_dataset_product_progress(dataset_state: DatasetRunState | None) -> bool:

@@ -210,6 +210,7 @@ def _default_allowed_environment_variables() -> tuple[str, ...]:
         "ProgramFiles(x86)",
         "CommonProgramFiles",
         "CommonProgramFiles(x86)",
+        "PROCESSOR_ARCHITECTURE",
         "R_HOME",
         "R_ARCH",
         "R_LIBS",

@@ -1026,6 +1026,59 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["native_resume"]["queue_item_count"], 1)
         self.assertEqual(progress["study_loop_result"], {})
 
+    def test_sqlite_native_draft_spec_resume_preserves_product_state_when_approved(self) -> None:
+        study_dir = _workspace_dir("lg2_native_draft_spec_resume_sqlite") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "addm.sas").write_text("data addm; set ae; run;\n", encoding="utf-8")
+        run_id = "run_lg2_native_draft_spec_resume_sqlite"
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, run_id)
+
+        try:
+            gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            gateway.start_native_draft_spec_review(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADDM",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+            reviewed = gateway.resume_native_dataset_interrupt(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADDM",
+                decision="approve",
+                reviewer="sqlite_tester",
+                notes="Approve draft spec through durable native resume.",
+            )
+        finally:
+            gateway.close()
+
+        dataset_state = reviewed.graph_state.datasets["ADDM"]
+        self.assertEqual(reviewed.interrupt, "draft_spec_review")
+        self.assertEqual(reviewed.decision, "approve")
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
+        self.assertEqual(
+            reviewed.workflow_projection["datasets"]["ADDM"]["spec_state"]["status"],
+            "approved",
+        )
+
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"
         study_dir.mkdir(parents=True)
@@ -3283,6 +3336,54 @@ class GraphGatewayTests(unittest.TestCase):
                 / "adae_code_review.json"
             ).exists()
         )
+
+    def test_gateway_native_dataset_product_loop_reports_code_generation_error(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_native_dataset_loop_code_error") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "da.csv").write_text("USUBJID,DATERM\n01,X\n", encoding="utf-8")
+        (legacy_dir / "addm.sas").write_text("data addm; set da; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_native_dataset_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_loop_code_error",
+            dataset="ADDM",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        gateway.resume_native_draft_spec_review(
+            study_dir=study_dir,
+            run_id="run_lg2_native_loop_code_error",
+            dataset="ADDM",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve generated draft spec before forcing a code-generation contract error.",
+            allow_graph_state_fallback=True,
+        )
+
+        class BadLLMClient:
+            def generate(self, _request):
+                return SimpleNamespace(
+                    response_text=json.dumps({"dataset": "ADDM"}),
+                    call_record=SimpleNamespace(provider="test", model="bad-contract"),
+                )
+
+        def bad_llm_client_builder(_provider_config):
+            return BadLLMClient()
+
+        with self.assertRaisesRegex(ValueError, "LLM response requires non-empty string field: r_code"):
+            gateway.start_native_dataset_product_loop(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id="run_lg2_native_loop_code_error",
+                dataset="ADDM",
+                llm_provider={"provider": "test", "model": "bad-contract"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+                llm_client_builder=bad_llm_client_builder,
+            )
 
     def test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_dataset_loop_draft_reject") / "PSY201"
@@ -7732,6 +7833,61 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(result.graph_state.datasets["ADAE"].result_summary.compare_status, "match")
         self.assertEqual(result.graph_state.datasets["ADAE"].agent_node_inputs[-1]["agent"], "validation_agent")
         self.assertEqual(result.graph_state.datasets["ADAE"].agent_node_outputs[-1]["decision"], "reference_compare_recorded")
+
+    def test_gateway_compare_reference_output_supports_sas7bdat_reference_reader(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_compare_sas7bdat_reference") / "PSY201"
+        output_dir = study_dir / "runs" / "run_lg2_compare_sas7bdat_reference" / "outputs"
+        validation_dir = study_dir / "runs" / "run_lg2_compare_sas7bdat_reference" / "validation"
+        reference_dir = study_dir / "reference_adam"
+        output_dir.mkdir(parents=True)
+        validation_dir.mkdir()
+        reference_dir.mkdir(parents=True)
+        (output_dir / "addm.csv").write_text("USUBJID,SITEID\n01,01\n02,01\n", encoding="utf-8")
+        (validation_dir / "addm_validation_report.json").write_text(
+            json.dumps({"dataset": "ADDM", "status": "pass"}),
+            encoding="utf-8",
+        )
+        reference_path = reference_dir / "addm.sas7bdat"
+        reference_path.write_text("binary placeholder", encoding="utf-8")
+        gateway = GraphGateway()
+        gateway.start_dependency_plan(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_compare_sas7bdat_reference",
+            target_datasets=["ADDM"],
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id="run_lg2_compare_sas7bdat_reference").model_copy(
+            deep=True
+        )
+        state.datasets["ADDM"].status = "completed"
+        state.datasets["ADDM"].execution_state = {
+            "status": "completed",
+            "terminal_failure": False,
+            "partial_output_usable": True,
+            "output_path": str((output_dir / "addm.csv").as_posix()),
+        }
+        gateway._persist_graph_state(study_dir, state, node="test_seed_compare_sas7bdat_reference")
+
+        def fake_reader(path: Path) -> dict:
+            self.assertEqual(path, reference_path)
+            return {
+                "status": "ok",
+                "columns": ["usubjid", "siteid"],
+                "rows": [{"usubjid": "01", "siteid": "01"}],
+            }
+
+        result = gateway.compare_reference_output(
+            study_dir=study_dir,
+            run_id="run_lg2_compare_sas7bdat_reference",
+            dataset="ADDM",
+            table_reader=fake_reader,
+        )
+
+        self.assertEqual(result.compare_summary["status"], "differences")
+        self.assertEqual(result.compare_summary["row_count_generated"], 2)
+        self.assertEqual(result.compare_summary["row_count_reference"], 1)
+        self.assertEqual(result.compare_summary["generated_only_keys"], ["02"])
+        self.assertEqual(result.graph_state.datasets["ADDM"].compare_summary["reference_file"], "addm.sas7bdat")
 
     def test_gateway_compare_reference_output_ignores_unrecorded_stale_output_file(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_compare_ignores_stale_output") / "PSY201"

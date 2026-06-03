@@ -75,6 +75,26 @@ class LLMGeneratedCodeTests(unittest.TestCase):
         )
         self.assertIn("system", package.r_code)
 
+    def test_parse_generated_code_response_normalizes_noncritical_metadata(self) -> None:
+        package = parse_generated_code_response(
+            json.dumps(
+                {
+                    "dataset": "ADDM",
+                    "r_code": "write.csv(data.frame(NOTE='ok'), 'outputs/addm.csv', row.names = FALSE)",
+                    "assumptions": "One row per subject.",
+                    "risk_points": [{"risk": "review draft-spec assumptions"}],
+                    "used_inputs": [{"role": "sdtm", "dataset": "DM"}],
+                    "expected_outputs": "addm.csv",
+                }
+            ),
+            expected_dataset="ADDM",
+        )
+
+        self.assertEqual(package.assumptions, ["One row per subject."])
+        self.assertEqual(package.used_inputs, ['{"dataset": "DM", "role": "sdtm"}'])
+        self.assertEqual(package.expected_outputs, ["addm.csv"])
+        self.assertTrue(any("used_inputs" in item for item in package.risk_points))
+
     def test_write_generated_code_artifacts_writes_response_code_and_parsed_package(self) -> None:
         study_dir = _workspace_dir("llm_generated_code_artifacts") / "PSY201"
         response = json.dumps(

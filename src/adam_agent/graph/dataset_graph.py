@@ -556,8 +556,31 @@ def wait_for_draft_spec_review_node(state: DatasetGraphState) -> DatasetGraphSta
         "notes": notes,
         "payload": payload,
     }
+    carried_state = {
+        "study_id": state["study_id"],
+        "run_id": state["run_id"],
+        "dataset": target,
+        "execution_mode": state.get("execution_mode"),
+        "study_dir": state.get("study_dir"),
+        "rscript_path": state.get("rscript_path", ""),
+        "dependency_resolution": state.get("dependency_resolution", []),
+        "llm_provider": state.get("llm_provider", {}),
+        "llm_exposure": state.get("llm_exposure", {}),
+        "native_draft_spec_review": state.get("native_draft_spec_review", False),
+        "product_context_ready": state.get("product_context_ready", False),
+        "product_context_warnings": state.get("product_context_warnings", []),
+        "product_context_artifact": state.get("product_context_artifact"),
+        "product_context": state.get("product_context", {}),
+        "spec_source": state.get("spec_source"),
+        "draft_spec_required": state.get("draft_spec_required", False),
+        "draft_spec_path": state.get("draft_spec_path"),
+        "draft_spec_prompt_path": state.get("draft_spec_prompt_path"),
+        "draft_spec_response_path": state.get("draft_spec_response_path"),
+        "draft_spec_variables": state.get("draft_spec_variables", []),
+    }
     if action == "approve":
         return {
+            **carried_state,
             "status": "needs_review",
             "current_interrupt": None,
             "native_draft_spec_review_status": "approved",
@@ -570,6 +593,7 @@ def wait_for_draft_spec_review_node(state: DatasetGraphState) -> DatasetGraphSta
             "human_commands": [human_command],
         }
     return {
+        **carried_state,
         "status": "failed",
         "failure_type": "human_rejected_draft_spec",
         "route": "fail",

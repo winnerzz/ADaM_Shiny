@@ -65,14 +65,19 @@ def parse_generated_code_response(response_text: str, *, expected_dataset: str |
         raise LLMGeneratedCodeError(f"LLM response dataset {dataset} does not match expected {expected_dataset}.")
 
     r_code = _required_str(payload, "r_code")
+    metadata_warnings: list[str] = []
+    assumptions = _metadata_string_list(payload.get("assumptions", []), "assumptions", metadata_warnings)
+    risk_points = _metadata_string_list(payload.get("risk_points", []), "risk_points", metadata_warnings)
+    used_inputs = _metadata_string_list(payload.get("used_inputs", []), "used_inputs", metadata_warnings)
+    expected_outputs = _metadata_string_list(payload.get("expected_outputs", []), "expected_outputs", metadata_warnings)
 
     return GeneratedCodePackage(
         dataset=dataset,
         r_code=r_code,
-        assumptions=_string_list(payload.get("assumptions", []), "assumptions"),
-        risk_points=_string_list(payload.get("risk_points", []), "risk_points"),
-        used_inputs=_string_list(payload.get("used_inputs", []), "used_inputs"),
-        expected_outputs=_string_list(payload.get("expected_outputs", []), "expected_outputs"),
+        assumptions=assumptions,
+        risk_points=risk_points + metadata_warnings,
+        used_inputs=used_inputs,
+        expected_outputs=expected_outputs,
         raw_payload=payload,
     )
 
@@ -158,16 +163,35 @@ def _required_str(payload: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
-def _string_list(value: Any, key: str) -> list[str]:
+def _metadata_string_list(value: Any, key: str, warnings: list[str]) -> list[str]:
     if value is None:
         return []
+    if isinstance(value, str):
+        warnings.append(f"LLM response field {key} was a string and was normalized to a one-item list.")
+        text = value.strip()
+        return [text] if text else []
     if not isinstance(value, list):
-        raise LLMGeneratedCodeError(f"LLM response field {key} must be a list of strings.")
+        warnings.append(f"LLM response field {key} was normalized to a list of strings.")
+        text = _metadata_item_to_string(value)
+        return [text] if text else []
     result: list[str] = []
+    normalized = False
     for item in value:
         if not isinstance(item, str):
-            raise LLMGeneratedCodeError(f"LLM response field {key} must be a list of strings.")
-        text = item.strip()
+            normalized = True
+        text = _metadata_item_to_string(item)
         if text:
             result.append(text)
+    if normalized:
+        warnings.append(f"LLM response field {key} contained non-string items and was normalized to strings.")
     return result
+
+
+def _metadata_item_to_string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=True, sort_keys=True)
+    return str(value).strip()

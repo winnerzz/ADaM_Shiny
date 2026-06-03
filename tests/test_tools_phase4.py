@@ -41,6 +41,7 @@ try:
     from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
     from adam_agent.tools.artifacts import ArtifactStore
     from adam_agent.tools.config import ConfigLoader
+    from adam_agent.tools.compare import compare_dataset_files
     from adam_agent.tools.r_runner import RRunRequest, StubRRunner
     from adam_agent.tools.sdtm_reader import SDTMReader
     from adam_agent.tools.study_inputs import StudyInputScanner
@@ -65,6 +66,7 @@ except ModuleNotFoundError:
     from adam_agent.schemas.llm import LLMCallRecord, LLMExposureConfig
     from adam_agent.tools.artifacts import ArtifactStore
     from adam_agent.tools.config import ConfigLoader
+    from adam_agent.tools.compare import compare_dataset_files
     from adam_agent.tools.r_runner import RRunRequest, StubRRunner
     from adam_agent.tools.sdtm_reader import SDTMReader
     from adam_agent.tools.study_inputs import StudyInputScanner
@@ -147,6 +149,38 @@ class Phase4ToolTests(unittest.TestCase):
 
         self.assertEqual(profile.status, "not_implemented_yet")
         self.assertIn("not implemented", profile.message)
+
+    def test_compare_supports_sas7bdat_reference_through_injected_reader(self) -> None:
+        tmp = workspace_tempdir("compare_sas7bdat_reference")
+        generated = tmp / "addm.csv"
+        reference = tmp / "addm.sas7bdat"
+        generated.write_text(
+            "USUBJID,SITEID,AGE\n01,01,21\n02,01,60\n",
+            encoding="utf-8",
+        )
+        reference.write_text("binary placeholder", encoding="utf-8")
+
+        def fake_reader(path: Path) -> dict:
+            self.assertEqual(path, reference)
+            return {
+                "status": "ok",
+                "columns": ["usubjid", "siteid", "age"],
+                "rows": [
+                    {"usubjid": "01", "siteid": "01", "age": "21"},
+                    {"usubjid": "03", "siteid": "01", "age": "70"},
+                ],
+            }
+
+        result = compare_dataset_files("ADDM", generated, reference, table_reader=fake_reader)
+
+        self.assertEqual(result["status"], "differences")
+        self.assertEqual(result["generated_file"], "addm.csv")
+        self.assertEqual(result["reference_file"], "addm.sas7bdat")
+        self.assertEqual(result["generated_only_columns"], [])
+        self.assertEqual(result["reference_only_columns"], [])
+        self.assertEqual(result["key_columns"], ["USUBJID"])
+        self.assertEqual(result["generated_only_keys"], ["02"])
+        self.assertEqual(result["reference_only_keys"], ["03"])
 
     def test_config_loader_defaults_and_demo_alias_use_existing_schema(self) -> None:
         default_config = ConfigLoader().load(study_id="PSY201", run_id="run_001")

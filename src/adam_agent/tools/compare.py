@@ -5,12 +5,22 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 
-def compare_dataset_files(dataset: str, generated_path: Path | None, reference_path: Path | None) -> dict[str, Any]:
-    """Compare generated and reference ADaM CSV files without mutating state."""
+TableReader = Callable[[Path], dict[str, Any]]
+
+
+def compare_dataset_files(
+    dataset: str,
+    generated_path: Path | None,
+    reference_path: Path | None,
+    *,
+    table_reader: TableReader | None = None,
+) -> dict[str, Any]:
+    """Compare generated and reference ADaM files without mutating state."""
 
     target = dataset.strip().upper()
     if generated_path is None or not generated_path.exists():
@@ -26,16 +36,16 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
             "generated_file": generated_path.name,
             "note": "No reference ADaM was found for this dataset.",
         }
-    if generated_path.suffix.lower() != ".csv" or reference_path.suffix.lower() != ".csv":
+    generated = _read_table(generated_path, table_reader=table_reader)
+    reference = _read_table(reference_path, table_reader=table_reader)
+    if generated["status"] == "not_supported" or reference["status"] == "not_supported":
         return {
             "dataset": target,
             "status": "not_supported",
             "generated_file": generated_path.name,
             "reference_file": reference_path.name,
-            "note": "Compare is currently implemented for CSV generated/reference ADaM tables.",
+            "note": generated["note"] if generated["status"] == "not_supported" else reference["note"],
         }
-    generated = _read_csv_table(generated_path)
-    reference = _read_csv_table(reference_path)
     if generated["status"] != "ok":
         return {
             "dataset": target,
@@ -55,10 +65,22 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
 
     generated_columns = generated["columns"]
     reference_columns = reference["columns"]
-    common_columns = [column for column in generated_columns if column in reference_columns]
-    generated_only_columns = [column for column in generated_columns if column not in reference_columns]
-    reference_only_columns = [column for column in reference_columns if column not in generated_columns]
+    generated_column_by_upper = _first_column_by_upper(generated_columns)
+    reference_column_by_upper = _first_column_by_upper(reference_columns)
+    common_column_uppers = [
+        column.upper()
+        for column in generated_columns
+        if column.upper() in reference_column_by_upper and column.upper() in generated_column_by_upper
+    ]
+    common_columns = [generated_column_by_upper[column] for column in common_column_uppers]
+    generated_only_columns = [column for column in generated_columns if column.upper() not in reference_column_by_upper]
+    reference_only_columns = [column for column in reference_columns if column.upper() not in generated_column_by_upper]
+    reference_column_for_generated = {
+        generated_column_by_upper[column]: reference_column_by_upper[column]
+        for column in common_column_uppers
+    }
     key_columns = choose_compare_keys(target, common_columns)
+    reference_key_columns = [reference_column_for_generated[column] for column in key_columns]
     generated_rows = generated["rows"]
     reference_rows = reference["rows"]
     row_count_generated = len(generated_rows)
@@ -72,7 +94,7 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
 
     if key_columns:
         generated_by_key = _rows_by_key(generated_rows, key_columns)
-        reference_by_key = _rows_by_key(reference_rows, key_columns)
+        reference_by_key = _rows_by_key(reference_rows, reference_key_columns)
         generated_key_set = set(generated_by_key)
         reference_key_set = set(reference_by_key)
         generated_only_keys = sorted(generated_key_set - reference_key_set)[:20]
@@ -85,8 +107,9 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
                 if column in key_columns:
                     continue
                 compared_cells += 1
+                reference_column = reference_column_for_generated[column]
                 generated_value = _string_cell(generated_row.get(column))
-                reference_value = _string_cell(reference_row.get(column))
+                reference_value = _string_cell(reference_row.get(reference_column))
                 if generated_value != reference_value:
                     mismatch_count += 1
                     if len(mismatch_samples) < 25:
@@ -103,8 +126,9 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
             matched_rows += 1
             for column in common_columns:
                 compared_cells += 1
+                reference_column = reference_column_for_generated[column]
                 generated_value = _string_cell(generated_row.get(column))
-                reference_value = _string_cell(reference_row.get(column))
+                reference_value = _string_cell(reference_row.get(reference_column))
                 if generated_value != reference_value:
                     mismatch_count += 1
                     if len(mismatch_samples) < 25:
@@ -145,7 +169,10 @@ def compare_dataset_files(dataset: str, generated_path: Path | None, reference_p
         "compared_cells": compared_cells,
         "mismatch_count": mismatch_count,
         "mismatch_samples": mismatch_samples,
-        "note": "Initial CSV compare. This checks structure and sampled cell differences, not full clinical rule conformance.",
+        "note": (
+            "Initial table compare. This checks structure and sampled cell differences, "
+            "not full clinical rule conformance. Column names are matched case-insensitively."
+        ),
     }
 
 
@@ -196,6 +223,39 @@ def choose_compare_keys(dataset: str, common_columns: list[str]) -> list[str]:
     return []
 
 
+def _read_table(path: Path, *, table_reader: TableReader | None) -> dict[str, Any]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _read_csv_table(path)
+    if suffix == ".sas7bdat":
+        if table_reader is None:
+            return {
+                "status": "not_supported",
+                "note": "sas7bdat compare requires a configured table reader such as local R haven.",
+                "columns": [],
+                "rows": [],
+            }
+        payload = table_reader(path)
+        if not isinstance(payload, dict):
+            return {"status": "error", "note": "Table reader returned a non-dictionary payload.", "columns": [], "rows": []}
+        return {
+            "status": _string_cell(payload.get("status") or "error"),
+            "note": _string_cell(payload.get("note")),
+            "columns": [str(column) for column in payload.get("columns", [])],
+            "rows": [
+                {str(column): _string_cell(row.get(column)) for column in payload.get("columns", [])}
+                for row in payload.get("rows", [])
+                if isinstance(row, dict)
+            ],
+        }
+    return {
+        "status": "not_supported",
+        "note": f"Compare does not support {suffix or 'unknown'} files.",
+        "columns": [],
+        "rows": [],
+    }
+
+
 def _read_csv_table(path: Path) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -209,6 +269,13 @@ def _read_csv_table(path: Path) -> dict[str, Any]:
     except csv.Error as exc:
         return {"status": "error", "note": str(exc), "columns": [], "rows": []}
     return {"status": "ok", "note": "", "columns": columns, "rows": rows}
+
+
+def _first_column_by_upper(columns: list[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for column in columns:
+        mapping.setdefault(column.upper(), column)
+    return mapping
 
 
 def _rows_by_key(rows: list[dict[str, str]], key_columns: list[str]) -> dict[str, dict[str, str]]:

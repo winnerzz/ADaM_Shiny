@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -93,7 +94,7 @@ from adam_agent.llm.prompt_compaction import (
 from adam_agent.schemas.artifacts import ArtifactRef
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.tools.artifacts import sha256_file
-from adam_agent.tools.compare import compare_dataset_files, reference_adam_path, usable_generated_output_path
+from adam_agent.tools.compare import TableReader, compare_dataset_files, reference_adam_path, usable_generated_output_path
 from adam_agent.tools.config import ConfigLoader
 from adam_agent.tools.r_runner import LocalRRunner, RRunRequest
 from adam_agent.tools.sdtm_reader import SDTMReader
@@ -345,7 +346,7 @@ def prepare_demo_study(
         study_dir=str(target.resolve().as_posix()),
         demo_source_dir=str(source.resolve().as_posix()),
         run_id=f"run_ui_{stamp[:14]}",
-        target_datasets=["ADAE"],
+        target_datasets=["ADSL", "ADAE"],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
         execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if DEFAULT_LOCAL_RSCRIPT.exists() else LLM_DOWNSTREAM_PROVIDER_MODE,
         rscript_path=str(DEFAULT_LOCAL_RSCRIPT.as_posix()) if DEFAULT_LOCAL_RSCRIPT.exists() else None,
@@ -1251,6 +1252,8 @@ def read_dataset_table_page(
             status="missing",
             note=f"No {resolved_kind} file was found for {target}.",
         )
+    if path.suffix.lower() == ".sas7bdat":
+        return _read_sas7bdat_page(path, dataset=target, kind=resolved_kind, page=page, page_size=page_size)
     if path.suffix.lower() != ".csv":
         return TablePageResponse(
             dataset=target,
@@ -1258,7 +1261,7 @@ def read_dataset_table_page(
             file_name=path.name,
             format=path.suffix.lower().lstrip("."),
             status="not_previewed",
-            note="Full table browsing is currently available for CSV outputs. sas7bdat files can be downloaded and profiled.",
+            note="Full table browsing is currently available for CSV and sas7bdat ADaM tables.",
         )
     return _read_csv_page(path, dataset=target, kind=resolved_kind, page=page, page_size=page_size)
 
@@ -1275,11 +1278,14 @@ def compare_dataset_with_reference(study_dir: str | Path, run_id: str, dataset: 
                 study_dir=root,
                 run_id=run_id,
                 dataset=target,
+                table_reader=_sas7bdat_table_reader(),
             )
     except FileNotFoundError:
         output_path = usable_generated_output_path(run_dir, target)
         reference_path = reference_adam_path(root, target)
-        return DatasetCompareResponse(**compare_dataset_files(target, output_path, reference_path))
+        return DatasetCompareResponse(
+            **compare_dataset_files(target, output_path, reference_path, table_reader=_sas7bdat_table_reader())
+        )
     except (ValueError, ValidationError) as exc:
         graph_state_path = run_dir / "graph_state.json"
         if graph_state_path.exists():
@@ -1881,6 +1887,111 @@ def _read_csv_page(
     )
 
 
+def _read_sas7bdat_page(
+    path: Path,
+    *,
+    dataset: str,
+    kind: str,
+    page: int,
+    page_size: int,
+) -> TablePageResponse:
+    resolved_page = max(1, page)
+    resolved_size = max(1, min(page_size, MAX_TABLE_PAGE_SIZE))
+    table = _read_sas7bdat_table(path)
+    if table["status"] != "ok":
+        return TablePageResponse(
+            dataset=dataset,
+            kind=kind,
+            file_name=path.name,
+            format="sas7bdat",
+            status=table["status"],
+            page=resolved_page,
+            page_size=resolved_size,
+            note=table["note"],
+        )
+    rows = table["rows"]
+    row_count = len(rows)
+    start = (resolved_page - 1) * resolved_size
+    stop = start + resolved_size
+    total_pages = (row_count + resolved_size - 1) // resolved_size if row_count else 0
+    return TablePageResponse(
+        dataset=dataset,
+        kind=kind,
+        file_name=path.name,
+        format="sas7bdat",
+        status="ok",
+        row_count=row_count,
+        columns=table["columns"],
+        page=resolved_page,
+        page_size=resolved_size,
+        total_pages=total_pages,
+        rows=rows[start:stop],
+        note="Read through local R haven.",
+    )
+
+
+def _sas7bdat_table_reader() -> TableReader:
+    return _read_sas7bdat_table
+
+
+def _read_sas7bdat_table(path: Path) -> dict[str, Any]:
+    rscript_path = str(DEFAULT_LOCAL_RSCRIPT) if DEFAULT_LOCAL_RSCRIPT.exists() else None
+    runner = LocalRRunner(rscript_path=rscript_path)
+    if not runner.rscript_path:
+        return {
+            "status": "not_supported",
+            "note": "sas7bdat compare requires Rscript with the R package 'haven'.",
+            "columns": [],
+            "rows": [],
+        }
+    dataset = path.stem.upper()
+    r_code = f'''
+if (!requireNamespace("haven", quietly = TRUE)) {{
+  stop("Reading sas7bdat requires the R package 'haven'.")
+}}
+data <- haven::read_sas({_r_string(str(path))})
+data <- as.data.frame(data, stringsAsFactors = FALSE)
+data[] <- lapply(data, as.character)
+cat("__TABLE_CSV__\\n")
+utils::write.csv(data, stdout(), row.names = FALSE, na = "")
+'''
+    with tempfile.TemporaryDirectory(prefix="adam_agent_compare_") as work_dir_text:
+        work_dir = Path(work_dir_text)
+        result = runner.run(
+            RRunRequest(
+                code=r_code,
+                dataset=dataset,
+                run_id="api_compare",
+                working_dir=str(work_dir),
+                script_path=str(work_dir / f"read_{dataset.lower()}.R"),
+                timeout_seconds=180,
+            )
+        )
+    if not result.success:
+        return {
+            "status": "error",
+            "note": "R haven table read failed: " + (result.stderr.strip() or result.stdout.strip() or "unknown error"),
+            "columns": [],
+            "rows": [],
+        }
+    try:
+        table_csv = result.stdout.split("__TABLE_CSV__", 1)[1].strip()
+    except IndexError:
+        return {
+            "status": "error",
+            "note": "R haven table read returned unreadable output.",
+            "columns": [],
+            "rows": [],
+        }
+    try:
+        reader = csv.DictReader(io.StringIO(table_csv))
+        columns = list(reader.fieldnames or [])
+        rows = [{column: _string_cell(row.get(column)) for column in columns} for row in reader]
+    except csv.Error as exc:
+        return {"status": "error", "note": str(exc), "columns": [], "rows": []}
+    return {"status": "ok", "note": "Read through local R haven.", "columns": columns, "rows": rows}
+
+
 def _dataset_file_for_kind(root: Path, run_id: str, dataset: str, kind: str) -> Path | None:
     if kind == "generated":
         return _generated_output_path_for_read(root, run_id, dataset)
@@ -2195,7 +2306,9 @@ def _dataset_review(
     output_path = _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     reference_path = reference_adam_path(root, dataset)
     reader = SDTMReader()
-    compare_summary = DatasetCompareResponse(**compare_dataset_files(dataset, output_path, reference_path))
+    compare_summary = DatasetCompareResponse(
+        **compare_dataset_files(dataset, output_path, reference_path, table_reader=_sas7bdat_table_reader())
+    )
     graph_compare_status = str(graph_dataset.compare_summary.get("status") or "") if graph_dataset else ""
     compare_status = (
         compare_summary.status
