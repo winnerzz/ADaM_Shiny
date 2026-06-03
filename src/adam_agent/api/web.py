@@ -2087,7 +2087,9 @@ INDEX_HTML = r"""<!doctype html>
           };
         }
         if (spec.status === 'approved') {
+          const existingDraftReview = state.draftSpecReviewByDataset[target] || {};
           state.draftSpecReviewByDataset[target] = {
+            ...existingDraftReview,
             dataset: target,
             approved: true,
             approved_spec_path: spec.approved_spec_path
@@ -2131,7 +2133,9 @@ INDEX_HTML = r"""<!doctype html>
           };
         }
         if (code.status === 'approved') {
+          const existingReview = state.reviewByDataset[target] || {};
           state.reviewByDataset[target] = {
+            ...existingReview,
             dataset: target,
             decision: code.decision || 'approve',
             approved: true,
@@ -2151,7 +2155,10 @@ INDEX_HTML = r"""<!doctype html>
           };
         }
         if (execution.terminal_failure_review) {
-          state.terminalFailureReviewByDataset[target] = execution.terminal_failure_review;
+          state.terminalFailureReviewByDataset[target] = {
+            ...(state.terminalFailureReviewByDataset[target] || {}),
+            ...execution.terminal_failure_review
+          };
         }
         if (datasetState.compare_summary?.status) {
           state.compareResults[target] = datasetState.compare_summary;
@@ -2292,17 +2299,18 @@ INDEX_HTML = r"""<!doctype html>
         && String(interrupt.status || 'open') === 'open';
     }
 
-    function nativeFullRunReviewRequestBody(extra = {}) {
-      return JSON.stringify({
+    function graphCommandRequestBody({dataset = null, interrupt = null, action = 'approve', notes = null, payload = {}} = {}) {
+      const body = {
         study_dir: studyDir(),
+        action,
         reviewer: byId('reviewer').value.trim() || 'local_user',
-        decision: 'approve',
-        notes: byId('reviewNotes').value.trim(),
-        config_path: byId('configPath').value.trim() || null,
-        rscript_path: byId('rscriptPath').value.trim() || null,
-        ...llmOverridePayload(),
-        ...extra
-      });
+        notes: notes ?? byId('reviewNotes').value.trim(),
+        payload
+      };
+      const normalizedDataset = String(dataset || '').toUpperCase();
+      if (normalizedDataset) body.dataset = normalizedDataset;
+      if (interrupt) body.interrupt = interrupt;
+      return JSON.stringify(body);
     }
 
     function actionAvailability() {
@@ -2808,39 +2816,33 @@ INDEX_HTML = r"""<!doctype html>
       if (!draft) return;
       beginOperation('Approving draft spec', `Recording approval for ${draft.dataset} draft spec in this run.`);
       try {
-        const useNativeFullRun = nativeFullRunResumeAvailable(draft.dataset);
-        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(draft.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'draft-spec-review'}`, {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: useNativeFullRun
-            ? nativeFullRunReviewRequestBody({notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'})
-            : JSON.stringify({
-                study_dir: studyDir(),
-                reviewer: byId('reviewer').value.trim() || 'local_user',
-                decision: 'approve',
-                notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'
-              })
+          body: graphCommandRequestBody({
+            dataset: draft.dataset,
+            interrupt: 'draft_spec_review',
+            action: 'approve',
+            notes: byId('reviewNotes').value.trim() || 'Approved for code generation in this run.'
+          })
         });
-        state.draftSpecReviewByDataset[payload.dataset] = {
+        const reviewedDataset = String(payload.dataset || draft.dataset || '').toUpperCase();
+        state.draftSpecReviewByDataset[reviewedDataset] = {
           ...payload,
           approved: payload.approved !== false,
-          native_full_run: useNativeFullRun
+          graph_command: true
         };
         await refreshGraphReadModels();
         await loadReviewSummary(runId());
-        const stillWaitingForDraft = targetInDraftSpecReview(payload.dataset);
-        setPill('codeStatus', stillWaitingForDraft ? 'draft review' : generatedFor(payload.dataset) ? 'review' : 'not generated');
+        const stillWaitingForDraft = targetInDraftSpecReview(reviewedDataset);
+        setPill('codeStatus', stillWaitingForDraft ? 'draft review' : generatedFor(reviewedDataset) ? 'review' : 'not generated');
         addEvent(
           'Draft spec approved',
-          useNativeFullRun
-            ? `${payload.dataset} draft spec was approved through the LG3 full-run gate.`
-            : `${payload.dataset} draft spec can now be used for R code generation.`
+          `${reviewedDataset} draft spec approval was recorded through the graph command gate.`
         );
         completeOperation(
-          useNativeFullRun && generatedFor(payload.dataset) ? 'Code review ready' : 'Draft spec approved',
-          useNativeFullRun && generatedFor(payload.dataset)
-            ? `${payload.dataset} continued to generated-code review. R has not been executed.`
-            : `${payload.dataset} can now use the approved draft spec for code generation.`
+          'Draft spec approved',
+          `${reviewedDataset} can now use the approved draft spec for code generation. Use Generate R Code when ready.`
         );
         renderDraftSpecPane();
         renderPane();
@@ -4126,28 +4128,25 @@ INDEX_HTML = r"""<!doctype html>
       );
       setPill('codeStatus', 'review');
       try {
-        const useNativeFullRun = nativeFullRunResumeAvailable(generated.dataset);
-        state.review = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/${useNativeFullRun ? 'native-full-run/resume' : 'code-review'}`, {
+        state.review = await api(`/runs/${encodeURIComponent(generated.run_id || runId())}/graph-command`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: useNativeFullRun
-            ? nativeFullRunReviewRequestBody({execute_after_approval: false})
-            : JSON.stringify({
-                study_dir: studyDir(),
-                reviewer: byId('reviewer').value.trim() || 'local_user',
-                decision: 'approve',
-                notes: byId('reviewNotes').value.trim()
-              })
+          body: graphCommandRequestBody({
+            dataset: generated.dataset,
+            interrupt: 'code_review',
+            action: 'approve'
+          })
         });
-        state.reviewByDataset[generated.dataset] = {
+        const reviewedDataset = String(state.review.dataset || generated.dataset || '').toUpperCase();
+        state.reviewByDataset[reviewedDataset] = {
           ...state.review,
           approved: state.review.approved !== false,
-          native_full_run: useNativeFullRun
+          graph_command: true
         };
         await refreshGraphReadModels();
         setPill('codeStatus', 'approved');
-        addEvent('Code approved', `${generated.dataset} code was approved. R has not been executed yet.`);
-        completeOperation('Code approved', `${generated.dataset} is ready for explicit local R execution.`);
+        addEvent('Code approved', `${reviewedDataset} code approval was recorded through the graph command gate. R has not been executed yet.`);
+        completeOperation('Code approved', `${reviewedDataset} is ready for explicit local R execution.`);
         renderActionAvailability();
         renderPane();
         renderGraphAwareDashboard();
@@ -4595,23 +4594,24 @@ INDEX_HTML = r"""<!doctype html>
       if (!target || !action) return;
       beginOperation('Recording failure decision', `Recording ${titleFromToken(action)} for ${target}.`);
       try {
-        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/terminal-failure-review`, {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            study_dir: studyDir(),
-            reviewer: byId('reviewer').value.trim() || 'local_user',
-            decision: action,
+          body: graphCommandRequestBody({
+            dataset: target,
+            interrupt: 'terminal_failure',
+            action,
             notes: byId('reviewNotes').value.trim() || `Selected ${action} from the local UI terminal-failure triage.`
           })
         });
         state.terminalFailureReviewByDataset[target] = {
-          action: payload.decision,
+          action: payload.action,
           next_action: payload.next_action,
-          current_interrupt: payload.current_interrupt
+          current_interrupt: payload.current_interrupt,
+          graph_command: true
         };
         await refreshGraphReadModels();
-        addEvent('Failure decision recorded', `${target}: ${titleFromToken(payload.decision)} -> ${titleFromToken(payload.next_action)}.`);
+        addEvent('Failure decision recorded', `${target}: ${titleFromToken(payload.action)} -> ${titleFromToken(payload.next_action)}.`);
         completeOperation('Failure decision recorded', `${target} next action: ${titleFromToken(payload.next_action)}.`);
         renderPane();
         renderActionAvailability();

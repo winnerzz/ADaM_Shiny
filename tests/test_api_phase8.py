@@ -1907,7 +1907,10 @@ console.log(JSON.stringify({
         self.assertIn("Waiting for graph-owned terminal-failure actions to load.", html)
         self.assertIn("data-terminal-action=\"${escapeHtml(item.action)}\"", html)
         self.assertIn("function submitTerminalFailureReview(dataset, action)", html)
-        self.assertIn("/terminal-failure-review", html)
+        terminal_body = html.split("async function submitTerminalFailureReview(dataset, action)", 1)[1].split("async function handleTableAction", 1)[0]
+        self.assertIn("/graph-command", terminal_body)
+        self.assertIn("interrupt: 'terminal_failure'", terminal_body)
+        self.assertNotIn("/terminal-failure-review", terminal_body)
         self.assertIn("await refreshGraphReadModels()", html)
         self.assertIn("Choose one controlled next step; the graph will record the decision", html)
 
@@ -1991,6 +1994,149 @@ console.log(JSON.stringify({
         self.assertTrue(result["graphOwnedHasRevise"])
         self.assertFalse(result["graphGateWithoutActionsHasAction"])
         self.assertTrue(result["graphGateWithoutActionsMessage"])
+
+    def test_index_graph_command_body_does_not_leak_continuation_settings(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    const values = {
+      studyDir: 'D:/tmp/study',
+      runId: 'run_ui_graph_command_body',
+      reviewer: 'qa_user',
+      reviewNotes: 'human decision',
+      configPath: 'studies/_template/configs/mock_downstream.json',
+      rscriptPath: 'C:/Dev/R-4.5.2/bin/Rscript.exe',
+      modelMode: 'real',
+      llmProvider: 'openai-compatible',
+      llmModel: 'gpt-5.5',
+      llmBaseUrl: 'http://localhost:8080/v1',
+      llmApiKey: 'sk-test',
+      llmAllowExternal: ''
+    };
+    nodes.set(id, {
+      value: Object.prototype.hasOwnProperty.call(values, id) ? values[id] : '',
+      checked: id === 'llmAllowExternal',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+  if (url.includes('/graph-command')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_graph_command_body',
+      scope: 'dataset',
+      dataset: 'ADAE',
+      interrupt: 'terminal_failure',
+      action: 'repair_code',
+      status: 'needs_review',
+      current_interrupt: null,
+      approved: null,
+      executed: false,
+      terminal_failure: true,
+      next_action: 'repair_generated_code',
+      graph_state_path: 'runs/run_ui_graph_command_body/graph_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_graph_command_body',
+      target_datasets: ['ADAE'],
+      datasets: {
+        ADAE: {
+          status: 'needs_review',
+          execution_state: {
+            status: 'terminal_failure',
+            terminal_failure_review: {action: 'repair_code', next_action: 'repair_generated_code'}
+          }
+        }
+      }
+    })};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({target_datasets: ['ADAE'], datasets: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+const helperBody = JSON.parse(graphCommandRequestBody({
+  dataset: 'adae',
+  interrupt: 'code_review',
+  action: 'approve',
+  payload: {reviewed_artifact: 'code'}
+}));
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.executionByDataset = {ADAE: {dataset: 'ADAE', status: 'terminal_failure'}};
+state.runProgress = {datasets: [{
+  dataset: 'ADAE',
+  status: 'terminal_failure',
+  execution_status: 'terminal_failure',
+  next_action: 'review_terminal_failure',
+  available_actions: [{action: 'repair_code', label: 'Repair Code'}]
+}]};
+await submitTerminalFailureReview('ADAE', 'repair_code');
+const commandBody = calls.find((item) => item.url.includes('/graph-command'))?.body || {};
+console.log(JSON.stringify({
+  helperKeys: Object.keys(helperBody).sort(),
+  helperBody,
+  commandKeys: Object.keys(commandBody).sort(),
+  commandBody,
+  terminalGraphCommand: state.terminalFailureReviewByDataset.ADAE?.graph_command === true
+}));
+"""
+        script_path = TMP_ROOT / "ui_graph_command_body_keys.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        allowed_keys = ["action", "dataset", "interrupt", "notes", "payload", "reviewer", "study_dir"]
+        self.assertEqual(result["helperKeys"], allowed_keys)
+        self.assertEqual(result["commandKeys"], allowed_keys)
+        self.assertEqual(result["helperBody"]["dataset"], "ADAE")
+        self.assertEqual(result["commandBody"]["interrupt"], "terminal_failure")
+        for forbidden in [
+            "execute_after_approval",
+            "config_path",
+            "rscript_path",
+            "llm_provider_override",
+            "llm_exposure_override",
+        ]:
+            self.assertNotIn(forbidden, result["helperBody"])
+            self.assertNotIn(forbidden, result["commandBody"])
+        self.assertTrue(result["terminalGraphCommand"])
 
     def test_index_hides_technical_paths_outside_advanced_artifact_view(self) -> None:
         client = TestClient(create_app())
@@ -2319,16 +2465,19 @@ console.log(JSON.stringify({
         self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';", html)
         self.assertIn("async function applyNativeFullRunStart(payload)", html)
         self.assertIn("function hasNativeFullRunContract(target)", html)
-        self.assertIn("native-full-run/resume", html)
         self.assertIn("native-full-run", html)
+        self.assertIn("function graphCommandRequestBody", html)
         self.assertIn("R will not run in this step.", approve_body)
-        self.assertIn("useNativeFullRun ? 'native-full-run/resume' : 'code-review'", approve_body)
+        self.assertIn("/graph-command", approve_body)
+        self.assertIn("interrupt: 'code_review'", approve_body)
+        self.assertNotIn("native-full-run/resume", approve_body)
+        self.assertNotIn("/code-review", approve_body)
         self.assertNotIn("/execute-approved-code", approve_body)
         self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", run_body)
         self.assertIn("/execute-approved-code", run_body)
         self.assertNotIn("/code-review", run_body)
 
-    def test_index_code_approval_uses_lg3_full_run_resume_when_contract_exists(self) -> None:
+    def test_index_code_approval_uses_graph_command_when_lg3_contract_exists(self) -> None:
         client = TestClient(create_app())
 
         response = client.get("/")
@@ -2368,18 +2517,20 @@ global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
   if (options.body) bodies.push(JSON.parse(options.body));
-  if (url.includes('/native-full-run/resume')) {
+  if (url.includes('/graph-command')) {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_lg3_code_resume',
+      scope: 'dataset',
       dataset: 'ADAE',
-      phase: 'reviewed',
-      last_interrupt: 'code_review',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
       current_interrupt: null,
-      decision: 'approve',
       approved: true,
       executed: false,
       terminal_failure: false,
+      next_action: 'execute_approved_code',
       graph_state_path: 'runs/run_ui_lg3_code_resume/graph_state.json'
     })};
   }
@@ -2447,11 +2598,14 @@ state.generatedByDataset = {
 };
 await approveCode();
 console.log(JSON.stringify({
+  graphCommandCalled: calls.some((item) => item.includes('/graph-command')),
   nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
   legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
   executeCalled: calls.some((item) => item.includes('/execute-approved-code')),
-  executeAfterApproval: bodies.find((item) => item.decision === 'approve')?.execute_after_approval,
+  approveBody: bodies.find((item) => item.action === 'approve') || {},
+  executeAfterApproval: bodies.find((item) => item.action === 'approve')?.execute_after_approval,
   reviewApproved: state.reviewByDataset.ADAE?.approved,
+  reviewGraphCommand: state.reviewByDataset.ADAE?.graph_command === true,
   nativeResumeStillAvailable: nativeFullRunResumeAvailable('ADAE')
 }));
 """
@@ -2466,14 +2620,19 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
-        self.assertTrue(result["nativeResumeCalled"])
+        self.assertTrue(result["graphCommandCalled"])
+        self.assertFalse(result["nativeResumeCalled"])
         self.assertFalse(result["legacyCodeReviewCalled"])
         self.assertFalse(result["executeCalled"])
-        self.assertFalse(result["executeAfterApproval"])
+        self.assertNotIn("execute_after_approval", result["approveBody"])
+        self.assertNotIn("config_path", result["approveBody"])
+        self.assertNotIn("rscript_path", result["approveBody"])
+        self.assertNotIn("executeAfterApproval", result)
         self.assertTrue(result["reviewApproved"])
+        self.assertTrue(result["reviewGraphCommand"])
         self.assertFalse(result["nativeResumeStillAvailable"])
 
-    def test_index_code_approval_uses_lg3_resume_from_progress_when_graph_state_missing(self) -> None:
+    def test_index_code_approval_uses_graph_command_from_progress_when_graph_state_missing(self) -> None:
         client = TestClient(create_app())
 
         response = client.get("/")
@@ -2508,21 +2667,25 @@ global.document = {
 node('reviewer').value = 'tester';
 node('modelMode').value = 'mock';
 const calls = [];
+const bodies = [];
 global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
-  if (url.includes('/native-full-run/resume')) {
+  if (options.body) bodies.push(JSON.parse(options.body));
+  if (url.includes('/graph-command')) {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_lg3_progress_contract',
+      scope: 'dataset',
       dataset: 'ADAE',
-      phase: 'reviewed',
-      last_interrupt: 'code_review',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
       current_interrupt: null,
-      decision: 'approve',
       approved: true,
       executed: false,
       terminal_failure: false,
+      next_action: 'execute_approved_code',
       graph_state_path: 'runs/run_ui_lg3_progress_contract/graph_state.json'
     })};
   }
@@ -2590,11 +2753,14 @@ state.generatedByDataset = {
 };
 await approveCode();
 console.log(JSON.stringify({
+  graphCommandCalled: calls.some((item) => item.includes('/graph-command')),
   nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
   legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
   graphStateLoaded: state.graphState !== null,
   nativeResumeStillAvailable: nativeFullRunResumeAvailable('ADAE'),
-  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true
+  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true,
+  reviewGraphCommand: state.reviewByDataset.ADAE?.graph_command === true,
+  approveBody: bodies.find((item) => item.action === 'approve') || {}
 }));
 """
         script_path = TMP_ROOT / "ui_lg3_progress_contract_resume.js"
@@ -2608,11 +2774,16 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
-        self.assertTrue(result["nativeResumeCalled"])
+        self.assertTrue(result["graphCommandCalled"])
+        self.assertFalse(result["nativeResumeCalled"])
         self.assertFalse(result["legacyCodeReviewCalled"])
         self.assertFalse(result["graphStateLoaded"])
         self.assertFalse(result["nativeResumeStillAvailable"])
-        self.assertTrue(result["reviewNativeFullRun"])
+        self.assertFalse(result["reviewNativeFullRun"])
+        self.assertTrue(result["reviewGraphCommand"])
+        self.assertNotIn("execute_after_approval", result["approveBody"])
+        self.assertNotIn("config_path", result["approveBody"])
+        self.assertNotIn("rscript_path", result["approveBody"])
 
     def test_index_does_not_use_lg3_resume_when_contract_marks_resume_unavailable(self) -> None:
         client = TestClient(create_app())
@@ -2652,13 +2823,20 @@ const calls = [];
 global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
-  if (url.includes('/code-review')) {
+  if (url.includes('/graph-command')) {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_lg3_resume_unavailable',
+      scope: 'dataset',
       dataset: 'ADAE',
-      decision: 'approve',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
+      current_interrupt: null,
       approved: true,
+      executed: false,
+      terminal_failure: false,
+      next_action: 'execute_approved_code',
       graph_state_path: 'runs/run_ui_lg3_resume_unavailable/graph_state.json',
       workflow_state_path: 'runs/run_ui_lg3_resume_unavailable/workflow_state.json'
     })};
@@ -2751,10 +2929,12 @@ state.generatedByDataset = {
 };
 await approveCode();
 console.log(JSON.stringify({
+  graphCommandCalled: calls.some((item) => item.includes('/graph-command')),
   nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
   legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
   nativeResumeAvailable: nativeFullRunResumeAvailable('ADAE'),
-  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true
+  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true,
+  reviewGraphCommand: state.reviewByDataset.ADAE?.graph_command === true
 }));
 """
         script_path = TMP_ROOT / "ui_lg3_resume_unavailable.js"
@@ -2768,10 +2948,12 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["graphCommandCalled"])
         self.assertFalse(result["nativeResumeCalled"])
-        self.assertTrue(result["legacyCodeReviewCalled"])
+        self.assertFalse(result["legacyCodeReviewCalled"])
         self.assertFalse(result["nativeResumeAvailable"])
         self.assertFalse(result["reviewNativeFullRun"])
+        self.assertTrue(result["reviewGraphCommand"])
 
     def test_index_graph_state_contract_absence_overrides_stale_lg3_progress_contract(self) -> None:
         client = TestClient(create_app())
@@ -2811,13 +2993,20 @@ const calls = [];
 global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
-  if (url.includes('/code-review')) {
+  if (url.includes('/graph-command')) {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_stale_lg3_progress',
+      scope: 'dataset',
       dataset: 'ADAE',
-      decision: 'approve',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
+      current_interrupt: null,
       approved: true,
+      executed: false,
+      terminal_failure: false,
+      next_action: 'execute_approved_code',
       graph_state_path: 'runs/run_ui_stale_lg3_progress/graph_state.json',
       workflow_state_path: 'runs/run_ui_stale_lg3_progress/workflow_state.json'
     })};
@@ -2897,11 +3086,13 @@ state.generatedByDataset = {
 };
 await approveCode();
 console.log(JSON.stringify({
+  graphCommandCalled: calls.some((item) => item.includes('/graph-command')),
   nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
   legacyCodeReviewCalled: calls.some((item) => item.includes('/code-review')),
   graphStillLoaded: state.graphState !== null,
   hasContractAfterRefresh: hasNativeFullRunContract('ADAE'),
-  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true
+  reviewNativeFullRun: state.reviewByDataset.ADAE?.native_full_run === true,
+  reviewGraphCommand: state.reviewByDataset.ADAE?.graph_command === true
 }));
 """
         script_path = TMP_ROOT / "ui_stale_lg3_progress_contract.js"
@@ -2915,13 +3106,15 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["graphCommandCalled"])
         self.assertFalse(result["nativeResumeCalled"])
-        self.assertTrue(result["legacyCodeReviewCalled"])
+        self.assertFalse(result["legacyCodeReviewCalled"])
         self.assertTrue(result["graphStillLoaded"])
         self.assertFalse(result["hasContractAfterRefresh"])
         self.assertFalse(result["reviewNativeFullRun"])
+        self.assertTrue(result["reviewGraphCommand"])
 
-    def test_index_draft_approval_uses_lg3_full_run_resume_when_contract_exists(self) -> None:
+    def test_index_draft_approval_uses_graph_command_when_lg3_contract_exists(self) -> None:
         client = TestClient(create_app())
 
         response = client.get("/")
@@ -2961,19 +3154,20 @@ global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
   if (options.body) bodies.push(JSON.parse(options.body));
-  if (url.includes('/native-full-run/resume')) {
+  if (url.includes('/graph-command')) {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_lg3_draft_resume',
+      scope: 'dataset',
       dataset: 'ADAE',
-      phase: 'waiting_for_human_gate',
-      last_interrupt: 'draft_spec_review',
-      current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'},
-      decision: 'approve',
+      interrupt: 'draft_spec_review',
+      action: 'approve',
+      status: 'pending',
+      current_interrupt: null,
       approved: true,
       executed: false,
       terminal_failure: false,
-      next_action: 'code_review',
+      next_action: 'generate_code',
       graph_state_path: 'runs/run_ui_lg3_draft_resume/graph_state.json'
     })};
   }
@@ -2991,10 +3185,9 @@ global.fetch = async (path, options = {}) => {
       },
       datasets: {
         ADAE: {
-          status: 'needs_review',
+          status: 'pending',
           spec_state: {status: 'approved', approved_spec_path: 'runs/run_ui_lg3_draft_resume/approved_specs/adae_approved_spec.json'},
-          code_state: {status: 'generated', code_path: 'runs/run_ui_lg3_draft_resume/code/build_adae.R'},
-          current_interrupt: {name: 'code_review', status: 'open', dataset: 'ADAE'}
+          current_interrupt: null
         }
       }
     })};
@@ -3004,11 +3197,10 @@ global.fetch = async (path, options = {}) => {
       target_datasets: ['ADAE'],
       datasets: [{
         dataset: 'ADAE',
-        status: 'needs_review',
-        next_action: 'review_code',
-        action_label: 'Review generated R code before execution.',
+        status: 'pending',
+        next_action: 'generate_code',
+        action_label: 'Generate R code.',
         spec_status: 'approved',
-        code_status: 'generated',
         blocked: false
       }]
     })};
@@ -3017,12 +3209,7 @@ global.fetch = async (path, options = {}) => {
     return {ok: true, json: async () => ({
       study_id: 'PSY201',
       run_id: 'run_ui_lg3_draft_resume',
-      dataset_reviews: [{
-        dataset: 'ADAE',
-        status: 'needs_review',
-        generated_code_path: 'runs/run_ui_lg3_draft_resume/code/build_adae.R',
-        generated_code: 'adae <- ae'
-      }]
+      dataset_reviews: []
     })};
   }
   return {ok: true, json: async () => ({})};
@@ -3055,12 +3242,15 @@ state.draftSpecByDataset = {
 };
 await approveDraftSpec();
 console.log(JSON.stringify({
+  graphCommandCalled: calls.some((item) => item.includes('/graph-command')),
   nativeResumeCalled: calls.some((item) => item.includes('/native-full-run/resume')),
   legacyDraftReviewCalled: calls.some((item) => item.includes('/draft-spec-review')),
-  bodyHasConfig: Object.prototype.hasOwnProperty.call(bodies.find((item) => item.decision === 'approve') || {}, 'config_path'),
+  bodyHasConfig: Object.prototype.hasOwnProperty.call(bodies.find((item) => item.action === 'approve') || {}, 'config_path'),
+  bodyHasRscript: Object.prototype.hasOwnProperty.call(bodies.find((item) => item.action === 'approve') || {}, 'rscript_path'),
   generatedCode: state.generatedByDataset.ADAE?.generated_code || '',
   codeStatus: nodes.get('codeStatus').textContent,
-  graphStillHasContract: hasNativeFullRunContract('ADAE')
+  graphStillHasContract: hasNativeFullRunContract('ADAE'),
+  draftGraphCommand: state.draftSpecReviewByDataset.ADAE?.graph_command === true
 }));
 """
         script_path = TMP_ROOT / "ui_lg3_draft_resume.js"
@@ -3074,12 +3264,15 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
-        self.assertTrue(result["nativeResumeCalled"])
+        self.assertTrue(result["graphCommandCalled"])
+        self.assertFalse(result["nativeResumeCalled"])
         self.assertFalse(result["legacyDraftReviewCalled"])
-        self.assertTrue(result["bodyHasConfig"])
-        self.assertEqual(result["generatedCode"], "adae <- ae")
-        self.assertEqual(result["codeStatus"], "review")
-        self.assertTrue(result["graphStillHasContract"])
+        self.assertFalse(result["bodyHasConfig"])
+        self.assertFalse(result["bodyHasRscript"])
+        self.assertEqual(result["generatedCode"], "")
+        self.assertEqual(result["codeStatus"], "not generated")
+        self.assertFalse(result["graphStillHasContract"])
+        self.assertTrue(result["draftGraphCommand"])
 
     def test_index_generate_button_starts_native_full_run(self) -> None:
         client = TestClient(create_app())
@@ -3381,9 +3574,6 @@ global.fetch = async (path) => {
       })
     };
   }
-  if (url.includes('/code-review')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
-  }
   return {ok: true, json: async () => ({})};
 };
 """ + script + r"""
@@ -3677,9 +3867,6 @@ global.fetch = async (path) => {
       })
     };
   }
-  if (url.includes('/code-review')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
-  }
   return {ok: true, json: async () => ({})};
 };
 """ + script + r"""
@@ -3841,8 +4028,21 @@ const calls = [];
 global.fetch = async (path, options = {}) => {
   const url = String(path);
   calls.push(url);
-  if (url.includes('/code-review')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', run_id: 'run_ui_split_review_execute', approved: true})};
+  if (url.includes('/graph-command')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_split_review_execute',
+      scope: 'dataset',
+      dataset: 'ADAE',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
+      current_interrupt: null,
+      approved: true,
+      executed: false,
+      next_action: 'execute_approved_code',
+      graph_state_path: 'runs/run_ui_split_review_execute/graph_state.json'
+    })};
   }
   if (url.includes('/execute-approved-code')) {
     return {ok: true, json: async () => ({dataset: 'ADAE', status: 'completed'})};
@@ -3851,7 +4051,7 @@ global.fetch = async (path, options = {}) => {
     return {ok: true, json: async () => ({target_datasets: ['ADAE'], datasets: {}})};
   }
   if (url.includes('/progress')) {
-    const approved = calls.some((item) => item.includes('/code-review'));
+    const approved = calls.some((item) => item.includes('/graph-command'));
     return {
       ok: true,
       json: async () => ({
@@ -3901,7 +4101,8 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
-        self.assertTrue(any("/code-review" in item for item in result["afterApprove"]))
+        self.assertTrue(any("/graph-command" in item for item in result["afterApprove"]))
+        self.assertFalse(any("/code-review" in item for item in result["afterApprove"]))
         self.assertFalse(any("/execute-approved-code" in item for item in result["afterApprove"]))
         self.assertTrue(any("/execute-approved-code" in item for item in result["afterRun"]))
         self.assertTrue(result["approved"])
@@ -4108,8 +4309,8 @@ global.fetch = async (path) => {
   if (url.includes('/graph-state') || url.includes('/progress')) {
     return {ok: false, json: async () => ({detail: 'graph read model unavailable'})};
   }
-  if (url.includes('/code-review')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', approved: true})};
+  if (url.includes('/graph-command')) {
+    return {ok: true, json: async () => ({dataset: 'ADAE', interrupt: 'code_review', action: 'approve', approved: true, graph_state_path: 'runs/run_ui_review_recovery_no_gate/graph_state.json'})};
   }
   return {ok: true, json: async () => ({})};
 };
@@ -4125,6 +4326,7 @@ console.log(JSON.stringify({
   generatedRecovered: Boolean(state.generatedByDataset.ADAE?.generated_code),
   approveReady: availability.approveCode.ready,
   approveButtonDisabled: nodes.get('approveButton').disabled,
+  graphCommandPosted: calls.some((item) => item.includes('/graph-command')),
   codeReviewPosted: calls.some((item) => item.includes('/code-review')),
   reviewPane: nodes.get('reviewPane').innerHTML
 }));
@@ -4143,6 +4345,7 @@ console.log(JSON.stringify({
         self.assertFalse(result["generatedRecovered"])
         self.assertFalse(result["approveReady"])
         self.assertTrue(result["approveButtonDisabled"])
+        self.assertFalse(result["graphCommandPosted"])
         self.assertFalse(result["codeReviewPosted"])
         self.assertIn("Generate code after choosing a target", result["reviewPane"])
 
@@ -4218,8 +4421,20 @@ global.fetch = async (path) => {
   if (url.includes('/progress')) {
     return {ok: false, json: async () => ({detail: 'progress unavailable'})};
   }
-  if (url.includes('/code-review')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', run_id: 'run_ui_review_recovery_graph_only', approved: true})};
+  if (url.includes('/graph-command')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_review_recovery_graph_only',
+      scope: 'dataset',
+      dataset: 'ADAE',
+      interrupt: 'code_review',
+      action: 'approve',
+      status: 'ready_to_execute',
+      current_interrupt: null,
+      approved: true,
+      next_action: 'execute_approved_code',
+      graph_state_path: 'runs/run_ui_review_recovery_graph_only/graph_state.json'
+    })};
   }
   return {ok: true, json: async () => ({})};
 };
@@ -4237,6 +4452,7 @@ console.log(JSON.stringify({
   recoveredCode: state.generatedByDataset.ADAE?.generated_code || '',
   approveReady: availability.approveCode.ready,
   approveButtonDisabled: nodes.get('approveButton').disabled,
+  graphCommandPosted: calls.some((item) => item.includes('/graph-command')),
   codeReviewPosted: calls.some((item) => item.includes('/code-review')),
   approved: Boolean(state.reviewByDataset.ADAE?.approved)
 }));
@@ -4257,7 +4473,8 @@ console.log(JSON.stringify({
         self.assertEqual(result["recoveredCode"], "adae <- ae")
         self.assertTrue(result["approveReady"])
         self.assertFalse(result["approveButtonDisabled"])
-        self.assertTrue(result["codeReviewPosted"])
+        self.assertTrue(result["graphCommandPosted"])
+        self.assertFalse(result["codeReviewPosted"])
         self.assertTrue(result["approved"])
 
     def test_index_action_availability_next_action_matrix(self) -> None:
