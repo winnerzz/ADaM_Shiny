@@ -7734,6 +7734,11 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(contract["boundary"], "lg3_backend_contract")
         self.assertEqual(contract["last_interrupt"], "draft_spec_review")
         self.assertTrue(contract["code_generation_continued"])
+        self.assertEqual(
+            graph_state["runtime_persistence"]["native_draft_spec_review_resume"]["resume_source"],
+            "graph_state_compatibility_fallback",
+        )
+        self.assertIn("native_dataset_product_loop_draft_resume", graph_state["runtime_persistence"])
 
     def test_native_full_run_resume_endpoint_rejects_non_lg3_split_flow(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_native_full_run_resume_requires_contract")

@@ -2230,6 +2230,10 @@ class GraphGatewayTests(unittest.TestCase):
             reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["native_status"],
             "approved",
         )
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
         self.assertTrue(
             (
                 study_dir
@@ -2277,6 +2281,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(
             reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["native_status"],
             "rejected",
+        )
+        self.assertEqual(
+            reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
         )
 
     def test_gateway_native_draft_spec_review_resume_requires_canonical_draft_interrupt(self) -> None:
@@ -3252,6 +3260,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["spec_source"], "approved_draft_spec")
         self.assertEqual(dataset_state.current_interrupt.name, "code_review")
         self.assertEqual(dataset_state.human_commands[-1].interrupt, "draft_spec_review")
+        self.assertEqual(
+            continued.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
         self.assertIn("native_dataset_product_loop_draft_resume", continued.graph_state.runtime_persistence)
         self.assertTrue(
             (
@@ -3309,6 +3321,10 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.spec_state["status"], "rejected")
         self.assertFalse(dataset_state.code_state)
         self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(
+            rejected.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
         self.assertFalse((study_dir / "runs" / "run_lg2_native_loop_draft_reject" / "code").exists())
 
     def test_gateway_native_dataset_product_loop_respects_repair_code_terminal_followup(self) -> None:
@@ -4604,6 +4620,11 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["last_interrupt"], "draft_spec_review")
         self.assertTrue(contract["code_generation_continued"])
         self.assertFalse(contract["executed_after_approval"])
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
+        self.assertIn("native_dataset_product_loop_draft_resume", result.graph_state.runtime_persistence)
         self.assertTrue(contract["llm_provider"]["api_key_present"])
         self.assertNotIn("api_key", contract["llm_provider"])
         self.assertTrue(

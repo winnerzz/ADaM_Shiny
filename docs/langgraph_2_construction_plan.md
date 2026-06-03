@@ -10854,3 +10854,44 @@ Verification so far:
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path -v
 Ran 4 tests - OK
 ```
+
+### 2026-06-03 - LG4.3 Full-Run Draft Review Uses Native Dataset Resume
+
+Completed:
+
+- Routed the LG3 single-dataset `/native-full-run/resume` draft-spec branch
+  through `GraphGateway.resume_native_dataset_product_loop_draft_spec()`.
+- The full-run compatibility method no longer calls `review_draft_spec()`
+  directly before starting code generation.
+- The native draft-spec resume path now:
+  - attempts DatasetGraph `Command(resume=...)` for `draft_spec_review`;
+  - bridges the resulting human command through `review_draft_spec_from_command()`;
+  - preserves draft-spec artifact/hash validation;
+  - continues to code generation and the next `code_review` gate only after
+    approval.
+- Added `native_draft_spec_review_resume.resume_source` so audit output can
+  distinguish `langgraph_command_resume` from `graph_state_compatibility_fallback`.
+- Preserved native runtime metadata across the draft-review-to-code-generation
+  boundary so `native_draft_spec_review_resume` and
+  `native_dataset_product_loop_draft_resume` remain visible after the code
+  generation step.
+
+Boundary:
+
+- `/native-full-run/resume` still remains an LG3 graph-state compatibility
+  endpoint. In memory-mode API calls without a durable LangGraph checkpoint, it
+  may use graph-state compatibility fallback.
+- Durable `/native-resume` still requires a real native checkpoint binding and
+  does not use the fallback.
+- This slice does not change LLM prompt content, generated-code parsing, static
+  rules, R execution, repair/spec-revision routing, compare, or UI actions.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_draft_spec_resume_path -v
+Ran 7 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_draft_and_continues_to_code_review -v
+Ran 1 test - OK
+```

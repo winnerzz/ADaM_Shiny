@@ -1282,6 +1282,7 @@ class GraphGateway:
         target_context_builder: Any | None = None,
         rscript_path: str | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        allow_graph_state_fallback: bool = False,
     ) -> GraphGatewayNativeDatasetLoopDraftResult:
         """Resume native dataset-loop draft review and continue to code review when approved."""
 
@@ -1295,6 +1296,7 @@ class GraphGateway:
             reviewer=reviewer,
             notes=notes,
             input_fingerprint_payload=input_fingerprint_payload,
+            allow_graph_state_fallback=allow_graph_state_fallback,
         )
         if not draft_review.approved:
             return GraphGatewayNativeDatasetLoopDraftResult(
@@ -1321,12 +1323,14 @@ class GraphGateway:
             code_generation.graph_state,
             node="native_dataset_product_loop_draft_to_code",
             runtime_persistence_extra={
+                **_runtime_persistence_extras(draft_review.graph_state),
+                **_runtime_persistence_extras(code_generation.graph_state),
                 "native_dataset_product_loop_draft_resume": {
                     "resumed": True,
                     "dataset": target,
                     "action": decision.strip().lower(),
                     "continued_to_code_review": True,
-                }
+                },
             },
         )
         projection = project_graph_state_to_workflow(
@@ -1552,45 +1556,31 @@ class GraphGateway:
                 raise ValueError(
                     "LG3 draft-spec approval requires llm_provider and llm_exposure so code generation can continue."
                 )
-            draft_review = self.review_draft_spec(
+            draft_result = self.resume_native_dataset_product_loop_draft_spec(
                 study_dir=root,
-                study_id=graph_state.study_id,
                 run_id=run_id,
                 dataset=target,
                 decision=decision,
                 reviewer=reviewer,
                 notes=notes,
+                llm_provider=llm_provider or {},
+                llm_exposure=llm_exposure or {},
+                llm_client_builder=llm_client_builder,
+                target_context_builder=target_context_builder,
+                rscript_path=rscript_path,
                 input_fingerprint_payload=input_fingerprint_payload,
+                allow_graph_state_fallback=True,
             )
-            graph_state = draft_review.graph_state
-            projection = draft_review.workflow_projection
-            code_generation_continued = False
-            if draft_review.approved:
-                code_generation = self.start_native_dataset_product_loop(
-                    study_dir=root,
-                    study_id=draft_review.graph_state.study_id,
-                    run_id=run_id,
-                    dataset=target,
-                    llm_provider=llm_provider or {},
-                    llm_exposure=llm_exposure or {},
-                    llm_client_builder=llm_client_builder,
-                    target_context_builder=target_context_builder,
-                    rscript_path=rscript_path,
-                )
-                if not isinstance(code_generation, GraphGatewayCodeGenerationResult):
-                    raise ValueError(
-                        f"DatasetGraph did not continue from approved draft spec to native code_review for {target}."
-                    )
-                graph_state = code_generation.graph_state
-                projection = code_generation.workflow_projection
-                code_generation_continued = True
+            graph_state = draft_result.graph_state
+            projection = draft_result.workflow_projection
+            code_generation_continued = draft_result.code_generation is not None
             dataset_state = graph_state.datasets.get(target)
             current_interrupt = (
                 dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
             )
             phase = "waiting_for_human_gate" if current_interrupt else "reviewed"
-            approved = draft_review.approved
-            final_decision = draft_review.decision
+            approved = draft_result.draft_review.approved
+            final_decision = draft_result.draft_review.decision
             execution = None
             last_interrupt = "draft_spec_review"
         elif interrupt.name == "code_review":
@@ -2551,6 +2541,7 @@ class GraphGateway:
         reviewer: str,
         notes: str = "",
         input_fingerprint_payload: dict[str, Any] | None = None,
+        allow_graph_state_fallback: bool = False,
     ) -> GraphGatewayDraftSpecReviewResult:
         """Resume the native draft-spec pilot through the formal review artifact flow."""
 
@@ -2575,24 +2566,38 @@ class GraphGateway:
                 notes=notes,
             ),
         )
-        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
-        resumed = dataset_graph.invoke(
-            Command(
-                resume={
-                    "action": normalized_decision,
-                    "reviewer": reviewer,
-                    "notes": notes,
-                }
-            ),
-            config=self._dataset_config(graph_state.study_id, run_id, target),
-        )
         expected_native_status = "approved" if normalized_decision == "approve" else "rejected"
-        if resumed.get("native_draft_spec_review_status") != expected_native_status:
-            raise ValueError(f"DatasetGraph did not resume native draft_spec_review for {target}.")
-        commands = resumed.get("human_commands") or []
-        if not commands:
-            raise ValueError(f"DatasetGraph native draft_spec_review resume did not produce a human command for {target}.")
-        command_payload = dict(commands[-1])
+        resume_source = "langgraph_command_resume"
+        try:
+            dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+            resumed = dataset_graph.invoke(
+                Command(
+                    resume={
+                        "action": normalized_decision,
+                        "reviewer": reviewer,
+                        "notes": notes,
+                    }
+                ),
+                config=self._dataset_config(graph_state.study_id, run_id, target),
+            )
+            if resumed.get("native_draft_spec_review_status") != expected_native_status:
+                raise ValueError(f"DatasetGraph did not resume native draft_spec_review for {target}.")
+            commands = resumed.get("human_commands") or []
+            if not commands:
+                raise ValueError(f"DatasetGraph native draft_spec_review resume did not produce a human command for {target}.")
+            command_payload = dict(commands[-1])
+        except Exception:
+            if not allow_graph_state_fallback or self.native_interrupt_resume_available():
+                raise
+            resume_source = "graph_state_compatibility_fallback"
+            command_payload = {
+                "interrupt": "draft_spec_review",
+                "action": normalized_decision,
+                "dataset": target,
+                "reviewer": reviewer,
+                "notes": notes,
+                "payload": {},
+            }
         result = self.review_draft_spec_from_command(
             study_dir=root,
             run_id=run_id,
@@ -2606,18 +2611,20 @@ class GraphGateway:
             ),
             input_fingerprint_payload=input_fingerprint_payload,
         )
+        runtime_extra = _runtime_persistence_extras(graph_state)
+        runtime_extra.update(_runtime_persistence_extras(result.graph_state))
+        runtime_extra["native_draft_spec_review_resume"] = {
+            "resumed": True,
+            "dataset": target,
+            "action": normalized_decision,
+            "native_status": expected_native_status,
+            "resume_source": resume_source,
+        }
         self._persist_graph_state(
             root,
             result.graph_state,
             node="native_draft_spec_review_resume",
-            runtime_persistence_extra={
-                "native_draft_spec_review_resume": {
-                    "resumed": True,
-                    "dataset": target,
-                    "action": normalized_decision,
-                    "native_status": resumed.get("native_draft_spec_review_status"),
-                }
-            },
+            runtime_persistence_extra=runtime_extra,
         )
         projection = project_graph_state_to_workflow(
             root,

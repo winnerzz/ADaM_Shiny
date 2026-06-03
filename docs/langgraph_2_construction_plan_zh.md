@@ -10138,3 +10138,43 @@ compiled source ok
 python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path -v
 Ran 4 tests - OK
 ```
+
+### 2026-06-03 - LG4.3 Full-Run Draft Review 接入 Native Dataset Resume
+
+已完成：
+
+- 将 LG3 单 dataset `/native-full-run/resume` 的 draft-spec 分支改为调用
+  `GraphGateway.resume_native_dataset_product_loop_draft_spec()`。
+- full-run compatibility 方法不再直接调用 `review_draft_spec()` 后再启动 code
+  generation。
+- native draft-spec resume path 现在负责：
+  - 优先尝试 DatasetGraph `Command(resume=...)` 来恢复
+    `draft_spec_review`；
+  - 把 native human command 交给 `review_draft_spec_from_command()`；
+  - 保留 draft-spec artifact/hash 校验；
+  - 只有 approval 后才继续 code generation，并进入下一个 `code_review` gate。
+- 新增 `native_draft_spec_review_resume.resume_source`，让审计输出能区分
+  `langgraph_command_resume` 和 `graph_state_compatibility_fallback`。
+- 修复 draft review 到 code generation 之间 native runtime metadata 丢失的问题：
+  `native_draft_spec_review_resume` 和
+  `native_dataset_product_loop_draft_resume` 会在 code generation 之后继续可见。
+
+边界：
+
+- `/native-full-run/resume` 仍是 LG3 graph-state compatibility endpoint。在没有
+  durable LangGraph checkpoint 的 memory-mode API 跨请求场景下，它可以使用
+  graph-state compatibility fallback。
+- durable `/native-resume` 仍然要求真实 native checkpoint binding，不使用
+  fallback。
+- 本切片不改变 LLM prompt 内容、generated-code parsing、static rules、R
+  execution、repair/spec-revision routing、compare 或 UI action。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_roundtrip_persists_formal_review_artifact tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_native_dataset_product_loop_draft_reject_does_not_generate_code tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_draft_approval_requires_llm_config tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_draft_spec_resume_path -v
+Ran 7 tests - OK
+
+python -B -m unittest tests.test_api_phase8.Phase8ApiTests.test_native_full_run_resume_endpoint_approves_draft_and_continues_to_code_review -v
+Ran 1 test - OK
+```
