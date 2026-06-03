@@ -7582,6 +7582,10 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertFalse(contract["durable_full_run_resume_available"])
         self.assertEqual(contract["durable_full_run_resume_boundary"], "not_implemented")
         self.assertFalse(contract["durable_native_interrupt_resume_available"])
+        self.assertEqual(
+            graph_state["runtime_persistence"]["native_code_review_resume"]["resume_source"],
+            "graph_state_compatibility_fallback",
+        )
         self.assertFalse((study_dir / "runs" / "run_native_full_run_resume_code" / "outputs" / "adae.csv").exists())
 
     def test_native_full_run_paused_code_approval_then_explicit_execution_updates_contract(self) -> None:
@@ -7645,6 +7649,10 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertTrue(contract["executed_after_approval"])
         self.assertFalse(contract["terminal_failure"])
         self.assertNotIn("next_action", contract)
+        self.assertEqual(
+            graph_state["runtime_persistence"]["native_code_review_resume"]["resume_source"],
+            "graph_state_compatibility_fallback",
+        )
 
     def test_native_full_run_resume_accepts_study_loop_full_run_dataset_contract(self) -> None:
         study_dir = _study_with_adae_adcm_inputs("phase8_native_full_run_resume_study_contract")

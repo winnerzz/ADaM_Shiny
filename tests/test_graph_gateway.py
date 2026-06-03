@@ -3749,7 +3749,23 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["compatibility_resume_boundary"], "historical_contract_only")
         self.assertFalse(contract["durable_resume_available"])
         self.assertFalse(contract["durable_full_run_resume_available"])
-        self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["native_status"],
+            "approved",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_dataset_product_loop_resume"],
+            {
+                "resumed": True,
+                "dataset": "ADSL",
+                "action": "approve",
+                "executed_after_approval": True,
+            },
+        )
         self.assertTrue(
             (
                 study_dir
@@ -3806,6 +3822,15 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["phase"], "reviewed")
         self.assertTrue(contract["approved"])
         self.assertFalse(contract["executed_after_approval"])
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["native_status"],
+            "approved",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
+        self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
         self.assertTrue(
             (
                 study_dir
@@ -4452,6 +4477,15 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(contract["phase"], "waiting_for_human_gate")
         self.assertFalse(contract["approved"])
         self.assertFalse(contract["executed_after_approval"])
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["native_status"],
+            "rejected",
+        )
+        self.assertEqual(
+            result.graph_state.runtime_persistence["native_code_review_resume"]["resume_source"],
+            "langgraph_command_resume",
+        )
+        self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
 
     def test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_approved_draft") / "PSY201"

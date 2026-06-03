@@ -10808,3 +10808,49 @@ Passed, with CRLF conversion warnings only
 python - <<read Python files and compile(source, path, 'exec') without writing pyc>
 compiled source ok
 ```
+
+### 2026-06-03 - LG4.2 Full-Run Code Review Uses Native Dataset Resume
+
+Completed:
+
+- Routed the LG3 single-dataset `/native-full-run/resume` code-review branch
+  through `GraphGateway.resume_native_dataset_product_loop()`.
+- That means the compatibility endpoint still exists for UI/API stability, but
+  code-review approval no longer calls `review_code()` directly from the
+  full-run method.
+- The native dataset resume path now remains responsible for:
+  - attempting to resume the DatasetGraph `code_review` interrupt;
+  - converting the native resume command into the canonical code-review
+    artifact flow;
+  - preserving artifact/hash validation through `review_code_from_command()`;
+  - optionally continuing into approved R execution.
+- Fixed runtime metadata preservation across the review-to-execute boundary:
+  - `native_code_review_resume` is retained when approval also executes R;
+  - `native_code_review_resume.resume_source` records whether the run used
+    `langgraph_command_resume` or the graph-state compatibility fallback;
+  - `native_dataset_product_loop_resume` is retained only when execution was
+    actually triggered after approval;
+  - existing LG3 `native_dataset_full_run` metadata remains the outer audit
+    contract.
+
+Boundary:
+
+- `/native-full-run/resume` remains the LG3 graph-state compatibility endpoint.
+  It is closer to native graph behavior now, but it is still not full durable
+  LangGraph full-run resume.
+- When a durable LangGraph checkpoint is not available, `/native-full-run/resume`
+  may fall back to the graph-state compatibility bridge so local memory-mode
+  API requests keep working. Durable `/native-resume` does not use that
+  fallback.
+- This slice does not change draft-spec approval, dependency planning, LLM code
+  generation, R execution internals, repair/spec-revision routing, static
+  checks, compare behavior, or UI actions.
+- It does not remove legacy split-flow endpoints or the compatibility read
+  model.
+
+Verification so far:
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path -v
+Ran 4 tests - OK
+```

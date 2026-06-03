@@ -10098,3 +10098,43 @@ Passed，只有 CRLF conversion warnings
 python - <<read Python files and compile(source, path, 'exec') without writing pyc>
 compiled source ok
 ```
+
+### 2026-06-03 - LG4.2 Full-Run Code Review 接入 Native Dataset Resume
+
+已完成：
+
+- 将 LG3 单 dataset `/native-full-run/resume` 的 code-review 分支改为调用
+  `GraphGateway.resume_native_dataset_product_loop()`。
+- 也就是说，为了 UI/API 稳定，compatibility endpoint 仍然保留；但 full-run
+  方法内部不再直接调用 `review_code()` 来写 code-review 状态。
+- native dataset resume path 现在负责：
+  - 优先尝试恢复 DatasetGraph 的 `code_review` interrupt；
+  - 把 native resume command 转成 canonical code-review artifact flow；
+  - 通过 `review_code_from_command()` 保留 artifact/hash 校验；
+  - 在 approval 后按需继续执行 approved R code。
+- 修复 review 到 execute 之间 runtime metadata 丢失的问题：
+  - approval 后立即执行 R 时，`native_code_review_resume` 也会被保留；
+  - `native_code_review_resume.resume_source` 会记录本次使用的是
+    `langgraph_command_resume`，还是 graph-state compatibility fallback；
+  - 只有 approval 后真的触发执行，才记录
+    `native_dataset_product_loop_resume`；
+  - LG3 `native_dataset_full_run` 仍作为外层审计 contract 保留。
+
+边界：
+
+- `/native-full-run/resume` 仍是 LG3 graph-state compatibility endpoint。它现在
+  更接近 native graph 行为，但仍不是完整 durable LangGraph full-run resume。
+- 如果没有 durable LangGraph checkpoint，`/native-full-run/resume` 可以退回
+  graph-state compatibility bridge，以保证本地 memory-mode API 跨请求仍能运行。
+  durable `/native-resume` 不允许这个 fallback。
+- 本切片不改变 draft-spec approval、dependency planning、LLM code generation、
+  R execution 内部实现、repair/spec-revision routing、static checks、compare
+  行为或 UI action。
+- 不删除 legacy split-flow endpoints，也不删除 compatibility read model。
+
+当前验证：
+
+```text
+python -B -m unittest tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_executes tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_approval_can_pause_before_execution tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_dataset_full_run_reject_does_not_execute tests.test_graph_gateway.GraphGatewayTests.test_gateway_lg3_native_resume_entrypoint_uses_native_code_review_resume_path -v
+Ran 4 tests - OK
+```

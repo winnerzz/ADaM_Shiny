@@ -1351,6 +1351,7 @@ class GraphGateway:
         reviewer: str,
         notes: str = "",
         input_fingerprint_payload: dict[str, Any] | None = None,
+        allow_graph_state_fallback: bool = False,
     ) -> GraphGatewayCodeReviewResult:
         """Resume the native code-review pilot through the formal review artifact flow."""
 
@@ -1370,24 +1371,38 @@ class GraphGateway:
                 notes=notes,
             ),
         )
-        dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
-        resumed = dataset_graph.invoke(
-            Command(
-                resume={
-                    "action": normalized_decision,
-                    "reviewer": reviewer,
-                    "notes": notes,
-                }
-            ),
-            config=self._dataset_config(graph_state.study_id, run_id, target),
-        )
         expected_native_status = "approved" if normalized_decision == "approve" else "rejected"
-        if resumed.get("native_code_review_status") != expected_native_status:
-            raise ValueError(f"DatasetGraph did not resume native code_review for {target}.")
-        commands = resumed.get("human_commands") or []
-        if not commands:
-            raise ValueError(f"DatasetGraph native code_review resume did not produce a human command for {target}.")
-        command_payload = dict(commands[-1])
+        resume_source = "langgraph_command_resume"
+        try:
+            dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+            resumed = dataset_graph.invoke(
+                Command(
+                    resume={
+                        "action": normalized_decision,
+                        "reviewer": reviewer,
+                        "notes": notes,
+                    }
+                ),
+                config=self._dataset_config(graph_state.study_id, run_id, target),
+            )
+            if resumed.get("native_code_review_status") != expected_native_status:
+                raise ValueError(f"DatasetGraph did not resume native code_review for {target}.")
+            commands = resumed.get("human_commands") or []
+            if not commands:
+                raise ValueError(f"DatasetGraph native code_review resume did not produce a human command for {target}.")
+            command_payload = dict(commands[-1])
+        except Exception:
+            if not allow_graph_state_fallback or self.native_interrupt_resume_available():
+                raise
+            resume_source = "graph_state_compatibility_fallback"
+            command_payload = {
+                "interrupt": "code_review",
+                "action": normalized_decision,
+                "dataset": target,
+                "reviewer": reviewer,
+                "notes": notes,
+                "payload": {},
+            }
         result = self.review_code_from_command(
             study_dir=root,
             run_id=run_id,
@@ -1401,18 +1416,20 @@ class GraphGateway:
             ),
             input_fingerprint_payload=input_fingerprint_payload,
         )
+        runtime_extra = _runtime_persistence_extras(graph_state)
+        runtime_extra.update(_runtime_persistence_extras(result.graph_state))
+        runtime_extra["native_code_review_resume"] = {
+            "resumed": True,
+            "dataset": target,
+            "action": normalized_decision,
+            "native_status": expected_native_status,
+            "resume_source": resume_source,
+        }
         self._persist_graph_state(
             root,
             result.graph_state,
             node="native_code_review_resume",
-            runtime_persistence_extra={
-                "native_code_review_resume": {
-                    "resumed": True,
-                    "dataset": target,
-                    "action": normalized_decision,
-                    "native_status": resumed.get("native_code_review_status"),
-                }
-            },
+            runtime_persistence_extra=runtime_extra,
         )
         projection = project_graph_state_to_workflow(
             root,
@@ -1440,6 +1457,7 @@ class GraphGateway:
         execute_after_approval: bool = True,
         rscript_path: str | None = None,
         input_fingerprint_payload: dict[str, Any] | None = None,
+        allow_graph_state_fallback: bool = False,
     ) -> GraphGatewayNativeDatasetLoopResult:
         """Resume the internal native dataset-loop pilot through Gateway-owned gates."""
 
@@ -1452,6 +1470,7 @@ class GraphGateway:
             reviewer=reviewer,
             notes=notes,
             input_fingerprint_payload=input_fingerprint_payload,
+            allow_graph_state_fallback=allow_graph_state_fallback,
         )
         execution: GraphGatewayExecutionResult | None = None
         final_graph_state = review.graph_state
@@ -1471,12 +1490,14 @@ class GraphGateway:
                 final_graph_state,
                 node="native_dataset_product_loop_execute",
                 runtime_persistence_extra={
+                    **_runtime_persistence_extras(review.graph_state),
+                    **_runtime_persistence_extras(final_graph_state),
                     "native_dataset_product_loop_resume": {
                         "resumed": True,
                         "dataset": dataset.strip().upper(),
                         "action": decision.strip().lower(),
                         "executed_after_approval": True,
-                    }
+                    },
                 },
             )
             final_projection = project_graph_state_to_workflow(
@@ -1573,29 +1594,21 @@ class GraphGateway:
             execution = None
             last_interrupt = "draft_spec_review"
         elif interrupt.name == "code_review":
-            review = self.review_code(
+            code_result = self.resume_native_dataset_product_loop(
                 study_dir=root,
-                study_id=graph_state.study_id,
                 run_id=run_id,
                 dataset=target,
                 decision=decision,
                 reviewer=reviewer,
                 notes=notes,
+                execute_after_approval=execute_after_approval,
+                rscript_path=rscript_path,
                 input_fingerprint_payload=input_fingerprint_payload,
+                allow_graph_state_fallback=True,
             )
-            execution: GraphGatewayExecutionResult | None = None
-            graph_state = review.graph_state
-            projection = review.workflow_projection
-            if review.approved and execute_after_approval:
-                execution = self.execute_approved_code(
-                    study_dir=root,
-                    study_id=review.graph_state.study_id,
-                    run_id=run_id,
-                    dataset=target,
-                    rscript_path=rscript_path,
-                )
-                graph_state = execution.graph_state
-                projection = execution.workflow_projection
+            execution = code_result.execution
+            graph_state = code_result.graph_state
+            projection = code_result.workflow_projection
             dataset_state = graph_state.datasets.get(target)
             current_interrupt = (
                 dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
@@ -1603,8 +1616,8 @@ class GraphGateway:
             phase = "executed" if execution is not None else "reviewed"
             if execution is not None and execution.terminal_failure:
                 phase = "terminal_failure"
-            approved = review.approved
-            final_decision = review.decision
+            approved = code_result.approved
+            final_decision = code_result.decision
             last_interrupt = "code_review"
             code_generation_continued = False
         else:
