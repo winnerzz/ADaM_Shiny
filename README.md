@@ -148,18 +148,24 @@ Start the Phase 8 local API and browser UI:
 python -m uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
+The default local product path uses a per-run SQLite LangGraph checkpointer at
+`runs/{run_id}/langgraph_checkpoints.sqlite`, so the base project dependency set
+includes `langgraph-checkpoint-sqlite`.
+
 Open:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-The page starts with a demo-first workflow:
+The page starts with a demo-first native LangGraph workflow:
 
 1. Prepare SDTM, spec, and optional reference ADaM inputs
-2. Generate ADaM R code
-3. Run the selected execution path
-4. Review generated output, generated R code, validation, risk points, and audit
+2. Prepare the dependency plan and start runnable datasets
+3. Generate reviewable R code through the selected dataset native flow
+4. Record human review decisions through the graph command path
+5. Run graph-approved R code through the native full-run execution endpoint
+6. Review generated output, generated R code, validation, risk points, and audit
    artifacts
 
 The demo preparation endpoint copies only the root-level demo files from

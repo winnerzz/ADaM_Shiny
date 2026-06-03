@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import tomllib
 import unittest
 import uuid
 from pathlib import Path
@@ -273,6 +274,12 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertEqual(kwargs["checkpointer_backend"], "sqlite")
         sqlite_path = str(kwargs["sqlite_checkpointer_path"]).replace("\\", "/")
         self.assertTrue(sqlite_path.endswith("runs/run_factory_default/langgraph_checkpoints.sqlite"))
+
+    def test_default_sqlite_checkpointer_dependency_is_base_dependency(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        dependencies = project["dependencies"]
+
+        self.assertIn("langgraph-checkpoint-sqlite>=3.0.3,<3.1", dependencies)
 
     def test_service_gateway_factory_uses_run_scoped_sqlite_path_when_enabled(self) -> None:
         from adam_agent.api import service

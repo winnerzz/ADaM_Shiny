@@ -805,6 +805,7 @@ class GraphGateway:
                 raise ValueError(f"Approved spec used for code generation no longer exists: {current_spec_path}")
             if f"sha256:{sha256_file(current_spec_path)}" != spec_sha:
                 raise ValueError("Approved spec changed after code generation. Regenerate code before review.")
+        previous_graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
         self.validate_code_review(
             study_dir=root,
             run_id=run_id,
@@ -868,6 +869,51 @@ class GraphGateway:
             if not self._graph_code_review_matches_review_path(root, run_id=run_id, dataset=target, review_path=review_path):
                 review_path.unlink(missing_ok=True)
             raise
+        if _has_lg3_full_run_resume_contract(previous_graph_state, target):
+            next_state = result.graph_state.model_copy(deep=True)
+            runtime_extra = _runtime_persistence_extras(previous_graph_state)
+            runtime_extra.update(_runtime_persistence_extras(next_state))
+            phase = "reviewed"
+            current_interrupt = None
+            metadata_updates = {
+                "last_interrupt": "code_review",
+                "decision": normalized_decision,
+                "approved": normalized_decision == "approve",
+                "executed_after_approval": False,
+                "terminal_failure": False,
+            }
+            if _has_native_dataset_full_run_contract(previous_graph_state, target):
+                runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
+                    previous_graph_state,
+                    dataset=target,
+                    phase=phase,
+                    current_interrupt=current_interrupt,
+                    native_interrupt_resume_available=_native_full_run_native_interrupt_resume_available_for_state(
+                        next_state,
+                        runtime_resume_available=self.native_interrupt_resume_available(),
+                        active_checkpoint_path=self._native_interrupt_checkpoint_path(),
+                    ),
+                    **metadata_updates,
+                )
+            _sync_native_study_full_run_dataset_contract(
+                runtime_extra,
+                dataset=target,
+                phase=phase,
+                current_interrupt=current_interrupt,
+                updates=metadata_updates,
+            )
+            self._persist_graph_state(
+                root,
+                next_state,
+                node="native_dataset_full_run_code_review",
+                runtime_persistence_extra=runtime_extra,
+            )
+            projection = project_graph_state_to_workflow(
+                root,
+                next_state,
+                node="graph_gateway_native_dataset_full_run_code_review",
+            )
+            result = GraphGatewayResult(graph_state=next_state, workflow_projection=projection)
         return GraphGatewayCodeReviewResult(
             graph_state=result.graph_state,
             workflow_projection=result.workflow_projection,
@@ -901,7 +947,7 @@ class GraphGateway:
             raise ValueError("Code review command must target code_review.")
         if command.action not in {"approve", "reject"}:
             raise ValueError("Code review command action must be approve or reject.")
-        return self.review_code(
+        result = self.review_code(
             study_dir=root,
             study_id=graph_state.study_id,
             run_id=run_id,
@@ -911,6 +957,7 @@ class GraphGateway:
             notes=command.notes,
             input_fingerprint_payload=input_fingerprint_payload,
         )
+        return result
 
     def start_native_code_review(
         self,
@@ -1121,7 +1168,8 @@ class GraphGateway:
         dataset_state = started.graph_state.datasets.get(target)
         current_interrupt = dataset_state.current_interrupt.name if dataset_state and dataset_state.current_interrupt else None
         graph_state = started.graph_state.model_copy(deep=True)
-        runtime_extra = _runtime_persistence_extras(graph_state)
+        runtime_extra = _runtime_persistence_extras(previous_graph_state or graph_state)
+        runtime_extra.update(_runtime_persistence_extras(graph_state))
         runtime_extra["native_dataset_full_run"] = _native_dataset_full_run_metadata(
             previous_graph_state or graph_state,
             dataset=target,

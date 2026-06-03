@@ -24,6 +24,11 @@ $env:PYTHONPATH = "D:/Archive/Research/Projects/ADaM_Shiny_LangGraph/src"
 uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
+The default service backend uses a per-run SQLite LangGraph checkpointer. The
+base project dependencies therefore include `langgraph-checkpoint-sqlite`; if a
+developer intentionally wants a non-durable local smoke run, they may set
+`ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND=memory` before starting the service.
+
 ## Current Product Flow
 
 ```text
