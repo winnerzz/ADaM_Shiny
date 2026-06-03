@@ -819,8 +819,304 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("Review generated R code before local execution.", queue_body)
         self.assertIn("Review diagnostics and choose repair, retry, or skip.", queue_body)
         self.assertIn("function reviewQueueActionHints(item)", queue_body)
+        self.assertIn("function reviewQueueGraphCommandActionHtml(item)", queue_body)
+        self.assertIn("function graphCommandActionsForReviewItem(item)", queue_body)
+        self.assertIn("Approve Dependency Plan", queue_body)
+        self.assertIn("data-review-command-action", queue_body)
+        self.assertIn("attachReviewQueueGraphCommandHandlers()", queue_body)
         self.assertIn("Available graph actions:", queue_body)
         self.assertNotIn("JSON.stringify", queue_body)
+
+    def test_index_review_queue_renders_dependency_graph_command_actions(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+applyRunProgress({
+  dependency_review_status: 'warning',
+  current_interrupt: {name: 'dependency_review', status: 'open', reason: 'Review dependency warnings.'},
+  review_queue: [{
+    scope: 'study',
+    dataset: '',
+    name: 'dependency_review',
+    reason: 'Review dependency warnings.',
+    available_actions: [
+      {action: 'approve', label: 'Approve Dependency Plan'},
+      {action: 'reject', label: 'Reject Dependency Plan'},
+      {action: 'execute_after_approval', label: 'Run Anyway'}
+    ]
+  }]
+});
+renderHumanReviewQueue();
+console.log(JSON.stringify({
+  title: nodes.get('humanReviewQueueTitle').textContent,
+  detail: nodes.get('humanReviewQueueDetail').textContent,
+  status: nodes.get('humanReviewQueueStatus').textContent,
+  html: nodes.get('humanReviewQueueList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_dependency_review_graph_command_render.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIn("1 review gate", result["title"])
+        self.assertEqual(result["status"], "review")
+        self.assertIn("Review gates are read from graph state", result["detail"])
+        self.assertIn("Study", result["html"])
+        self.assertIn("Dependency review", result["html"])
+        self.assertIn("Approve Dependency Plan", result["html"])
+        self.assertIn("Reject Dependency Plan", result["html"])
+        self.assertIn('data-review-command-interrupt="dependency_review"', result["html"])
+        self.assertIn('data-review-command-dataset=""', result["html"])
+        self.assertNotIn("Run Anyway", result["html"])
+        self.assertNotIn("execute_after_approval", result["html"])
+        self.assertNotIn("native-resume", result["html"])
+
+    def test_index_dependency_review_queue_requires_advertised_actions(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+applyRunProgress({
+  dependency_review_status: 'warning',
+  current_interrupt: {name: 'dependency_review', status: 'open', reason: 'Review dependency warnings.'},
+  review_queue: [{
+    scope: 'study',
+    dataset: '',
+    name: 'dependency_review',
+    reason: 'Review dependency warnings.',
+    available_actions: []
+  }]
+});
+renderHumanReviewQueue();
+console.log(JSON.stringify({
+  html: nodes.get('humanReviewQueueList').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_dependency_review_requires_advertised_actions.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertIn("Dependency review", result["html"])
+        self.assertIn("Review dependency warnings.", result["html"])
+        self.assertNotIn("Approve Dependency Plan", result["html"])
+        self.assertNotIn("Reject Dependency Plan", result["html"])
+        self.assertNotIn("data-review-command-action", result["html"])
+
+    def test_index_dependency_review_queue_action_posts_graph_command_only(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    const values = {
+      studyDir: 'D:/tmp/study',
+      runId: 'run_ui_dependency_review_graph_command',
+      reviewer: 'alice',
+      reviewNotes: 'dependency plan looks acceptable',
+      configPath: 'studies/_template/configs/mock_downstream.json',
+      rscriptPath: 'C:/Dev/R-4.5.2/bin/Rscript.exe',
+      modelMode: 'real',
+      llmProvider: 'openai-compatible',
+      llmModel: 'gpt-5.5',
+      llmBaseUrl: 'http://localhost:8080/v1',
+      llmApiKey: 'sk-test',
+      llmAllowExternal: ''
+    };
+    nodes.set(id, {
+      value: Object.prototype.hasOwnProperty.call(values, id) ? values[id] : '',
+      checked: id === 'llmAllowExternal',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+const calls = [];
+global.fetch = async (path, options = {}) => {
+  const url = String(path);
+  calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+  if (url.includes('/graph-command')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_dependency_review_graph_command',
+      scope: 'study',
+      interrupt: 'dependency_review',
+      action: 'approve',
+      status: 'approved',
+      dependency_review_status: 'approved',
+      current_interrupt: null,
+      next_action: 'start_runnable_datasets',
+      graph_state_path: 'runs/run_ui_dependency_review_graph_command/graph_state.json'
+    })};
+  }
+  if (url.includes('/graph-state')) {
+    return {ok: true, json: async () => ({
+      study_id: 'PSY201',
+      run_id: 'run_ui_dependency_review_graph_command',
+      status: 'planned',
+      dependency_review_status: 'approved',
+      current_interrupt: null,
+      datasets: {}
+    })};
+  }
+  if (url.includes('/progress')) {
+    return {ok: true, json: async () => ({
+      dependency_review_status: 'approved',
+      review_queue: [],
+      target_datasets: ['ADAE'],
+      datasets: []
+    })};
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_dependency_review_graph_command', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+nodes.get('runId').value = 'run_ui_dependency_review_graph_command';
+state.studyId = 'PSY201';
+state.plan = {requested_datasets: ['ADAE'], runnable_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'warning'};
+applyRunProgress({
+  dependency_review_status: 'warning',
+  current_interrupt: {name: 'dependency_review', status: 'open', reason: 'Review dependency warnings.'},
+  review_queue: [{
+    scope: 'study',
+    dataset: '',
+    name: 'dependency_review',
+    reason: 'Review dependency warnings.',
+    available_actions: [
+      {action: 'approve', label: 'Approve Dependency Plan'},
+      {action: 'reject', label: 'Reject Dependency Plan'}
+    ]
+  }]
+});
+await submitReviewQueueGraphCommand({dataset: '', interrupt: 'dependency_review', action: 'approve'});
+const graphCommandCalls = calls.filter((item) => item.url.includes('/graph-command'));
+console.log(JSON.stringify({
+  graphCommandCalls,
+  nativeResumeCalls: calls.filter((item) => item.url.includes('/native-resume')),
+  dependencyReviewEndpointCalls: calls.filter((item) => item.url.includes('/dependency-review')),
+  operation: nodes.get('operationTitle').textContent,
+  planStatus: state.plan.dependency_review_status,
+  queueLength: state.runProgress.review_queue.length
+}));
+"""
+        script_path = TMP_ROOT / "ui_dependency_review_graph_command_post.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(len(result["graphCommandCalls"]), 1)
+        call = result["graphCommandCalls"][0]
+        self.assertIn("/runs/run_ui_dependency_review_graph_command/graph-command", call["url"])
+        body = call["body"]
+        self.assertEqual(body["study_dir"], "D:/tmp/study")
+        self.assertEqual(body["reviewer"], "alice")
+        self.assertEqual(body["interrupt"], "dependency_review")
+        self.assertEqual(body["action"], "approve")
+        self.assertEqual(body["notes"], "dependency plan looks acceptable")
+        self.assertEqual(body["payload"], {"approved_dependency_datasets": []})
+        self.assertNotIn("dataset", body)
+        self.assertNotIn("execute_after_approval", body)
+        self.assertNotIn("config_path", body)
+        self.assertNotIn("rscript_path", body)
+        self.assertNotIn("llm_provider", body)
+        self.assertEqual(result["nativeResumeCalls"], [])
+        self.assertEqual(result["dependencyReviewEndpointCalls"], [])
+        self.assertEqual(result["operation"], "Graph review decision recorded")
+        self.assertEqual(result["planStatus"], "approved")
+        self.assertEqual(result["queueLength"], 0)
 
     def test_index_exposes_native_study_loop_result_summary(self) -> None:
         client = TestClient(create_app())
@@ -7673,8 +7969,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             },
         )
 
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertIn("execute_after_approval is reserved", response.json()["detail"])
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("execute_after_approval", response.text)
         graph_state = client.get(
             "/runs/run_graph_command_reserved_execute/graph-state",
             params={"study_dir": str(study_dir)},
@@ -7686,6 +7982,58 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
                 study_dir
                 / "runs"
                 / "run_graph_command_reserved_execute"
+                / "review"
+                / "adae_code_review.json"
+            ).exists()
+        )
+
+    def test_graph_command_rejects_continuation_settings_at_request_boundary(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_graph_command_reserved_config")
+        client = TestClient(create_app())
+        started = client.post(
+            "/runs/run_graph_command_reserved_config/datasets/ADAE/native-full-run",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+            },
+        )
+        self.assertEqual(started.status_code, 200, started.text)
+
+        base_request = {
+            "study_dir": str(study_dir),
+            "dataset": "ADAE",
+            "interrupt": "code_review",
+            "action": "approve",
+            "reviewer": "qa_user",
+        }
+        forbidden_fields = [
+            {"config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json")},
+            {"rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"},
+            {"llm_provider_override": {"provider": "mock", "model": "mock-model"}},
+            {"llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"}},
+        ]
+        for forbidden in forbidden_fields:
+            with self.subTest(forbidden=sorted(forbidden)):
+                response = client.post(
+                    "/runs/run_graph_command_reserved_config/graph-command",
+                    json={**base_request, **forbidden},
+                )
+
+                self.assertEqual(response.status_code, 422, response.text)
+                for field in forbidden:
+                    self.assertIn(field, response.text)
+
+        graph_state = client.get(
+            "/runs/run_graph_command_reserved_config/graph-state",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(graph_state.status_code, 200, graph_state.text)
+        self.assertEqual(graph_state.json()["datasets"]["ADAE"]["code_state"]["status"], "generated")
+        self.assertFalse(
+            (
+                study_dir
+                / "runs"
+                / "run_graph_command_reserved_config"
                 / "review"
                 / "adae_code_review.json"
             ).exists()

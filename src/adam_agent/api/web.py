@@ -261,6 +261,12 @@ INDEX_HTML = r"""<!doctype html>
       border-color: var(--line);
     }
     button.secondary:hover { background: #edf3f8; }
+    button.secondary.danger {
+      color: var(--danger);
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    button.secondary.danger:hover { background: #fde9e7; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     .action-hints {
       display: grid;
@@ -476,6 +482,17 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       font-size: 11px;
       font-weight: 700;
+    }
+    .review-queue-command-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 7px;
+    }
+    .review-queue-command-actions button {
+      min-height: 30px;
+      padding: 6px 10px;
+      font-size: 11px;
     }
     .study-loop-panel {
       margin: 0 0 12px;
@@ -3058,6 +3075,7 @@ INDEX_HTML = r"""<!doctype html>
       byId('humanReviewQueueList').innerHTML = items.length
         ? items.map((item) => reviewQueueItemHtml(item)).join('')
         : '<div class="muted">No dependency, draft-spec, code-review, or terminal-failure gate is open.</div>';
+      attachReviewQueueGraphCommandHandlers();
       attachNativeResumeHandlers();
     }
 
@@ -3214,6 +3232,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="review-queue-action">${escapeHtml(reviewQueueActionText(item))}</div>
             <div class="review-queue-detail">${escapeHtml(reviewQueueDetailText(item))}</div>
             ${reviewQueueActionHints(item)}
+            ${reviewQueueGraphCommandActionHtml(item)}
             ${nativeResumeActionHtml(item.dataset, item.name)}
           </div>
         </div>
@@ -3223,11 +3242,57 @@ INDEX_HTML = r"""<!doctype html>
     function reviewQueueActionHints(item) {
       const actions = item.availableActions || item.available_actions || [];
       if (!Array.isArray(actions) || !actions.length) return '';
-      const labels = actions
+      const hintActions = item.name === 'dependency_review'
+        ? actions.filter((action) => new Set(graphCommandActionsForReviewItem(item).map((allowed) => allowed.action)).has(String(action.action || '').trim()))
+        : actions;
+      const labels = hintActions
         .map((action) => action.label || titleFromToken(action.action || 'review'))
         .filter(Boolean)
         .join(' / ');
+      if (!labels) return '';
       return `<div class="review-queue-actions">Available graph actions: ${escapeHtml(labels)}</div>`;
+    }
+
+    function reviewQueueGraphCommandActionHtml(item) {
+      const actions = graphCommandActionsForReviewItem(item);
+      if (!actions.length) return '';
+      const target = String(item.dataset || '').toUpperCase();
+      const interrupt = String(item.name || '').trim();
+      const buttons = actions.map((action) => `
+        <button class="${action.tone === 'reject' ? 'secondary danger' : 'secondary'}" data-review-command-action="${escapeHtml(action.action)}" data-review-command-dataset="${escapeHtml(target)}" data-review-command-interrupt="${escapeHtml(interrupt)}">${escapeHtml(action.label)}</button>
+      `).join('');
+      return `<div class="review-queue-command-actions" aria-label="Graph command review actions">${buttons}</div>`;
+    }
+
+    function graphCommandActionsForReviewItem(item) {
+      const interrupt = String(item.name || '').trim();
+      const advertised = Array.isArray(item.availableActions || item.available_actions)
+        ? item.availableActions || item.available_actions
+        : [];
+      const advertisedActions = advertised
+        .map((action) => String(action.action || '').trim())
+        .filter(Boolean);
+      const allowedByGate = {
+        dependency_review: ['approve', 'reject']
+      }[interrupt] || [];
+      const actionNames = advertisedActions.filter((action) => allowedByGate.includes(action));
+      return Array.from(new Set(actionNames)).map((action) => ({
+        action,
+        label: graphCommandActionLabel(interrupt, action, advertised),
+        tone: action === 'reject' ? 'reject' : 'approve'
+      }));
+    }
+
+    function graphCommandActionLabel(interrupt, action, advertised) {
+      const advertisedMatch = (advertised || []).find((item) => String(item.action || '').trim() === action);
+      if (advertisedMatch?.label) return advertisedMatch.label;
+      const labels = {
+        dependency_review: {
+          approve: 'Approve Dependency Plan',
+          reject: 'Reject Dependency Plan'
+        }
+      };
+      return labels[interrupt]?.[action] || titleFromToken(action);
     }
 
     function readableInterruptName(name) {
@@ -4510,6 +4575,95 @@ INDEX_HTML = r"""<!doctype html>
     function attachTerminalFailureHandlers() {
       for (const button of document.querySelectorAll('[data-terminal-action]')) {
         button.addEventListener('click', () => submitTerminalFailureReview(button.dataset.terminalDataset, button.dataset.terminalAction));
+      }
+    }
+
+    function attachReviewQueueGraphCommandHandlers() {
+      for (const button of document.querySelectorAll('[data-review-command-action]')) {
+        if (button.dataset.reviewCommandBound === '1') continue;
+        button.dataset.reviewCommandBound = '1';
+        button.addEventListener('click', () => submitReviewQueueGraphCommand({
+          dataset: button.dataset.reviewCommandDataset,
+          interrupt: button.dataset.reviewCommandInterrupt,
+          action: button.dataset.reviewCommandAction
+        }));
+      }
+    }
+
+    async function submitReviewQueueGraphCommand({dataset = '', interrupt = '', action = ''} = {}) {
+      const normalizedInterrupt = String(interrupt || '').trim();
+      const normalizedDataset = String(dataset || '').toUpperCase();
+      const normalizedAction = String(action || '').trim();
+      if (!normalizedInterrupt || !normalizedAction) return;
+      const item = humanReviewQueueItems().find((candidate) => (
+        String(candidate.name || '') === normalizedInterrupt &&
+        String(candidate.dataset || '').toUpperCase() === normalizedDataset
+      ));
+      if (!graphCommandReviewActionAllowed(item, normalizedInterrupt, normalizedAction)) return;
+      beginOperation(
+        'Recording graph review decision',
+        `${readableInterruptName(normalizedInterrupt)}: ${titleFromToken(normalizedAction)}. This records the decision only.`
+      );
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: graphCommandRequestBody({
+            dataset: normalizedInterrupt === 'dependency_review' ? null : normalizedDataset,
+            interrupt: normalizedInterrupt,
+            action: normalizedAction,
+            notes: byId('reviewNotes').value.trim() || `Selected ${normalizedAction} from the graph review queue.`,
+            payload: graphCommandPayloadForReview(normalizedInterrupt, normalizedAction)
+          })
+        });
+        await refreshGraphReadModels();
+        await loadReviewSummary(payload.run_id || runId());
+        applyReviewQueueGraphCommandResponse(payload, normalizedInterrupt);
+        addEvent(
+          'Graph review decision recorded',
+          `${readableInterruptName(normalizedInterrupt)}: ${titleFromToken(payload.action || normalizedAction)} -> ${titleFromToken(payload.next_action || payload.status)}.`
+        );
+        completeOperation(
+          'Graph review decision recorded',
+          `${readableInterruptName(normalizedInterrupt)} is now ${titleFromToken(payload.status || payload.action || normalizedAction)}.`
+        );
+        renderPlan(state.plan || {});
+        renderDraftSpecPane();
+        renderPane();
+        renderGraphAwareDashboard();
+        renderActionAvailability();
+      } catch (error) {
+        failOperation('Graph review decision failed', error);
+      }
+    }
+
+    function graphCommandReviewActionAllowed(item, interrupt, action) {
+      if (!item) return false;
+      return graphCommandActionsForReviewItem(item).some((candidate) => candidate.action === action);
+    }
+
+    function graphCommandPayloadForReview(interrupt, action) {
+      if (interrupt === 'dependency_review' && action === 'approve') {
+        return {approved_dependency_datasets: []};
+      }
+      return {};
+    }
+
+    function applyReviewQueueGraphCommandResponse(payload, interrupt) {
+      if (interrupt !== 'dependency_review') return;
+      state.plan = {
+        ...(state.plan || {}),
+        dependency_review_status: payload.dependency_review_status || payload.status || payload.action || 'reviewed'
+      };
+      if (state.runProgress) {
+        state.runProgress = {
+          ...state.runProgress,
+          dependency_review_status: state.plan.dependency_review_status,
+          current_interrupt: payload.current_interrupt || null,
+          review_queue: Array.isArray(state.runProgress.review_queue)
+            ? state.runProgress.review_queue.filter((item) => String(item.name || item.interrupt || '') !== 'dependency_review')
+            : state.runProgress.review_queue
+        };
       }
     }
 

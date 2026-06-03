@@ -755,18 +755,6 @@ def submit_graph_command(run_id: str, request: Any) -> GraphCommandResponse:
         for item in payload.get("approved_dependency_datasets", [])
         if str(item).strip()
     ] if isinstance(payload, dict) else []
-    provider_config = None
-    exposure = None
-    if getattr(request, "llm_provider_override", None) is not None or getattr(request, "llm_exposure_override", None) is not None:
-        config = ConfigLoader().load(getattr(request, "config_path", None), study_id=study_dir.name, run_id=run_id)
-        provider_config = _provider_config_from_override(
-            getattr(request, "llm_provider_override", None),
-            fallback=config.llm_provider,
-        )
-        exposure = _exposure_config_from_override(
-            getattr(request, "llm_exposure_override", None),
-            fallback=config.llm_exposure,
-        )
     try:
         with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
             result = gateway.submit_graph_command(
@@ -778,12 +766,12 @@ def submit_graph_command(run_id: str, request: Any) -> GraphCommandResponse:
                 reviewer=request.reviewer,
                 notes=request.notes,
                 approved_dependency_datasets=approved_dependencies,
-                execute_after_approval=bool(getattr(request, "execute_after_approval", False)),
-                llm_provider=provider_config.__dict__ if provider_config is not None else None,
-                llm_exposure=exposure.model_dump(mode="json") if exposure is not None else None,
-                llm_client_builder=build_llm_client if provider_config is not None else None,
-                target_context_builder=build_target_llm_context if provider_config is not None else None,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                execute_after_approval=False,
+                llm_provider=None,
+                llm_exposure=None,
+                llm_client_builder=None,
+                target_context_builder=None,
+                rscript_path="",
             )
     except (FileNotFoundError, ValueError) as exc:
         raise ApiServiceError(str(exc)) from exc
