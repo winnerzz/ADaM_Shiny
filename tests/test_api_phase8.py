@@ -1124,7 +1124,15 @@ console.log(JSON.stringify({
         contract = (ROOT / "docs" / "phase8_1_api_contract.md").read_text(encoding="utf-8")
 
         self.assertIn("decision through `POST /runs/{run_id}/graph-command`", contract)
+        self.assertIn("Product UI code should prefer:", contract)
+        self.assertIn("`POST /runs/native-study-loop` for study-level dispatch", contract)
+        self.assertIn("`POST /runs/{run_id}/datasets/{dataset}/native-full-run`", contract)
+        self.assertIn("`POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute`", contract)
+        self.assertIn("## Dataset Native Flow", contract)
+        self.assertIn("## Dataset Split Flow Compatibility", contract)
+        self.assertIn("compatibility/manual transition endpoints", contract)
         self.assertIn("Compatibility endpoint for older clients", contract)
+        self.assertIn("Product review actions should use `/graph-command`.", contract)
         self.assertIn("New UI/product code should not call this endpoint.", contract)
         self.assertIn("Normal browser review actions should use `/graph-command`.", contract)
         self.assertNotIn(
@@ -5907,7 +5915,11 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         )
 
         self.assertEqual(run_response.status_code, 400)
-        self.assertIn("would bypass review gates", run_response.json()["detail"])
+        detail = run_response.json()["detail"]
+        self.assertIn("would bypass review gates", detail)
+        self.assertIn("/runs/native-study-loop", detail)
+        self.assertIn("/graph-command", detail)
+        self.assertIn("native-full-run/execute", detail)
         state = json.loads((target / "runs" / "run_demo_from_endpoint" / "workflow_state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["current_interrupt"], "split_flow_required")
         self.assertEqual(state["workflow_control"], "legacy_run_to_completion_compatibility_shim")
@@ -5960,6 +5972,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         detail = response.json()["detail"]
         self.assertIn("requires an explicit execution_mode", detail)
         self.assertIn("execution_mode='stub'", detail)
+        self.assertIn("/runs/prepare", detail)
+        self.assertIn("/runs/native-study-loop", detail)
         self.assertFalse((study_dir / "runs" / "run_no_implicit_stub" / "workflow_state.json").exists())
 
     def test_create_run_rejects_unknown_execution_mode_before_legacy_graph(self) -> None:
@@ -5981,6 +5995,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn("Unsupported execution_mode for POST /runs", detail)
         self.assertIn("legacy_auto_magic", detail)
         self.assertIn("Allowed legacy endpoint modes", detail)
+        self.assertIn("/runs/prepare", detail)
+        self.assertIn("/runs/native-study-loop", detail)
         self.assertFalse((study_dir / "runs" / "run_unknown_execution_mode" / "workflow_state.json").exists())
 
     def test_generate_review_execute_split_flow(self) -> None:

@@ -370,13 +370,13 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
         raise ApiServiceError(
             "POST /runs requires an explicit execution_mode. "
             "Use execution_mode='stub' only for the legacy compatibility/test path, "
-            "or use the split-flow endpoints for product LLM generation."
+            "or start the graph product path with /runs/prepare or /runs/native-study-loop."
         )
     if execution_mode not in LEGACY_RUN_ENDPOINT_MODES:
         raise ApiServiceError(
             f"Unsupported execution_mode for POST /runs: {execution_mode}. "
             f"Allowed legacy endpoint modes: {format_execution_modes(LEGACY_RUN_ENDPOINT_MODES)}. "
-            "Use the split-flow endpoints for product LLM generation."
+            "Use /runs/prepare or /runs/native-study-loop for product LLM generation."
         )
     with _open_graph_gateway(study_dir=study_dir, run_id=config.run_id) as gateway:
         if execution_mode in LEGACY_RUN_BLOCKED_LLM_MODES:
@@ -389,8 +389,9 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             )
             raise ApiServiceError(
                 "LLM ADaM generation cannot run through POST /runs because it would bypass review gates. "
-                "Use /runs/prepare, finalize-inputs, draft-spec-review, generate-code, code-review, "
-                "and execute-approved-code."
+                "Use /runs/prepare or /runs/native-study-loop, record human review through /graph-command, "
+                "and execute LG3/native-full-run datasets through native-full-run/execute. "
+                "Dataset split-flow endpoints remain compatibility/manual transition endpoints."
             )
 
         legacy_result = gateway.run_legacy_to_completion(

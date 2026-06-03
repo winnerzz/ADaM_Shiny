@@ -2,10 +2,11 @@
 
 Phase 8.1 exposes a local FastAPI backend for ADaM Agent Studio.
 
-The current product path is a graph-controlled split flow. The browser and any
-external caller should treat `GraphGateway` as the workflow boundary: API calls
-start graph transitions, human review calls record decisions at graph-owned
-gates, and read endpoints render graph-owned state and artifacts.
+The current product path is a graph-controlled native study/dataset flow. The
+browser and any external caller should treat `GraphGateway` as the workflow
+boundary: API calls start graph transitions, human review calls record decisions
+at graph-owned gates, and read endpoints render graph-owned state and
+artifacts.
 
 `POST /runs` is still present, but only as a legacy compatibility and smoke-test
 endpoint.
@@ -28,16 +29,28 @@ uvicorn adam_agent.api.app:app --reload --host 127.0.0.1 --port 8000
 ```text
 create/open workspace
   -> upload SDTM/spec/define/reference/legacy files
-  -> prepare run dependency plan
-  -> review dependency plan if needed
-  -> finalize one dataset's inputs
-  -> if no input_spec: review generated draft spec
-  -> generate R code
-  -> review generated code
-  -> execute approved R code
+  -> prepare or refresh the graph dependency plan
+  -> start the native study loop for runnable datasets
+  -> start a selected dataset through native-full-run
+  -> if needed, review dependency, draft-spec, code, or terminal-failure gates
+     through graph-command
+  -> execute approved LG3/native-full-run R code
   -> preview/download/compare output
-  -> triage terminal failure if execution fails
 ```
+
+Product UI code should prefer:
+
+- `POST /runs/prepare` for dependency planning.
+- `POST /runs/native-study-loop` for study-level dispatch of runnable datasets.
+- `POST /runs/{run_id}/datasets/{dataset}/native-full-run` for the selected
+  dataset generation path.
+- `POST /runs/{run_id}/graph-command` for human review decisions.
+- `POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute` for LG3
+  execution after code approval.
+
+Older dataset split-flow endpoints remain available for compatibility, manual
+transition tests, and explicit fallback. They are not the preferred browser
+product path.
 
 State ownership:
 
@@ -145,6 +158,16 @@ datasets, dependency decisions, warnings, and graph/projection paths.
 If the dependency plan needs user input, new product clients should record the
 decision through `POST /runs/{run_id}/graph-command`.
 
+### POST /runs/native-study-loop
+
+Starts the study-level native product loop for runnable datasets. This endpoint
+can dispatch multiple requested targets, writes graph-owned progress, and stops
+at graph-owned review gates. It does not approve draft specs, approve code, or
+run R.
+
+Use this endpoint after uploads and dependency planning when the UI wants the
+graph to decide which datasets can move forward.
+
 ### POST /runs/{run_id}/graph-command
 
 Records a human decision for a graph-owned review gate. For the study-level
@@ -193,10 +216,33 @@ Durable native checkpoint resume endpoint. Use it only when the graph read model
 explicitly marks native resume as available for the current run and dataset.
 Normal browser review actions should use `/graph-command`.
 
-## Dataset Split Flow
+## Dataset Native Flow
 
-All dataset-level product endpoints below mutate graph-owned state through
-`GraphGateway` and return compatibility projection metadata.
+### POST /runs/{run_id}/datasets/{dataset}/native-full-run
+
+Starts one dataset through the LG3 native full-run contract. The graph advances
+only until the next review gate, commonly draft-spec review or code review. It
+does not run R.
+
+This is the preferred selected-dataset generation path in the browser product
+flow.
+
+### POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute
+
+Runs approved generated R code for a dataset that was started through the LG3
+native full-run contract.
+
+This endpoint fails closed if the dataset has no LG3 full-run contract in graph
+state. It is the preferred browser execution path after code was approved in an
+LG3/native-full-run dataset flow.
+
+## Dataset Split Flow Compatibility
+
+All dataset-level endpoints below mutate graph-owned state through
+`GraphGateway` and return compatibility projection metadata, but they are
+compatibility/manual transition endpoints. New browser product code should
+prefer `/runs/native-study-loop`, dataset `native-full-run`, `/graph-command`,
+and `native-full-run/execute`.
 
 ### POST /runs/{run_id}/datasets/{dataset}/finalize-inputs
 
@@ -218,7 +264,8 @@ routes a failed run back to spec revision.
 
 ### POST /runs/{run_id}/datasets/{dataset}/draft-spec-review
 
-Records approval or rejection of a generated draft spec.
+Compatibility review endpoint for older clients that still post draft-spec
+decisions directly. Product review actions should use `/graph-command`.
 
 Request:
 
@@ -233,7 +280,8 @@ Request:
 
 ### POST /runs/{run_id}/datasets/{dataset}/generate-code
 
-Generates auditable R code for one dataset without executing it.
+Manual split-flow endpoint that generates auditable R code for one dataset
+without executing it.
 
 The endpoint requires either:
 
@@ -244,7 +292,8 @@ Generated code still requires code review before execution.
 
 ### POST /runs/{run_id}/datasets/{dataset}/code-review
 
-Records the human code-review decision.
+Compatibility review endpoint for older clients that still post code-review
+decisions directly. Product review actions should use `/graph-command`.
 
 Request:
 
@@ -262,23 +311,6 @@ Request:
 Runs previously approved generated R code through the local R execution
 boundary. It does not generate new code and does not approve code by itself.
 This endpoint remains available for compatibility and non-LG3 split-flow runs.
-
-### POST /runs/{run_id}/datasets/{dataset}/native-full-run/execute
-
-Runs approved generated R code for a dataset that was started through the LG3
-native full-run contract. The request shape matches `execute-approved-code`:
-
-```json
-{
-  "study_dir": "D:/path/to/PSY201",
-  "study_id": "PSY201",
-  "rscript_path": "C:/Dev/R-4.5.2/bin/Rscript.exe"
-}
-```
-
-This endpoint fails closed if the dataset has no LG3 full-run contract in graph
-state. It is the preferred browser execution path after code was approved in an
-LG3/native-full-run dataset flow.
 
 ### POST /runs/{run_id}/datasets/{dataset}/terminal-failure-review
 
@@ -411,8 +443,9 @@ This endpoint is retained for compatibility and smoke tests. It is synchronous,
 but it is not the product path for LLM/R ADaM generation. Requests using
 `llm_downstream_provider` or `llm_downstream_r_sandbox` are rejected because
 they would bypass draft-spec, code-review, and execution approval gates. Use
-`POST /runs/prepare` and the dataset-level split-flow endpoints for real
-generation.
+`POST /runs/prepare` or `POST /runs/native-study-loop`, record human decisions
+through `POST /runs/{run_id}/graph-command`, and execute LG3 datasets through
+dataset `native-full-run/execute`.
 
 Allowed `POST /runs` `execution_mode` values are intentionally narrow:
 `stub`, `llm_downstream_provider`, and `llm_downstream_r_sandbox`. `stub` is
