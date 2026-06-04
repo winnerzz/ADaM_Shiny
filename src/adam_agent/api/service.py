@@ -297,6 +297,53 @@ def save_uploaded_file_bytes(
     return normalized_role, folder_name, saved, summary, upload_state
 
 
+def delete_study_input_file(
+    *,
+    study_dir: str | Path,
+    role: str,
+    file_name: str,
+    study_id: str | None = None,
+) -> tuple[str, str, str, StudyInputSummary, dict[str, Any]]:
+    """Remove one uploaded study input file and invalidate stale graph state."""
+
+    normalized_role = role.strip().lower()
+    folder_name = UPLOAD_ROLE_TO_FOLDER.get(normalized_role)
+    if folder_name is None:
+        allowed = ", ".join(sorted(UPLOAD_ROLE_TO_FOLDER))
+        raise ApiServiceError(f"Unsupported input role: {role}. Allowed roles: {allowed}")
+    safe_name = _safe_upload_name(file_name)
+    if safe_name != file_name:
+        raise ApiServiceError("Input file deletion only accepts a plain file name from the study input list.")
+    root = Path(study_dir).expanduser()
+    if not root.exists() or not root.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {root}")
+    folder = (root / folder_name).resolve()
+    resolved_root = root.resolve()
+    if not _is_relative_to(folder, resolved_root):
+        raise ApiServiceError("Input folder resolved outside the study workspace.")
+    target = (folder / safe_name).resolve()
+    if not _is_relative_to(target, folder):
+        raise ApiServiceError("Input file resolved outside its canonical study input folder.")
+    if not target.exists() or not target.is_file():
+        raise ApiServiceError(f"Input file does not exist: {safe_name}")
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise ApiServiceError(f"Could not delete input file {safe_name}: {exc}") from exc
+
+    summary = summarize_study_inputs(root, study_id=study_id or root.name)
+    with _open_graph_gateway() as gateway:
+        graph_invalidation = gateway.mark_study_inputs_changed(study_dir=root)
+    upload_state = {
+        "input_fingerprint": graph_invalidation.input_fingerprint,
+        "input_diff": graph_invalidation.input_diff,
+        "touched_runs": graph_invalidation.touched_runs,
+        "touched_graph_runs": graph_invalidation.touched_graph_runs,
+        "skipped_graph_runs": graph_invalidation.skipped_graph_runs,
+    }
+    return normalized_role, folder_name, str(target.as_posix()), summary, upload_state
+
+
 def prepare_demo_study(
     *,
     demo_source_dir: str | Path | None = None,

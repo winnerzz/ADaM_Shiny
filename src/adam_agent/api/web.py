@@ -954,6 +954,15 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
+    .file-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+    .file-actions button {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
     .field-help {
       margin-top: 4px;
       color: var(--muted);
@@ -1495,6 +1504,13 @@ INDEX_HTML = r"""<!doctype html>
       define: 'uploadStatusDefine',
       legacy: 'uploadStatusLegacy'
     };
+    const fileListRoles = {
+      sdtmFiles: 'sdtm',
+      specFiles: 'spec',
+      referenceFiles: 'reference',
+      defineFiles: 'define',
+      legacyFiles: 'legacy'
+    };
     const byId = (id) => document.getElementById(id);
 
     function defaultRunId() {
@@ -1895,6 +1911,40 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    function attachDeleteInputHandlers() {
+      for (const button of document.querySelectorAll('[data-delete-input-file]')) {
+        if (button.dataset.deleteInputBound === '1') continue;
+        button.dataset.deleteInputBound = '1';
+        button.addEventListener('click', () => deleteInputFile(button.dataset.deleteInputRole, button.dataset.deleteInputFile));
+      }
+    }
+
+    async function deleteInputFile(role, fileName) {
+      const normalizedRole = String(role || '').trim();
+      const normalizedFile = String(fileName || '').trim();
+      if (!normalizedRole || !normalizedFile || !studyDir()) return;
+      const ok = window.confirm(`Remove ${normalizedFile} from ${titleFromToken(normalizedRole)} inputs? Existing plans, draft specs, generated code, and approvals may become stale.`);
+      if (!ok) return;
+      beginOperation('Removing input file', `Deleting ${normalizedFile}, rescanning inputs, and invalidating stale graph state if needed.`);
+      try {
+        const payload = await api(`/studies/files?study_dir=${encodeURIComponent(studyDir())}&role=${encodeURIComponent(normalizedRole)}&file_name=${encodeURIComponent(normalizedFile)}${state.studyId ? `&study_id=${encodeURIComponent(state.studyId)}` : ''}`, {
+          method: 'DELETE'
+        });
+        state.inputSummary = payload.input_summary;
+        invalidateUiStateAfterInputChange(payload);
+        await refreshGraphReadModels();
+        renderInputSummary(payload.input_summary);
+        await loadReviewSummary(runId());
+        addEvent('Input file removed', `${normalizedFile} was removed. ${uploadDiffMessage(payload)}`);
+        completeOperation('Input file removed', uploadDiffMessage(payload));
+        renderDraftSpecPane();
+        renderPane();
+        renderActionAvailability();
+      } catch (error) {
+        failOperation('Input file removal failed', error);
+      }
+    }
+
     function invalidateUiStateAfterInputChange(payload) {
       if (!payload?.input_diff?.changed) return;
       state.plan = null;
@@ -1975,6 +2025,7 @@ INDEX_HTML = r"""<!doctype html>
         node.innerHTML = '<div class="muted">No files found.</div>';
         return;
       }
+      const role = fileListRoles[containerId] || '';
       node.innerHTML = files.map((file) => `
         <div class="file-item">
           <div class="file-title">
@@ -1984,8 +2035,10 @@ INDEX_HTML = r"""<!doctype html>
           <div class="file-meta">${escapeHtml(file.file_name)} | ${escapeHtml(file.format)} | ${file.row_count ?? file.line_count ?? '-'} ${file.preview_type === 'code' || file.preview_type === 'text' ? 'lines' : 'rows'}</div>
           <div class="file-meta">${escapeHtml(fileSummary(file))}</div>
           ${file.text_preview ? `<div class="mini-pre">${escapeHtml(file.text_preview)}</div>` : ''}
+          ${role ? `<div class="file-actions"><button class="secondary danger" data-delete-input-role="${escapeHtml(role)}" data-delete-input-file="${escapeHtml(file.file_name)}">Remove</button></div>` : ''}
         </div>
       `).join('');
+      attachDeleteInputHandlers();
     }
 
     function fileStatusLabel(file) {
@@ -3117,6 +3170,47 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    async function rejectDraftSpec() {
+      const draft = draftSpecFor(state.selectedTarget);
+      if (!draft) return;
+      const notes = byId('reviewNotes').value.trim();
+      if (!notes) {
+        byId('draftSpecPane').innerHTML = `${draftSpecReviewHtml(draft)}<p class="note warn">Add a short review note before rejecting this draft spec, so the next draft has correction guidance.</p>`;
+        return;
+      }
+      beginOperation('Rejecting draft spec', `Recording rejection for ${draft.dataset}. Code generation will stay blocked until the draft is revised or inputs change.`);
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: graphCommandRequestBody({
+            dataset: draft.dataset,
+            interrupt: 'draft_spec_review',
+            action: 'reject',
+            notes
+          })
+        });
+        const reviewedDataset = String(payload.dataset || draft.dataset || '').toUpperCase();
+        state.draftSpecReviewByDataset[reviewedDataset] = {
+          ...payload,
+          approved: false,
+          graph_command: true
+        };
+        delete state.generatedByDataset[reviewedDataset];
+        await refreshGraphReadModels();
+        await loadReviewSummary(runId());
+        setPill('codeStatus', 'draft rejected');
+        addEvent('Draft spec rejected', `${reviewedDataset} draft spec was rejected. Revise inputs or generate a new draft before code generation.`);
+        completeOperation('Draft spec rejected', `${reviewedDataset} is back at draft-spec review. Update notes or inputs, then finalize again.`);
+        renderDraftSpecPane();
+        renderPane();
+        renderActionAvailability();
+      } catch (error) {
+        byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Draft spec rejection failed', error);
+      }
+    }
+
     function renderDraftSpecPane() {
       const node = byId('draftSpecPane');
       if (!node) return;
@@ -3277,7 +3371,8 @@ INDEX_HTML = r"""<!doctype html>
           detail: 'No R code should be generated until this draft spec is approved or rejected.',
           buttons: [
             {label: 'Show Draft Spec', action: 'scrollDraft', primary: true},
-            {label: 'Approve Draft Spec', action: 'approveDraft'}
+            {label: 'Approve Draft Spec', action: 'approveDraft'},
+            {label: 'Reject Draft Spec', action: 'rejectDraft'}
           ],
           tone: 'warn'
         };
@@ -3375,6 +3470,7 @@ INDEX_HTML = r"""<!doctype html>
       if (action === 'preparePlan') return preparePlan();
       if (action === 'finalizeInputs') return finalizeInputsForDraftSpec();
       if (action === 'approveDraft') return approveDraftSpec();
+      if (action === 'rejectDraft') return rejectDraftSpec();
       if (action === 'startStudy') return startNativeStudyLoop();
       if (action === 'generateCode') return generateCode();
       if (action === 'approveCode') return approveCode();
@@ -3745,7 +3841,9 @@ INDEX_HTML = r"""<!doctype html>
         .map((action) => String(action.action || '').trim())
         .filter(Boolean);
       const allowedByGate = {
-        dependency_review: ['approve', 'reject']
+        dependency_review: ['approve', 'reject'],
+        draft_spec_review: ['approve', 'reject'],
+        code_review: ['approve', 'reject']
       }[interrupt] || [];
       const actionNames = advertisedActions.filter((action) => allowedByGate.includes(action));
       return Array.from(new Set(actionNames)).map((action) => ({
@@ -3762,6 +3860,14 @@ INDEX_HTML = r"""<!doctype html>
         dependency_review: {
           approve: 'Approve Dependency Plan',
           reject: 'Reject Dependency Plan'
+        },
+        draft_spec_review: {
+          approve: 'Approve Draft Spec',
+          reject: 'Reject Draft Spec'
+        },
+        code_review: {
+          approve: 'Approve Code',
+          reject: 'Reject Code'
         }
       };
       return labels[interrupt]?.[action] || titleFromToken(action);
@@ -4012,7 +4118,8 @@ INDEX_HTML = r"""<!doctype html>
         if (!actionName) return '';
         if (!nativeResumeActionAllowed(interrupt, actionName)) return '';
         const label = action.label || titleFromToken(actionName);
-        return `<button class="secondary" data-saved-graph-action="${escapeHtml(actionName)}" data-saved-graph-dataset="${escapeHtml(target)}" data-saved-graph-interrupt="${escapeHtml(interrupt)}">${escapeHtml(label)}</button>`;
+        const buttonClass = actionName === 'reject' ? 'secondary danger' : 'secondary';
+        return `<button class="${buttonClass}" data-saved-graph-action="${escapeHtml(actionName)}" data-saved-graph-dataset="${escapeHtml(target)}" data-saved-graph-interrupt="${escapeHtml(interrupt)}">${escapeHtml(label)}</button>`;
       }).filter(Boolean).join('');
       if (!buttons) return '';
       return `<div class="review-queue-actions saved-graph-actions">Saved graph resume: ${buttons}</div>`;
@@ -5194,6 +5301,31 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function applyReviewQueueGraphCommandResponse(payload, interrupt) {
+      const target = String(payload.dataset || '').toUpperCase();
+      if (interrupt === 'draft_spec_review' && target) {
+        state.draftSpecReviewByDataset[target] = {
+          ...payload,
+          approved: payload.action === 'approve' || payload.approved === true,
+          graph_command: true
+        };
+        if (payload.action === 'reject' || payload.approved === false) {
+          delete state.generatedByDataset[target];
+          delete state.reviewByDataset[target];
+          delete state.executionByDataset[target];
+        }
+        return;
+      }
+      if (interrupt === 'code_review' && target) {
+        state.reviewByDataset[target] = {
+          ...payload,
+          approved: payload.action === 'approve' || payload.approved === true,
+          graph_command: true
+        };
+        if (payload.action === 'reject' || payload.approved === false) {
+          delete state.executionByDataset[target];
+        }
+        return;
+      }
       if (interrupt !== 'dependency_review') return;
       state.plan = {
         ...(state.plan || {}),
@@ -5251,6 +5383,9 @@ INDEX_HTML = r"""<!doctype html>
             approved: payload.decision === 'approve',
             native_resume: true
           };
+          if (payload.decision === 'reject') {
+            delete state.executionByDataset[target];
+          }
         }
         if (normalizeNativeResumeInterruptName(payload.interrupt) === 'draft_spec_review') {
           state.draftSpecReviewByDataset[target] = {
@@ -5258,6 +5393,11 @@ INDEX_HTML = r"""<!doctype html>
             approved: payload.decision === 'approve',
             native_resume: true
           };
+          if (payload.decision === 'reject') {
+            delete state.generatedByDataset[target];
+            delete state.reviewByDataset[target];
+            delete state.executionByDataset[target];
+          }
         }
         if (normalizeNativeResumeInterruptName(payload.interrupt) === 'terminal_failure') {
           state.terminalFailureReviewByDataset[target] = {

@@ -45,6 +45,22 @@ class FileUploadResponse(StrictBaseModel):
     skipped_graph_runs: list[str] = Field(default_factory=list)
 
 
+class FileDeleteResponse(StrictBaseModel):
+    """Result of removing one canonical study input file."""
+
+    study_id: str
+    study_dir: str
+    role: str
+    folder: str
+    deleted_file: str
+    input_summary: "StudyInputSummary"
+    input_fingerprint: dict[str, Any] = Field(default_factory=dict)
+    input_diff: dict[str, Any] = Field(default_factory=dict)
+    touched_runs: list[str] = Field(default_factory=list)
+    touched_graph_runs: list[str] = Field(default_factory=list)
+    skipped_graph_runs: list[str] = Field(default_factory=list)
+
+
 class RunPlanRequest(StrictBaseModel):
     """Prepare dependency planning without generating code or running R."""
 

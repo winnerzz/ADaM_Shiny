@@ -710,6 +710,13 @@ class GraphGateway:
         normalized_action = action.strip().lower()
         target = dataset.strip().upper() if dataset else None
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        if target and _normalize_graph_command_interrupt_name(interrupt or "") == "draft_spec_review":
+            graph_state = self._ensure_draft_spec_review_state_for_graph_command(
+                root=root,
+                run_id=run_id,
+                target=target,
+                graph_state=graph_state,
+            )
         command_interrupt = _resolve_graph_command_interrupt(graph_state, target, interrupt)
         _assert_graph_command_action_allowed(command_interrupt.name, normalized_action)
         if command_interrupt.name == "dependency_review":
@@ -4989,6 +4996,61 @@ class GraphGateway:
             active_checkpoint_path=self._native_interrupt_checkpoint_path(),
         )
 
+    def _ensure_draft_spec_review_state_for_graph_command(
+        self,
+        *,
+        root: Path,
+        run_id: str,
+        target: str,
+        graph_state: StudyRunState,
+    ) -> StudyRunState:
+        """Recover a reviewable draft-spec artifact into graph state before review."""
+
+        if _open_study_interrupt(graph_state) is not None or _study_next_action_requires_dependency_review(graph_state):
+            return graph_state
+        dataset_state = graph_state.datasets.get(target)
+        if (
+            dataset_state is not None
+            and dataset_state.current_interrupt is not None
+            and dataset_state.current_interrupt.status == "open"
+            and dataset_state.current_interrupt.name == "draft_spec_review"
+            and dataset_state.spec_state.get("status") == "draft_generated"
+        ):
+            return graph_state
+        draft_path = root / "runs" / run_id / "specs" / f"{target.lower()}_draft_spec.json"
+        if not draft_path.exists() or not draft_path.is_file():
+            return graph_state
+        draft_payload = _read_json_if_exists(draft_path)
+        variables = draft_payload.get("variables")
+        warnings = draft_payload.get("warnings")
+        recovered = self.record_draft_spec_generation(
+            study_dir=root,
+            study_id=graph_state.study_id,
+            run_id=run_id,
+            dataset=target,
+            draft_spec_path=draft_path,
+            prompt_path=_existing_optional_path(root / "runs" / run_id / "llm" / f"{target.lower()}_draft_spec_prompt.txt"),
+            response_path=_existing_optional_path(root / "runs" / run_id / "llm" / f"{target.lower()}_draft_spec_response.json"),
+            variables=variables if isinstance(variables, list) else [],
+            warnings=(warnings if isinstance(warnings, list) else [])
+            + ["Recovered draft spec review state from existing run artifact before graph command."],
+            input_fingerprint_payload=input_fingerprint(root),
+            agent_decisions=[
+                record_agent_decision(
+                    agent="audit_agent",
+                    node="draft_spec_review_state_recovery",
+                    decision="draft_spec_review_state_recovered",
+                    dataset=target,
+                    status="needs_review",
+                    reason="Recovered graph review state from an existing draft spec artifact before applying a human graph command.",
+                    outputs={"draft_spec_path": str(draft_path.as_posix())},
+                    risk_flags=["recovered_draft_spec_review_state"],
+                )
+            ],
+            risk_flags=["recovered_draft_spec_review_state", "draft_spec_requires_human_review"],
+        )
+        return recovered.graph_state
+
     @staticmethod
     def _raise_dataset_graph_start_error(result: dict[str, Any], *, target: str, expected_interrupt: str) -> None:
         if result.get("status") == "failed":
@@ -7138,6 +7200,11 @@ def _read_json_if_exists(path: str | Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _existing_optional_path(path: str | Path) -> Path | None:
+    item = Path(path)
+    return item if item.exists() and item.is_file() else None
 
 
 def _artifact_path(artifact: Any) -> str | None:

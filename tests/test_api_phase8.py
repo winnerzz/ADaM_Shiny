@@ -6162,6 +6162,51 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertTrue(graph_state["dependency_plan"]["plan_stale"])
         _assert_run_projection(self, study_dir, "run_graph_state_only")
 
+    def test_delete_input_file_rescans_and_invalidates_graph_run(self) -> None:
+        study_dir = _workspace_dir("phase8_delete_input_graph_state") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        plan = client.post(
+            "/runs/prepare",
+            json={"study_dir": str(study_dir), "run_id": "run_delete_input", "target_datasets": ["ADAE"]},
+        )
+        self.assertEqual(plan.status_code, 200, plan.text)
+
+        response = client.delete(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "sdtm", "file_name": "ae.csv"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse((study_dir / "input_sdtm" / "ae.csv").exists())
+        self.assertEqual(payload["role"], "sdtm")
+        self.assertTrue(payload["deleted_file"].endswith("input_sdtm/ae.csv"))
+        self.assertEqual(payload["input_summary"]["sdtm"], [])
+        self.assertIn("run_delete_input", payload["touched_graph_runs"])
+        graph_state = client.get(
+            "/runs/run_delete_input/graph-state",
+            params={"study_dir": str(study_dir)},
+        ).json()
+        self.assertEqual(graph_state["dependency_review_status"], "stale")
+        self.assertTrue(graph_state["dependency_plan"]["plan_stale"])
+        _assert_run_projection(self, study_dir, "run_delete_input")
+
+    def test_delete_input_file_rejects_path_escape(self) -> None:
+        study_dir = _workspace_dir("phase8_delete_input_escape") / "MY_STUDY"
+        client = TestClient(create_app())
+        client.post("/studies/workspace", json={"study_dir": str(study_dir)})
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+
+        response = client.delete(
+            "/studies/files",
+            params={"study_dir": str(study_dir), "role": "sdtm", "file_name": "../ae.csv"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue((study_dir / "input_sdtm" / "ae.csv").exists())
+
     def test_upload_reports_corrupt_graph_state_as_skipped(self) -> None:
         study_dir = _workspace_dir("phase8_upload_corrupt_graph_state") / "MY_STUDY"
         client = TestClient(create_app())
@@ -10341,6 +10386,140 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         adae_state = graph_state.json()["datasets"]["ADAE"]
         self.assertEqual(adae_state["current_interrupt"]["name"], "draft_spec_review")
         self.assertEqual(adae_state["spec_state"]["status"], "draft_generated")
+
+    def test_reject_draft_spec_keeps_generation_blocked_until_revision(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_reject_draft_spec")
+        client = TestClient(create_app())
+        run_id = "run_reject_draft_spec"
+
+        class FakeDraftLLMClient:
+            def generate(self, request):
+                return SimpleNamespace(
+                    response_text=json.dumps(
+                        {
+                            "dataset": "ADAE",
+                            "variables": [
+                                {
+                                    "variable": "AETERM",
+                                    "label": "Reported Term",
+                                    "type": "character",
+                                    "source_domains": ["AE"],
+                                    "source_variables": ["AETERM"],
+                                    "derivation": "Copy from AE.AETERM based on uploaded evidence.",
+                                    "confidence": 0.7,
+                                    "review_required": True,
+                                    "review_reasons": ["Generated because approved input_spec is missing."],
+                                    "risk_level": "high",
+                                }
+                            ],
+                        }
+                    ),
+                    call_record=SimpleNamespace(),
+                )
+
+        with patch("adam_agent.api.service.build_llm_client", return_value=FakeDraftLLMClient()):
+            finalized = client.post(
+                f"/runs/{run_id}/datasets/ADAE/finalize-inputs",
+                json={
+                    "study_dir": str(study_dir),
+                    "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                    "llm_provider_override": {"provider": "mock", "model": "mock"},
+                    "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+                },
+            )
+        self.assertEqual(finalized.status_code, 200, finalized.text)
+        self.assertEqual(finalized.json()["next_action"], "review_draft_spec")
+
+        rejected = client.post(
+            f"/runs/{run_id}/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "draft_spec_review",
+                "action": "reject",
+                "reviewer": "qa_user",
+                "notes": "Draft spec missed required timing context.",
+            },
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.text)
+        payload = rejected.json()
+        self.assertEqual(payload["action"], "reject")
+        self.assertEqual(payload["current_interrupt"]["name"], "draft_spec_review")
+
+        graph_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)}).json()
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["spec_state"]["status"], "rejected")
+        self.assertEqual(adae_state["current_interrupt"]["name"], "draft_spec_review")
+
+        generated = client.post(
+            f"/runs/{run_id}/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+                "llm_provider_override": {"provider": "mock", "model": "mock"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 400, generated.text)
+        self.assertIn("approved draft spec", generated.json()["detail"])
+
+    def test_graph_command_reject_recovers_orphan_draft_spec_state(self) -> None:
+        study_dir = _study_without_spec_with_auxiliary_evidence("phase8_recover_orphan_draft_spec")
+        run_id = "run_recover_orphan_draft_spec"
+        run_dir = study_dir / "runs" / run_id
+        spec_dir = run_dir / "specs"
+        spec_dir.mkdir(parents=True)
+        draft_path = spec_dir / "adae_draft_spec.json"
+        draft_path.write_text(
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "status": "draft",
+                    "variables": [{"variable": "AETERM", "source_domains": ["AE"]}],
+                    "input_fingerprint": input_fingerprint(study_dir),
+                }
+            ),
+            encoding="utf-8",
+        )
+        GraphGateway().start_dependency_plan(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id=run_id,
+            target_datasets=["ADAE"],
+            approved_dependency_datasets=["ADAE"],
+        )
+        graph_path = run_dir / "graph_state.json"
+        orphan_state = json.loads(graph_path.read_text(encoding="utf-8"))
+        orphan_state["dependency_review_status"] = "approved"
+        orphan_state["current_interrupt"] = None
+        orphan_state["datasets"].pop("ADAE", None)
+        graph_path.write_text(json.dumps(orphan_state, indent=2, sort_keys=True), encoding="utf-8")
+        client = TestClient(create_app())
+
+        rejected = client.post(
+            f"/runs/{run_id}/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "dataset": "ADAE",
+                "interrupt": "draft_spec_review",
+                "action": "reject",
+                "reviewer": "qa_user",
+                "notes": "Draft spec should be revised.",
+            },
+        )
+
+        self.assertEqual(rejected.status_code, 200, rejected.text)
+        payload = rejected.json()
+        self.assertEqual(payload["action"], "reject")
+        self.assertEqual(payload["current_interrupt"]["name"], "draft_spec_review")
+        graph_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)}).json()
+        adae_state = graph_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["spec_state"]["status"], "rejected")
+        self.assertEqual(adae_state["spec_state"]["draft_spec_sha256"], f"sha256:{sha256_file(draft_path)}")
+        self.assertTrue(
+            any(flag == "recovered_draft_spec_review_state" for flag in adae_state["risk_flags"]),
+            adae_state["risk_flags"],
+        )
 
     def test_native_resume_approves_generated_draft_spec_without_500_when_sqlite_enabled(self) -> None:
         study_dir = _study_without_spec_with_auxiliary_evidence("phase8_native_resume_draft_spec_sqlite")

@@ -21,6 +21,7 @@ from adam_agent.api.models import (
     DraftSpecReviewResponse,
     ExecuteCodeRequest,
     ExecuteCodeResponse,
+    FileDeleteResponse,
     FileUploadResponse,
     FinalizeInputsRequest,
     FinalizeInputsResponse,
@@ -58,6 +59,7 @@ from adam_agent.api.service import (
     compare_dataset_with_reference,
     create_default_product_workspace,
     dataset_download_path,
+    delete_study_input_file,
     ensure_study_workspace,
     execute_approved_dataset_code,
     finalize_dataset_inputs,
@@ -149,6 +151,36 @@ def create_app() -> FastAPI:
                 role=normalized_role,
                 folder=folder,
                 saved_files=saved,
+                input_summary=summary,
+                input_fingerprint=upload_state.get("input_fingerprint", {}),
+                input_diff=upload_state.get("input_diff", {}),
+                touched_runs=upload_state.get("touched_runs", []),
+                touched_graph_runs=upload_state.get("touched_graph_runs", []),
+                skipped_graph_runs=upload_state.get("skipped_graph_runs", []),
+            )
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/studies/files", response_model=FileDeleteResponse)
+    def delete_study_file(
+        study_dir: str = Query(..., description="Path to the local study folder."),
+        role: str = Query(..., description="Input role: sdtm, spec, define, reference, or legacy."),
+        file_name: str = Query(..., description="Plain file name shown in the study input list."),
+        study_id: str | None = Query(None, description="Optional study id override."),
+    ) -> FileDeleteResponse:
+        try:
+            normalized_role, folder, deleted, summary, upload_state = delete_study_input_file(
+                study_dir=study_dir,
+                role=role,
+                file_name=file_name,
+                study_id=study_id,
+            )
+            return FileDeleteResponse(
+                study_id=summary.study_id,
+                study_dir=summary.study_dir,
+                role=normalized_role,
+                folder=folder,
+                deleted_file=deleted,
                 input_summary=summary,
                 input_fingerprint=upload_state.get("input_fingerprint", {}),
                 input_diff=upload_state.get("input_diff", {}),
