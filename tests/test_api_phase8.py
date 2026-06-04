@@ -8224,6 +8224,56 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             result["warnings"],
         )
 
+    def test_progress_endpoint_reports_waiting_runtime_dependencies_after_dependency_approval(self) -> None:
+        study_dir = _study_with_legacy_adam_dependency("phase8_progress_waiting_runtime_dependency")
+        client = TestClient(create_app())
+        request = {
+            "study_dir": str(study_dir),
+            "run_id": "run_progress_waiting_runtime_dependency",
+            "target_datasets": ["ADDM", "ADAE"],
+            "config_path": str(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"),
+        }
+
+        first = client.post("/runs/native-study-loop", json=request)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["review_queue"][0]["name"], "dependency_review")
+
+        approved = client.post(
+            "/runs/run_progress_waiting_runtime_dependency/graph-command",
+            json={
+                "study_dir": str(study_dir),
+                "interrupt": "dependency_review",
+                "action": "approve",
+                "reviewer": "tester",
+                "notes": "Approve the dependency evidence for this run.",
+            },
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertIsNone(approved.json()["current_interrupt"])
+
+        second = client.post("/runs/native-study-loop", json=request)
+        self.assertEqual(second.status_code, 200, second.text)
+        second_payload = second.json()
+        self.assertEqual(second_payload["started_datasets"], ["ADDM"])
+        self.assertEqual(second_payload["skipped_datasets"][0]["dataset"], "ADAE")
+        self.assertEqual(second_payload["skipped_datasets"][0]["reason"], "waiting_for_runtime_dependency_output")
+
+        progress = client.get(
+            "/runs/run_progress_waiting_runtime_dependency/progress",
+            params={"study_dir": str(study_dir)},
+        )
+        self.assertEqual(progress.status_code, 200, progress.text)
+        payload = progress.json()
+        self.assertEqual(payload["dependency_review_status"], "approved")
+        by_dataset = {item["dataset"]: item for item in payload["datasets"]}
+        self.assertEqual(by_dataset["ADDM"]["next_action"], "review_draft_spec")
+        self.assertEqual(by_dataset["ADAE"]["next_action"], "complete_dependency_output")
+        self.assertEqual(by_dataset["ADAE"]["waiting_for_runtime_dependencies"], ["ADDM"])
+        self.assertNotIn(
+            ("", "dependency_review"),
+            {(item["dataset"], item["name"]) for item in payload["review_queue"]},
+        )
+
     def test_native_full_run_endpoint_starts_single_dataset_at_code_review(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_native_full_run_endpoint")
         client = TestClient(create_app())
@@ -10521,6 +10571,19 @@ def _study_with_adae_adcm_inputs(name: str) -> Path:
         encoding="utf-8",
     )
     (reference_adam / "adsl.csv").write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+    return study_dir
+
+
+def _study_with_legacy_adam_dependency(name: str) -> Path:
+    study_dir = _workspace_dir(name) / "PSY201"
+    input_sdtm = study_dir / "input_sdtm"
+    legacy_code = study_dir / "legacy_code"
+    input_sdtm.mkdir(parents=True)
+    legacy_code.mkdir()
+    (input_sdtm / "dm.csv").write_text("USUBJID,STUDYID\n01,PSY201\n", encoding="utf-8")
+    (input_sdtm / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+    (legacy_code / "ADDM.sas").write_text("data addm; set dm; run;\n", encoding="utf-8")
+    (legacy_code / "ADAE.sas").write_text("data adae; set addm ae; run;\n", encoding="utf-8")
     return study_dir
 
 

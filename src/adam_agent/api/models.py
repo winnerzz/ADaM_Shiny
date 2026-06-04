@@ -265,6 +265,7 @@ class DatasetProgressItem(StrictBaseModel):
     action_label: str
     blocked: bool = False
     blocked_reason: str = ""
+    waiting_for_runtime_dependencies: list[str] = Field(default_factory=list)
     current_interrupt: dict[str, Any] | None = None
     spec_status: str = ""
     code_status: str = ""

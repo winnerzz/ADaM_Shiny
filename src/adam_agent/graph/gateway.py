@@ -650,6 +650,21 @@ class GraphGateway:
                 },
             ),
         )
+        result.graph_state.dependency_review_status = "approved" if normalized_decision == "approve" else "rejected"
+        if normalized_decision == "approve":
+            _mark_dependency_review_decisions_approved(result.graph_state)
+        else:
+            result.graph_state.status = "failed"
+        _sync_study_agent_decisions(result.graph_state)
+        self._persist_graph_state(root, result.graph_state, node="dependency_review")
+        result = GraphGatewayResult(
+            graph_state=result.graph_state,
+            workflow_projection=project_graph_state_to_workflow(
+                root,
+                result.graph_state,
+                node="graph_gateway_dependency_review",
+            ),
+        )
         current_interrupt = None
         if result.graph_state.current_interrupt is not None and result.graph_state.current_interrupt.status == "open":
             current_interrupt = result.graph_state.current_interrupt.name
@@ -4933,6 +4948,8 @@ class GraphGateway:
         except FileNotFoundError:
             return planned_state
         merged = planned_state.model_copy(deep=True)
+        if _can_carry_forward_approved_dependency_review(existing, merged):
+            _carry_forward_approved_dependency_review(existing, merged)
         for dataset, existing_dataset_state in existing.datasets.items():
             if not _has_dataset_product_progress(existing_dataset_state):
                 continue
@@ -5151,6 +5168,67 @@ def _dependency_gate_result(study_dir: Path, graph_state: StudyRunState) -> Grap
     )
 
 
+def _can_carry_forward_approved_dependency_review(existing: StudyRunState, planned: StudyRunState) -> bool:
+    """Return whether a prior dependency approval still applies to this replan."""
+
+    if existing.dependency_review_status != "approved":
+        return False
+    if existing.current_interrupt is not None and existing.current_interrupt.name == "dependency_review":
+        return False
+    if planned.dependency_review_status not in {"review_required", "warning"}:
+        return False
+    diff = compare_fingerprints(existing.input_fingerprint, planned.input_fingerprint)
+    if diff.get("changed"):
+        return False
+    existing_targets = [dataset.strip().upper() for dataset in existing.target_datasets]
+    planned_targets = [dataset.strip().upper() for dataset in planned.target_datasets]
+    return existing_targets == planned_targets
+
+
+def _carry_forward_approved_dependency_review(existing: StudyRunState, planned: StudyRunState) -> None:
+    """Preserve a still-current human dependency approval across graph replanning."""
+
+    planned.current_interrupt = None
+    planned.dependency_review_status = "approved"
+    planned.dependency_plan["dependency_review_status_before_approval"] = existing.dependency_plan.get(
+        "dependency_review_status_before_approval",
+        existing.dependency_plan.get("dependency_review_status_before_product_step", "review_required"),
+    )
+    planned.dependency_plan["dependency_review_approved_by_human"] = True
+    planned.dependency_plan["dependency_review_approval_source"] = "carried_forward_same_input_fingerprint"
+    planned.human_commands = list(existing.human_commands)
+    _mark_dependency_review_decisions_approved(planned)
+    _clear_dependency_review_risk_flags(planned)
+
+
+def _mark_dependency_review_decisions_approved(state: StudyRunState) -> None:
+    """Mark review-required dependency decisions as accepted by human review."""
+
+    changed_decisions: list[dict[str, Any]] = []
+    changed_any = False
+    for decision in state.dependency_decisions:
+        item = dict(decision)
+        if item.get("review_required") is True and str(item.get("source", "")) != "no_dependency_evidence":
+            item["review_required"] = False
+            item["review_status"] = "approved_by_human"
+            changed_any = True
+        changed_decisions.append(item)
+    state.dependency_decisions = changed_decisions
+    if changed_any:
+        state.dependency_plan["dependency_review_approved_by_human"] = True
+        state.dependency_plan.setdefault("dependency_review_status_before_approval", "review_required")
+        state.dependency_plan["dependency_review_approval_scope"] = "review_required_dependency_decisions"
+    _clear_dependency_review_risk_flags(state)
+
+
+def _clear_dependency_review_risk_flags(state: StudyRunState) -> None:
+    state.risk_flags = [
+        flag
+        for flag in state.risk_flags
+        if str(flag) not in {"dependency_review_review_required", "dependency_review_warning"}
+    ]
+
+
 def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target: str) -> None:
     dataset = target.strip().upper()
     plan_payload = getattr(gate, "dependency_plan", None)
@@ -5332,6 +5410,26 @@ def _native_study_loop_dependency_outputs_available(state: StudyRunState, target
         ):
             available.add(required)
     return all(dependency in available for dependency in dependencies)
+
+
+def _waiting_runtime_dependencies(state: StudyRunState, target: str) -> list[str]:
+    """Return upstream ADaM datasets whose real runtime output is still needed."""
+
+    dataset = target.strip().upper()
+    dependencies = _native_study_loop_dependencies_for_dataset(state, dataset)
+    if not dependencies:
+        return []
+    run_dir = Path(".")
+    path_text = state.runtime_persistence.get("graph_state_path")
+    if path_text:
+        run_dir = Path(str(path_text)).parent
+    waiting: list[str] = []
+    for dependency in dependencies:
+        probe = state.model_copy(deep=True)
+        probe.dependency_plan["dataset_dependencies"] = {dataset: [dependency]}
+        if not _native_study_loop_dependency_outputs_available(probe, dataset, run_dir=run_dir):
+            waiting.append(dependency)
+    return waiting
 
 
 def _native_study_loop_runtime_dependency_record_is_current(
@@ -5868,14 +5966,20 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
     target = dataset.strip().upper()
     dataset_state = state.datasets.get(target)
     block = _blocked_dataset_progress_reason(state, target)
+    waiting_dependencies = _waiting_runtime_dependencies(state, target)
     if dataset_state is None:
         return {
             "dataset": target,
             "status": "pending",
-            "next_action": "wait_for_plan",
-            "action_label": "Wait for dependency planning.",
+            "next_action": "complete_dependency_output" if waiting_dependencies else "wait_for_plan",
+            "action_label": (
+                f"Complete upstream runtime output first: {', '.join(waiting_dependencies)}."
+                if waiting_dependencies
+                else "Wait for dependency planning."
+            ),
             "blocked": bool(block),
             "blocked_reason": block,
+            "waiting_for_runtime_dependencies": waiting_dependencies,
             "current_interrupt": None,
             "spec_status": "",
             "code_status": "",
@@ -5887,6 +5991,11 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
             "available_actions": [],
         }
     next_item = _dataset_next_action(dataset_state, blocked_reason=block)
+    if not block and waiting_dependencies and not _has_dataset_product_progress(dataset_state):
+        next_item = {
+            "next_action": "complete_dependency_output",
+            "action_label": f"Complete upstream runtime output first: {', '.join(waiting_dependencies)}.",
+        }
     output_quality = dataset_output_quality(
         status=dataset_state.status,
         code_state=dataset_state.code_state,
@@ -5900,6 +6009,7 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
         "action_label": next_item["action_label"],
         "blocked": bool(block),
         "blocked_reason": block,
+        "waiting_for_runtime_dependencies": waiting_dependencies,
         "current_interrupt": _interrupt_payload(dataset_state.current_interrupt),
         "spec_status": str(dataset_state.spec_state.get("status") or ""),
         "code_status": str(dataset_state.code_state.get("status") or ""),

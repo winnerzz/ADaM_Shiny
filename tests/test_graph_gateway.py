@@ -5899,6 +5899,87 @@ class GraphGatewayTests(unittest.TestCase):
         )
         self.assertFalse(reviewed_draft.approved)
 
+    def test_gateway_dependency_review_approval_unblocks_native_study_loop_replan(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_dependency_review_approval_replan") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "dm.csv").write_text("USUBJID,STUDYID\n01,PSY201\n", encoding="utf-8")
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "addm.sas").write_text("data addm; set dm; run;\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set addm ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+        run_id = "run_lg2_dependency_review_approval_replan"
+
+        blocked = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADDM", "ADAE"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(blocked.started_datasets, [])
+        self.assertEqual(blocked.graph_state.dependency_review_status, "review_required")
+        self.assertEqual(blocked.graph_state.current_interrupt.name, "dependency_review")
+        self.assertEqual(blocked.graph_state.target_datasets, ["ADDM", "ADAE"])
+
+        reviewed = gateway.review_dependency(
+            study_dir=study_dir,
+            run_id=run_id,
+            decision="approve",
+            reviewer="tester",
+            notes="Accept dependency evidence for this unchanged run.",
+        )
+
+        self.assertTrue(reviewed.approved)
+        self.assertIsNone(reviewed.graph_state.current_interrupt)
+        self.assertEqual(reviewed.graph_state.dependency_review_status, "approved")
+        self.assertFalse(
+            any(
+                decision.get("review_required") is True and decision.get("source") != "no_dependency_evidence"
+                for decision in reviewed.graph_state.dependency_decisions
+            )
+        )
+
+        continued = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADDM", "ADAE"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        self.assertEqual(continued.graph_state.dependency_review_status, "approved")
+        self.assertNotEqual(
+            continued.graph_state.current_interrupt.name if continued.graph_state.current_interrupt else "",
+            "dependency_review",
+        )
+        self.assertEqual(continued.started_datasets, ["ADDM"])
+        self.assertEqual(continued.graph_state.datasets["ADDM"].current_interrupt.name, "draft_spec_review")
+        self.assertIn(
+            ("ADAE", "waiting_for_runtime_dependency_output"),
+            {
+                (str(item.get("dataset")), str(item.get("reason")))
+                for item in continued.skipped_datasets
+            },
+        )
+        progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        self.assertEqual(progress["dependency_review_status"], "approved")
+        progress_by_dataset = {item["dataset"]: item for item in progress["datasets"]}
+        self.assertEqual(progress_by_dataset["ADAE"]["next_action"], "complete_dependency_output")
+        self.assertEqual(progress_by_dataset["ADAE"]["waiting_for_runtime_dependencies"], ["ADDM"])
+        self.assertNotIn(
+            ("", "dependency_review"),
+            {
+                (str(item.get("dataset")), str(item.get("name")))
+                for item in progress["review_queue"]
+            },
+        )
+
     def test_gateway_native_study_product_loop_restart_preserves_spec_gap_review_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_spec_gap_restart") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
