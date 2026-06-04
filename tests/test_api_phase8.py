@@ -2729,7 +2729,9 @@ console.log(JSON.stringify({
         self.assertIn("const graphProgressMissingTarget = Boolean(state.runProgress && target && targetIsPlanned && !progress);", action_body)
         self.assertIn("Graph progress has no dataset step for ${target}", action_body)
         self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)", action_body)
-        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated)", action_body)
+        self.assertIn("const nativeExecutionContract = hasNativeFullRunExecutionContract(target);", action_body)
+        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)", action_body)
+        self.assertIn("Product UI can execute only graph-owned native full-run code", action_body)
         self.assertIn("local execution is paused until dependency review is resolved", action_body)
         self.assertIn("Ready for human code approval for ${target}. This will not run R.", action_body)
         self.assertIn("Approve the generated code before running local R.", action_body)
@@ -2788,7 +2790,8 @@ console.log(JSON.stringify({
         self.assertIn("Graph next action:", gate_body)
         self.assertIn("Graph next action is", gate_body)
         self.assertIn("function graphAllowsCodeGeneration(progress)", html)
-        self.assertIn("const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';", html)
+        self.assertIn("/native-full-run", html)
+        self.assertNotIn("const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';", html)
         self.assertIn("async function applyNativeFullRunStart(payload)", html)
         self.assertIn("function hasNativeFullRunContract(target)", html)
         self.assertIn("function hasNativeFullRunExecutionContract(target)", html)
@@ -2801,9 +2804,88 @@ console.log(JSON.stringify({
         self.assertNotIn("/code-review", approve_body)
         self.assertNotIn("/execute-approved-code", approve_body)
         self.assertIn("Executing the graph-approved ${generated.dataset} R code with local Rscript.", run_body)
-        self.assertIn("const executionEndpoint = nativeFullRunExecution ? 'native-full-run/execute' : 'execute-approved-code';", run_body)
-        self.assertIn("/${executionEndpoint}", run_body)
+        self.assertIn("hasNativeFullRunExecutionContract(generated.dataset)", run_body)
+        self.assertIn("/native-full-run/execute", run_body)
+        self.assertNotIn("/execute-approved-code", run_body)
         self.assertNotIn("/code-review", run_body)
+
+    def test_index_primary_next_action_prefers_native_study_loop_over_compatibility_finalize(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_native_primary_action' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        classList: { add() {}, toggle() {}, remove() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute() {},
+        scrollIntoView() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.inputSummary = {sdtm: [{dataset: 'AE', file_name: 'ae.csv'}], specs: []};
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], runnable_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.runProgress = {
+  dependency_review_status: 'accepted',
+  target_datasets: ['ADAE'],
+  runnable_datasets: ['ADAE'],
+  blocked_datasets: [],
+  datasets: [{
+    dataset: 'ADAE',
+    next_action: 'finalize_inputs',
+    action_label: 'Confirm input spec or draft spec.',
+    blocked: false
+  }]
+};
+const availability = actionAvailability();
+const view = primaryNextActionView();
+console.log(JSON.stringify({
+  finalizeReady: availability.finalize.ready,
+  startStudyReady: availability.startStudy.ready,
+  title: view.title,
+  detail: view.detail,
+  actions: view.buttons.map((item) => item.action),
+  labels: view.buttons.map((item) => item.label)
+}));
+"""
+        script_path = TMP_ROOT / "ui_primary_native_before_finalize.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["finalizeReady"])
+        self.assertTrue(result["startStudyReady"])
+        self.assertEqual(result["actions"], ["startStudy"])
+        self.assertEqual(result["labels"], ["Start Runnable Datasets"])
+        self.assertIn("review gates", result["title"])
+        self.assertNotIn("finalizeInputs", result["actions"])
 
     def test_index_code_approval_uses_graph_command_when_lg3_contract_exists(self) -> None:
         client = TestClient(create_app())
@@ -4088,6 +4170,150 @@ console.log(JSON.stringify({
         self.assertIn("Review the generated draft spec above before R code can be generated", result["reviewPane"])
         self.assertEqual(result["lastStep"], 4)
 
+    def test_index_generate_revise_spec_uses_native_full_run_not_draft_spec_endpoint(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+function node(id) {
+  if (!nodes.has(id)) {
+    nodes.set(id, {
+      value: id === 'studyDir' ? 'D:/tmp/study' : id === 'runId' ? 'run_ui_lg3_revise_spec' : '',
+      textContent: '',
+      innerHTML: '',
+      className: '',
+      dataset: {},
+      disabled: false,
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      setAttribute() {},
+      scrollIntoView() {},
+    });
+  }
+  return nodes.get(id);
+}
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) { return node(id); },
+  querySelectorAll() { return []; },
+};
+node('modelMode').value = 'mock';
+const calls = [];
+const draftVariables = [{variable: 'AETERM', type: 'text', source_domains: ['AE'], derivation: 'review revised spec', risk_level: 'medium'}];
+global.fetch = async (path) => {
+  const url = String(path);
+  calls.push(url);
+  if (url.includes('/draft-spec')) throw new Error('Product UI must not call split-flow draft-spec for revise_approved_spec.');
+  if (url.includes('/native-full-run')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_lg3_revise_spec',
+        dataset: 'ADAE',
+        phase: 'waiting_for_human_gate',
+        status: 'needs_review',
+        current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'},
+        next_action: 'draft_spec_review',
+        draft_spec_path: 'runs/run_ui_lg3_revise_spec/specs/adae_revised_draft_spec.json',
+        graph_state_path: 'runs/run_ui_lg3_revise_spec/graph_state.json'
+      })
+    };
+  }
+  if (url.includes('/graph-state')) {
+    return {
+      ok: true,
+      json: async () => ({
+        study_id: 'PSY201',
+        run_id: 'run_ui_lg3_revise_spec',
+        requested_datasets: ['ADAE'],
+        target_datasets: ['ADAE'],
+        runtime_persistence: {
+          native_dataset_full_run: {
+            dataset: 'ADAE',
+            contract: 'single_dataset_spec_code_review_execute',
+            boundary: 'lg3_backend_contract',
+            phase: 'waiting_for_human_gate',
+            terminal_failure_followup: {action: 'revise_spec', next_action: 'revise_approved_spec'}
+          }
+        },
+        datasets: {
+          ADAE: {
+            status: 'needs_review',
+            spec_state: {
+              status: 'draft_generated',
+              draft_spec_path: 'runs/run_ui_lg3_revise_spec/specs/adae_revised_draft_spec.json',
+              variables: draftVariables,
+              warnings: ['Review revised spec before code generation.']
+            },
+            current_interrupt: {name: 'draft_spec_review', status: 'open', dataset: 'ADAE'}
+          }
+        }
+      })
+    };
+  }
+  if (url.includes('/progress')) {
+    return {
+      ok: true,
+      json: async () => ({
+        target_datasets: ['ADAE'],
+        datasets: [{
+          dataset: 'ADAE',
+          next_action: 'review_draft_spec',
+          action_label: 'Review generated draft spec before code generation.',
+          blocked: false
+        }]
+      })
+    };
+  }
+  if (url.includes('/review-summary')) {
+    return {ok: true, json: async () => ({study_id: 'PSY201', run_id: 'run_ui_lg3_revise_spec', dataset_reviews: []})};
+  }
+  return {ok: true, json: async () => ({})};
+};
+""" + script + r"""
+state.studyId = 'PSY201';
+state.selectedTarget = 'ADAE';
+state.selectedTargetsForPlan = ['ADAE'];
+state.plan = {requested_datasets: ['ADAE'], target_datasets: ['ADAE'], blocked_datasets: [], dependency_review_status: 'accepted'};
+state.runProgress = {datasets: [{dataset: 'ADAE', next_action: 'revise_approved_spec', action_label: 'Revise approved spec before regenerating code.', blocked: false}]};
+state.draftSpecReviewByDataset = {ADAE: {dataset: 'ADAE', approved: true}};
+state.generatedByDataset = {ADAE: {dataset: 'ADAE', run_id: 'run_ui_lg3_revise_spec', status: 'generated', generated_code: 'old code must clear'}};
+await generateCode();
+console.log(JSON.stringify({
+  nativeCalled: calls.some((item) => item.includes('/native-full-run')),
+  splitDraftSpecCalled: calls.some((item) => item.includes('/draft-spec')),
+  draftVariable: state.draftSpecByDataset.ADAE?.variables?.[0]?.variable || '',
+  generatedExists: Boolean(state.generatedByDataset.ADAE),
+  codeStatus: nodes.get('codeStatus').textContent,
+  operationTitle: nodes.get('operationTitle').textContent,
+  draftPane: nodes.get('draftSpecPane').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_lg3_revise_spec_native_full_run.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertTrue(result["nativeCalled"])
+        self.assertFalse(result["splitDraftSpecCalled"])
+        self.assertEqual(result["draftVariable"], "AETERM")
+        self.assertFalse(result["generatedExists"])
+        self.assertEqual(result["codeStatus"], "draft review")
+        self.assertEqual(result["operationTitle"], "Draft spec ready")
+        self.assertIn("Draft spec for ADAE", result["draftPane"])
+
     def test_index_native_full_run_draft_gate_clears_stale_generated_code(self) -> None:
         client = TestClient(create_app())
 
@@ -4316,7 +4542,7 @@ console.log(JSON.stringify({
         self.assertIn("Review the generated draft spec above before R code can be generated", result["reviewPane"])
         self.assertNotIn("Generate code after choosing a target", result["reviewPane"])
 
-    def test_index_code_approval_and_execution_are_separate_ui_actions(self) -> None:
+    def test_index_code_approval_does_not_execute_split_flow_code_from_product_ui(self) -> None:
         client = TestClient(create_app())
 
         response = client.get("/")
@@ -4372,9 +4598,7 @@ global.fetch = async (path, options = {}) => {
       graph_state_path: 'runs/run_ui_split_review_execute/graph_state.json'
     })};
   }
-  if (url.includes('/execute-approved-code')) {
-    return {ok: true, json: async () => ({dataset: 'ADAE', status: 'completed'})};
-  }
+  if (url.includes('/execute-approved-code')) throw new Error('Product UI must not call split-flow execute.');
   if (url.includes('/graph-state')) {
     return {ok: true, json: async () => ({target_datasets: ['ADAE'], datasets: {}})};
   }
@@ -4415,7 +4639,8 @@ console.log(JSON.stringify({
   afterApprove,
   afterRun: calls,
   approved: state.reviewByDataset.ADAE.approved,
-  executionStatus: state.executionByDataset.ADAE.status
+  executionExists: Boolean(state.executionByDataset.ADAE),
+  reviewPane: nodes.get('reviewPane').innerHTML
 }));
 """
         script_path = TMP_ROOT / "ui_split_review_execute.js"
@@ -4432,9 +4657,11 @@ console.log(JSON.stringify({
         self.assertTrue(any("/graph-command" in item for item in result["afterApprove"]))
         self.assertFalse(any("/code-review" in item for item in result["afterApprove"]))
         self.assertFalse(any("/execute-approved-code" in item for item in result["afterApprove"]))
-        self.assertTrue(any("/execute-approved-code" in item for item in result["afterRun"]))
+        self.assertFalse(any("/execute-approved-code" in item for item in result["afterRun"]))
+        self.assertFalse(any("/native-full-run/execute" in item for item in result["afterRun"]))
         self.assertTrue(result["approved"])
-        self.assertEqual(result["executionStatus"], "completed")
+        self.assertFalse(result["executionExists"])
+        self.assertIn("graph-owned native full-run code", result["reviewPane"])
 
     def test_index_run_approved_code_uses_native_full_run_execute_when_contract_exists(self) -> None:
         client = TestClient(create_app())
@@ -5051,7 +5278,7 @@ console.log(JSON.stringify(results));
         self.assertTrue(results["review_code"]["approveCode"])
         self.assertFalse(results["review_code"]["runApproved"])
         self.assertFalse(results["execute_approved_code"]["approveCode"])
-        self.assertTrue(results["execute_approved_code"]["runApproved"])
+        self.assertFalse(results["execute_approved_code"]["runApproved"])
 
     def test_index_primary_actions_fail_closed_when_progress_lacks_active_target(self) -> None:
         client = TestClient(create_app())
@@ -5123,7 +5350,7 @@ console.log(JSON.stringify({
             self.assertIn("Graph progress has no dataset step for ADAE", result[key]["reason"])
         self.assertTrue(result["legacyGenerateReady"])
         self.assertTrue(result["legacyApproveReady"])
-        self.assertTrue(result["legacyRunReady"])
+        self.assertFalse(result["legacyRunReady"])
 
     def test_index_draft_review_gate_overrides_local_input_spec_shortcuts(self) -> None:
         client = TestClient(create_app())
@@ -5543,24 +5770,26 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         dependency_body = html.split("function dependencyFlowRowHtml(dependency, runnable, targets)", 1)[1].split("function dependencyDecisionFor(target)", 1)[0]
         runtime_body = html.split("function dependencyRuntimeAvailable(dependency, runnable, targets)", 1)[1].split("function dependencyEvidenceText(dependency, runnable, targets)", 1)[0]
         render_body = html.split("function renderDependencyGraph(targets, runnable, blocked)", 1)[1].split("function dependencySourceEvidenceText", 1)[0]
-        self.assertIn("dependency-summary", render_body)
-        self.assertIn("Source evidence", render_body)
-        self.assertIn("Dependency decision", render_body)
-        self.assertIn("Runtime meaning", render_body)
-        self.assertIn("dependency-flow-row", render_body)
-        self.assertIn("dependency-action", render_body)
+        self.assertIn("dependency-plain", render_body)
+        self.assertIn("dependency-plain-card", render_body)
+        self.assertIn("What it means", render_body)
+        self.assertIn("Why", render_body)
+        self.assertIn("Evidence", render_body)
+        self.assertIn("Next action", render_body)
+        self.assertIn("trust-boundary", render_body)
         self.assertIn("function dependencySourceEvidenceText(sdtm)", html)
         self.assertIn("function dependencyDecisionSummary(target, decision, dependencies)", html)
         self.assertIn("function dependencyRuntimeSummary(target, status, isBlocked)", html)
-        self.assertIn("no upstream ADaM evidence was found; confirm this during spec or code review before trusting the run.", html)
+        self.assertIn("has no upstream ADaM dependency evidence in the current uploaded materials; this must be confirmed in spec/code review.", html)
+        self.assertIn("No dependency evidence is not the same as clinical proof.", html)
         self.assertIn("this must be confirmed in spec/code review", html)
         self.assertIn("Reference ADaM is comparison/output-shape evidence only", dependency_body)
         self.assertIn("not derivation authority or a runtime dependency by itself", dependency_body)
         self.assertIn("Runtime input is available or planned", dependency_body)
         self.assertIn("User action is needed before this target can generate", dependency_body)
         self.assertNotIn("hasReferenceAdamEvidence(dependency)", runtime_body)
-        self.assertIn("reference ADaM uploaded for compare/output-shape evidence only", html)
-        self.assertIn("reference evidence", html)
+        self.assertIn("Reference ADaM is used only to preview shape and compare final output.", html)
+        self.assertIn("Reference ADaM supports comparison/output-shape review only", html)
         self.assertNotIn("provided in Reference ADaM", html)
         status_body = html.split("function datasetStatus(target, runnable, blocked)", 1)[1].split("async function generateCode()", 1)[0]
         self.assertLess(status_body.index("(runnable || []).includes(target)"), status_body.index("hasReferenceAdamEvidence(target)"))
@@ -5744,7 +5973,8 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["current_interrupt"]["name"], "code_review")
         self.assertEqual(payload["next_action"], "review_code")
         self.assertEqual(payload["requested_datasets"], ["ADAE"])
-        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
+        self.assertEqual(payload["target_datasets"], ["ADAE"])
+        self.assertNotIn("ADSL", payload["target_datasets"])
         self.assertTrue(payload["graph_state_path"].endswith("graph_state.json"))
         self.assertEqual(payload["native_resume"]["available"], False)
         self.assertEqual(payload["native_resume"]["scope"], "none")

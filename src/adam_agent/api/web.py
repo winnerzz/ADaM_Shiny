@@ -2594,9 +2594,10 @@ INDEX_HTML = r"""<!doctype html>
       const approveReady = approveCodeGate
         ? Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)
         : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked && !graphProgressMissingTarget);
+      const nativeExecutionContract = hasNativeFullRunExecutionContract(target);
       const runReady = runApprovedGate
-        ? Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated)
-        : Boolean(target && !blocked && !progressBlocked && !graphProgressMissingTarget && generated && reviewFor(target)?.approved);
+        ? Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)
+        : Boolean(target && !blocked && !progressBlocked && !graphProgressMissingTarget && generated && reviewFor(target)?.approved && nativeExecutionContract);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2729,6 +2730,8 @@ INDEX_HTML = r"""<!doctype html>
               ? graphProgressMissingReason
             : progressBlocked
               ? progressBlockReason
+            : !nativeExecutionContract
+              ? 'Product UI can execute only graph-owned native full-run code. Compatibility split-flow code must be handled through manual/API migration endpoints.'
             : runApprovedGate
               ? runApprovedGate.reason
             : blocked
@@ -3217,16 +3220,6 @@ INDEX_HTML = r"""<!doctype html>
           tone: 'fail'
         };
       }
-      if (availability.finalize.ready) {
-        return {
-          title: targetHasInputSpec(target)
-            ? `Confirm uploaded spec for ${target}`
-            : `Create or confirm a draft spec for ${target}`,
-          detail: availability.finalize.reason,
-          buttons: [{label: availability.finalize.label, action: 'finalizeInputs', primary: true}],
-          tone: targetHasInputSpec(target) ? '' : 'warn'
-        };
-      }
       if (availability.approveDraft.ready || targetInDraftSpecReview(target)) {
         return {
           title: `Review the draft spec for ${target}`,
@@ -3243,6 +3236,16 @@ INDEX_HTML = r"""<!doctype html>
           title: 'Start all runnable datasets at their review gates',
           detail: availability.startStudy.reason,
           buttons: [{label: 'Start Runnable Datasets', action: 'startStudy', primary: true}]
+        };
+      }
+      if (availability.finalize.ready) {
+        return {
+          title: targetHasInputSpec(target)
+            ? `Compatibility spec check for ${target}`
+            : `Compatibility draft-spec check for ${target}`,
+          detail: `${availability.finalize.reason} Normal product flow should use Start Runnable Datasets so the graph owns the review gate.`,
+          buttons: [{label: 'Manual Compatibility Check', action: 'finalizeInputs', primary: true}],
+          tone: 'warn'
         };
       }
       if (availability.generate.ready) {
@@ -4511,14 +4514,13 @@ INDEX_HTML = r"""<!doctype html>
       beginOperation(
         revisingSpec ? 'Generating revised draft spec' : 'Starting dataset generation',
         revisingSpec
-          ? `Calling the selected LLM/spec drafter for ${state.selectedTarget}. Review and approve the revised draft before generating R code.`
+          ? `Re-entering the graph-owned ${state.selectedTarget} flow. It will stop at draft-spec review before new R code is generated.`
           : `Starting the graph-owned ${state.selectedTarget} flow. It will stop at draft-spec review or code review before any R execution.`
       );
       setPill('codeStatus', 'running');
       try {
         const overrides = llmOverridePayload();
-        const endpoint = revisingSpec ? 'draft-spec' : 'native-full-run';
-        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/${endpoint}`, {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(state.selectedTarget)}/native-full-run`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -4529,18 +4531,6 @@ INDEX_HTML = r"""<!doctype html>
             ...overrides
           })
         });
-        if (revisingSpec) {
-          state.draftSpecByDataset[payload.dataset] = payload;
-          delete state.draftSpecReviewByDataset[payload.dataset];
-          await refreshGraphReadModels();
-          setPill('codeStatus', 'draft review');
-          addEvent('Revised draft spec generated', `${payload.dataset} draft spec requires review before new R code can be generated.`);
-          completeOperation('Revised draft spec ready', `${payload.dataset} draft spec is ready for human review.`);
-          renderDraftSpecPane();
-          renderGraphAwareDashboard();
-          setStep(4);
-          return;
-        }
         await applyNativeFullRunStart(payload);
         state.selectedView = 'summary';
         setActiveTab();
@@ -4663,9 +4653,10 @@ INDEX_HTML = r"""<!doctype html>
       );
       setPill('codeStatus', 'running');
       try {
-        const nativeFullRunExecution = hasNativeFullRunExecutionContract(generated.dataset);
-        const executionEndpoint = nativeFullRunExecution ? 'native-full-run/execute' : 'execute-approved-code';
-        state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/${executionEndpoint}`, {
+        if (!hasNativeFullRunExecutionContract(generated.dataset)) {
+          throw new Error('Product UI can execute only graph-owned native full-run code. Use the compatibility execute-approved-code API only for old split-flow runs.');
+        }
+        state.execution = await api(`/runs/${encodeURIComponent(generated.run_id)}/datasets/${encodeURIComponent(generated.dataset)}/native-full-run/execute`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
