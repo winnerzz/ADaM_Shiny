@@ -7118,6 +7118,128 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(adae_state["human_commands"][-1]["interrupt"], "terminal_failure")
         _assert_run_projection(self, study_dir, "run_terminal")
 
+    def test_graph_command_terminal_failure_repair_falls_back_when_native_resume_misses_checkpoint(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_terminal_native_resume_fallback")
+        client = TestClient(create_app())
+        run_id = "run_terminal_native_resume_fallback"
+        generated = client.post(
+            f"/runs/{run_id}/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        code_path = study_dir / "runs" / run_id / "code" / "build_adae.R"
+        code_path.write_text(
+            "dir.create('outputs', showWarnings = FALSE)\n"
+            "write.csv(data.frame(USUBJID='01'), 'outputs/adae.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+        static_path, static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        GraphGateway().record_code_generation(
+            study_dir=study_dir,
+            study_id=study_dir.name,
+            run_id=run_id,
+            dataset="ADAE",
+            code_path=code_path,
+            code_sha256=f"sha256:{sha256_file(code_path)}",
+            static_check_path=static_path,
+            static_check_sha256=static_sha,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+        reviewed = client.post(
+            f"/runs/{run_id}/datasets/ADAE/code-review",
+            json={"study_dir": str(study_dir), "decision": "approve", "reviewer": "tester"},
+        )
+        self.assertEqual(reviewed.status_code, 200, reviewed.text)
+        executed = client.post(
+            f"/runs/{run_id}/datasets/ADAE/execute-approved-code",
+            json={"study_dir": str(study_dir), "rscript_path": "C:/not/a/real/Rscript.exe"},
+        )
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertTrue(executed.json()["terminal_failure"])
+        graph_path = study_dir / "runs" / run_id / "graph_state.json"
+        state = json.loads(graph_path.read_text(encoding="utf-8"))
+        state["runtime_persistence"]["native_interrupt_resume"] = True
+        state["runtime_persistence"].pop("langgraph_checkpoint_path", None)
+        graph_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+        with (
+            patch("adam_agent.graph.gateway.GraphGateway.native_interrupt_resume_available", return_value=True),
+            patch("adam_agent.graph.gateway.GraphGateway._native_interrupt_checkpoint_path", return_value=None),
+            patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph,
+        ):
+            compile_graph.return_value.invoke.return_value = {"native_terminal_failure_review_status": "not_triaged"}
+            response = client.post(
+                f"/runs/{run_id}/graph-command",
+                json={
+                    "study_dir": str(study_dir),
+                    "dataset": "ADAE",
+                    "interrupt": "terminal_failure",
+                    "action": "repair_code",
+                    "reviewer": "tester",
+                    "notes": "Repair generated R code.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["action"], "repair_code")
+        self.assertEqual(payload["next_action"], "repair_generated_code")
+        self.assertEqual(payload["current_interrupt"]["name"], "terminal_failure")
+        final_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)}).json()
+        adae_state = final_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["execution_state"]["terminal_failure_review"]["action"], "repair_code")
+        self.assertIn("Native graph resume was unavailable", adae_state["execution_state"]["terminal_failure_review"]["notes"])
+
+    def test_graph_command_code_review_falls_back_when_native_resume_misses_checkpoint(self) -> None:
+        study_dir = _study_with_adae_inputs("phase8_code_review_native_resume_fallback")
+        client = TestClient(create_app())
+        run_id = "run_code_review_native_resume_fallback"
+        generated = client.post(
+            f"/runs/{run_id}/datasets/ADAE/generate-code",
+            json={
+                "study_dir": str(study_dir),
+                "llm_provider_override": {"provider": "mock", "model": "mock-model"},
+                "llm_exposure_override": {"mode": "metadata_only", "data_classification": "unknown"},
+            },
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        graph_path = study_dir / "runs" / run_id / "graph_state.json"
+        state = json.loads(graph_path.read_text(encoding="utf-8"))
+        state["runtime_persistence"]["native_interrupt_resume"] = True
+        state["runtime_persistence"].pop("langgraph_checkpoint_path", None)
+        graph_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+        with (
+            patch("adam_agent.graph.gateway.GraphGateway.native_interrupt_resume_available", return_value=True),
+            patch("adam_agent.graph.gateway.GraphGateway._native_interrupt_checkpoint_path", return_value=None),
+            patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph,
+        ):
+            compile_graph.return_value.invoke.return_value = {"native_code_review_status": "not_reviewed"}
+            response = client.post(
+                f"/runs/{run_id}/graph-command",
+                json={
+                    "study_dir": str(study_dir),
+                    "dataset": "ADAE",
+                    "interrupt": "code_review",
+                    "action": "approve",
+                    "reviewer": "tester",
+                    "notes": "Approve generated code.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["action"], "approve")
+        self.assertTrue(payload["approved"])
+        final_state = client.get(f"/runs/{run_id}/graph-state", params={"study_dir": str(study_dir)}).json()
+        adae_state = final_state["datasets"]["ADAE"]
+        self.assertEqual(adae_state["code_state"]["status"], "approved")
+        self.assertIn("Native graph resume was unavailable", adae_state["code_state"]["notes"])
+
     def test_execute_requires_terminal_failure_review_before_retry(self) -> None:
         study_dir = _study_with_adae_inputs("phase8_terminal_retry_gate")
         client = TestClient(create_app())

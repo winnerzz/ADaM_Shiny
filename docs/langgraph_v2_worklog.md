@@ -455,3 +455,34 @@ cd D:\Archive\Research\Projects\ADaM_Shiny_LangGraph
 - 不要让缺少 graph state 的路径静默继续。
 - 不要把 `.sas7bdat` 支持等同于完整 SAS 项目理解；SAS 程序解析和 spec draft 仍要经过审核。
 - 不要把“R code 跑通”说成“临床逻辑正确”；正确性至少还需要 spec 审核、静态规则、reference compare 和人工确认。
+
+## 2026-06-04 PSY201 六个 ADaM 连续生成记录
+
+本次只验证“流程能不能连续跑通”，没有做 reference ADaM 比较，也不能据此证明临床推导逻辑正确。
+
+输入材料来自旧 Shiny 参考项目，只作为测试数据源使用，未修改旧项目：
+
+- SDTM `.sas7bdat`: `D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data\PSY201\Primary\HW\SDTM\Output`
+- Reference ADaM `.sas7bdat`: `D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data\PSY201\Primary\HW\AD\Output`
+- Legacy SAS 程序: `D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data\PSY201\Primary\HW\AD\Program`
+- Rscript: `C:\Dev\R-4.5.2\bin\Rscript.exe`
+- LLM: 本地 OpenAI-compatible endpoint，模型 `gpt-5.5`
+
+测试 run:
+
+- `run_psy201_six_adam_20260604_191328`
+- workspace: `.tmp_tests\psy201_six_adam_smoke\PSY201_HW`
+- graph state: study `completed`
+
+结果：
+
+| Dataset | Status | Rows | Columns |
+| --- | --- | ---: | ---: |
+| ADDM | completed | 30 | 31 |
+| ADAE | completed | 57 | 33 |
+| ADCM | completed | 41 | 29 |
+| ADEG | completed | 392 | 22 |
+| ADEX | completed | 2160 | 29 |
+| ADLB | completed | 2818 | 31 |
+
+过程中暴露并修复了一个 LangGraph 恢复稳定性问题：当 durable runtime metadata 显示可以走 native resume，但实际 checkpoint 没停在对应 interrupt 时，`Approve Code` 或 `Repair Code` 会失败。当前修复策略是：先尝试 native resume；如果失败且 canonical `graph_state.json` 明确存在同名 open interrupt，则把人工决定记录回 graph state，并在 notes 中写明 fallback 原因。这样不会绕过缺失状态，也不会让错误 interrupt 静默通过。

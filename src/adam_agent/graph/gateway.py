@@ -739,14 +739,27 @@ class GraphGateway:
             raise ValueError(f"{command_interrupt.name} requires a dataset.")
         if command_interrupt.name == "draft_spec_review":
             if self._graph_command_can_resume_native_interrupt(graph_state):
-                result = self.resume_native_draft_spec_review(
-                    study_dir=root,
-                    run_id=run_id,
-                    dataset=target,
-                    decision=normalized_action,
-                    reviewer=reviewer,
-                    notes=notes,
-                )
+                try:
+                    result = self.resume_native_draft_spec_review(
+                        study_dir=root,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=notes,
+                    )
+                except ValueError as exc:
+                    if not _can_fallback_to_graph_state_dataset_review(graph_state, target, "draft_spec_review"):
+                        raise
+                    result = self.review_draft_spec(
+                        study_dir=root,
+                        study_id=graph_state.study_id,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=_append_native_resume_fallback_note(notes, exc),
+                    )
             else:
                 result = self.review_draft_spec(
                     study_dir=root,
@@ -765,14 +778,27 @@ class GraphGateway:
             )
         if command_interrupt.name == "code_review":
             if self._graph_command_can_resume_native_interrupt(graph_state):
-                result = self.resume_native_code_review(
-                    study_dir=root,
-                    run_id=run_id,
-                    dataset=target,
-                    decision=normalized_action,
-                    reviewer=reviewer,
-                    notes=notes,
-                )
+                try:
+                    result = self.resume_native_code_review(
+                        study_dir=root,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=notes,
+                    )
+                except ValueError as exc:
+                    if not _can_fallback_to_graph_state_dataset_review(graph_state, target, "code_review"):
+                        raise
+                    result = self.review_code(
+                        study_dir=root,
+                        study_id=graph_state.study_id,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=_append_native_resume_fallback_note(notes, exc),
+                    )
             else:
                 result = self.review_code(
                     study_dir=root,
@@ -791,14 +817,26 @@ class GraphGateway:
             )
         if command_interrupt.name == "terminal_failure":
             if self._graph_command_can_resume_native_interrupt(graph_state):
-                result = self.resume_native_terminal_failure_review(
-                    study_dir=root,
-                    run_id=run_id,
-                    dataset=target,
-                    decision=normalized_action,
-                    reviewer=reviewer,
-                    notes=notes,
-                )
+                try:
+                    result = self.resume_native_terminal_failure_review(
+                        study_dir=root,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=notes,
+                    )
+                except ValueError as exc:
+                    if not _can_fallback_to_graph_state_terminal_failure_review(graph_state, target):
+                        raise
+                    result = self.review_terminal_failure(
+                        study_dir=root,
+                        run_id=run_id,
+                        dataset=target,
+                        decision=normalized_action,
+                        reviewer=reviewer,
+                        notes=_append_native_resume_fallback_note(notes, exc),
+                    )
             else:
                 result = self.review_terminal_failure(
                     study_dir=root,
@@ -6550,6 +6588,26 @@ def _native_resume_runtime_bound_to_state(
         state.runtime_persistence.get("langgraph_checkpoint_path"),
         active_checkpoint_path,
     )
+
+
+def _can_fallback_to_graph_state_terminal_failure_review(state: StudyRunState, dataset: str) -> bool:
+    return _can_fallback_to_graph_state_dataset_review(state, dataset, "terminal_failure")
+
+
+def _can_fallback_to_graph_state_dataset_review(state: StudyRunState, dataset: str, interrupt_name: str) -> bool:
+    target = dataset.strip().upper()
+    if _open_study_interrupt(state) is not None:
+        return False
+    dataset_state = state.datasets.get(target)
+    if dataset_state is None:
+        return False
+    interrupt = dataset_state.current_interrupt
+    return interrupt is not None and interrupt.status == "open" and interrupt.name == interrupt_name
+
+
+def _append_native_resume_fallback_note(notes: str, exc: ValueError) -> str:
+    fallback_note = f"Native graph resume was unavailable; recorded the decision from graph state. {exc}"
+    return f"{notes}\n\n{fallback_note}".strip()
 
 
 def _native_full_run_native_interrupt_resume_available_for_state(
