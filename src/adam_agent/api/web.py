@@ -480,6 +480,7 @@ INDEX_HTML = r"""<!doctype html>
     .progress-step.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
     .progress-step.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
     .progress-step.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .progress-step.waiting { color: var(--warn); background: #fff8ea; border-color: #f0d19b; }
     .progress-step span { display: block; color: inherit; font-size: 10px; font-weight: 700; }
     .review-queue-panel {
       margin: 0 0 12px;
@@ -727,6 +728,10 @@ INDEX_HTML = r"""<!doctype html>
       border-color: #efc4be;
       background: #fff8f7;
     }
+    .dependency-plain-card.waiting {
+      border-color: #f0d19b;
+      background: #fff8ea;
+    }
     .dependency-plain-head {
       display: flex;
       align-items: center;
@@ -778,6 +783,7 @@ INDEX_HTML = r"""<!doctype html>
     .dataset-card:hover { border-color: rgba(15, 118, 110, 0.35); background: #fbfffe; }
     .dataset-card.active { border-color: rgba(15, 118, 110, 0.45); background: #fbfffe; }
     .dataset-card.blocked { border-color: #efc4be; background: #fff8f7; }
+    .dataset-card.waiting { border-color: #f0d19b; background: #fff8ea; }
     .dataset-top {
       display: flex;
       align-items: center;
@@ -808,6 +814,7 @@ INDEX_HTML = r"""<!doctype html>
     .stage.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
     .stage.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
     .stage.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
+    .stage.waiting { color: var(--warn); background: #fff8ea; border-color: #f0d19b; }
     .stage.review-only { color: #8a5b00; background: #fff6dc; border-color: #e4c36b; }
     .agent-audit-panel {
       margin-top: 12px;
@@ -2403,6 +2410,23 @@ INDEX_HTML = r"""<!doctype html>
         && String(interrupt.status || 'open') === 'open';
     }
 
+    function waitingRuntimeDependenciesFor(target) {
+      const progress = datasetProgressFor(target);
+      return Array.from(new Set((progress?.waiting_for_runtime_dependencies || [])
+        .map((item) => String(item || '').toUpperCase())
+        .filter(Boolean)));
+    }
+
+    function runtimeDependencyWaitText(target, dependencies) {
+      const normalizedTarget = String(target || '').toUpperCase();
+      const list = (dependencies || []).join(', ');
+      return `${normalizedTarget} is waiting for real local runtime output from ${list}. Complete that upstream ADaM first, then refresh progress. Reference ADaM files do not satisfy this runtime dependency.`;
+    }
+
+    function hasRuntimeDependencyWait(target) {
+      return waitingRuntimeDependenciesFor(target).length > 0;
+    }
+
     function targetInDraftSpecReview(target) {
       const progress = datasetProgressFor(target);
       if (String(progress?.next_action || '') === 'review_draft_spec') return true;
@@ -2540,6 +2564,10 @@ INDEX_HTML = r"""<!doctype html>
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
       const progress = datasetProgressFor(target);
+      const waitingRuntimeDependencies = waitingRuntimeDependenciesFor(target);
+      const waitingRuntimeReason = waitingRuntimeDependencies.length
+        ? runtimeDependencyWaitText(target, waitingRuntimeDependencies)
+        : '';
       const progressBlocked = Boolean(progress?.blocked);
       const progressBlockReason = progress?.blocked_reason || '';
       const generated = generatedFor(target);
@@ -2580,24 +2608,24 @@ INDEX_HTML = r"""<!doctype html>
         startable.length
       );
       const finalizeReady = finalizeGate
-        ? Boolean(target && targetIsPlanned && !blocked && !graphProgressMissingTarget && finalizeGate.ready)
-        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !graphProgressMissingTarget);
+        ? Boolean(target && targetIsPlanned && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && finalizeGate.ready)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget);
       const draftApprovalReady = draftGate
-        ? Boolean(target && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)
-        : Boolean(target && !graphProgressMissingTarget && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
+        ? Boolean(target && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)
+        : Boolean(target && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
       const generateReady = generateGate
-        ? Boolean(target && targetIsPlanned && !blocked && !graphProgressMissingTarget && generateGate.ready && effectiveSpecGate)
-        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !graphProgressMissingTarget && hasSpecGate);
+        ? Boolean(target && targetIsPlanned && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && generateGate.ready && effectiveSpecGate)
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && hasSpecGate);
       const codeApprovalReady = approveCodeGate?.nextAction === 'review_code'
         ? canApproveGeneratedCode(target)
         : Boolean(generated);
       const approveReady = approveCodeGate
-        ? Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)
-        : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked && !graphProgressMissingTarget);
+        ? Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)
+        : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget);
       const nativeExecutionContract = hasNativeFullRunExecutionContract(target);
       const runReady = runApprovedGate
-        ? Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)
-        : Boolean(target && !blocked && !progressBlocked && !graphProgressMissingTarget && generated && reviewFor(target)?.approved && nativeExecutionContract);
+        ? Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)
+        : Boolean(target && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && generated && reviewFor(target)?.approved && nativeExecutionContract);
       return {
         finalize: {
           ready: finalizeReady,
@@ -2610,6 +2638,8 @@ INDEX_HTML = r"""<!doctype html>
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
               : graphProgressMissingTarget
                 ? graphProgressMissingReason
+              : waitingRuntimeReason
+                ? waitingRuntimeReason
               : progressBlocked
                 ? progressBlockReason
                 : finalizeGate
@@ -2644,6 +2674,8 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : graphProgressMissingTarget
               ? graphProgressMissingReason
+            : waitingRuntimeReason
+              ? waitingRuntimeReason
             : draftGate?.ready
               ? `Graph requires draft-spec review for ${target}. Review and approve the draft before code generation.`
             : finalized?.input_spec_available || targetHasInputSpec(target)
@@ -2669,6 +2701,8 @@ INDEX_HTML = r"""<!doctype html>
               ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
               : graphProgressMissingTarget
                 ? graphProgressMissingReason
+              : waitingRuntimeReason
+                ? waitingRuntimeReason
               : progressBlocked
                 ? progressBlockReason
                 : generateGate
@@ -2692,6 +2726,8 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : graphProgressMissingTarget
               ? graphProgressMissingReason
+            : waitingRuntimeReason
+              ? waitingRuntimeReason
             : progressBlocked
               ? progressBlockReason
             : approveCodeGate?.ready && !codeApprovalReady
@@ -2728,6 +2764,8 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Choose an ADaM output first.'
             : graphProgressMissingTarget
               ? graphProgressMissingReason
+            : waitingRuntimeReason
+              ? waitingRuntimeReason
             : progressBlocked
               ? progressBlockReason
             : !nativeExecutionContract
@@ -3179,6 +3217,7 @@ INDEX_HTML = r"""<!doctype html>
       const progress = datasetProgressFor(target);
       const availability = actionAvailability();
       const compare = target ? (state.compareResults[target] || datasetReviewFor(target)?.compare_summary) : null;
+      const waitingRuntimeDependencies = waitingRuntimeDependenciesFor(target);
       if (!inputCount) {
         return {
           title: 'Load demo data or upload your study files',
@@ -3218,6 +3257,18 @@ INDEX_HTML = r"""<!doctype html>
             {label: 'Refresh Progress', action: 'refreshProgress'}
           ],
           tone: 'fail'
+        };
+      }
+      if (waitingRuntimeDependencies.length) {
+        return {
+          title: `${target} is waiting for ${waitingRuntimeDependencies.join(', ')}`,
+          detail: availability.startStudy.ready
+            ? `${runtimeDependencyWaitText(target, waitingRuntimeDependencies)} ${availability.startStudy.reason}`
+            : runtimeDependencyWaitText(target, waitingRuntimeDependencies),
+          buttons: availability.startStudy.ready
+            ? [{label: 'Start Upstream Dataset', action: 'startStudy', primary: true}, {label: 'Refresh Progress', action: 'refreshProgress'}]
+            : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
+          tone: 'warn'
         };
       }
       if (availability.approveDraft.ready || targetInDraftSpecReview(target)) {
@@ -3390,9 +3441,12 @@ INDEX_HTML = r"""<!doctype html>
         (state.inputSummary?.legacy_code?.length || 0);
       const active = state.selectedTarget || '';
       const activeProgress = datasetProgressFor(active);
-      const activeStatus = active ? (activeProgress?.status || datasetStatus(active, runnable, blocked)) : 'not selected';
+      const waitingRuntimeDependencies = waitingRuntimeDependenciesFor(active);
+      const activeStatus = active ? datasetStatus(active, runnable, blocked) : 'not selected';
       const activeNext = active
-        ? (activeProgress?.blocked_reason || activeProgress?.action_label || nextActionText(active, activeStatus, Boolean((blocked || []).find((item) => item.dataset === active))))
+        ? (waitingRuntimeDependencies.length
+          ? runtimeDependencyWaitText(active, waitingRuntimeDependencies)
+          : activeProgress?.blocked_reason || activeProgress?.action_label || nextActionText(active, activeStatus, Boolean((blocked || []).find((item) => item.dataset === active))))
         : 'Load or upload study evidence.';
       const interrupt = graphInterruptLabel();
       const localSteps = [
@@ -3424,6 +3478,7 @@ INDEX_HTML = r"""<!doctype html>
     function studyStatusPill(progress, blocked, targets) {
       if (progress?.output_quality_rollup?.completion_quality === 'review_only_complete') return 'review only';
       if (progress?.output_quality_rollup?.completion_quality === 'mixed_output_quality_complete') return 'mixed output';
+      if ((progress?.datasets || []).some((item) => (item.waiting_for_runtime_dependencies || []).length)) return 'waiting upstream';
       return progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
     }
 
@@ -3469,12 +3524,14 @@ INDEX_HTML = r"""<!doctype html>
       const specStatus = activeProgress?.spec_status || '';
       const codeStatus = activeProgress?.code_status || '';
       const executionStatus = activeProgress?.execution_status || '';
+      const waitingDependencies = (activeProgress?.waiting_for_runtime_dependencies || []).map((item) => String(item || '').toUpperCase()).filter(Boolean);
+      const waitingText = waitingDependencies.length ? `waiting for ${waitingDependencies.join(', ')}` : '';
       return [
         {label: 'Inputs', detail: inputCount ? `${inputCount} file(s)` : 'not loaded', state: inputCount ? 'done' : 'active'},
         {label: 'Plan', detail: progress.plan_stale ? 'replan needed' : planBlocked ? 'review needed' : 'ready', state: progress.plan_stale || planBlocked ? 'blocked' : 'done'},
-        {label: 'Spec', detail: specStatus || 'not finalized', state: ['input_spec_ready', 'approved'].includes(specStatus) ? 'done' : specStatus === 'draft_generated' ? 'active' : ''},
-        {label: 'Code Review', detail: codeStatus || 'not generated', state: codeStatus === 'approved' ? 'done' : codeStatus === 'generated' ? 'active' : codeStatus === 'stale' ? 'blocked' : ''},
-        {label: 'Run', detail: executionStatus || 'waiting', state: executionStatus === 'completed' ? 'done' : ['terminal_failure', 'failed', 'stale'].includes(executionStatus) ? 'blocked' : executionStatus ? 'active' : ''}
+        {label: 'Spec', detail: waitingText || specStatus || 'not finalized', state: waitingDependencies.length ? 'waiting' : ['input_spec_ready', 'approved'].includes(specStatus) ? 'done' : specStatus === 'draft_generated' ? 'active' : ''},
+        {label: 'Code Review', detail: waitingText || codeStatus || 'not generated', state: waitingDependencies.length ? 'waiting' : codeStatus === 'approved' ? 'done' : codeStatus === 'generated' ? 'active' : codeStatus === 'stale' ? 'blocked' : ''},
+        {label: 'Run', detail: waitingText || executionStatus || 'waiting', state: waitingDependencies.length ? 'waiting' : executionStatus === 'completed' ? 'done' : ['terminal_failure', 'failed', 'stale'].includes(executionStatus) ? 'blocked' : executionStatus ? 'active' : ''}
       ];
     }
 
@@ -4052,20 +4109,24 @@ INDEX_HTML = r"""<!doctype html>
       ];
       const rows = orderedTargets.map((target) => {
         const dependencies = dependenciesForTarget(target);
+        const waitingDependencies = waitingRuntimeDependenciesFor(target);
         const status = datasetStatus(target, runnable, blocked);
         const isBlocked = blockedNames.has(target);
+        const isWaiting = waitingDependencies.length > 0;
         const decision = dependencyDecisionFor(target);
         const dependencyText = dependencies.length
-          ? `${target} needs ${dependencies.join(', ')} before it can run.`
+          ? isWaiting
+            ? `${target} needs real local runtime output from ${waitingDependencies.join(', ')} before it can continue.`
+            : `${target} needs ${dependencies.join(', ')} before it can run.`
           : `${target} has no upstream ADaM dependency detected from the current uploaded evidence.`;
         const sourceText = dependencySourceEvidenceText(sdtm);
         const actionText = nextActionText(target, status, isBlocked);
         const boundaryText = dependencyTrustBoundaryText(target, dependencies, decision);
         return `
-          <div class="dependency-plain-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''}">
+          <div class="dependency-plain-card ${target === state.selectedTarget ? 'active' : ''} ${isBlocked ? 'blocked' : ''} ${isWaiting ? 'waiting' : ''}">
             <div class="dependency-plain-head">
               <span class="dependency-plain-title">${escapeHtml(target)}</span>
-              <span class="pill ${isBlocked || status === 'failed' ? 'fail' : status === 'ready' || status === 'completed' || status === 'reference' ? '' : 'warn'}">${escapeHtml(status)}</span>
+              <span class="pill ${isBlocked || status === 'failed' ? 'fail' : isWaiting ? 'warn' : status === 'ready' || status === 'completed' || status === 'reference' ? '' : 'warn'}">${escapeHtml(status)}</span>
             </div>
             <div class="dependency-plain-body">
               <div class="dependency-plain-row"><strong>What it means</strong><span>${escapeHtml(dependencyText)}</span></div>
@@ -4087,6 +4148,8 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function dependencyDecisionSummary(target, decision, dependencies) {
+      const waitingDependencies = waitingRuntimeDependenciesFor(target);
+      if (waitingDependencies.length) return `${target} is paused until ${waitingDependencies.join(', ')} has a real local runtime output in this run.`;
       if (dependencies.length) return `${target} has upstream ADaM dependency: ${dependencies.join(', ')}.`;
       if (decision?.source === 'input_spec_no_adam_dependency') return `${target} input spec does not show an upstream ADaM dependency.`;
       if (decision?.source === 'no_dependency_evidence') return `${target} has no upstream ADaM dependency evidence in the current uploaded materials; this must be confirmed in spec/code review.`;
@@ -4105,6 +4168,8 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function dependencyRuntimeSummary(target, status, isBlocked) {
+      const waitingDependencies = waitingRuntimeDependenciesFor(target);
+      if (waitingDependencies.length) return runtimeDependencyWaitText(target, waitingDependencies);
       const quality = datasetOutputQualityStatus(target);
       if (isBlocked || status === 'blocked') return `${target} cannot generate until the dependency gate is resolved.`;
       if (status === 'ready') return `${target} can move to spec/code review; review must still confirm that the dependency assumption is correct.`;
@@ -4136,6 +4201,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function nextActionText(target, status, isBlocked) {
       const progress = datasetProgressFor(target);
+      const waitingDependencies = waitingRuntimeDependenciesFor(target);
+      if (waitingDependencies.length) return runtimeDependencyWaitText(target, waitingDependencies);
       if (progress?.blocked_reason) return progress.blocked_reason;
       if (progress?.action_label) return progress.action_label;
       if (isBlocked) {
@@ -4176,17 +4243,19 @@ INDEX_HTML = r"""<!doctype html>
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
         const isPlanned = selectedTargets().includes(target);
+        const waitingDependencies = waitingRuntimeDependenciesFor(target);
         const qualityStatus = datasetOutputQualityStatus(target);
         const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);
-        const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : reviewOnlyOutput ? 'warn' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
+        const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : waitingDependencies.length || reviewOnlyOutput ? 'warn' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         const isBlocked = blockedNames.has(target) || progress?.blocked;
+        const isWaiting = waitingDependencies.length > 0;
         const isReferenceOnly = status === 'reference evidence' && !isPlanned;
         const planStageClass = state.plan ? (isBlocked ? 'blocked' : isPlanned ? 'done' : '') : (isPlanned || isActive ? 'active' : '');
-        const codeStageClass = codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly);
+        const codeStageClass = codeStageClassFor(target, progress, isActive, isPlanned, isBlocked || isWaiting, isReferenceOnly);
         const reviewStageClass = reviewStageClassFor(target, progress);
         const runStageClass = runStageClassFor(target, progress, reviewOnlyOutput);
         return `
-          <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''}" data-card-target="${escapeHtml(target)}">
+          <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''} ${isWaiting ? 'waiting' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
               <span class="dataset-name">${escapeHtml(target)}</span>
               <span class="pill ${statusClass}">${escapeHtml(status)}</span>
@@ -4244,6 +4313,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function runStageClassFor(target, progress, reviewOnlyOutput) {
       if (reviewOnlyOutput) return 'review-only';
+      if (hasRuntimeDependencyWait(target)) return 'waiting';
       const executionStatus = String(progress?.execution_status || '').toLowerCase();
       const nextAction = String(progress?.next_action || '').toLowerCase();
       if (executionStatus === 'completed' || nextAction === 'complete') return 'done';
@@ -4255,6 +4325,8 @@ INDEX_HTML = r"""<!doctype html>
     function datasetPlanningContext(target, isPlanned, isActive, status) {
       const parts = [];
       parts.push(isPlanned ? 'planned in this run' : 'view-only history/candidate');
+      const waiting = waitingRuntimeDependenciesFor(target);
+      if (waiting.length) parts.push(`waiting for real upstream output: ${waiting.join(', ')}`);
       if (status === 'reference evidence' && !isPlanned) parts.push('reference ADaM only: compare/output-shape evidence, not generation input');
       if (isActive) parts.push('active detail view');
       return `${target}: ${parts.join(' | ')}`;
@@ -4460,6 +4532,7 @@ INDEX_HTML = r"""<!doctype html>
     function datasetStatus(target, runnable, blocked) {
       const progress = datasetProgressFor(target);
       if (progress?.blocked) return 'blocked';
+      if (waitingRuntimeDependenciesFor(target).length) return 'waiting upstream';
       const quality = datasetOutputQualityStatus(target);
       if (quality === 'structural_stub') return 'demo output';
       if (quality === 'not_real_derivation') return 'review only';

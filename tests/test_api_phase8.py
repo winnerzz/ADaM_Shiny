@@ -2728,10 +2728,13 @@ console.log(JSON.stringify({
         self.assertIn("graphActionGate(progress, 'runApproved')", action_body)
         self.assertIn("const graphProgressMissingTarget = Boolean(state.runProgress && target && targetIsPlanned && !progress);", action_body)
         self.assertIn("Graph progress has no dataset step for ${target}", action_body)
-        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)", action_body)
+        self.assertIn("waitingRuntimeDependenciesFor(target)", action_body)
+        self.assertIn("runtimeDependencyWaitText(target, waitingRuntimeDependencies)", action_body)
+        self.assertIn("Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && approveCodeGate.ready && codeApprovalReady)", action_body)
         self.assertIn("const nativeExecutionContract = hasNativeFullRunExecutionContract(target);", action_body)
-        self.assertIn("Boolean(target && !blocked && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)", action_body)
+        self.assertIn("Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)", action_body)
         self.assertIn("Product UI can execute only graph-owned native full-run code", action_body)
+        self.assertIn("Reference ADaM files do not satisfy this runtime dependency", html)
         self.assertIn("local execution is paused until dependency review is resolved", action_body)
         self.assertIn("Ready for human code approval for ${target}. This will not run R.", action_body)
         self.assertIn("Approve the generated code before running local R.", action_body)
@@ -2886,6 +2889,115 @@ console.log(JSON.stringify({
         self.assertEqual(result["labels"], ["Start Runnable Datasets"])
         self.assertIn("review gates", result["title"])
         self.assertNotIn("finalizeInputs", result["actions"])
+
+    def test_index_explains_waiting_runtime_dependencies_from_progress_read_model(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+        harness = r"""
+const nodes = new Map();
+global.window = { location: { href: '' } };
+global.document = {
+  getElementById(id) {
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        value: id === 'runId' ? 'run_ui_waiting_runtime_dependency' : '',
+        textContent: '',
+        innerHTML: '',
+        className: '',
+        dataset: {},
+        disabled: false,
+        classList: { add() {}, toggle() {}, remove() {} },
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        setAttribute(name, value) { this[name] = value; },
+        scrollIntoView() {},
+      });
+    }
+    return nodes.get(id);
+  },
+  querySelectorAll() { return []; },
+};
+global.fetch = async () => ({ ok: true, json: async () => ({}) });
+""" + script + r"""
+state.inputSummary = {
+  sdtm: [{dataset: 'LB', file_name: 'lb.csv'}],
+  specs: [],
+  reference_adam: [{dataset: 'ADSL', file_name: 'adsl.csv'}],
+  define: [],
+  legacy_code: []
+};
+state.studyId = 'WAITSTUDY';
+state.selectedTarget = 'ADLB';
+state.selectedTargetsForPlan = ['ADSL', 'ADLB'];
+state.targetCandidates = ['ADSL', 'ADLB'];
+state.plan = {
+  requested_datasets: ['ADSL', 'ADLB'],
+  target_datasets: ['ADSL', 'ADLB'],
+  runnable_datasets: ['ADSL'],
+  blocked_datasets: [],
+  dependency_review_status: 'accepted',
+  dependency_decisions: [{dataset: 'ADLB', dependencies: ['ADSL'], source: 'legacy_code', review_required: false}]
+};
+state.runProgress = {
+  status: 'running',
+  next_action: 'generate_code',
+  dependency_review_status: 'accepted',
+  target_datasets: ['ADSL', 'ADLB'],
+  runnable_datasets: ['ADSL'],
+  blocked_datasets: [],
+  datasets: [
+    {dataset: 'ADSL', status: 'needs_review', next_action: 'review_code', code_status: 'generated', blocked: false},
+    {dataset: 'ADLB', status: 'pending', next_action: 'complete_dependency_output', action_label: 'Complete upstream runtime output first: ADSL.', blocked: false, waiting_for_runtime_dependencies: ['ADSL']}
+  ]
+};
+renderGraphAwareDashboard();
+const availability = actionAvailability();
+const view = primaryNextActionView();
+console.log(JSON.stringify({
+  graphStatus: nodes.get('graphStatus').textContent,
+  title: view.title,
+  detail: view.detail,
+  finalizeReady: availability.finalize.ready,
+  generateReady: availability.generate.ready,
+  approveReady: availability.approveCode.ready,
+  runReady: availability.runApproved.ready,
+  generateReason: availability.generate.reason,
+  progressDetail: nodes.get('studyProgressDetail').textContent,
+  stepsHtml: nodes.get('studyProgressSteps').innerHTML,
+  dependencyHtml: nodes.get('dependencyGraph').innerHTML,
+  boardHtml: nodes.get('datasetBoard').innerHTML
+}));
+"""
+        script_path = TMP_ROOT / "ui_waiting_runtime_dependency.js"
+        TMP_ROOT.mkdir(exist_ok=True)
+        script_path.write_text(harness, encoding="utf-8")
+        completed = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = json.loads(completed.stdout.strip())
+        self.assertEqual(result["graphStatus"], "waiting upstream")
+        self.assertFalse(result["finalizeReady"])
+        self.assertFalse(result["generateReady"])
+        self.assertFalse(result["approveReady"])
+        self.assertFalse(result["runReady"])
+        self.assertIn("ADLB is waiting for ADSL", result["title"])
+        self.assertIn("ADLB is waiting for real local runtime output from ADSL", result["detail"])
+        self.assertIn("ADLB is waiting for real local runtime output from ADSL", result["generateReason"])
+        self.assertIn("Reference ADaM files do not satisfy this runtime dependency", result["generateReason"])
+        self.assertIn("waiting for ADSL", result["stepsHtml"])
+        self.assertIn("waiting", result["stepsHtml"])
+        self.assertIn("waiting upstream", result["boardHtml"])
+        self.assertIn("ADLB is paused until ADSL has a real local runtime output in this run.", result["dependencyHtml"])
+        self.assertIn("waiting for real upstream output: ADSL", result["boardHtml"])
+        self.assertIn("dataset-card active  waiting", result["boardHtml"])
 
     def test_index_code_approval_uses_graph_command_when_lg3_contract_exists(self) -> None:
         client = TestClient(create_app())
@@ -5364,7 +5476,7 @@ console.log(JSON.stringify({
         self.assertIn("const graphRequiresDraftReview = progress?.next_action === 'review_draft_spec';", draft_body)
         self.assertIn("if (graphRequiresDraftReview && draft)", draft_body)
         self.assertLess(draft_body.index("if (graphRequiresDraftReview && draft)"), draft_body.index("if (finalized?.input_spec_available || targetHasInputSpec"))
-        self.assertIn("Boolean(target && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)", action_body)
+        self.assertIn("Boolean(target && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)", action_body)
         self.assertNotIn("draftGate.ready && draft && !draftReview?.approved && !finalized?.input_spec_available", action_body)
 
     def test_index_recovers_dependency_plan_projection_from_graph_state(self) -> None:
