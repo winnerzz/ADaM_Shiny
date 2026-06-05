@@ -4109,6 +4109,83 @@ class GraphGatewayTests(unittest.TestCase):
                 dataset="ADAE",
             )
 
+    def test_gateway_native_full_run_execute_recovers_missing_runtime_contract_from_approved_graph_state(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_execute_recovers_missing_contract") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "input_spec"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir()
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "AETERM", "source_domains": ["AE"]}]}),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        run_id = "run_lg3_missing_contract_execute"
+        gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADAE",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        gateway.resume_native_dataset_full_run(
+            study_dir=study_dir,
+            run_id=run_id,
+            dataset="ADAE",
+            decision="approve",
+            reviewer="tester",
+            execute_after_approval=False,
+        )
+        state = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        state.runtime_persistence.pop("native_dataset_full_run", None)
+        state.runtime_persistence.pop("native_study_product_loop", None)
+        gateway._persist_graph_state(
+            study_dir,
+            state,
+            node="test_seed_missing_native_full_run_contract",
+            runtime_persistence_extra={
+                key: value
+                for key, value in state.runtime_persistence.items()
+                if key.startswith("native_")
+            },
+        )
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "completed",
+                "response_status": "completed",
+                "real_validation_status": "pass",
+                "terminal_failure": False,
+                "validation_report": {"status": "pass", "errors": [], "warnings": []},
+                "output_path": "runs/run_lg3_missing_contract_execute/outputs/adae.csv",
+                "validation_report_path": "runs/run_lg3_missing_contract_execute/validation/adae_validation_report.json",
+                "diagnostics_path": "",
+                "real_run_artifacts": {},
+                "failure_records": [],
+                "agent_decisions": [],
+                "agent_node_inputs": [],
+                "agent_node_outputs": [],
+                "risk_flags": [],
+                "execution_errors": [],
+                "execution_warnings": [],
+            }
+            result = gateway.execute_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+            )
+
+        contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(contract["phase"], "executed")
+        self.assertEqual(contract["boundary"], "lg3_backend_contract")
+        self.assertTrue(contract["recovered_from_graph_state"])
+        self.assertTrue(contract["approved"])
+        self.assertTrue(contract["executed_after_approval"])
+
     def test_gateway_native_full_run_execute_rejects_polluted_lg3_boundary_without_contract(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_execute_rejects_polluted_contract") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"

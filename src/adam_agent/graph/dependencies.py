@@ -16,7 +16,7 @@ DEPENDENCY_SOURCE_PRIORITY = {
     "legacy_sas_dependency": 1,
     "define_xml_dependency": 2,
 }
-_NON_DATASET_AD_TOKENS = {"ADDATA", "ADAM", "ADAMS", "ADAMDATA", "ADSLIB"}
+_NON_DATASET_AD_TOKENS = {"ADDATA", "ADAM", "ADAMS", "ADAMDATA", "ADSLIB", "ADVERSE"}
 INPUT_SPEC_GAP_WARNING_CODE = "input_spec_gap_no_default_dependency"
 DEPENDENCY_CONFLICT_WARNING_CODE = "dependency_conflict"
 DEPENDENCY_SCAN_WARNING_CODE = "dependency_scan_warning"
@@ -744,15 +744,25 @@ def _dedupe_evidence(records: list[DependencyEvidence]) -> list[DependencyEviden
 
 def _adam_tokens(text: str) -> list[str]:
     tokens: list[str] = []
-    for match in re.finditer(r"\bAD[A-Z0-9_]{1,}\b", text.upper()):
+    for match in re.finditer(r"\bAD[A-Z0-9_]{2,}\b", text.upper()):
         if match.end() < len(text) and text[match.end()] == ".":
             continue
         token = match.group(0).split(".")[-1]
-        if token in _NON_DATASET_AD_TOKENS:
+        if not _is_adam_dataset_token(token):
             continue
         if token not in tokens:
             tokens.append(token)
     return tokens
+
+
+def _is_adam_dataset_token(token: str) -> bool:
+    raw = str(token or "").upper()
+    if "_" in raw:
+        return False
+    value = re.sub(r"[^A-Z0-9]", "", raw)
+    if not re.fullmatch(r"AD[A-Z0-9]{2,6}", value):
+        return False
+    return value not in _NON_DATASET_AD_TOKENS
 
 
 def _dataset_from_path(path: Path) -> str | None:

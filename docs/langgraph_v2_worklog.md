@@ -486,3 +486,30 @@ cd D:\Archive\Research\Projects\ADaM_Shiny_LangGraph
 | ADLB | completed | 2818 | 31 |
 
 过程中暴露并修复了一个 LangGraph 恢复稳定性问题：当 durable runtime metadata 显示可以走 native resume，但实际 checkpoint 没停在对应 interrupt 时，`Approve Code` 或 `Repair Code` 会失败。当前修复策略是：先尝试 native resume；如果失败且 canonical `graph_state.json` 明确存在同名 open interrupt，则把人工决定记录回 graph state，并在 notes 中写明 fallback 原因。这样不会绕过缺失状态，也不会让错误 interrupt 静默通过。
+
+## 2026-06-06 Phase 8 UI / Graph 收尾记录
+
+本次收尾目标是先把 Phase 8 的本地产品主路径稳定下来，再考虑进入 Phase 9。重点不是新增临床推导能力，而是让 UI 更像一个可用产品，并保证 UI 操作继续服从 graph-owned 状态。
+
+完成内容：
+
+- UI 首屏进一步收敛为“当前任务 + 当前数据集 + 下一步”，隐藏旧的空状态大面板和非必要运行面板，减少用户一打开页面就看到大量小框。
+- 增加前端中英文切换。默认中文，保留 `ADaM`、`SDTM`、`Spec`、dataset、变量名、文件名、R code、JSON 审计内容为原文，不翻译技术证据本身。
+- LLM 设置入口保持在顶部，语言切换和 LLM 模式状态也在顶部可见。
+- 修复操作反馈：`beginOperation()` / `completeOperation()` 现在会显示 detail，不再只在失败时显示。用户点击 approve / run 等按钮后可以看到“正在保存什么、是否运行 R”。
+- 修复 dependency warning 的主动作判断：`input_spec_gap_no_default_dependency` 这类 spec gap warning 可以继续进入 dataset review handoff，不再被误显示成必须人工 approve/reject dependency plan。真正的 dependency conflict 仍会阻塞。
+- 修复 review summary 恢复生成代码的安全边界：只有当 graph state 能证明对应 dataset 已处于 code review / approved code 状态时，UI 才从 review summary 恢复 generated code；缺少 graph state 时继续 fail closed。
+- 更新 Phase 8 UI 测试，使断言检查当前行为和 graph action，而不是绑定旧英文文案或旧布局。
+
+验证：
+
+```powershell
+python -B -m unittest tests.test_api_phase8 tests.test_graph_gateway tests.test_llm_generated_code tests.test_tools_phase4 -v
+```
+
+结果：`Ran 423 tests in 74.000s - OK`。
+
+当前阶段判断：
+
+- Phase 8 仍属于“产品 UI 和审计 workflow 收尾”，但已经可以作为本地 prototype 的稳定检查点。
+- 还没有进入 Phase 9。Phase 9 应该处理生产级问题：静态规则层、系统级 R sandbox、默认 durable checkpointer、compare 后质量闸门、前端工程化拆分。

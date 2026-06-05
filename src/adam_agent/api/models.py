@@ -84,6 +84,7 @@ class RunPlanResponse(StrictBaseModel):
     dependency_decisions: list[dict[str, Any]] = Field(default_factory=list)
     dependency_resolution: list[dict[str, Any]] = Field(default_factory=list)
     dependency_warnings: list[str] = Field(default_factory=list)
+    dependency_warning_records: list[dict[str, Any]] = Field(default_factory=list)
     graph_state_path: str | None = None
     workflow_state_path: str | None = None
 
@@ -304,11 +305,13 @@ class RunProgressResponse(StrictBaseModel):
     output_quality_rollup: dict[str, Any] = Field(default_factory=dict)
     current_interrupt: dict[str, Any] | None = None
     dependency_review_status: str | None = None
+    dependency_review_summary: dict[str, Any] = Field(default_factory=dict)
     plan_stale: bool = False
     requested_datasets: list[str] = Field(default_factory=list)
     target_datasets: list[str] = Field(default_factory=list)
     runnable_datasets: list[str] = Field(default_factory=list)
     blocked_datasets: list[dict[str, Any]] = Field(default_factory=list)
+    dependency_warning_records: list[dict[str, Any]] = Field(default_factory=list)
     review_queue: list[dict[str, Any]] = Field(default_factory=list)
     study_loop_result: dict[str, Any] = Field(default_factory=dict)
     native_resume: dict[str, Any] = Field(default_factory=dict)
@@ -702,6 +705,7 @@ class RunReviewSummary(StrictBaseModel):
     run_id: str
     run_dir: str
     status: str
+    detail_level: str = "full"
     read_model_source: str = "unknown"
     graph_state_path: str | None = None
     workflow_state_path: str | None = None

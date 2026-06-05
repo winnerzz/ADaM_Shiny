@@ -493,6 +493,7 @@ def prepare_run_plan(request: RunPlanRequest) -> RunPlanResponse:
         dependency_decisions=list(graph_state.dependency_decisions),
         dependency_resolution=list(graph_state.dependency_resolution),
         dependency_warnings=list(plan_payload.get("dependency_planning_warnings", [])),
+        dependency_warning_records=list(plan_payload.get("dependency_planning_warning_records", [])),
         **_gateway_projection_paths(gateway_result),
     )
 
@@ -1447,7 +1448,7 @@ def summarize_study_inputs(study_dir: str | Path, *, study_id: str | None = None
     )
 
 
-def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSummary:
+def build_run_review_summary(study_dir: str | Path, run_id: str, *, detail_level: str = "full") -> RunReviewSummary:
     """Build a UI-friendly run review bundle from run artifacts."""
 
     root = Path(study_dir).expanduser()
@@ -1459,7 +1460,8 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
 
     manifest = _read_json_if_exists(run_dir / "audit" / "manifest.json")
     study_id = str(manifest.get("study_id") or root.name)
-    input_summary = summarize_study_inputs(root, study_id=study_id)
+    resolved_detail_level = _review_summary_detail_level(detail_level)
+    input_summary = _minimal_study_input_summary(root, study_id=study_id, detail_level=resolved_detail_level)
     requested = _string_list(manifest.get("requested_datasets"))
     result_datasets = [
         str(result.get("dataset", "")).strip().upper()
@@ -1474,7 +1476,15 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         else _unique_non_empty(result_datasets + requested + _datasets_from_outputs(run_dir))
     )
     dataset_reviews = [
-        _dataset_review(root, run_id, dataset, manifest, workflow_state, graph_state)
+        _dataset_review(
+            root,
+            run_id,
+            dataset,
+            manifest,
+            workflow_state,
+            graph_state,
+            detail_level=resolved_detail_level,
+        )
         for dataset in datasets
     ]
     status = str(
@@ -1498,6 +1508,7 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         run_id=run_id,
         run_dir=str(run_dir.as_posix()),
         status=status,
+        detail_level=resolved_detail_level,
         read_model_source=read_model_source,
         graph_state_path=str(graph_state_path.as_posix()) if graph_state is not None else None,
         workflow_state_path=str(workflow_state_path.as_posix()) if graph_state is None and workflow_state_path.exists() else None,
@@ -1505,6 +1516,28 @@ def build_run_review_summary(study_dir: str | Path, run_id: str) -> RunReviewSum
         input_summary=input_summary,
         dataset_reviews=dataset_reviews,
         advanced_artifacts=_advanced_artifacts(run_dir, graph_state=graph_state),
+    )
+
+
+def _review_summary_detail_level(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"summary", "light", "lightweight", "fast"}:
+        return "summary"
+    if normalized in {"full", "detail", "detailed"}:
+        return "full"
+    raise ApiServiceError("review-summary detail_level must be summary or full.")
+
+
+def _minimal_study_input_summary(root: Path, *, study_id: str, detail_level: str) -> StudyInputSummary:
+    note = (
+        "Input file previews are owned by the input evidence panel and are not recomputed by run review."
+        if detail_level == "full"
+        else "Input file previews are omitted in summary mode. Open the input evidence panel to rescan previews."
+    )
+    return StudyInputSummary(
+        study_id=study_id,
+        study_dir=str(root.resolve().as_posix()),
+        warnings=[note],
     )
 
 
@@ -2276,15 +2309,25 @@ def _looks_like_dependency_line(line: str) -> bool:
 
 def _detect_adam_tokens(text: str) -> list[str]:
     tokens: list[str] = []
-    for match in re.finditer(r"\bAD[A-Z0-9_]{1,}\b", text.upper()):
+    for match in re.finditer(r"\bAD[A-Z0-9_]{2,}\b", text.upper()):
         token = match.group(0).strip("_")
-        if len(token) > 2 and token not in tokens:
+        if _is_adam_dataset_token(token) and token not in tokens:
             tokens.append(token)
-    for match in re.finditer(r"\bADS[_\-\s]+(AD[A-Z0-9]{1,})(?:[_\-\s]+FULL)?\b", text.upper()):
+    for match in re.finditer(r"\bADS[_\-\s]+(AD[A-Z0-9]{2,})(?:[_\-\s]+FULL)?\b", text.upper()):
         token = match.group(1)
-        if token not in tokens:
+        if _is_adam_dataset_token(token) and token not in tokens:
             tokens.append(token)
     return tokens
+
+
+def _is_adam_dataset_token(token: str) -> bool:
+    raw = str(token or "").upper()
+    if "_" in raw:
+        return False
+    value = re.sub(r"[^A-Z0-9]", "", raw)
+    if not re.fullmatch(r"AD[A-Z0-9]{2,6}", value):
+        return False
+    return value not in {"ADAM", "ADAMS", "ADDATA", "ADAMDATA", "ADSLIB", "ADVERSE"}
 
 
 def _dataset_from_name_or_text(name: str, text: str) -> str | None:
@@ -2332,9 +2375,12 @@ def _dataset_review(
     manifest: dict[str, Any],
     workflow_state: dict[str, Any] | None = None,
     graph_state: StudyRunState | None = None,
+    *,
+    detail_level: str = "full",
 ) -> DatasetReview:
     dataset_lower = dataset.lower()
     run_dir = root / "runs" / run_id
+    resolved_detail_level = _review_summary_detail_level(detail_level)
     result = _dataset_result_from_manifest(manifest, dataset)
     graph_dataset = _graph_dataset_state(graph_state, dataset)
     projected_dataset = _projected_dataset_state(workflow_state or {}, dataset) if graph_dataset is None else {}
@@ -2352,9 +2398,13 @@ def _dataset_review(
     parsed_response = _read_json_if_exists(parsed_response_path) if parsed_response_path else {}
     output_path = _generated_output_path_for_read(root, run_id, dataset, graph_state=graph_state)
     reference_path = reference_adam_path(root, dataset)
-    reader = SDTMReader()
-    compare_summary = DatasetCompareResponse(
-        **compare_dataset_files(dataset, output_path, reference_path, table_reader=_sas7bdat_table_reader())
+    reader = SDTMReader() if resolved_detail_level == "full" else None
+    compare_summary = (
+        DatasetCompareResponse(
+            **compare_dataset_files(dataset, output_path, reference_path, table_reader=_sas7bdat_table_reader())
+        )
+        if resolved_detail_level == "full"
+        else _lightweight_compare_summary(dataset, output_path, reference_path, graph_dataset, result)
     )
     graph_compare_status = str(graph_dataset.compare_summary.get("status") or "") if graph_dataset else ""
     compare_status = (
@@ -2398,12 +2448,16 @@ def _dataset_review(
         compare_status=compare_status,
         output_path=str(output_path.as_posix()) if output_path else None,
         output_quality=output_quality,
-        output_preview=_preview_table_file(output_path, role="Generated ADaM", dataset=dataset, reader=reader, sample_rows=5)
-        if output_path
-        else None,
-        reference_preview=_preview_table_file(reference_path, role="Reference ADaM", dataset=dataset, reader=reader, sample_rows=5)
-        if reference_path is not None
-        else None,
+        output_preview=(
+            _preview_table_file(output_path, role="Generated ADaM", dataset=dataset, reader=reader, sample_rows=5)
+            if output_path and reader is not None
+            else None
+        ),
+        reference_preview=(
+            _preview_table_file(reference_path, role="Reference ADaM", dataset=dataset, reader=reader, sample_rows=5)
+            if reference_path is not None and reader is not None
+            else None
+        ),
         compare_summary=compare_summary,
         downloads=_dataset_downloads(root, run_id, dataset, graph_state=graph_state),
         generated_code_path=str(code_path.as_posix()) if code_path is not None and code_path.exists() else None,
@@ -2414,6 +2468,40 @@ def _dataset_review(
         errors=_string_list(review_validation.get("errors")),
         validation_report=review_validation,
         diagnostics=diagnostics,
+    )
+
+
+def _lightweight_compare_summary(
+    dataset: str,
+    output_path: Path | None,
+    reference_path: Path | None,
+    graph_dataset: DatasetRunState | None,
+    result: dict[str, Any],
+) -> DatasetCompareResponse:
+    target = dataset.strip().upper()
+    graph_summary = graph_dataset.compare_summary if graph_dataset is not None else {}
+    if graph_summary:
+        payload = {
+            key: value
+            for key, value in graph_summary.items()
+            if key in DatasetCompareResponse.model_fields
+        }
+        payload.setdefault("dataset", target)
+        payload.setdefault("status", str(graph_summary.get("status") or "recorded"))
+        return DatasetCompareResponse(**payload)
+    recorded_status = str(result.get("compare_status") or "").strip()
+    if recorded_status:
+        return DatasetCompareResponse(dataset=target, status=recorded_status)
+    if output_path is None:
+        return DatasetCompareResponse(dataset=target, status="missing_generated")
+    if reference_path is None:
+        return DatasetCompareResponse(dataset=target, status="missing_reference")
+    return DatasetCompareResponse(
+        dataset=target,
+        status="not_run",
+        generated_file=output_path.name,
+        reference_file=reference_path.name,
+        note="Compare is available but has not been run in this lightweight status refresh.",
     )
 
 

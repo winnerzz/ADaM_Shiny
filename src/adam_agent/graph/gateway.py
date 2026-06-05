@@ -717,6 +717,11 @@ class GraphGateway:
                 target=target,
                 graph_state=graph_state,
             )
+        if target:
+            graph_state = self._clear_nonblocking_dependency_review_for_graph_command(
+                root=root,
+                state=graph_state,
+            )
         command_interrupt = _resolve_graph_command_interrupt(graph_state, target, interrupt)
         _assert_graph_command_action_allowed(command_interrupt.name, normalized_action)
         if command_interrupt.name == "dependency_review":
@@ -853,6 +858,28 @@ class GraphGateway:
                 interrupt=command_interrupt.name,
             )
         raise ValueError(f"Graph command does not support interrupt: {command_interrupt.name}.")
+
+    def _clear_nonblocking_dependency_review_for_graph_command(
+        self,
+        *,
+        root: Path,
+        state: StudyRunState,
+    ) -> StudyRunState:
+        """Allow dataset review commands when dependency review is only a product note."""
+
+        if state.current_interrupt is None or state.current_interrupt.name != "dependency_review":
+            return state
+        gate = _dependency_gate_result(root, state)
+        before_interrupt = state.current_interrupt
+        before_status = state.dependency_review_status
+        _clear_nonblocking_dependency_review_interrupt(state, gate)
+        _clear_spec_gap_dependency_warning_interrupt(state, gate)
+        if state.current_interrupt == before_interrupt and state.dependency_review_status == before_status:
+            return state
+        _roll_up_study_state(state)
+        _sync_study_agent_decisions(state)
+        self._persist_graph_state(root, state, node="graph_command_nonblocking_dependency_review_handoff")
+        return state
 
     def review_code(
         self,
@@ -3741,7 +3768,8 @@ class GraphGateway:
             agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
         )
-        if _has_lg3_full_run_resume_contract(previous_graph_state, target):
+        has_lg3_execution_context = _can_recover_lg3_full_run_execution_contract(previous_graph_state, target)
+        if has_lg3_execution_context:
             phase = "terminal_failure" if terminal_failure else "executed"
             current_interrupt = "terminal_failure" if terminal_failure else None
             prior_contract = _lg3_full_run_contract_payload(previous_graph_state, target)
@@ -3770,6 +3798,13 @@ class GraphGateway:
                     current_interrupt=current_interrupt,
                     native_interrupt_resume_available=False,
                     **metadata_updates,
+                )
+            elif not prior_contract:
+                runtime_extra["native_dataset_full_run"] = _recovered_lg3_execution_contract(
+                    previous_graph_state,
+                    dataset=target,
+                    phase=phase,
+                    current_interrupt=current_interrupt,
                 )
             _sync_native_study_full_run_dataset_contract(
                 runtime_extra,
@@ -3822,7 +3857,7 @@ class GraphGateway:
             raise ValueError(
                 "Graph state does not exist for this run. Start the dataset through the native-full-run endpoint before execution."
             ) from exc
-        if not _has_lg3_full_run_resume_contract(graph_state, target):
+        if not _can_recover_lg3_full_run_execution_contract(graph_state, target):
             raise ValueError(
                 f"No LG3 native full-run contract exists for {target}. "
                 "Use the compatibility execute-approved-code endpoint for non-LG3 split-flow runs."
@@ -4741,11 +4776,13 @@ class GraphGateway:
             "output_quality_rollup": output_quality_rollup,
             "current_interrupt": _interrupt_payload(graph_state.current_interrupt),
             "dependency_review_status": graph_state.dependency_review_status,
+            "dependency_review_summary": _dependency_review_summary(graph_state, datasets),
             "plan_stale": bool(graph_state.dependency_plan.get("plan_stale")),
             "requested_datasets": list(graph_state.requested_datasets),
             "target_datasets": list(graph_state.target_datasets),
             "runnable_datasets": list(graph_state.runnable_datasets),
             "blocked_datasets": list(graph_state.blocked_datasets),
+            "dependency_warning_records": list(graph_state.dependency_plan.get("dependency_planning_warning_records", [])),
             "review_queue": review_queue,
             "study_loop_result": _study_loop_progress_result(
                 graph_state,
@@ -5241,6 +5278,116 @@ def _dependency_review_reason(status: str) -> str:
     return "Dependency planning requires human review before execution."
 
 
+def _dependency_review_summary(state: StudyRunState, datasets: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return a product-facing explanation for the study dependency gate."""
+
+    status = str(state.dependency_review_status or "").strip()
+    open_interrupt = (
+        state.current_interrupt is not None
+        and state.current_interrupt.name == "dependency_review"
+        and state.current_interrupt.status == "open"
+    )
+    review_required = open_interrupt or status in {"blocked", "warning", "review_required", "stale", "rejected"}
+    dataset_progress = {str(item.get("dataset") or "").strip().upper(): item for item in datasets}
+    blocking_sources = {
+        str(decision.get("source") or "").strip()
+        for decision in state.dependency_decisions
+        if decision.get("review_required") is True and str(decision.get("source", "")) != "no_dependency_evidence"
+    }
+    blocking_sources.discard("")
+    decisions = [
+        _dependency_decision_summary_item(decision, state)
+        for decision in state.dependency_decisions
+        if decision.get("review_required") is True and str(decision.get("source", "")) != "no_dependency_evidence"
+    ]
+    if not decisions:
+        decisions = [
+            _dependency_decision_summary_item(decision, state)
+            for decision in state.dependency_decisions
+            if decision.get("review_required") is True
+        ]
+    affected = []
+    for item in decisions:
+        dataset = str(item.get("dataset") or "").strip().upper()
+        if dataset and dataset not in affected:
+            affected.append(dataset)
+    if not affected:
+        affected = [
+            str(item.get("dataset") or "").strip().upper()
+            for item in state.blocked_datasets
+            if item.get("dataset")
+        ]
+    actionable_after_approval = []
+    waiting_after_approval = []
+    for target in affected or [str(dataset) for dataset in state.target_datasets]:
+        normalized = str(target or "").strip().upper()
+        if not normalized:
+            continue
+        progress = dataset_progress.get(normalized, {})
+        waiting = list(progress.get("waiting_for_runtime_dependencies") or _waiting_runtime_dependencies(state, normalized))
+        if waiting:
+            waiting_after_approval.append({"dataset": normalized, "waiting_for": waiting})
+            continue
+        if normalized in [item.strip().upper() for item in state.runnable_datasets]:
+            action = _dataset_next_action_after_dependency_review(state, normalized)
+            actionable_after_approval.append({"dataset": normalized, "next_action": action["next_action"], "action_label": action["action_label"]})
+    evidence_labels = sorted(blocking_sources)
+    if decisions:
+        first = decisions[0]
+        dependency_texts = []
+        for item in decisions:
+            dependencies = item.get("dependencies") or []
+            if dependencies:
+                dependency_texts.append(f"{item.get('dataset')} uses {', '.join(dependencies)}")
+        detail = "; ".join(dependency_texts) or str(first.get("reason") or _dependency_review_reason(status))
+    else:
+        detail = _dependency_review_reason(status) if review_required else "Dependency plan is ready."
+    return {
+        "review_required": bool(review_required),
+        "status": status or "accepted",
+        "open_interrupt": bool(open_interrupt),
+        "title": "Review dependency plan" if review_required else "Dependency plan ready",
+        "detail": detail,
+        "affected_datasets": affected,
+        "review_required_sources": evidence_labels,
+        "decisions": decisions,
+        "actionable_after_approval": actionable_after_approval,
+        "waiting_after_approval": waiting_after_approval,
+        "available_actions": _available_actions_for_interrupt("dependency_review") if review_required else [],
+    }
+
+
+def _dependency_decision_summary_item(decision: dict[str, Any], state: StudyRunState) -> dict[str, Any]:
+    dataset = str(decision.get("dataset") or "").strip().upper()
+    dependencies = _normalize_dataset_list([str(item) for item in decision.get("dependencies", [])])
+    resolution = [
+        record
+        for record in state.dependency_resolution
+        if str(record.get("target_dataset") or "").strip().upper() == dataset
+    ]
+    available_dependencies = [
+        str(record.get("required_dataset") or "").strip().upper()
+        for record in resolution
+        if record.get("resolution_status") == "available" and record.get("required_dataset")
+    ]
+    return {
+        "dataset": dataset,
+        "dependencies": dependencies,
+        "source": str(decision.get("source") or "").strip(),
+        "confidence": decision.get("confidence"),
+        "reason": str(decision.get("reason") or "").strip(),
+        "evidence_ids": list(decision.get("evidence_ids") or []),
+        "available_dependencies": _normalize_dataset_list(available_dependencies),
+    }
+
+
+def _dataset_next_action_after_dependency_review(state: StudyRunState, dataset: str) -> dict[str, str]:
+    dataset_state = state.datasets.get(dataset.strip().upper())
+    if dataset_state is None:
+        return {"next_action": "finalize_inputs", "action_label": "Confirm uploaded evidence and prepare the spec gate."}
+    return _dataset_next_action(dataset_state, blocked_reason="")
+
+
 def _blocked_dataset_names(blocked: list[dict[str, Any]]) -> set[str]:
     return {str(item.get("dataset", "")).strip().upper() for item in blocked if item.get("dataset")}
 
@@ -5385,42 +5532,38 @@ def _clear_nonblocking_dependency_review_interrupt(state: StudyRunState, gate: G
     interrupt = state.current_interrupt
     if interrupt is None or interrupt.name != "dependency_review" or interrupt.status != "open":
         return
-    if gate.dependency_review_status != "review_required":
+    status_before = state.dependency_review_status or gate.dependency_review_status
+    if status_before not in {"review_required", "warning"}:
+        return
+    if bool(state.dependency_plan.get("plan_stale")) or gate.dependency_review_status == "stale":
+        return
+    if gate.blocked_datasets:
+        return
+    if _blocking_dependency_warnings(gate):
         return
     blocking_decisions = [
         decision
         for decision in gate.dependency_decisions
         if decision.get("review_required") is True and str(decision.get("source", "")) != "no_dependency_evidence"
     ]
-    if blocking_decisions or gate.blocked_datasets or gate.dependency_warnings:
+    if blocking_decisions:
         return
     state.current_interrupt = None
     state.dependency_review_status = "accepted"
-    state.dependency_plan["dependency_review_status_before_product_step"] = "review_required"
+    state.dependency_plan["dependency_review_status_before_product_step"] = status_before
     state.dependency_plan["dependency_review_auto_accepted_reason"] = (
-        "Only no_dependency_evidence decisions required review; product draft/spec/code review now carries that risk."
+        "Dependency review contained only no_dependency_evidence decisions or input_spec_gap_no_default_dependency "
+        "warnings; product draft/spec/code review now carries that risk."
     )
 
 
 def _clear_spec_gap_dependency_warning_interrupt(state: StudyRunState, gate: GraphGatewayDependencyGateResult) -> bool:
     """Clear a study warning when all warnings are dataset spec-gap handoffs."""
 
-    interrupt = state.current_interrupt
-    if interrupt is None or interrupt.name != "dependency_review" or interrupt.status != "open":
-        return False
-    if state.dependency_review_status != "warning":
-        return False
-    if gate.blocked_datasets:
-        return False
-    if _blocking_dependency_warnings(gate):
-        return False
-    state.current_interrupt = None
-    state.dependency_review_status = "accepted"
-    state.dependency_plan["dependency_review_status_before_product_step"] = "warning"
-    state.dependency_plan["dependency_review_auto_accepted_reason"] = (
-        "Only input_spec_gap_no_default_dependency warnings remained; dataset draft/code review now carries that risk."
-    )
-    return True
+    before_interrupt = state.current_interrupt
+    before_status = state.dependency_review_status
+    _clear_nonblocking_dependency_review_interrupt(state, gate)
+    return state.current_interrupt != before_interrupt or state.dependency_review_status != before_status
 
 
 def _dependency_artifacts_for_dataset(dependency_resolution: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
@@ -6765,6 +6908,79 @@ def _has_lg3_full_run_resume_contract(state: StudyRunState, dataset: str) -> boo
     """Return whether dataset review gates may use the LG3 full-run resume entry."""
 
     return bool(_lg3_full_run_contract_payload(state, dataset))
+
+
+def _can_recover_lg3_full_run_execution_contract(state: StudyRunState, dataset: str) -> bool:
+    """Return whether an approved graph-owned dataset can recover a missing LG3 execute contract."""
+
+    target = dataset.strip().upper()
+    if _has_lg3_full_run_resume_contract(state, target):
+        return True
+    if not _has_native_study_graph_boundary(state):
+        return False
+    dataset_state = state.datasets.get(target)
+    if dataset_state is None:
+        return False
+    return (
+        str(dataset_state.code_state.get("status") or "").strip().lower() == "approved"
+        and bool(dataset_state.code_state.get("code_path"))
+        and bool(dataset_state.code_state.get("review_path"))
+    )
+
+
+def _has_native_study_graph_boundary(state: StudyRunState) -> bool:
+    """Return whether this run has already entered the native LangGraph product flow."""
+
+    runtime = state.runtime_persistence
+    for key in runtime:
+        if str(key).startswith("native_") and str(key) not in {
+            "native_dataset_full_run",
+            "native_interrupt_resume",
+            "native_interrupt_resume_scope",
+        }:
+            return True
+    native_nodes = {
+        "native_study_product_loop",
+        "native_dataset_full_run",
+        "native_dataset_product_loop",
+        "native_code_review_resume",
+        "native_draft_spec_review_resume",
+    }
+    for record in state.agent_node_outputs:
+        node = str(record.get("node") or "")
+        if node in native_nodes or node.startswith("native_"):
+            return True
+    for dataset_state in state.datasets.values():
+        for record in dataset_state.agent_node_outputs:
+            node = str(record.get("node") or "")
+            if node in native_nodes or node.startswith("native_"):
+                return True
+    return False
+
+
+def _recovered_lg3_execution_contract(
+    state: StudyRunState,
+    *,
+    dataset: str,
+    phase: str,
+    current_interrupt: str | None,
+) -> dict[str, Any]:
+    """Build a recovered LG3 execution contract from canonical approved dataset state."""
+
+    return _native_dataset_full_run_metadata(
+        state,
+        dataset=dataset,
+        phase=phase,
+        current_interrupt=current_interrupt,
+        native_interrupt_resume_available=False,
+        last_interrupt="code_review",
+        decision="approve",
+        approved=True,
+        executed_after_approval=phase == "executed",
+        terminal_failure=phase == "terminal_failure",
+        recovered_from_graph_state=True,
+        recovery_reason="Canonical dataset code_state is approved but runtime full-run metadata was missing.",
+    )
 
 
 def _has_native_dataset_full_run_terminal_followup(state: StudyRunState, dataset: str) -> bool:

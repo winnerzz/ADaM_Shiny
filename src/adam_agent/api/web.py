@@ -38,11 +38,75 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 18px;
-      padding: 16px 22px;
+      padding: 12px 22px;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
-    h1 { margin: 0 0 4px; font-size: 22px; }
+    .brand-block {
+      display: grid;
+      gap: 7px;
+      min-width: 240px;
+    }
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .llm-config-button {
+      min-height: 34px;
+      padding: 0 11px;
+      border-color: rgba(15, 118, 110, 0.42);
+      background: #f2fbf9;
+      color: var(--accent-dark);
+    }
+    .llm-config-button:hover {
+      border-color: var(--accent);
+      background: #e5f5f2;
+    }
+    .llm-mode-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .llm-mode-chip.real {
+      border-color: #f0d19b;
+      background: #fff8ea;
+      color: var(--warn);
+    }
+    .language-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 30px;
+      padding: 3px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+    }
+    .language-toggle button {
+      min-height: 24px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .language-toggle button.active {
+      color: #fff;
+      background: var(--accent);
+    }
+    h1 { margin: 0; font-size: 22px; }
     h2 { margin: 0; font-size: 17px; }
     h3 { margin: 0 0 8px; font-size: 14px; }
     .subtitle, .muted, .status-line {
@@ -53,11 +117,11 @@ INDEX_HTML = r"""<!doctype html>
     .header-status {
       display: grid;
       gap: 7px;
-      min-width: 340px;
-      max-width: 460px;
+      min-width: min(560px, 50vw);
+      max-width: 640px;
     }
     .status-card {
-      padding: 10px 12px;
+      padding: 8px 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfdff;
@@ -67,7 +131,7 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
     .status-label {
       color: var(--muted);
@@ -85,12 +149,14 @@ INDEX_HTML = r"""<!doctype html>
     .status-meta-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 7px;
-      margin-top: 9px;
+      gap: 6px;
+      margin-top: 7px;
     }
+    .header-next-chip { display: none; }
+    .header-now-chip { display: none; }
     .status-chip {
-      min-height: 48px;
-      padding: 7px 8px;
+      min-height: 34px;
+      padding: 6px 8px;
       border: 1px solid var(--line);
       border-radius: 7px;
       background: #fff;
@@ -112,9 +178,9 @@ INDEX_HTML = r"""<!doctype html>
       overflow-wrap: anywhere;
     }
     .header-progress-track {
-      height: 7px;
+      height: 5px;
       overflow: hidden;
-      margin-top: 9px;
+      margin-top: 7px;
       border-radius: 999px;
       background: #e4e9f0;
     }
@@ -133,32 +199,107 @@ INDEX_HTML = r"""<!doctype html>
     .header-progress-bar.failed { width: 100%; background: var(--danger); }
     main {
       display: grid;
-      grid-template-columns: 280px minmax(700px, 1fr);
-      gap: 14px;
-      padding: 14px;
+      grid-template-columns: 280px minmax(0, 1fr) 340px;
+      gap: 18px;
+      align-items: start;
+      padding: 18px;
       min-height: calc(100vh - 74px);
+    }
+    main.wide-main {
+      grid-template-columns: 280px minmax(0, 1fr);
     }
     aside, section, .card {
       background: var(--panel);
-      border: 1px solid var(--line);
+      border: 1px solid #cfd7e3;
       border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .workstream > section {
+      border-color: #b9c5d4;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
     }
     aside {
       padding: 12px;
-      height: fit-content;
       position: sticky;
       top: 14px;
+      max-height: calc(100vh - 28px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
     }
-    section { margin-bottom: 14px; }
+    .workstream {
+      display: grid;
+      gap: 18px;
+      min-width: 0;
+    }
+    .left-rail, .inspector-rail {
+      align-self: start;
+      max-height: calc(100dvh - 32px);
+      padding-bottom: 18px;
+    }
+    .inspector-rail {
+      display: grid;
+      gap: 12px;
+      background: #fbfdff;
+    }
+    .inspector-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .inspector-title strong {
+      display: block;
+      font-size: 14px;
+    }
+    .inspector-empty {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .inspector-empty strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .legacy-step-anchors { display: none; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+    }
+    section {
+      margin-bottom: 0;
+      overflow: hidden;
+    }
     .section-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 12px;
       padding: 14px 16px;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid #cfd7e3;
+      background: #f8fafc;
     }
-    .section-body { padding: 16px; }
+    .section-head h2 {
+      padding-left: 10px;
+      border-left: 4px solid var(--accent);
+      line-height: 1.25;
+    }
+    .section-body {
+      padding: 16px;
+      background: #fff;
+    }
     .step {
       display: grid;
       grid-template-columns: 28px 1fr;
@@ -184,11 +325,136 @@ INDEX_HTML = r"""<!doctype html>
     }
     .step strong { display: block; margin-bottom: 2px; font-size: 13px; }
     .step p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .side-workflow-panel {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .side-workflow-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .side-workflow-target {
+      display: block;
+      margin: 3px 0 4px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+    .side-workflow-detail {
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .side-progress-steps {
+      display: grid;
+      gap: 6px;
+    }
+    .side-progress-step {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 7px;
+      align-items: start;
+      padding: 7px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdff;
+    }
+    .side-progress-dot {
+      display: grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      color: #fff;
+      background: #bdc8d7;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .side-progress-step strong {
+      display: block;
+      margin-bottom: 1px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .side-progress-step span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+    .side-progress-step.done { border-color: #b8dfc9; background: #f2fbf5; }
+    .side-progress-step.done .side-progress-dot { background: var(--ok); }
+    .side-progress-step.active { border-color: #a7d8cf; background: #eef8f6; }
+    .side-progress-step.active .side-progress-dot { background: var(--accent); }
+    .side-progress-step.blocked { border-color: #efc4be; background: #fff8f7; }
+    .side-progress-step.blocked .side-progress-dot { background: var(--danger); }
+    .side-progress-step.waiting { border-color: #f0d19b; background: #fff8ea; }
+    .side-progress-step.waiting .side-progress-dot { background: var(--warn); }
+    .side-queue-panel {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .side-queue-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .side-queue-panel .dataset-board {
+      max-height: 40dvh;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .side-review-panel {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .side-review-panel .review-queue-panel {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .side-review-panel .review-queue-head {
+      margin-bottom: 7px;
+    }
+    .side-review-panel .review-queue-title {
+      font-size: 13px;
+    }
+    .side-review-panel .review-queue-detail {
+      font-size: 11px;
+    }
+    .side-review-panel .review-queue-item {
+      grid-template-columns: 1fr;
+      padding: 8px;
+      font-size: 11px;
+    }
+    .side-review-panel .review-queue-command-actions button {
+      min-height: 28px;
+      padding: 5px 8px;
+    }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
     .grid5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
     .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .dashboard-current-panel {
+      margin-bottom: 12px;
+    }
     .card { padding: 13px; min-width: 0; }
+    .card, .metric, .setup-action-card, .drop-card, .operation-banner, .active-dataset-panel, .dashboard-audit-details, .focus-panel, .graph-canvas, .note {
+      box-shadow: none;
+    }
     .metric {
       padding: 12px;
       border: 1px solid var(--line);
@@ -197,17 +463,99 @@ INDEX_HTML = r"""<!doctype html>
     }
     .metric-value { display: block; margin-bottom: 3px; font-size: 22px; font-weight: 800; color: var(--text); }
     .metric-label { color: var(--muted); font-size: 12px; }
-    .choice-card {
-      cursor: pointer;
-      min-height: 140px;
-    }
+    .choice-card { cursor: pointer; }
     .choice-card:hover { border-color: rgba(15, 118, 110, 0.5); background: #fbfffe; }
     .choice-card.active { border-color: var(--accent); background: #eef8f6; }
+    .setup-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .setup-action-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      min-height: 82px;
+      padding: 16px;
+      border: 1px solid rgba(15, 118, 110, 0.34);
+      border-radius: 8px;
+      background: #f8fcfb;
+    }
+    .setup-action-card h3 {
+      margin-bottom: 5px;
+      font-size: 15px;
+    }
+    .setup-action-card p {
+      display: none;
+    }
+    .demo-inline-action {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 4px 0;
+      border: 0;
+      border-top: 1px solid #e1e7ef;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .demo-inline-action.active {
+      border-color: var(--accent);
+      background: #f3fbf9;
+      color: var(--text);
+    }
+    .demo-inline-action strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+    .demo-inline-action div {
+      color: transparent;
+      font-size: 0;
+    }
+    .demo-inline-action strong {
+      color: var(--text);
+    }
+    .demo-inline-action div::after {
+      content: " optional sample";
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .demo-inline-action button {
+      min-height: 30px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .upload-panel {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px;
+    }
     .drop-card {
+      display: grid;
+      gap: 7px;
+      align-content: start;
       border: 1px dashed #b9c4d3;
       background: #fbfdff;
     }
-    .drop-card input { margin-top: 8px; }
+    .drop-card h3 {
+      margin-bottom: 0;
+      font-size: 14px;
+    }
+    .drop-card p {
+      display: none;
+    }
+    .drop-card input { margin-top: 0; }
     label {
       display: block;
       margin-bottom: 6px;
@@ -268,6 +616,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     button.secondary.danger:hover { background: #fde9e7; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.button-pending {
+      opacity: 0.85;
+      cursor: wait;
+      position: relative;
+    }
     .action-hints {
       display: grid;
       gap: 6px;
@@ -333,20 +686,25 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       line-height: 1.4;
     }
+    .quiet-helper {
+      display: none;
+    }
     .operation-banner {
-      margin-bottom: 12px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfdff;
+      margin-bottom: 0;
+      padding: 2px 4px 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
     }
     .operation-banner.busy {
-      border-color: #a7d8cf;
-      background: #eef8f6;
+      background: transparent;
     }
     .operation-banner.fail {
-      border-color: #efc4be;
-      background: #fff8f7;
+      background: transparent;
+      color: var(--danger);
+    }
+    .operation-banner.done {
+      background: transparent;
     }
     .next-action-panel {
       display: grid;
@@ -360,6 +718,17 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 8px;
       background: #f2fbf9;
     }
+    .command-center-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    .command-action-stack {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
     .next-action-panel.warn {
       border-color: #f0d19b;
       border-left-color: #c98200;
@@ -369,6 +738,11 @@ INDEX_HTML = r"""<!doctype html>
       border-color: #efc4be;
       border-left-color: var(--danger);
       background: #fff8f7;
+    }
+    .next-action-panel.done {
+      border-color: #b8dfc9;
+      border-left-color: var(--ok);
+      background: #f2fbf5;
     }
     .next-action-eyebrow {
       display: block;
@@ -387,9 +761,7 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.25;
     }
     .next-action-detail {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
+      display: none;
     }
     .next-action-buttons {
       display: flex;
@@ -401,12 +773,173 @@ INDEX_HTML = r"""<!doctype html>
     .next-action-buttons button {
       white-space: nowrap;
     }
-    .operation-head {
+    .sticky-action-bar {
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      display: none;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid #a7d8cf;
+      border-radius: 8px 8px 0 0;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.08);
+      backdrop-filter: blur(8px);
+    }
+    .sticky-action-bar.warn {
+      border-color: #f0d19b;
+      background: rgba(255, 248, 234, 0.96);
+    }
+    .sticky-action-bar.fail {
+      border-color: #efc4be;
+      background: rgba(255, 248, 247, 0.96);
+    }
+    .sticky-action-bar.done {
+      border-color: #b8dfc9;
+      background: rgba(242, 251, 245, 0.96);
+    }
+    .sticky-action-title {
+      display: block;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+    .sticky-action-detail {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .sticky-action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 190px;
+    }
+    .sticky-action-buttons button {
+      white-space: nowrap;
+    }
+    .active-dataset-panel, .dashboard-audit-details {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .active-dataset-panel {
+      min-height: 100%;
+      border-color: rgba(15, 118, 110, 0.34);
+      background: #f8fcfb;
+    }
+    .active-dataset-head {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 9px;
+      margin-bottom: 8px;
+    }
+    .active-dataset-title {
+      display: block;
+      margin: 2px 0 3px;
+      font-size: 18px;
+      font-weight: 800;
+    }
+    .active-dataset-body {
+      display: grid;
+      gap: 9px;
+    }
+    .active-dataset-summary {
+      display: grid;
+      gap: 8px;
+      padding-top: 2px;
+    }
+    .active-dataset-summary-item {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      padding: 0 0 7px;
+      border-bottom: 1px solid #e5ebf2;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .active-dataset-summary-item:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+    .active-dataset-summary-item strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+    .active-dataset-summary-item.warn span { color: #6f4700; }
+    .active-dataset-summary-item.fail span { color: var(--danger); }
+    .active-dataset-row {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 9px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .active-dataset-row strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+    .active-dataset-row.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+    }
+    .active-dataset-row.fail {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
+    .active-stage-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .focus-panel {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid rgba(15, 118, 110, 0.24);
+      border-radius: 8px;
+      background: #fbfffe;
+    }
+    .focus-panel .active-dataset-panel {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .compact-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .compact-metrics .metric {
+      min-height: 62px;
+      padding: 9px;
+      background: #fff;
+    }
+    .compact-metrics .metric-value {
+      font-size: 18px;
+    }
+    .operation-head {
+      display: none;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
     }
     .operation-title {
       display: block;
@@ -415,7 +948,7 @@ INDEX_HTML = r"""<!doctype html>
       font-weight: 800;
     }
     .progress-track {
-      height: 9px;
+      height: 6px;
       overflow: hidden;
       border-radius: 999px;
       background: #e4e9f0;
@@ -438,50 +971,6 @@ INDEX_HTML = r"""<!doctype html>
       50% { opacity: 1; }
       100% { opacity: 0.55; }
     }
-    .study-progress-panel {
-      margin-bottom: 12px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfdff;
-    }
-    .study-progress-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-    .study-progress-title {
-      display: block;
-      margin: 2px 0 3px;
-      font-size: 15px;
-      font-weight: 800;
-    }
-    .study-progress-steps {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 7px;
-    }
-    .progress-step {
-      min-height: 46px;
-      display: grid;
-      align-content: center;
-      gap: 2px;
-      padding: 7px;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fff;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 800;
-      text-align: center;
-    }
-    .progress-step.done { color: var(--ok); background: #e8f6ee; border-color: #b8dfc9; }
-    .progress-step.active { color: var(--accent-dark); background: #e6f5f2; border-color: #a7d8cf; }
-    .progress-step.blocked { color: var(--danger); background: #fde9e7; border-color: #e8b2ac; }
-    .progress-step.waiting { color: var(--warn); background: #fff8ea; border-color: #f0d19b; }
-    .progress-step span { display: block; color: inherit; font-size: 10px; font-weight: 700; }
     .review-queue-panel {
       margin: 0 0 12px;
       padding: 12px;
@@ -602,6 +1091,12 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfdff;
+    }
+    .panel-kicker {
+      margin: -4px 0 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
     .graph-row {
       display: flex;
@@ -763,6 +1258,14 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       font-size: 12px;
     }
+    .dependency-plain-row.primary {
+      border-color: rgba(15, 118, 110, 0.28);
+      background: #f2fbf9;
+    }
+    .dependency-plain-row.blocked {
+      border-color: #efc4be;
+      background: #fff8f7;
+    }
     .trust-boundary {
       padding: 9px 10px;
       border: 1px solid #f0d19b;
@@ -773,8 +1276,40 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.45;
     }
     .dataset-board { display: grid; gap: 8px; }
+    .dataset-lane {
+      display: grid;
+      gap: 5px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .dataset-lane-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .dataset-lane-head span:last-child {
+      color: var(--text);
+      font-size: 11px;
+      text-transform: none;
+    }
+    .dataset-lane .muted {
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .dataset-lane.review { border-color: #f0d19b; background: #fffdf7; }
+    .dataset-lane.waiting { border-color: #f0d19b; background: #fff8ea; }
+    .dataset-lane.blocked { border-color: #efc4be; background: #fff8f7; }
+    .dataset-lane.done { border-color: #b8dfc9; background: #f2fbf5; }
     .dataset-card {
-      padding: 11px;
+      padding: 8px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fff;
@@ -789,14 +1324,22 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      margin-bottom: 7px;
+      margin-bottom: 4px;
     }
-    .dataset-name { font-size: 15px; font-weight: 800; }
+    .dataset-name { font-size: 13px; font-weight: 800; }
     .dataset-context {
-      margin: -2px 0 8px;
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.35;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .dataset-next {
+      margin: 4px 0 0;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .dataset-next strong {
+      font-weight: 800;
     }
     .stage-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
     .stage {
@@ -880,6 +1423,21 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
     }
     .agent-trace-card span { color: var(--muted); overflow-wrap: anywhere; }
+    .dashboard-audit-details {
+      margin-top: 12px;
+    }
+    .dashboard-audit-details summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--text);
+    }
+    .dashboard-audit-details summary span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
     .timeline {
       display: grid;
       gap: 8px;
@@ -916,7 +1474,8 @@ INDEX_HTML = r"""<!doctype html>
     .note {
       margin: 0 0 12px;
       padding: 10px 12px;
-      border: 1px solid var(--line);
+      border: 0;
+      border-left: 3px solid #d8dee8;
       border-radius: 8px;
       background: #fbfdff;
       color: var(--muted);
@@ -925,13 +1484,140 @@ INDEX_HTML = r"""<!doctype html>
     }
     .note.strong {
       color: var(--text);
-      border-color: rgba(15, 118, 110, 0.24);
+      border-color: rgba(15, 118, 110, 0.42);
       background: #eef8f6;
     }
     .note.warn {
-      border-color: #f0d19b;
+      border: 1px solid #f0d19b;
+      border-left: 4px solid #c98200;
       background: #fff8ea;
       color: #6d4200;
+    }
+    .evidence-summary-table {
+      overflow: auto;
+      border: 1px solid #dfe6ef;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .evidence-summary-table table {
+      min-width: 640px;
+    }
+    .evidence-summary-table td,
+    .evidence-summary-table th {
+      padding: 9px 10px;
+    }
+    .evidence-summary-role {
+      color: var(--text);
+      font-weight: 800;
+    }
+    .evidence-summary-status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e8f6ee;
+      color: var(--ok);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .evidence-summary-status.warn {
+      background: #fff4df;
+      color: var(--warn);
+    }
+    .evidence-summary-status.optional {
+      background: #eef3f8;
+      color: var(--muted);
+    }
+    .evidence-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .evidence-grid.compact {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      align-items: start;
+    }
+    .evidence-grid.compact .evidence-card {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 9px;
+      align-items: start;
+    }
+    .evidence-grid.compact .evidence-card h3 {
+      margin-bottom: 0;
+    }
+    .input-profile {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .input-profile-card {
+      min-height: 58px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .input-profile-card strong {
+      display: block;
+      color: var(--text);
+      font-size: 16px;
+      line-height: 1.2;
+    }
+    .input-profile-card span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .input-profile-card.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+    }
+    .input-profile-card.reference {
+      border-color: #f0d19b;
+      background: #fffdf7;
+    }
+    .evidence-details {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .evidence-details summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .evidence-details summary span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .evidence-details .evidence-grid {
+      margin-top: 10px;
+    }
+    .evidence-card {
+      padding: 13px;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .evidence-card h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
     }
     .file-list { display: grid; gap: 8px; }
     .file-item {
@@ -939,6 +1625,10 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line);
       border-radius: 7px;
       background: #fbfdff;
+    }
+    .file-item.reference-evidence {
+      border-color: #f0d19b;
+      background: #fffdf7;
     }
     .file-title {
       display: flex;
@@ -962,6 +1652,12 @@ INDEX_HTML = r"""<!doctype html>
     .file-actions button {
       padding: 6px 10px;
       font-size: 12px;
+    }
+    .optional-evidence-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
     }
     .field-help {
       margin-top: 4px;
@@ -1071,6 +1767,57 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
       line-height: 1.45;
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.38);
+    }
+    .settings-modal {
+      width: min(920px, 100%);
+      max-height: min(760px, calc(100vh - 36px));
+      overflow: auto;
+      border: 1px solid #c8d2df;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.28);
+    }
+    .settings-modal-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #cfd7e3;
+      background: #f8fafc;
+    }
+    .settings-modal-head h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+    }
+    .settings-modal-body {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+    }
+    .settings-group {
+      padding: 14px;
+      border: 1px solid #d5dde8;
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .settings-group h3 {
+      margin-bottom: 10px;
+      padding-left: 9px;
+      border-left: 3px solid var(--accent);
+      font-size: 14px;
+    }
     .compare-mini-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1103,15 +1850,29 @@ INDEX_HTML = r"""<!doctype html>
     .hidden { display: none !important; }
     @media (max-width: 1120px) {
       main { grid-template-columns: 1fr; }
-      aside { position: static; }
-      .grid3, .grid5, .metric-grid, .study-progress-steps, .agent-audit-grid, .agent-trace-card, .dependency-summary { grid-template-columns: 1fr; }
+      aside, .left-rail, .inspector-rail {
+        position: static;
+        max-height: none;
+        overflow: visible;
+      }
+      .command-center-grid { grid-template-columns: 1fr; }
+      .grid3, .grid5, .metric-grid, .agent-audit-grid, .agent-trace-card, .dependency-summary { grid-template-columns: 1fr; }
+      .upload-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+      .side-queue-panel .dataset-board { max-height: none; overflow: visible; }
     }
     @media (max-width: 760px) {
       header { align-items: flex-start; flex-direction: column; }
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
+      .setup-actions { grid-template-columns: 1fr; }
+      .setup-action-card { grid-template-columns: 1fr; }
+      .upload-grid { grid-template-columns: 1fr; }
+      .evidence-grid.compact .evidence-card { grid-template-columns: 1fr; }
+      .compact-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .next-action-panel { grid-template-columns: 1fr; }
       .next-action-buttons { justify-content: flex-start; min-width: 0; }
+      .sticky-action-bar { grid-template-columns: 1fr; }
+      .sticky-action-buttons { justify-content: flex-start; min-width: 0; }
       .review-queue-item { grid-template-columns: 1fr; }
       .study-loop-item { grid-template-columns: 1fr; }
       .status-meta-grid { grid-template-columns: 1fr; }
@@ -1122,265 +1883,276 @@ INDEX_HTML = r"""<!doctype html>
 </head>
 <body>
   <header>
-    <div>
+    <div class="brand-block">
       <h1>ADaM Agent Studio</h1>
-      <div class="subtitle">Upload study evidence, generate reviewable R code, then run it locally after approval.</div>
+      <div class="header-actions">
+        <button class="secondary llm-config-button" id="openLlmSettingsButton" type="button" data-i18n="llmConfig">LLM Config</button>
+        <span class="llm-mode-chip" id="llmModeChip">Mock LLM</span>
+        <span class="language-toggle" aria-label="Language">
+          <button type="button" data-lang-option="zh">中文</button>
+          <button type="button" data-lang-option="en">EN</button>
+        </span>
+      </div>
     </div>
     <div class="header-status">
       <div class="status-card">
         <div class="status-row">
-          <span class="status-label">Current Status</span>
+          <span class="status-label" data-i18n="currentStatus">Current Status</span>
           <span class="pill warn" id="health">Checking API...</span>
         </div>
         <div class="status-detail" id="globalStatusDetail">Waiting for the local API health check.</div>
         <div class="status-meta-grid" id="headerStatusGrid">
-          <div class="status-chip"><span>Now</span><strong id="headerOperation">Idle</strong></div>
-          <div class="status-chip"><span>Study</span><strong id="headerStudy">Not loaded</strong></div>
-          <div class="status-chip"><span>Target</span><strong id="headerTarget">None</strong></div>
-          <div class="status-chip"><span>Next</span><strong id="headerNextAction">Setup</strong></div>
+          <div class="status-chip header-now-chip" aria-hidden="true"><span data-i18n="now">Now</span><strong id="headerOperation">Idle</strong></div>
+          <div class="status-chip"><span data-i18n="study">Study</span><strong id="headerStudy">Not loaded</strong></div>
+          <div class="status-chip"><span data-i18n="target">Target</span><strong id="headerTarget">None</strong></div>
+          <div class="status-chip header-next-chip" aria-hidden="true"><span data-i18n="next">Next</span><strong id="headerNextAction">Setup</strong></div>
         </div>
         <div class="header-progress-track"><div class="header-progress-bar" id="headerOperationProgress"></div></div>
       </div>
     </div>
   </header>
 
-  <main>
-    <aside>
-      <div class="step active" data-step="1"><div class="step-number">1</div><div><strong>Start</strong><p>Use the demo or upload your own files.</p></div></div>
-      <div class="step" data-step="2"><div class="step-number">2</div><div><strong>Inputs</strong><p>Check recognized SDTM, specs, and references.</p></div></div>
-      <div class="step" data-step="3"><div class="step-number">3</div><div><strong>Target</strong><p>Choose which ADaM dataset to generate.</p></div></div>
-      <div class="step" data-step="4"><div class="step-number">4</div><div><strong>Code</strong><p>Generate R without running it.</p></div></div>
-      <div class="step" data-step="5"><div class="step-number">5</div><div><strong>Review & Run</strong><p>Approve code, then execute in R sandbox.</p></div></div>
-      <div class="step" data-step="6"><div class="step-number">6</div><div><strong>Results</strong><p>Inspect generated ADaM and warnings.</p></div></div>
+  <main id="appMain">
+    <aside class="left-rail">
+      <div class="side-workflow-panel" id="sideWorkflowPanel">
+        <div class="side-workflow-title">
+          <span class="status-label" data-i18n="workflow">Workflow</span>
+          <span class="pill warn" id="sideWorkflowStatus">setup</span>
+        </div>
+        <span class="side-workflow-target" id="sideWorkflowTarget">No study loaded</span>
+        <div class="side-workflow-detail" id="sideWorkflowDetail"></div>
+        <div class="side-progress-steps" id="sideWorkflowSteps"></div>
+      </div>
+      <div class="side-queue-panel hidden" id="sideDatasetQueuePanel">
+        <div class="side-queue-title">
+          <span class="status-label" data-i18n="datasetQueue">Dataset Queue</span>
+          <span class="pill" id="sideDatasetQueueStatus">empty</span>
+        </div>
+        <div id="datasetBoard" class="dataset-board"><div class="muted">No dataset selected yet.</div></div>
+      </div>
+      <div class="side-review-panel">
+        <div class="review-queue-panel hidden" id="humanReviewQueuePanel">
+          <div class="review-queue-head">
+            <div>
+              <span class="status-label" data-i18n="humanReviewQueue">Human Review Queue</span>
+              <span class="review-queue-title" id="humanReviewQueueTitle">No open review gate</span>
+              <div class="muted" id="humanReviewQueueDetail">Graph review gates will appear here when the workflow needs a human decision.</div>
+            </div>
+            <span class="pill" id="humanReviewQueueStatus">clear</span>
+          </div>
+          <div class="review-queue-list" id="humanReviewQueueList"></div>
+        </div>
+      </div>
+      <div class="legacy-step-anchors" aria-hidden="true">
+        <div class="step active" data-step="1"><div class="step-number">1</div><div><strong>Start</strong><p>Upload study evidence. Demo is optional.</p></div></div>
+        <div class="step" data-step="2"><div class="step-number">2</div><div><strong>Inputs</strong><p>Check recognized SDTM, specs, and references.</p></div></div>
+        <div class="step" data-step="3"><div class="step-number">3</div><div><strong>Target</strong><p>Choose which ADaM dataset to generate.</p></div></div>
+        <div class="step" data-step="4"><div class="step-number">4</div><div><strong>Code</strong><p>Generate R without running it.</p></div></div>
+        <div class="step" data-step="5"><div class="step-number">5</div><div><strong>Review & Run</strong><p>Approve code, then execute in R sandbox.</p></div></div>
+        <div class="step" data-step="6"><div class="step-number">6</div><div><strong>Results</strong><p>Inspect generated ADaM and warnings.</p></div></div>
+      </div>
     </aside>
 
-    <div>
-      <section>
+    <div class="workstream">
+      <section id="currentWorkSection">
         <div class="section-head">
-          <h2>Study Dashboard</h2>
+          <h2 data-i18n="currentWork">Current Work</h2>
           <span class="pill warn" id="graphStatus">waiting</span>
         </div>
         <div class="section-body">
-          <div class="next-action-panel" id="primaryNextActionPanel">
-            <div>
-              <span class="next-action-eyebrow">Next Step</span>
-              <div class="next-action-title" id="primaryNextActionTitle">Load demo data or upload your study files</div>
-              <div class="next-action-detail" id="primaryNextActionDetail">The app needs study evidence before it can plan an ADaM generation run.</div>
-            </div>
-            <div class="next-action-buttons" id="primaryNextActionButtons">
-              <button data-primary-action="loadDemo" type="button">Load Demo</button>
-              <button class="secondary" data-primary-action="startUpload" type="button">Start Upload</button>
-            </div>
+          <div class="note strong hidden" id="dashboardEmptyGuide">
+            Start by uploading SDTM source data. Specs are best when available; reference ADaM is only for output review and comparison.
           </div>
-          <div class="operation-banner" id="operationBanner">
-            <div class="operation-head">
-              <div>
-                <span class="operation-title" id="operationTitle">Ready for study setup</span>
-                <div class="muted" id="operationDetail">No long-running operation is active.</div>
+          <div class="command-center-grid">
+            <div class="active-dataset-panel" id="activeDatasetPanel">
+              <div class="active-dataset-head">
+                <div>
+                  <span class="status-label" data-i18n="currentDataset">Current Dataset</span>
+                  <span class="active-dataset-title" id="activeDatasetTitle">No dataset selected</span>
+                  <div class="muted" id="activeDatasetSubtitle"></div>
+                </div>
+                <span class="pill warn" id="activeDatasetStatus">waiting</span>
               </div>
-              <span class="pill" id="operationStatus">idle</span>
-            </div>
-            <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
-          </div>
-          <div class="study-progress-panel" id="studyProgressPanel">
-            <div class="study-progress-head">
-              <div>
-                <span class="status-label">Study Progress</span>
-                <span class="study-progress-title" id="studyProgressTitle">No study loaded</span>
-                <div class="muted" id="studyProgressDetail">Load demo data or upload study files to start.</div>
+              <div class="active-dataset-body" id="activeDatasetBody">
+                <div class="muted">No active dataset yet.</div>
               </div>
-              <span class="pill warn" id="studyNextAction">setup</span>
             </div>
-            <div class="study-progress-steps" id="studyProgressSteps"></div>
-          </div>
-          <div class="review-queue-panel" id="humanReviewQueuePanel">
-            <div class="review-queue-head">
-              <div>
-                <span class="status-label">Human Review Queue</span>
-                <span class="review-queue-title" id="humanReviewQueueTitle">No open review gate</span>
-                <div class="muted" id="humanReviewQueueDetail">Graph review gates will appear here when the workflow needs a human decision.</div>
+            <div class="command-action-stack">
+              <div class="next-action-panel" id="primaryNextActionPanel">
+                <div>
+                  <span class="next-action-eyebrow" data-i18n="nextStep">Next Step</span>
+                  <div class="next-action-title" id="primaryNextActionTitle">Start by uploading your study files</div>
+                  <div class="next-action-detail" id="primaryNextActionDetail"></div>
+                </div>
+                <div class="next-action-buttons" id="primaryNextActionButtons">
+                  <button data-primary-action="startUpload" type="button">Start Upload</button>
+                </div>
               </div>
-              <span class="pill" id="humanReviewQueueStatus">clear</span>
-            </div>
-            <div class="review-queue-list" id="humanReviewQueueList"></div>
-          </div>
-          <div class="study-loop-panel" id="studyLoopResultPanel">
-            <div class="study-loop-head">
-              <div>
-                <span class="status-label">Study Loop Result</span>
-                <span class="study-loop-title" id="studyLoopResultTitle">No batch start yet</span>
-                <div class="muted" id="studyLoopResultDetail">Start Runnable Datasets will show which datasets moved to review gates and which stayed blocked.</div>
+              <div class="operation-banner" id="operationBanner">
+                <div class="operation-head">
+                  <div>
+                    <span class="operation-title" id="operationTitle">Ready for study setup</span>
+                    <div class="muted" id="operationDetail"></div>
+                  </div>
+                  <span class="pill" id="operationStatus">idle</span>
+                </div>
+                <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
               </div>
-              <span class="pill" id="studyLoopResultStatus">idle</span>
-            </div>
-            <div class="study-loop-list" id="studyLoopResultList"></div>
-          </div>
-          <div class="metric-grid">
-            <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
-            <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
-            <div class="metric"><span class="metric-value" id="metricRunnable">0</span><span class="metric-label">runnable now</span></div>
-            <div class="metric"><span class="metric-value" id="metricBlocked">0</span><span class="metric-label">blocked</span></div>
-          </div>
-          <div class="grid2">
-            <div>
-              <h3>Dependency Map</h3>
-              <div id="dependencyGraph" class="graph-canvas"><div class="muted">Load inputs to build the study graph.</div></div>
-            </div>
-            <div>
-              <h3>Dataset Execution Cards</h3>
-              <div id="datasetBoard" class="dataset-board"><div class="muted">No dataset selected yet.</div></div>
             </div>
           </div>
-          <div class="agent-audit-panel" id="agentAuditPanel">
-            <div class="agent-audit-head">
-              <div>
-                <div class="status-label">Agent Audit</div>
-                <div class="agent-audit-title" id="agentAuditTitle">No graph decisions yet</div>
-                <div class="muted" id="agentAuditDetail">Agent decisions appear after dependency planning or dataset actions.</div>
-              </div>
-              <span class="pill warn" id="agentAuditStatus">waiting</span>
+          <div id="dashboardRuntimePanels" class="hidden">
+            <div class="dashboard-current-panel focus-panel hidden" id="dashboardCurrentPanel" aria-hidden="true"></div>
+            <div class="metric-grid compact-metrics hidden" id="metricGrid">
+              <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
+              <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
+              <div class="metric"><span class="metric-value" id="metricRunnable">0</span><span class="metric-label">runnable now</span></div>
+              <div class="metric"><span class="metric-value" id="metricBlocked">0</span><span class="metric-label">blocked</span></div>
             </div>
-            <div class="agent-audit-grid" id="agentAuditGrid"></div>
-            <div class="agent-trace-list" id="agentNodeTrace"></div>
-            <div class="note" id="agentAuditRiskNote">No agent risk flags yet.</div>
           </div>
+          <span class="sr-only">Study Dashboard</span>
         </div>
       </section>
 
-      <section>
+      <section id="studySetupSection" class="hidden">
         <div class="section-head">
-          <h2>Start A Study</h2>
+          <h2 data-i18n="startStudy">Start A Study</h2>
           <span class="pill warn" id="workspaceStatus">not started</span>
         </div>
         <div class="section-body">
-          <div class="grid2">
-            <div class="card choice-card" id="demoChoice">
-              <h3>Try With Shiny Demo Data</h3>
-              <p class="muted">Loads AE, DM, EX as SDTM; ads_adsl_full and ads_adae_full as specs; ADSL and ADAE as reference outputs.</p>
-              <div class="button-row"><button id="createDemoButton">Load Demo</button></div>
+          <div class="setup-actions">
+            <div class="setup-action-card choice-card" id="uploadChoice">
+              <div>
+              <h3 data-i18n="uploadEvidence">Upload Study Evidence</h3>
+              <p class="muted"></p>
+              </div>
+              <button id="startUploadButton" data-i18n="startUpload">Start Upload</button>
             </div>
-            <div class="card choice-card" id="uploadChoice">
-              <h3>Use My Study Files</h3>
-              <p class="muted">Creates a local working folder automatically. You only choose file roles; technical paths stay hidden.</p>
-              <div class="button-row"><button class="secondary" id="startUploadButton">Start Upload</button></div>
+            <div class="demo-inline-action" id="demoChoice">
+              <div><strong>Want to explore first?</strong> Load a small Shiny sample study to see the workflow. This is not the normal production entry.</div>
+              <button class="secondary" id="createDemoButton" data-i18n="tryDemo">Try Sample Demo</button>
             </div>
           </div>
-          <p class="note" id="workspaceMessage">Choose one path to begin. The app will organize files into the backend structure automatically.</p>
+          <p class="note hidden" id="workspaceMessage"></p>
 
-          <div id="uploadPanel" class="hidden">
-            <div class="grid5">
+          <div id="uploadPanel" class="upload-panel hidden">
+            <div class="upload-grid">
               <div class="card drop-card">
-                <h3>SDTM Source Data</h3>
-                <p class="muted">Examples: dm.csv, ae.csv, ex.csv.</p>
+                <h3 data-i18n="sdtmSource">SDTM Source Data</h3>
+                <p class="muted">Required runtime input. CSV and SAS7BDAT can be recognized.</p>
                 <input id="uploadSdtm" type="file" multiple>
-                <button data-upload-role="sdtm">Upload SDTM</button>
+                <button data-upload-role="sdtm" data-i18n="uploadSdtm">Upload SDTM</button>
                 <div class="file-meta" id="uploadStatusSdtm"></div>
               </div>
               <div class="card drop-card">
-                <h3>ADaM Specs</h3>
-                <p class="muted">Examples: ads_adsl_full.csv, ads_adae_full.csv.</p>
+                <h3 data-i18n="adamSpecs">ADaM Specs</h3>
+                <p class="muted">Best source for derivation instructions. If missing, a draft spec review gate is required.</p>
                 <input id="uploadSpec" type="file" multiple>
-                <button data-upload-role="spec">Upload Specs</button>
+                <button data-upload-role="spec" data-i18n="uploadSpecs">Upload Specs</button>
                 <div class="file-meta" id="uploadStatusSpec"></div>
               </div>
               <div class="card drop-card">
-                <h3>Reference ADaM</h3>
-            <p class="muted">Existing ADaM for compare/output-shape evidence only.</p>
+                <h3 data-i18n="referenceAdam">Reference ADaM</h3>
+                <p class="muted">Existing ADaM for compare/output-shape evidence only.</p>
                 <input id="uploadReference" type="file" multiple>
-                <button data-upload-role="reference">Upload Reference ADaM</button>
+                <button data-upload-role="reference" data-i18n="uploadReference">Upload Reference ADaM</button>
                 <div class="file-meta" id="uploadStatusReference"></div>
               </div>
               <div class="card drop-card">
-                <h3>Define</h3>
+                <h3 data-i18n="define">Define</h3>
                 <p class="muted">define.xml or related metadata evidence.</p>
                 <input id="uploadDefine" type="file" multiple>
-                <button data-upload-role="define">Upload Define</button>
+                <button data-upload-role="define" data-i18n="uploadDefine">Upload Define</button>
                 <div class="file-meta" id="uploadStatusDefine"></div>
               </div>
               <div class="card drop-card">
-                <h3>Legacy Code</h3>
+                <h3 data-i18n="legacyCode">Legacy Code</h3>
                 <p class="muted">SAS/R programs used as lineage evidence.</p>
                 <input id="uploadLegacy" type="file" multiple>
-                <button data-upload-role="legacy">Upload Legacy Code</button>
+                <button data-upload-role="legacy" data-i18n="uploadLegacy">Upload Legacy Code</button>
                 <div class="file-meta" id="uploadStatusLegacy"></div>
               </div>
             </div>
-            <p class="note warn" style="margin-top:12px;">Reference ADaM is used for compare/output-shape evidence only. It is not derivation authority and does not override user specs.</p>
+            <p class="optional-evidence-note hidden">Reference ADaM is used for compare/output-shape evidence only. It is not derivation authority and does not override user specs.</p>
           </div>
         </div>
       </section>
 
-      <section>
+      <section id="recognizedEvidenceSection" class="hidden">
         <div class="section-head">
-          <h2>Recognized Inputs</h2>
+          <h2 data-i18n="recognizedEvidence">Recognized Evidence</h2>
           <span class="muted" id="inputSummaryLine">Nothing scanned yet.</span>
         </div>
         <div class="section-body">
-          <div class="grid5">
-            <div class="card"><h3>SDTM</h3><div id="sdtmFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
-            <div class="card"><h3>Specs</h3><div id="specFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
-            <div class="card"><h3>Reference ADaM</h3><div id="referenceFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
-            <div class="card"><h3>Define</h3><div id="defineFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
-            <div class="card"><h3>Legacy Code</h3><div id="legacyFiles" class="file-list"><div class="muted">No files yet.</div></div></div>
+          <div id="inputProfile" class="input-profile">
+            <div class="note">No evidence yet.</div>
           </div>
-          <div id="inputWarnings" class="note" style="margin-top: 12px;">No warnings yet.</div>
+          <div id="inputEvidenceNotes" class="note hidden" style="margin-top: 12px;"></div>
+          <div id="inputWarnings" class="note hidden" style="margin-top: 12px;"></div>
+          <details class="evidence-details" id="evidenceDetails">
+            <summary><span data-i18n="showRecognizedFiles">Show recognized files</span> <span id="evidenceDetailsSummary">No files yet.</span></summary>
+            <div id="evidenceCards" class="evidence-grid compact">
+              <div class="note">No study evidence recognized yet.</div>
+            </div>
+          </details>
         </div>
       </section>
 
-      <section>
+      <section id="chooseOutputSection" class="hidden">
         <div class="section-head">
-          <h2>Choose Output</h2>
+          <h2 data-i18n="chooseOutput">Choose Output</h2>
           <span id="planStatus" class="pill warn">waiting</span>
         </div>
         <div class="section-body">
-          <p class="note">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panels below; study-level start can move all runnable datasets to their review gates without running R.</p>
+          <p class="note quiet-helper">Select one or more ADaM datasets to plan together. The active dataset is the one shown in the review/code panel; study-level start can move all runnable datasets to their review gates without running R.</p>
           <div class="button-row" id="targetButtons"></div>
-          <div id="targetSelectionSummary" class="target-selection-summary">No planning target selected yet.</div>
+          <div id="targetSelectionSummary" class="target-selection-summary">No target selected.</div>
           <div class="grid2" style="margin-top:12px;">
             <div class="field">
-              <label for="manualTarget">Add another ADaM target</label>
+              <label for="manualTarget" data-i18n="addTarget">Add another ADaM target</label>
               <input id="manualTarget" placeholder="Example: ADLB, ADCM, ADSL">
             </div>
             <div class="field">
               <label>&nbsp;</label>
-              <button class="secondary" id="addTargetButton">Add Target</button>
+              <button class="secondary" id="addTargetButton" data-i18n="addTargetButton">Add Target</button>
             </div>
           </div>
           <div id="planView" class="note">Load inputs first, then choose a target.</div>
           <div class="button-row">
-            <button class="secondary" id="finalizeInputsButton" disabled>Finalize Inputs / Draft Spec</button>
-            <button class="secondary" id="startStudyLoopButton" disabled>Start Runnable Datasets</button>
-            <button class="secondary" id="approveDraftSpecButton" disabled>Approve Draft Spec</button>
+            <button class="secondary" id="finalizeInputsButton" disabled data-i18n="finalizeInputs">Finalize Inputs / Draft Spec</button>
+            <button class="secondary" id="startStudyLoopButton" disabled data-i18n="startRunnable">Start Runnable Datasets</button>
           </div>
           <div id="specActionHints" class="action-hints"></div>
           <div id="draftSpecPane" class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</div>
+          <div class="button-row">
+            <button class="secondary" id="approveDraftSpecButton" disabled data-i18n="approveDraftSpec">Approve Draft Spec</button>
+          </div>
         </div>
       </section>
 
-      <section>
+      <section id="generateRunSection" class="hidden">
         <div class="section-head">
-          <h2>Generate, Review, Run</h2>
+          <h2 data-i18n="generateReviewRun">Generate, Review, Run</h2>
           <span id="codeStatus" class="pill warn">not generated</span>
         </div>
         <div class="section-body">
           <div class="button-row">
-            <button id="generateCodeButton" disabled>Generate R Code</button>
-            <button id="approveButton" disabled>Approve Code</button>
-            <button id="runApprovedButton" disabled>Run Approved Code</button>
+            <button id="generateCodeButton" disabled data-i18n="generateRCode">Generate R Code</button>
+            <button id="approveButton" disabled data-i18n="approveCode">Approve Code</button>
+            <button id="runApprovedButton" disabled data-i18n="runApprovedCode">Run Approved Code</button>
           </div>
           <div id="generationActionHints" class="action-hints"></div>
           <p class="note">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
           <div class="tabs">
-            <button class="tab active" data-view="summary">Summary</button>
-            <button class="tab" data-view="code">R Code</button>
-            <button class="tab" data-view="risk">Assumptions & Risks</button>
-            <button class="tab" data-view="output">Generated ADaM</button>
-            <button class="tab" data-view="timeline">Audit Timeline</button>
+            <button class="tab active" data-view="summary" data-i18n="summary">Summary</button>
+            <button class="tab" data-view="code" data-i18n="rCode">R Code</button>
+            <button class="tab" data-view="risk" data-i18n="risks">Assumptions & Risks</button>
+            <button class="tab" data-view="output" data-i18n="generatedAdam">Generated ADaM</button>
+            <button class="tab" data-view="timeline" data-i18n="auditTimeline">Audit Timeline</button>
           </div>
           <div id="reviewPane"><p class="note">No code generated yet.</p></div>
           <details>
-            <summary>Advanced setup and audit files (usually not needed)</summary>
-            <p class="note">Use this panel only when changing the LLM provider, troubleshooting local R, or inspecting audit file locations. The normal flow above does not require editing these technical fields.</p>
+            <summary data-i18n="advancedSetup">Advanced setup and audit files (usually not needed)</summary>
+            <p class="note">Use this panel only when troubleshooting local R or inspecting audit file locations. LLM provider settings are in the top LLM Config panel.</p>
             <div class="grid3" style="margin-top:12px;">
               <div class="field">
                 <label for="studyDir">Study folder</label>
@@ -1395,47 +2167,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="field">
                 <label for="configPath">Pipeline config file</label>
                 <input id="configPath" value="studies\\_template\\configs\\mock_downstream.json">
-                <div class="field-help">Developer fallback config. Browser provider settings below override model calls.</div>
-              </div>
-              <div class="field">
-                <label for="modelMode">Model mode</label>
-                <select id="modelMode">
-                  <option value="mock">Mock / offline</option>
-                  <option value="real">Real LLM API</option>
-                </select>
-                <div class="field-help">Mock is for UI/pipeline checks; Real calls your selected API.</div>
-              </div>
-              <div class="field">
-                <label for="llmProvider">Provider</label>
-                <select id="llmProvider">
-                  <option value="openai-compatible">OpenAI-compatible</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic / Claude</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="qwen">Qwen</option>
-                </select>
-                <div class="field-help">Choose OpenAI-compatible for local relays or API gateways.</div>
-              </div>
-              <div class="field">
-                <label for="llmModel">Model</label>
-                <input id="llmModel" value="gpt-5.5">
-                <div class="field-help">Model name sent to the selected provider.</div>
-              </div>
-              <div class="field">
-                <label for="llmBaseUrl">Base URL</label>
-                <input id="llmBaseUrl" placeholder="Optional, for a relay or compatible endpoint">
-                <div class="field-help">Only needed for a relay, local server, or non-default endpoint.</div>
-              </div>
-              <div class="field">
-                <label for="llmApiKey">API key</label>
-                <input id="llmApiKey" type="password" placeholder="Used for this browser request only">
-                <div class="field-help">Kept in this browser form; not saved as a study artifact.</div>
-              </div>
-              <div class="field">
-                <label>&nbsp;</label>
-                <label><input id="llmAllowExternal" type="checkbox"> allow external API for demo data</label>
-                <button class="secondary" id="testLlmButton" type="button">Test Connection</button>
-                <div class="field-help">Required before sending demo-data context to an external API.</div>
+                <div class="field-help">Developer fallback config. The top LLM Config panel controls model calls.</div>
               </div>
               <div class="field">
                 <label for="rscriptPath">Local Rscript executable</label>
@@ -1453,15 +2185,297 @@ INDEX_HTML = r"""<!doctype html>
                 <div class="field-help">Short approval note saved to the audit trail.</div>
               </div>
             </div>
-            <div id="llmStatus" class="note">Mock mode is active. No external LLM call will be made unless Real LLM API is selected.</div>
             <div id="advancedPane" class="note">Audit artifacts appear after a run.</div>
           </details>
         </div>
       </section>
+      <div class="sticky-action-bar" id="stickyNextActionBar">
+        <div>
+          <span class="status-label" data-i18n="nextStep">Next Step</span>
+          <span class="sticky-action-title" id="stickyNextActionTitle">Start by uploading your study files</span>
+          <div class="sticky-action-detail" id="stickyNextActionDetail"></div>
+        </div>
+        <div class="sticky-action-buttons" id="stickyNextActionButtons">
+          <button data-primary-action="startUpload" type="button" data-i18n="startUpload">Start Upload</button>
+        </div>
+      </div>
     </div>
+
+    <aside class="inspector-rail hidden" id="inspectorRail">
+      <div class="inspector-title">
+        <div>
+          <span class="status-label" data-i18n="runContext">Run Context</span>
+          <strong data-i18n="studyDashboard">Study Dashboard</strong>
+        </div>
+        <span class="pill warn" id="inspectorStatus">waiting</span>
+      </div>
+      <div class="inspector-empty" id="inspectorEmptyGuide">
+        <strong>No dataset selected</strong>
+        Waiting for a target.
+      </div>
+      <div id="dependencyPanel" class="hidden">
+        <h3>Why this dataset is waiting</h3>
+        <div class="panel-kicker">Plain-language dependency explanation from the current graph plan. Reference ADaM is comparison evidence only.</div>
+        <div id="dependencyGraph" class="graph-canvas"><div class="muted">Load inputs to build the study graph.</div></div>
+      </div>
+      <details class="dashboard-audit-details hidden" id="advancedRunAudit">
+        <summary>Advanced run audit <span>Study loop status, agent decisions, graph traces, and risk flags</span></summary>
+        <div class="study-loop-panel" id="studyLoopResultPanel">
+          <div class="study-loop-head">
+            <div>
+              <span class="status-label">Study Loop Result</span>
+              <span class="study-loop-title" id="studyLoopResultTitle">No batch start yet</span>
+              <div class="muted" id="studyLoopResultDetail">Start Runnable Datasets will show which datasets moved to review gates and which stayed blocked.</div>
+            </div>
+            <span class="pill" id="studyLoopResultStatus">idle</span>
+          </div>
+          <div class="study-loop-list" id="studyLoopResultList"></div>
+        </div>
+        <div class="agent-audit-panel" id="agentAuditPanel">
+          <div class="agent-audit-head">
+            <div>
+              <div class="status-label">Agent Audit</div>
+              <div class="agent-audit-title" id="agentAuditTitle">No graph decisions yet</div>
+              <div class="muted" id="agentAuditDetail">Agent decisions appear after dependency planning or dataset actions.</div>
+            </div>
+            <span class="pill warn" id="agentAuditStatus">waiting</span>
+          </div>
+          <div class="agent-audit-grid" id="agentAuditGrid"></div>
+          <div class="agent-trace-list" id="agentNodeTrace"></div>
+          <div class="note" id="agentAuditRiskNote">No agent risk flags yet.</div>
+        </div>
+      </details>
+    </aside>
   </main>
 
+  <div class="modal-backdrop hidden" id="llmSettingsModal" role="dialog" aria-modal="true" aria-labelledby="llmSettingsTitle">
+    <div class="settings-modal">
+      <div class="settings-modal-head">
+        <div>
+          <h2 id="llmSettingsTitle">LLM Configuration</h2>
+          <div class="muted">Change provider settings only when you are ready to use a real model or test a relay endpoint.</div>
+        </div>
+        <button class="secondary" id="closeLlmSettingsButton" type="button">Close</button>
+      </div>
+      <div class="settings-modal-body">
+        <div class="settings-group">
+          <h3>Model Access</h3>
+          <div class="grid3">
+            <div class="field">
+              <label for="modelMode">Model mode</label>
+              <select id="modelMode">
+                <option value="mock">Mock / offline</option>
+                <option value="real">Real LLM API</option>
+              </select>
+              <div class="field-help">Mock is for UI/pipeline checks; Real calls your selected API.</div>
+            </div>
+            <div class="field">
+              <label for="llmProvider">Provider</label>
+              <select id="llmProvider">
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic / Claude</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="qwen">Qwen</option>
+              </select>
+              <div class="field-help">Choose OpenAI-compatible for local relays or API gateways.</div>
+            </div>
+            <div class="field">
+              <label for="llmModel">Model</label>
+              <input id="llmModel" value="gpt-5.5">
+              <div class="field-help">Model name sent to the selected provider.</div>
+            </div>
+          </div>
+          <div class="grid3">
+            <div class="field">
+              <label for="llmBaseUrl">Base URL</label>
+              <input id="llmBaseUrl" placeholder="Optional, for a relay or compatible endpoint">
+              <div class="field-help">Only needed for a relay, local server, or non-default endpoint.</div>
+            </div>
+            <div class="field">
+              <label for="llmApiKey">API key</label>
+              <input id="llmApiKey" type="password" placeholder="Used for this browser request only">
+              <div class="field-help">Kept in this browser form; not saved as a study artifact.</div>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label><input id="llmAllowExternal" type="checkbox"> allow external API for demo data</label>
+              <button class="secondary" id="testLlmButton" type="button">Test Connection</button>
+              <div class="field-help">Required before sending demo-data context to an external API.</div>
+            </div>
+          </div>
+          <div id="llmStatus" class="note">Mock mode is active. No external LLM call will be made unless Real LLM API is selected.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
+    const I18N = {
+      en: {
+        llmConfig: 'LLM Config',
+        currentStatus: 'Current Status',
+        now: 'Now',
+        study: 'Study',
+        target: 'Target',
+        next: 'Next',
+        workflow: 'Workflow',
+        datasetQueue: 'Dataset Queue',
+        humanReviewQueue: 'Human Review Queue',
+        currentWork: 'Current Work',
+        currentDataset: 'Current Dataset',
+        nextStep: 'Next Step',
+        startStudy: 'Start A Study',
+        uploadEvidence: 'Upload Study Evidence',
+        startUpload: 'Start Upload',
+        tryDemo: 'Try Sample Demo',
+        sdtmSource: 'SDTM Source Data',
+        uploadSdtm: 'Upload SDTM',
+        adamSpecs: 'ADaM Specs',
+        uploadSpecs: 'Upload Specs',
+        referenceAdam: 'Reference ADaM',
+        uploadReference: 'Upload Reference ADaM',
+        define: 'Define',
+        uploadDefine: 'Upload Define',
+        legacyCode: 'Legacy Code',
+        uploadLegacy: 'Upload Legacy Code',
+        recognizedEvidence: 'Recognized Evidence',
+        showRecognizedFiles: 'Show recognized files',
+        chooseOutput: 'Choose Output',
+        addTarget: 'Add another ADaM target',
+        addTargetButton: 'Add Target',
+        finalizeInputs: 'Finalize Inputs / Draft Spec',
+        startRunnable: 'Start Runnable Datasets',
+        approveDraftSpec: 'Approve Draft Spec',
+        generateReviewRun: 'Generate, Review, Run',
+        generateRCode: 'Generate R Code',
+        approveCode: 'Approve Code',
+        runApprovedCode: 'Run Approved Code',
+        summary: 'Summary',
+        rCode: 'R Code',
+        risks: 'Assumptions & Risks',
+        generatedAdam: 'Generated ADaM',
+        auditTimeline: 'Audit Timeline',
+        advancedSetup: 'Advanced setup and audit files (usually not needed)',
+        runContext: 'Run Context',
+        studyDashboard: 'Study Dashboard'
+      },
+      zh: {
+        llmConfig: '模型设置',
+        currentStatus: '当前状态',
+        now: '当前',
+        study: '研究',
+        target: '目标',
+        next: '下一步',
+        workflow: '流程',
+        datasetQueue: '数据集队列',
+        humanReviewQueue: '人工审核队列',
+        currentWork: '当前任务',
+        currentDataset: '当前数据集',
+        nextStep: '下一步',
+        startStudy: '开始研究',
+        uploadEvidence: '上传研究材料',
+        startUpload: '开始上传',
+        tryDemo: '试用示例',
+        sdtmSource: 'SDTM 源数据',
+        uploadSdtm: '上传 SDTM',
+        adamSpecs: 'ADaM Spec',
+        uploadSpecs: '上传 Spec',
+        referenceAdam: '参考 ADaM',
+        uploadReference: '上传参考 ADaM',
+        define: 'Define',
+        uploadDefine: '上传 Define',
+        legacyCode: '历史程序',
+        uploadLegacy: '上传历史程序',
+        recognizedEvidence: '已识别材料',
+        showRecognizedFiles: '查看文件明细',
+        chooseOutput: '选择输出',
+        addTarget: '添加 ADaM 目标',
+        addTargetButton: '添加目标',
+        finalizeInputs: '确认输入 / Draft Spec',
+        startRunnable: '启动可运行数据集',
+        approveDraftSpec: '批准 Draft Spec',
+        generateReviewRun: '生成 / 审核 / 运行',
+        generateRCode: '生成 R 代码',
+        approveCode: '批准代码',
+        runApprovedCode: '运行已批准代码',
+        summary: '摘要',
+        rCode: 'R 代码',
+        risks: '假设与风险',
+        generatedAdam: '生成的 ADaM',
+        auditTimeline: '审计时间线',
+        advancedSetup: '高级设置和审计文件（通常不用）',
+        runContext: '运行上下文',
+        studyDashboard: '研究面板'
+      }
+    };
+    const TEXT_I18N = {
+      zh: {
+        'Mock LLM': 'Mock 模型',
+        'Real LLM': '真实模型',
+        'Checking API...': '检查 API...',
+        'API ready': 'API 就绪',
+        'unavailable': '不可用',
+        'Not loaded': '未加载',
+        'None': '无',
+        'Setup': '设置',
+        'setup': '设置',
+        'waiting': '等待',
+        'not started': '未开始',
+        'No study loaded': '未加载研究',
+        'Load or upload study evidence.': '加载或上传研究材料。',
+        'No dataset selected': '未选择数据集',
+        'Select an output.': '请选择输出。',
+        'Start by uploading your study files': '先上传研究文件',
+        'Start Upload': '开始上传',
+        'Try Sample Demo': '试用示例',
+        'Prepare Plan': '准备计划',
+        'Finalize Inputs / Draft Spec': '确认输入 / Draft Spec',
+        'Approve Dependency Plan': '批准依赖计划',
+        'Reject Dependency Plan': '拒绝依赖计划',
+        'Approve Draft Spec': '批准 Draft Spec',
+        'Reject Draft Spec': '拒绝 Draft Spec',
+        'Start Runnable Datasets': '启动可运行数据集',
+        'Generate R Code': '生成 R 代码',
+        'Generate Revised Draft Spec': '重新生成 Draft Spec',
+        'Approve Code': '批准代码',
+        'Run Approved Code': '运行已批准代码',
+        'Review Failure': '审核失败',
+        'Retry Run': '重试运行',
+        'Show Results': '查看结果',
+        'Run Compare': '运行对比',
+        'Run Compare Again': '再次运行对比',
+        'Show Draft Spec': '查看 Draft Spec',
+        'Show Review Queue': '查看审核队列',
+        'Refresh Progress': '刷新进度',
+        'No target selected.': '未选择目标。',
+        'No files yet.': '暂无文件。',
+        'Nothing scanned yet.': '尚未扫描。',
+        'No evidence yet.': '暂无材料。',
+        'Waiting for a target.': '等待选择目标。',
+        'No dataset selected yet.': '尚未选择数据集。',
+        'idle': '空闲',
+        'ready': '就绪',
+        'review': '审核',
+        'blocked': '阻塞',
+        'completed': '完成',
+        'failed': '失败',
+        'not generated': '未生成',
+        'Input': '输入',
+        'Inputs': '输入',
+        'Plan': '计划',
+        'Spec': 'Spec',
+        'Code Review': '代码审核',
+        'Run': '运行',
+        'not loaded': '未加载',
+        'not prepared': '未准备',
+        'choose target': '选择目标',
+        'Load or upload study evidence': '加载或上传研究材料'
+      }
+    };
+    const LANGUAGE_STORAGE_KEY = 'adam_agent_studio_language_v1';
+    let currentLanguage = readLanguagePreference();
+
     const state = {
       studyId: null,
       inputSummary: null,
@@ -1479,6 +2493,7 @@ INDEX_HTML = r"""<!doctype html>
       draftSpecReviewByDataset: {},
       finalizedInputsByDataset: {},
       runReview: null,
+      runReviewDetailLevel: null,
       selectedTarget: null,
       selectedTargetsForPlan: [],
       targetCandidates: [],
@@ -1513,6 +2528,98 @@ INDEX_HTML = r"""<!doctype html>
     };
     const byId = (id) => document.getElementById(id);
 
+    function readLanguagePreference() {
+      try {
+        const value = window.localStorage?.getItem(LANGUAGE_STORAGE_KEY);
+        return value === 'en' || value === 'zh' ? value : 'zh';
+      } catch {
+        return 'zh';
+      }
+    }
+
+    function setLanguage(lang) {
+      currentLanguage = lang === 'en' ? 'en' : 'zh';
+      try {
+        window.localStorage?.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
+      } catch {
+        // Language preference is optional browser state.
+      }
+      renderGraphAwareDashboard();
+      applyI18n();
+    }
+
+    function t(key) {
+      return I18N[currentLanguage]?.[key] || I18N.en[key] || key;
+    }
+
+    function tt(text) {
+      const value = String(text ?? '');
+      if (currentLanguage === 'en') return value;
+      return TEXT_I18N[currentLanguage]?.[value] || value;
+    }
+
+    function applyI18n() {
+      if (document.documentElement) {
+        document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
+      }
+      for (const node of safeQuerySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n);
+      }
+      for (const button of safeQuerySelectorAll('[data-lang-option]')) {
+        if (button.classList?.toggle) {
+          button.classList.toggle('active', button.dataset.langOption === currentLanguage);
+        }
+      }
+      translateVisibleText();
+    }
+
+    function safeQuerySelectorAll(selector) {
+      return document.querySelectorAll ? document.querySelectorAll(selector) : [];
+    }
+
+    function translateVisibleText() {
+      if (currentLanguage === 'en') return;
+      const simpleIds = [
+        'llmModeChip',
+        'health',
+        'headerOperation',
+        'headerStudy',
+        'headerTarget',
+        'headerNextAction',
+        'sideWorkflowTarget',
+        'sideWorkflowDetail',
+        'sideWorkflowStatus',
+        'sideWorkflowSteps',
+        'graphStatus',
+        'activeDatasetTitle',
+        'activeDatasetStatus',
+        'activeDatasetBody',
+        'primaryNextActionTitle',
+        'operationStatus',
+        'workspaceStatus',
+        'inputSummaryLine',
+        'evidenceDetailsSummary',
+        'targetSelectionSummary',
+        'planStatus',
+        'codeStatus',
+        'inspectorStatus',
+        'inspectorEmptyGuide'
+      ];
+      for (const id of simpleIds) translateNodeText(byId(id));
+    }
+
+    function translateNodeText(node) {
+      if (!node) return;
+      if (!node.children?.length) {
+        node.textContent = tt(node.textContent);
+        return;
+      }
+      for (const child of node.childNodes || []) {
+        if (child.nodeType === 3) child.textContent = tt(child.textContent);
+      }
+      for (const child of node.children || []) translateNodeText(child);
+    }
+
     function defaultRunId() {
       return `run_${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
     }
@@ -1539,6 +2646,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function setPill(id, status) {
       const node = byId(id);
+      if (!node) return;
       node.textContent = status;
       node.className = 'pill';
       if (['failed', 'blocked', 'error', 'not started', 'unavailable', 'diagnose'].includes(status)) node.classList.add('fail');
@@ -1578,7 +2686,7 @@ INDEX_HTML = r"""<!doctype html>
       const banner = byId('operationBanner');
       const statusNode = byId('operationStatus');
       byId('operationTitle').textContent = title;
-      byId('operationDetail').textContent = detail;
+      byId('operationDetail').textContent = detail || '';
       byId('headerOperation').textContent = title;
       statusNode.textContent = status;
       statusNode.className = 'pill';
@@ -1599,7 +2707,7 @@ INDEX_HTML = r"""<!doctype html>
       } else if (status === 'waiting') {
         statusNode.classList.add('warn');
       }
-      byId('globalStatusDetail').textContent = detail;
+      byId('globalStatusDetail').textContent = detail || '';
       updateHeaderStatusOverview();
     }
 
@@ -1667,6 +2775,67 @@ INDEX_HTML = r"""<!doctype html>
       return next;
     }
 
+    const SESSION_STORAGE_KEY = 'adam_agent_studio_session_v1';
+
+    function saveBrowserSession() {
+      if (!window.localStorage) return;
+      const payload = {
+        study_dir: studyDir(),
+        study_id: state.studyId,
+        run_id: byId('runId').value.trim(),
+        selected_target: state.selectedTarget,
+        selected_targets: selectedTargets(),
+        config_path: byId('configPath').value.trim(),
+        rscript_path: byId('rscriptPath').value.trim(),
+      };
+      if (!payload.study_dir && !payload.run_id) return;
+      try {
+        window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+      } catch {
+        // Browser storage is optional; graph state remains durable on the backend.
+      }
+    }
+
+    function readBrowserSession() {
+      if (!window.localStorage) return null;
+      try {
+        const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function restoreBrowserSession() {
+      const saved = readBrowserSession();
+      if (!saved?.study_dir || !saved?.run_id) return false;
+      byId('studyDir').value = saved.study_dir || '';
+      byId('runId').value = saved.run_id || '';
+      if (saved.config_path) byId('configPath').value = saved.config_path;
+      if (saved.rscript_path) byId('rscriptPath').value = saved.rscript_path;
+      state.studyId = saved.study_id || null;
+      state.selectedTarget = saved.selected_target || null;
+      state.selectedTargetsForPlan = Array.isArray(saved.selected_targets)
+        ? saved.selected_targets.map((target) => String(target || '').toUpperCase()).filter(Boolean)
+        : [];
+      if (state.selectedTarget) recordTargetSource(state.selectedTarget, 'browser_session');
+      beginOperation('Restoring last study', 'Reloading saved study inputs and graph progress from the local backend.');
+      try {
+        await scanInputs({restoreMode: true});
+        await refreshGraphReadModels();
+        if (runId()) await loadReviewSummary(runId(), {detailLevel: 'summary'});
+        completeOperation('Study restored', 'The browser reconnected to the saved local graph run.');
+        addEvent('Study restored', `${state.studyId || 'Local study'} / ${runId()} was restored after page refresh.`);
+        renderTargetButtons(state.targetCandidates || []);
+        renderGraphAwareDashboard();
+        renderActionAvailability();
+        return true;
+      } catch (error) {
+        failOperation('Study restore failed', error);
+        return false;
+      }
+    }
+
     function selectedTargets() {
       const selected = (state.selectedTargetsForPlan || [])
         .map((target) => String(target || '').toUpperCase())
@@ -1680,7 +2849,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function recordTargetSource(target, source) {
       const normalized = String(target || '').toUpperCase();
-      if (!normalized) return;
+      if (!isAdamDatasetToken(normalized)) return;
       const current = new Set(state.targetEvidenceSources?.[normalized] || []);
       current.add(source);
       state.targetEvidenceSources[normalized] = Array.from(current).sort();
@@ -1688,6 +2857,15 @@ INDEX_HTML = r"""<!doctype html>
 
     function targetSources(target) {
       return state.targetEvidenceSources?.[String(target || '').toUpperCase()] || [];
+    }
+
+    function isAdamDatasetToken(value) {
+      const raw = String(value || '').toUpperCase();
+      if (raw.includes('_')) return false;
+      const token = raw.replace(/[^A-Z0-9]/g, '');
+      if (!/^AD[A-Z0-9]{2,6}$/.test(token)) return false;
+      if (['ADAM', 'ADAMS', 'ADDATA', 'ADAMDATA', 'ADSLIB', 'ADVERSE'].includes(token)) return false;
+      return true;
     }
 
     function isReferenceOnlyTarget(target) {
@@ -1767,10 +2945,26 @@ INDEX_HTML = r"""<!doctype html>
       for (const id of ['llmProvider', 'llmModel', 'llmBaseUrl', 'llmApiKey', 'llmAllowExternal', 'testLlmButton']) {
         byId(id).disabled = !realMode;
       }
+      const chip = byId('llmModeChip');
+      if (chip) {
+        chip.textContent = realMode ? 'Real LLM' : 'Mock LLM';
+        chip.className = realMode ? 'llm-mode-chip real' : 'llm-mode-chip';
+      }
       byId('llmStatus').className = realMode ? 'note warn' : 'note';
       byId('llmStatus').textContent = realMode
         ? 'Real LLM mode is selected. Test the connection before generating code; the API key is used only for this browser request.'
         : 'Mock mode is active. No external LLM call will be made unless Real LLM API is selected.';
+    }
+
+    function openLlmSettings() {
+      const modal = byId('llmSettingsModal');
+      modal.classList.remove('hidden');
+      byId('modelMode').focus();
+    }
+
+    function closeLlmSettings() {
+      byId('llmSettingsModal').classList.add('hidden');
+      byId('openLlmSettingsButton').focus();
     }
 
     async function testLlmConnection() {
@@ -1810,9 +3004,7 @@ INDEX_HTML = r"""<!doctype html>
       try {
         const payload = await api('/health');
         setPill('health', payload.status === 'ok' ? 'API ready' : 'unavailable');
-        byId('globalStatusDetail').textContent = payload.status === 'ok'
-          ? 'Local API is running. Choose demo data or upload study files.'
-          : 'Local API responded but is not ready.';
+        byId('globalStatusDetail').textContent = payload.status === 'ok' ? '' : 'Local API responded but is not ready.';
         updateHeaderStatusOverview();
       } catch {
         setPill('health', 'unavailable');
@@ -1826,11 +3018,13 @@ INDEX_HTML = r"""<!doctype html>
       byId('uploadChoice').classList.add('active');
       byId('demoChoice').classList.remove('active');
       byId('workspaceMessage').textContent = 'Creating a local workspace...';
+      updateMainSectionVisibility();
       try {
         const payload = await api('/product-workspace', {method: 'POST'});
         applyWorkspacePayload(payload);
         state.inputSummary = payload.input_summary;
         renderInputSummary(payload.input_summary);
+        saveBrowserSession();
         addEvent('Workspace created', 'A local study workspace is ready for uploads.');
         setPill('workspaceStatus', 'ready');
         byId('workspaceMessage').textContent = 'Workspace ready. Upload SDTM and spec files by role.';
@@ -1849,11 +3043,13 @@ INDEX_HTML = r"""<!doctype html>
       byId('uploadChoice').classList.remove('active');
       byId('uploadPanel').classList.add('hidden');
       byId('workspaceMessage').textContent = 'Loading demo data...';
+      updateMainSectionVisibility();
       try {
         const payload = await api('/demo-study', {method: 'POST'});
         applyWorkspacePayload(payload);
         await scanInputs();
         autoSelectFirstTarget(inferTargets(state.inputSummary));
+        saveBrowserSession();
         addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
         setPill('workspaceStatus', 'ready');
         byId('workspaceMessage').textContent = 'Demo loaded. Files are already organized by role.';
@@ -1899,10 +3095,12 @@ INDEX_HTML = r"""<!doctype html>
         invalidateUiStateAfterInputChange(payload);
         await refreshGraphReadModels();
         renderInputSummary(payload.input_summary);
+        saveBrowserSession();
         addEvent(`${role} uploaded`, uploadDiffMessage(payload));
         byId(uploadStatus[role]).textContent = `${payload.saved_files.length} file(s) uploaded.`;
         byId('workspaceMessage').textContent = `Uploaded ${payload.saved_files.length} file(s). ${uploadDiffMessage(payload)}`;
         completeOperation(`${role} upload complete`, uploadDiffMessage(payload));
+        updateMainSectionVisibility();
         setStep(2);
       } catch (error) {
         byId(uploadStatus[role]).textContent = 'Upload failed.';
@@ -1934,7 +3132,8 @@ INDEX_HTML = r"""<!doctype html>
         invalidateUiStateAfterInputChange(payload);
         await refreshGraphReadModels();
         renderInputSummary(payload.input_summary);
-        await loadReviewSummary(runId());
+        if (runId()) await loadReviewSummary(runId(), {detailLevel: 'summary', refreshGraph: false});
+        saveBrowserSession();
         addEvent('Input file removed', `${normalizedFile} was removed. ${uploadDiffMessage(payload)}`);
         completeOperation('Input file removed', uploadDiffMessage(payload));
         renderDraftSpecPane();
@@ -1961,6 +3160,7 @@ INDEX_HTML = r"""<!doctype html>
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
       state.runReview = null;
+      state.runReviewDetailLevel = null;
       state.lastStudyLoopResult = null;
       state.selectedTargetsForPlan = [];
       state.tablePages = {};
@@ -1984,34 +3184,124 @@ INDEX_HTML = r"""<!doctype html>
       return `${payload.saved_files?.length || 0} file(s) added and inputs rescanned.${parts.length ? ` Input diff: ${parts.join(', ')}.` : ''}${touched}${skipped}`;
     }
 
-    async function scanInputs() {
+    async function scanInputs({restoreMode = false} = {}) {
       const payload = await api(`/study-inputs?study_dir=${encodeURIComponent(studyDir())}`);
       state.inputSummary = payload;
       renderInputSummary(payload);
-      addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
-      await refreshGraphReadModels();
+      if (!restoreMode) addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
+      if (byId('runId').value.trim()) await refreshGraphReadModels();
+      saveBrowserSession();
       return payload;
     }
 
     function renderInputSummary(summary) {
-      renderFiles('sdtmFiles', summary?.sdtm || []);
-      renderFiles('specFiles', summary?.specs || []);
-      renderFiles('referenceFiles', summary?.reference_adam || []);
-      renderFiles('defineFiles', summary?.define || []);
-      renderFiles('legacyFiles', summary?.legacy_code || []);
+      const inferredTargets = inferTargets(summary);
+      renderInputProfile(summary, inferredTargets);
+      renderEvidenceCards(summary);
       const sdtm = summary?.sdtm?.length || 0;
       const specs = summary?.specs?.length || 0;
       const refs = summary?.reference_adam?.length || 0;
       const define = summary?.define?.length || 0;
       const legacy = summary?.legacy_code?.length || 0;
-      byId('inputSummaryLine').textContent = `${sdtm} SDTM, ${specs} spec, ${refs} reference, ${define} define, ${legacy} legacy file(s) recognized.`;
+      const visible = [
+        sdtm ? `${sdtm} SDTM` : '',
+        specs ? `${specs} spec` : '',
+        refs ? `${refs} reference ADaM` : '',
+        define ? `${define} define` : '',
+        legacy ? `${legacy} legacy` : ''
+      ].filter(Boolean);
+      byId('inputSummaryLine').textContent = visible.length
+        ? `${visible.join(', ')}`
+        : 'None';
+      byId('evidenceDetailsSummary').textContent = visible.length ? visible.join(' | ') : 'No files yet.';
+      const evidenceNotes = inputEvidenceNotes(summary);
+      const notesNode = byId('inputEvidenceNotes');
+      notesNode.textContent = evidenceNotes.join(' ');
+      notesNode.classList.toggle('hidden', !evidenceNotes.length);
       const warnings = [...(summary?.warnings || []), ...((summary?.invalid_files || []).map(inputWarningText))];
-      byId('inputWarnings').textContent = warnings.length ? warnings.join(' ') : 'No input warnings.';
-      renderTargetButtons(inferTargets(summary));
+      const warningsNode = byId('inputWarnings');
+      warningsNode.textContent = warnings.join(' ');
+      warningsNode.classList.toggle('hidden', !warnings.length);
+      renderTargetButtons(inferredTargets);
       renderGraphAwareDashboard();
-      if (runId()) {
-        loadReviewSummary(runId());
+      const existingRunId = byId('runId').value.trim();
+      if (existingRunId) {
+        loadReviewSummary(existingRunId, {detailLevel: 'summary', refreshGraph: false});
       }
+    }
+
+    function renderInputProfile(summary, inferredTargets = []) {
+      const node = byId('inputProfile');
+      if (!node) return;
+      const groups = inputEvidenceGroups(summary);
+      const inputCount = groups.reduce((total, group) => total + group.files.length, 0);
+      if (!inputCount) {
+        node.innerHTML = '<div class="note">No evidence yet.</div>';
+        return;
+      }
+      const specCount = summary?.specs?.length || 0;
+      const referenceCount = summary?.reference_adam?.length || 0;
+      const rows = [
+        {
+          role: 'SDTM',
+          count: summary?.sdtm?.length || 0,
+          meaning: 'runtime source data',
+          status: (summary?.sdtm?.length || 0) ? 'ready' : 'missing',
+          tone: (summary?.sdtm?.length || 0) ? '' : 'warn'
+        },
+        {
+          role: 'ADaM Specs',
+          count: specCount,
+          meaning: specCount ? 'primary derivation instruction' : 'missing; draft spec review required',
+          status: specCount ? 'ready' : 'draft required',
+          tone: specCount ? '' : 'warn'
+        },
+        {
+          role: 'Reference ADaM',
+          count: referenceCount,
+          meaning: referenceCount ? 'compare only, not derivation authority' : 'not uploaded',
+          status: referenceCount ? 'compare only' : 'optional',
+          tone: referenceCount ? 'warn' : 'optional'
+        },
+        {
+          role: 'Define',
+          count: summary?.define?.length || 0,
+          meaning: 'metadata evidence for labels, domains, and variables',
+          status: (summary?.define?.length || 0) ? 'ready' : 'optional',
+          tone: (summary?.define?.length || 0) ? '' : 'optional'
+        },
+        {
+          role: 'Legacy Code',
+          count: summary?.legacy_code?.length || 0,
+          meaning: 'lineage evidence when uploaded specs are missing',
+          status: (summary?.legacy_code?.length || 0) ? 'ready' : 'optional',
+          tone: (summary?.legacy_code?.length || 0) ? '' : 'optional'
+        },
+        {
+          role: 'Target Candidates',
+          count: inferredTargets.length,
+          meaning: 'ADaM outputs inferred from spec, reference, or code names',
+          status: inferredTargets.length ? 'available' : 'none yet',
+          tone: inferredTargets.length ? '' : 'optional'
+        }
+      ];
+      node.innerHTML = `
+        <div class="evidence-summary-table">
+          <table>
+            <thead><tr><th>Role</th><th>Count</th><th>Meaning</th><th>Status</th></tr></thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>
+                  <td class="evidence-summary-role">${escapeHtml(row.role)}</td>
+                  <td>${escapeHtml(row.count)}</td>
+                  <td>${escapeHtml(row.meaning)}</td>
+                  <td><span class="evidence-summary-status ${escapeHtml(row.tone)}">${escapeHtml(row.status)}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
     function inputWarningText(item) {
@@ -2019,26 +3309,84 @@ INDEX_HTML = r"""<!doctype html>
       return `Skipped ${fileName}: ${item?.reason || 'unsupported input file'}`;
     }
 
-    function renderFiles(containerId, files) {
-      const node = byId(containerId);
-      if (!files || !files.length) {
-        node.innerHTML = '<div class="muted">No files found.</div>';
+    function renderEvidenceCards(summary) {
+      const node = byId('evidenceCards');
+      if (!node) return;
+      const groups = inputEvidenceGroups(summary).filter((group) => group.files.length);
+      if (!groups.length) {
+        node.innerHTML = '<div class="note">No study evidence recognized yet.</div>';
         return;
       }
+      node.innerHTML = groups.map((group) => `
+        <div class="evidence-card" data-evidence-role="${escapeHtml(group.role)}">
+          <h3>${escapeHtml(group.title)} <span class="pill">${group.files.length} file(s)</span></h3>
+          <div class="file-meta">${escapeHtml(group.description)}</div>
+          <div id="${escapeHtml(group.containerId)}" class="file-list">${renderFiles(group.containerId, group.files)}</div>
+        </div>
+      `).join('');
+      attachDeleteInputHandlers();
+    }
+
+    function inputEvidenceGroups(summary) {
+      return [
+        {containerId: 'sdtmFiles', role: 'sdtm', title: 'SDTM', files: summary?.sdtm || [], description: 'Source data used by the R runner.'},
+        {containerId: 'specFiles', role: 'spec', title: 'Specs', files: summary?.specs || [], description: 'Primary derivation instructions. Used before any generated draft spec.'},
+        {containerId: 'referenceFiles', role: 'reference', title: 'Reference ADaM', files: summary?.reference_adam || [], description: 'Comparison/output-shape evidence only. Not derivation authority.'},
+        {containerId: 'defineFiles', role: 'define', title: 'Define', files: summary?.define || [], description: 'Metadata evidence for labels, domains, and variables.'},
+        {containerId: 'legacyFiles', role: 'legacy', title: 'Legacy Code', files: summary?.legacy_code || [], description: 'Lineage evidence for draft specs when uploaded specs are missing.'}
+      ];
+    }
+
+    function inputEvidenceNotes(summary) {
+      const notes = [];
+      const inputCount =
+        (summary?.sdtm?.length || 0) +
+        (summary?.specs?.length || 0) +
+        (summary?.reference_adam?.length || 0) +
+        (summary?.define?.length || 0) +
+        (summary?.legacy_code?.length || 0);
+      if (!inputCount) return [];
+      if (!(summary?.specs || []).length) {
+        notes.push('No uploaded spec found. The graph can draft a spec from available evidence, but human review is required before code generation.');
+      }
+      if (!(summary?.reference_adam || []).length) {
+        notes.push('No reference ADaM uploaded. Final compare can be skipped or run later after reference evidence is added.');
+      } else {
+        notes.push('Reference ADaM is comparison evidence only, not derivation authority.');
+      }
+      if (!(summary?.define || []).length && !(summary?.legacy_code || []).length) {
+        notes.push('No define or legacy code uploaded. Draft spec generation will rely mostly on SDTM structure and available targets.');
+      }
+      return notes.length ? notes : ['Uploaded evidence is ready for target selection and planning.'];
+    }
+
+    function renderFiles(containerId, files) {
+      if (!files || !files.length) return '<div class="muted">No files found.</div>';
       const role = fileListRoles[containerId] || '';
-      node.innerHTML = files.map((file) => `
-        <div class="file-item">
+      return files.map((file) => `
+        <div class="file-item ${role === 'reference' ? 'reference-evidence' : ''}">
           <div class="file-title">
             <span>${escapeHtml(file.dataset || file.file_name)}</span>
             <span class="pill ${fileStatusPillClass(file)}">${escapeHtml(fileStatusLabel(file))}</span>
           </div>
+          <div class="file-meta"><strong>${escapeHtml(inputAuthorityLabel(role))}</strong></div>
           <div class="file-meta">${escapeHtml(file.file_name)} | ${escapeHtml(file.format)} | ${file.row_count ?? file.line_count ?? '-'} ${file.preview_type === 'code' || file.preview_type === 'text' ? 'lines' : 'rows'}</div>
           <div class="file-meta">${escapeHtml(fileSummary(file))}</div>
           ${file.text_preview ? `<div class="mini-pre">${escapeHtml(file.text_preview)}</div>` : ''}
           ${role ? `<div class="file-actions"><button class="secondary danger" data-delete-input-role="${escapeHtml(role)}" data-delete-input-file="${escapeHtml(file.file_name)}">Remove</button></div>` : ''}
         </div>
       `).join('');
-      attachDeleteInputHandlers();
+    }
+
+    function inputAuthorityLabel(role) {
+      const labels = {
+        sdtm: 'Source data. Used as runtime input.',
+        spec: 'Primary derivation instruction. Used before any generated draft spec.',
+        reference: 'Comparison/output-shape evidence only. Not derivation authority.',
+        define: 'Metadata evidence. Helps interpret variables and labels.',
+        legacy: 'Derivation evidence. Helps draft specs when uploaded specs are missing.'
+      };
+      return labels[role] || 'Study evidence.';
     }
 
     function fileStatusLabel(file) {
@@ -2059,7 +3407,7 @@ INDEX_HTML = r"""<!doctype html>
         return [targets ? `ADaM tokens: ${targets}` : '', deps ? `Dependency hints: ${deps}` : '', file.note || ''].filter(Boolean).join(' | ');
       }
       if (file.status === 'not_previewed' && file.format === 'sas7bdat') {
-        return file.note || 'SAS dataset recognized as a runtime input. Install R package haven to enable preview.';
+        return `SAS dataset recognized. It can be used by the R runner when the required R package is available. Browser preview may be limited.${file.note ? ` ${file.note}` : ''}`;
       }
       const columns = (file.columns || []).slice(0, 10).join(', ');
       return columns || file.note || 'No preview details.';
@@ -2077,7 +3425,7 @@ INDEX_HTML = r"""<!doctype html>
       const candidates = new Set();
       for (const spec of summary?.specs || []) {
         const dataset = String(spec.dataset || '').toUpperCase();
-        if (dataset && dataset.startsWith('AD')) {
+        if (isAdamDatasetToken(dataset)) {
           candidates.add(dataset);
           recordTargetSource(dataset, 'input_spec');
         }
@@ -2088,7 +3436,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       for (const ref of summary?.reference_adam || []) {
         const dataset = String(ref.dataset || '').toUpperCase();
-        if (dataset && dataset.startsWith('AD')) {
+        if (isAdamDatasetToken(dataset)) {
           candidates.add(dataset);
           recordTargetSource(dataset, 'reference_adam');
         }
@@ -2107,11 +3455,11 @@ INDEX_HTML = r"""<!doctype html>
     function inferAdTokens(text) {
       const normalized = String(text || '').toUpperCase();
       const tokens = new Set();
-      for (const match of normalized.matchAll(/\bAD[A-Z0-9]{1,6}\b/g)) {
-        tokens.add(match[0]);
+      for (const match of normalized.matchAll(/\bAD[A-Z0-9]{2,6}\b/g)) {
+        if (isAdamDatasetToken(match[0])) tokens.add(match[0]);
       }
-      for (const match of normalized.matchAll(/ADS[_-]?(AD[A-Z0-9]{1,6})/g)) {
-        tokens.add(match[1]);
+      for (const match of normalized.matchAll(/ADS[_-]?(AD[A-Z0-9]{2,6})/g)) {
+        if (isAdamDatasetToken(match[1])) tokens.add(match[1]);
       }
       return Array.from(tokens);
     }
@@ -2191,8 +3539,8 @@ INDEX_HTML = r"""<!doctype html>
       const planned = selectedTargets();
       const active = state.selectedTarget || '';
       byId('targetSelectionSummary').textContent = planned.length
-        ? `Planned together: ${planned.join(', ')}. Active detail view: ${active || 'none'}. Start Runnable Datasets moves all runnable targets to review gates; R execution stays per dataset after human approval.`
-        : `No planning target selected. Active detail view: ${active || 'none'}. Reference-only candidates stay unplanned until you explicitly select them.`;
+        ? `Selected: ${planned.join(', ')}${active ? ` | Viewing: ${active}` : ''}`
+        : 'No target selected.';
     }
 
     function addManualTarget() {
@@ -2229,6 +3577,7 @@ INDEX_HTML = r"""<!doctype html>
       state.draftSpecReviewByDataset = {};
       state.finalizedInputsByDataset = {};
       state.runReview = null;
+      state.runReviewDetailLevel = null;
       state.lastStudyLoopResult = null;
       state.targetCandidates = state.selectedTarget ? [state.selectedTarget] : [];
       state.targetEvidenceSources = {};
@@ -2309,6 +3658,7 @@ INDEX_HTML = r"""<!doctype html>
           ? progress.study_loop_result
           : null;
       }
+      saveBrowserSession();
     }
 
     function applyGraphState(graph) {
@@ -2431,6 +3781,7 @@ INDEX_HTML = r"""<!doctype html>
       if (recoveredPlan) {
         renderPlan(recoveredPlan);
       }
+      saveBrowserSession();
     }
 
     function planFromGraphState(graph) {
@@ -2449,7 +3800,8 @@ INDEX_HTML = r"""<!doctype html>
         dependency_review_status: graph.dependency_review_status || (blocked.length ? 'blocked' : 'accepted'),
         dependency_decisions: decisions,
         dependency_plan: graph.dependency_plan || {},
-        dependency_resolution: graph.dependency_resolution || []
+        dependency_resolution: graph.dependency_resolution || [],
+        dependency_warning_records: graph.dependency_plan?.dependency_planning_warning_records || []
       };
     }
 
@@ -2495,6 +3847,51 @@ INDEX_HTML = r"""<!doctype html>
     function activeDependencyBlock() {
       if (!state.selectedTarget) return null;
       return (state.plan?.blocked_datasets || []).find((item) => item.dataset === state.selectedTarget) || null;
+    }
+
+    function activeDependencyReviewSummary() {
+      const summary = state.runProgress?.dependency_review_summary || {};
+      const status = String(summary.status || currentDependencyReviewStatus() || '').trim();
+      const interrupt = state.runProgress?.current_interrupt || state.graphState?.current_interrupt || {};
+      const openDependencyInterrupt = String(interrupt.name || '') === 'dependency_review'
+        && String(interrupt.status || 'open') === 'open';
+      const runnable = state.runProgress?.runnable_datasets || state.plan?.runnable_datasets || [];
+      if (status === 'warning' && !dependencyReviewBlocksDatasetStart(runnable)) return null;
+      if (!openDependencyInterrupt && !['blocked', 'warning', 'review_required', 'stale', 'rejected'].includes(status)) return null;
+      return {
+        ...summary,
+        status,
+        open_interrupt: openDependencyInterrupt || summary.open_interrupt === true,
+        review_required: summary.review_required !== false
+      };
+    }
+
+    function dependencyReviewSummaryText(summary) {
+      const decisions = Array.isArray(summary?.decisions) ? summary.decisions : [];
+      const decisionTexts = decisions
+        .filter((item) => String(item.source || '') !== 'no_dependency_evidence')
+        .map((item) => {
+          const dataset = String(item.dataset || '').toUpperCase();
+          const dependencies = (item.dependencies || []).map((dep) => String(dep || '').toUpperCase()).filter(Boolean);
+          const evidence = String(item.source || '').trim();
+          const available = (item.available_dependencies || []).map((dep) => String(dep || '').toUpperCase()).filter(Boolean);
+          const availability = available.length ? ` Available now: ${available.join(', ')}.` : '';
+          return dependencies.length
+            ? `${dataset} uses ${dependencies.join(', ')} from ${evidence || 'uploaded evidence'}.${availability}`
+            : `${dataset} has dependency evidence from ${evidence || 'uploaded evidence'}.`;
+        });
+      const after = (summary?.actionable_after_approval || [])
+        .map((item) => `${String(item.dataset || '').toUpperCase()}: ${item.action_label || titleFromToken(item.next_action || 'continue')}`)
+        .filter(Boolean);
+      const waiting = (summary?.waiting_after_approval || [])
+        .map((item) => `${String(item.dataset || '').toUpperCase()} still waits for ${(item.waiting_for || []).join(', ')}`)
+        .filter(Boolean);
+      return [
+        summary?.detail || 'Review the dependency plan before continuing.',
+        ...decisionTexts,
+        after.length ? `After approval: ${after.join('; ')}.` : '',
+        waiting.length ? `Still waiting: ${waiting.join('; ')}.` : ''
+      ].filter(Boolean).join(' ');
     }
 
     function graphActionGate(progress, actionGroup) {
@@ -2557,10 +3954,20 @@ INDEX_HTML = r"""<!doctype html>
 
     function hasNativeFullRunExecutionContract(target) {
       const normalized = String(target || '').toUpperCase();
+      const progress = datasetProgressFor(normalized);
+      if (progressAllowsNativeApprovedExecution(progress)) return true;
       if (state.graphState) {
         return runtimeHasNativeFullRunExecutionContract(state.graphState.runtime_persistence || {}, normalized);
       }
       return runtimeHasNativeFullRunExecutionContract(state.runProgress?.runtime_persistence || {}, normalized);
+    }
+
+    function progressAllowsNativeApprovedExecution(progress) {
+      const next = String(progress?.next_action || '');
+      if (!['execute_approved_code', 'retry_approved_execution'].includes(next)) return false;
+      if (progress?.blocked) return false;
+      return String(progress?.code_status || '').toLowerCase() === 'approved'
+        || String(progress?.status || '').toLowerCase() === 'ready_to_execute';
     }
 
     function runtimeHasNativeFullRunExecutionContract(runtime, normalized) {
@@ -2613,6 +4020,39 @@ INDEX_HTML = r"""<!doctype html>
       return JSON.stringify(body);
     }
 
+    function currentDependencyReviewStatus() {
+      return String(state.runProgress?.dependency_review_status || state.plan?.dependency_review_status || '').trim();
+    }
+
+    function currentDependencyWarningRecords() {
+      const progressRecords = state.runProgress?.dependency_warning_records;
+      if (Array.isArray(progressRecords) && progressRecords.length) return progressRecords;
+      const planRecords = state.plan?.dependency_warning_records;
+      if (Array.isArray(planRecords) && planRecords.length) return planRecords;
+      const embedded = state.plan?.dependency_plan?.dependency_planning_warning_records;
+      return Array.isArray(embedded) ? embedded : [];
+    }
+
+    function dependencyWarningAllowsDatasetReviewHandoff(runnable = []) {
+      const records = currentDependencyWarningRecords();
+      if (!records.length) return false;
+      const runnableSet = new Set((runnable || []).map((dataset) => String(dataset || '').toUpperCase()).filter(Boolean));
+      if (!runnableSet.size) return false;
+      return records.every((record) => (
+        record &&
+        record.code === 'input_spec_gap_no_default_dependency' &&
+        runnableSet.has(String(record.dataset || '').toUpperCase())
+      ));
+    }
+
+    function dependencyReviewBlocksDatasetStart(runnable = []) {
+      const status = currentDependencyReviewStatus();
+      if (state.runProgress?.plan_stale) return true;
+      if (['blocked', 'review_required', 'rejected', 'stale'].includes(status)) return true;
+      if (status === 'warning') return !dependencyWarningAllowsDatasetReviewHandoff(runnable);
+      return false;
+    }
+
     function actionAvailability() {
       const target = state.selectedTarget;
       const blocked = activeDependencyBlock();
@@ -2631,6 +4071,16 @@ INDEX_HTML = r"""<!doctype html>
       const hasSpecGate = targetSpecGateSatisfied(target);
       const targetIsPlanned = Boolean(target && selectedTargets().includes(target));
       const graphProgressMissingTarget = Boolean(state.runProgress && target && targetIsPlanned && !progress);
+      const graphProgressMissingCanFinalize = Boolean(
+        graphProgressMissingTarget &&
+        state.plan &&
+        !blocked &&
+        !waitingRuntimeDependencies.length &&
+        !generated &&
+        !execution &&
+        !draftReview?.approved &&
+        !hasSpecGate
+      );
       const graphProgressMissingReason = graphProgressMissingTarget
         ? `Graph progress has no dataset step for ${target}. Refresh graph state or prepare the dependency plan again before continuing.`
         : '';
@@ -2653,16 +4103,18 @@ INDEX_HTML = r"""<!doctype html>
         ['finalize_inputs', 'generate_code', 'review_draft_spec', 'review_code'].includes(String(item.next_action || ''))
       );
       const blockedCount = (state.runProgress?.blocked_datasets || state.plan?.blocked_datasets || []).length;
+      const runnableForDependencyGate = state.runProgress?.runnable_datasets || state.plan?.runnable_datasets || [];
+      const dependencyBlocksStart = dependencyReviewBlocksDatasetStart(runnableForDependencyGate);
       const startStudyReady = Boolean(
         selected.length &&
         state.plan &&
         !state.runProgress?.plan_stale &&
-        !['blocked', 'review_required', 'stale'].includes(String(state.runProgress?.dependency_review_status || state.plan?.dependency_review_status || '')) &&
+        !dependencyBlocksStart &&
         startable.length
       );
       const finalizeReady = finalizeGate
         ? Boolean(target && targetIsPlanned && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && finalizeGate.ready)
-        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget);
+        : Boolean(target && targetIsPlanned && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && (!graphProgressMissingTarget || graphProgressMissingCanFinalize));
       const draftApprovalReady = draftGate
         ? Boolean(target && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && draftGate.ready && draft && !draftReview?.approved)
         : Boolean(target && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && draft && !draftReview?.approved && !finalized?.input_spec_available && !targetHasInputSpec(target));
@@ -2677,7 +4129,7 @@ INDEX_HTML = r"""<!doctype html>
         : Boolean(canApproveGeneratedCode(target) && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget);
       const nativeExecutionContract = hasNativeFullRunExecutionContract(target);
       const runReady = runApprovedGate
-        ? Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && runApprovedGate.ready && generated && nativeExecutionContract)
+        ? Boolean(target && !blocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && runApprovedGate.ready && generated && (nativeExecutionContract || progressAllowsNativeApprovedExecution(progress)))
         : Boolean(target && !blocked && !progressBlocked && !waitingRuntimeDependencies.length && !graphProgressMissingTarget && generated && reviewFor(target)?.approved && nativeExecutionContract);
       return {
         finalize: {
@@ -2689,7 +4141,7 @@ INDEX_HTML = r"""<!doctype html>
               ? planRequiredReason
             : !state.plan
               ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
-              : graphProgressMissingTarget
+              : graphProgressMissingTarget && !graphProgressMissingCanFinalize
                 ? graphProgressMissingReason
               : waitingRuntimeReason
                 ? waitingRuntimeReason
@@ -2701,6 +4153,8 @@ INDEX_HTML = r"""<!doctype html>
                 ? `${target} is blocked by ${blocked.blocked_by}. Resolve or approve the dependency plan first.`
                 : hasSpecGate
                   ? `${target} already has an input spec or approved draft spec; finalizing again is optional.`
+                  : graphProgressMissingCanFinalize
+                    ? `${target} is selected in the current plan but has not started yet. Finalize inputs now to create its spec gate.`
                   : `Ready to check whether ${target} has an input spec or needs a draft spec.`
         },
         startStudy: {
@@ -2712,7 +4166,7 @@ INDEX_HTML = r"""<!doctype html>
               ? 'Prepare the dependency plan before starting runnable datasets.'
               : state.runProgress?.plan_stale
                 ? 'Inputs changed after planning. Re-run dependency planning before starting datasets.'
-                : ['blocked', 'review_required', 'stale'].includes(String(state.runProgress?.dependency_review_status || state.plan?.dependency_review_status || ''))
+                : dependencyBlocksStart
                   ? 'Resolve the study dependency review before starting dataset review gates.'
                   : blockedCount && !startable.length
                     ? 'All selected datasets are currently blocked by dependency decisions.'
@@ -2821,7 +4275,7 @@ INDEX_HTML = r"""<!doctype html>
               ? waitingRuntimeReason
             : progressBlocked
               ? progressBlockReason
-            : !nativeExecutionContract
+            : !nativeExecutionContract && !progressAllowsNativeApprovedExecution(progress)
               ? 'Product UI can execute only graph-owned native full-run code. Compatibility split-flow code must be handled through manual/API migration endpoints.'
             : runApprovedGate
               ? runApprovedGate.reason
@@ -2848,22 +4302,73 @@ INDEX_HTML = r"""<!doctype html>
       setButtonAvailability('generateCodeButton', availability.generate);
       setButtonAvailability('approveButton', availability.approveCode);
       setButtonAvailability('runApprovedButton', availability.runApproved);
-      renderActionHints('specActionHints', [availability.finalize, availability.startStudy, availability.approveDraft]);
-      renderActionHints('generationActionHints', [availability.generate, availability.approveCode, availability.runApproved]);
+      renderActionHints('specActionHints', visibleSpecActionHints(availability));
+      renderActionHints('generationActionHints', visibleGenerationActionHints(availability));
     }
 
     function setButtonAvailability(id, item) {
       const button = byId(id);
       if (!button) return;
+      if (button.dataset.pendingAction === '1') return;
       button.title = item.reason;
       button.setAttribute('aria-disabled-reason', item.reason);
       button.dataset.actionReady = String(Boolean(item.ready));
       button.disabled = !item.ready;
     }
 
+    function setPendingButton(button, label = 'Recording...') {
+      if (!button) return () => {};
+      const previous = {
+        textContent: button.textContent,
+        disabled: button.disabled,
+        title: button.title,
+        ariaBusy: button.getAttribute ? button.getAttribute('aria-busy') : null,
+        pendingAction: button.dataset?.pendingAction || ''
+      };
+      if (button.dataset) button.dataset.pendingAction = '1';
+      button.disabled = true;
+      button.textContent = label;
+      button.title = 'Saving this review decision. The graph state is being updated.';
+      if (button.setAttribute) button.setAttribute('aria-busy', 'true');
+      if (button.classList) button.classList.add('button-pending');
+      return () => {
+        button.textContent = previous.textContent;
+        button.disabled = previous.disabled;
+        button.title = previous.title;
+        if (button.dataset) {
+          if (previous.pendingAction) button.dataset.pendingAction = previous.pendingAction;
+          else delete button.dataset.pendingAction;
+        }
+        if (button.setAttribute && previous.ariaBusy) button.setAttribute('aria-busy', previous.ariaBusy);
+        else if (button.removeAttribute) button.removeAttribute('aria-busy');
+        if (button.classList) button.classList.remove('button-pending');
+      };
+    }
+
+    function setPendingButtons(buttons, primaryButton, label = 'Recording...') {
+      const unique = Array.from(new Set((buttons || []).filter(Boolean)));
+      if (primaryButton && !unique.includes(primaryButton)) unique.push(primaryButton);
+      const restores = unique.map((candidate) => setPendingButton(candidate, candidate === primaryButton ? label : 'Please wait'));
+      return () => restores.reverse().forEach((restore) => restore());
+    }
+
+    function setPendingButtonGroup(button, selector, label = 'Recording...') {
+      const buttons = [];
+      if (selector && document.querySelectorAll) {
+        for (const candidate of document.querySelectorAll(selector)) buttons.push(candidate);
+      }
+      if (button && !buttons.includes(button)) buttons.push(button);
+      const restores = buttons.map((candidate) => setPendingButton(candidate, candidate === button ? label : 'Please wait'));
+      return () => restores.reverse().forEach((restore) => restore());
+    }
+
     function renderActionHints(id, items) {
       const node = byId(id);
       if (!node) return;
+      if (!items.length) {
+        node.innerHTML = '';
+        return;
+      }
       node.innerHTML = items.map((item) => {
         const stateClass = item.ready ? 'ready' : 'blocked';
         const pill = item.pill || (item.ready ? 'ready' : 'waiting');
@@ -2874,6 +4379,25 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         `;
       }).join('');
+    }
+
+    function visibleSpecActionHints(availability) {
+      return [availability.approveDraft, availability.startStudy, availability.finalize].filter(shouldShowActionHint);
+    }
+
+    function visibleGenerationActionHints(availability) {
+      return [availability.approveCode, availability.runApproved, availability.generate].filter(shouldShowActionHint);
+    }
+
+    function shouldShowActionHint(item) {
+      if (!item) return false;
+      if (item.ready) return true;
+      const target = state.selectedTarget || '';
+      if (item.label === 'Approve Draft Spec' && (targetInDraftSpecReview(target) || draftSpecFor(target))) return true;
+      if (item.label === 'Approve Code' && generatedFor(target) && !reviewFor(target)?.approved) return true;
+      if (item.label === 'Run Approved Code' && reviewFor(target)?.approved && !executionFor(target)) return true;
+      if (item.pill === 'diagnose') return true;
+      return false;
     }
 
     function reviewFor(dataset) {
@@ -3101,7 +4625,6 @@ INDEX_HTML = r"""<!doctype html>
           })
         });
         await refreshGraphReadModels();
-        await loadReviewSummary(runId());
         const started = payload.started_datasets || [];
         const resultText = (payload.dataset_results || []).map((item) => `${item.dataset}: ${titleFromToken(item.next_action)}`).join('; ');
         addEvent('Study loop started', payload.message);
@@ -3128,10 +4651,11 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    async function approveDraftSpec() {
+    async function approveDraftSpec(button = byId('approveDraftSpecButton')) {
       const draft = draftSpecFor(state.selectedTarget);
       if (!draft) return;
-      beginOperation('Approving draft spec', `Recording approval for ${draft.dataset} draft spec in this run.`);
+      const restorePending = setPendingButton(button, 'Recording...');
+      beginOperation('Saving draft spec approval', `Recording approval for ${draft.dataset}. This only updates the graph state; R is not running.`);
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
           method: 'POST',
@@ -3150,7 +4674,6 @@ INDEX_HTML = r"""<!doctype html>
           graph_command: true
         };
         await refreshGraphReadModels();
-        await loadReviewSummary(runId());
         const stillWaitingForDraft = targetInDraftSpecReview(reviewedDataset);
         setPill('codeStatus', stillWaitingForDraft ? 'draft review' : generatedFor(reviewedDataset) ? 'review' : 'not generated');
         addEvent(
@@ -3167,10 +4690,13 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Draft spec approval failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
-    async function rejectDraftSpec() {
+    async function rejectDraftSpec(button = null) {
       const draft = draftSpecFor(state.selectedTarget);
       if (!draft) return;
       const notes = byId('reviewNotes').value.trim();
@@ -3178,7 +4704,8 @@ INDEX_HTML = r"""<!doctype html>
         byId('draftSpecPane').innerHTML = `${draftSpecReviewHtml(draft)}<p class="note warn">Add a short review note before rejecting this draft spec, so the next draft has correction guidance.</p>`;
         return;
       }
-      beginOperation('Rejecting draft spec', `Recording rejection for ${draft.dataset}. Code generation will stay blocked until the draft is revised or inputs change.`);
+      const restorePending = setPendingButton(button, 'Recording...');
+      beginOperation('Saving draft spec rejection', `Recording rejection for ${draft.dataset}. Code generation will stay blocked until the draft is revised or inputs change.`);
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
           method: 'POST',
@@ -3198,7 +4725,6 @@ INDEX_HTML = r"""<!doctype html>
         };
         delete state.generatedByDataset[reviewedDataset];
         await refreshGraphReadModels();
-        await loadReviewSummary(runId());
         setPill('codeStatus', 'draft rejected');
         addEvent('Draft spec rejected', `${reviewedDataset} draft spec was rejected. Revise inputs or generate a new draft before code generation.`);
         completeOperation('Draft spec rejected', `${reviewedDataset} is back at draft-spec review. Update notes or inputs, then finalize again.`);
@@ -3208,6 +4734,9 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Draft spec rejection failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -3275,7 +4804,7 @@ INDEX_HTML = r"""<!doctype html>
         (summary?.reference_adam?.length || 0) +
         (summary?.define?.length || 0) +
         (summary?.legacy_code?.length || 0);
-      const targets = progress?.target_datasets?.length ? progress.target_datasets : state.targetCandidates || [];
+      const targets = dashboardTargets();
       const runnable = progress?.runnable_datasets || state.plan?.runnable_datasets || [];
       const blocked = progress?.blocked_datasets || state.plan?.blocked_datasets || [];
       byId('metricInputs').textContent = String(fileCount);
@@ -3283,14 +4812,89 @@ INDEX_HTML = r"""<!doctype html>
       byId('metricRunnable').textContent = String(runnable.length);
       byId('metricBlocked').textContent = String(blocked.length);
       setPill('graphStatus', studyStatusPill(progress, blocked, targets));
+      setPill('inspectorStatus', studyStatusPill(progress, blocked, targets));
+      updateDashboardPanelVisibility(fileCount, targets, runnable, blocked);
+      renderActiveDatasetPanel(runnable, blocked);
       renderStudyProgress(targets, runnable, blocked);
       renderHumanReviewQueue();
       renderStudyLoopResult();
       renderDependencyGraph(targets, runnable, blocked);
       renderDatasetBoard(targets, runnable, blocked);
+      setPill('sideDatasetQueueStatus', targets.length ? `${targets.length} target(s)` : 'empty');
       renderAgentAuditPanel();
       renderActionAvailability();
       renderPrimaryNextAction();
+      updateMainSectionVisibility();
+      applyI18n();
+    }
+
+    function updateMainSectionVisibility() {
+      const hasInputs = recognizedInputCount() > 0;
+      const hasTargets = Boolean(state.selectedTarget || selectedTargets().length || dashboardTargets().length || state.plan || state.runProgress);
+      const hasCodeContext = Boolean(
+        state.generated ||
+        state.review ||
+        state.execution ||
+        Object.keys(state.generatedByDataset || {}).length ||
+        Object.keys(state.reviewByDataset || {}).length ||
+        Object.keys(state.executionByDataset || {}).length ||
+        state.runReview
+      );
+      const uploadOpen = !nodeHasClass(byId('uploadPanel'), 'hidden') || Boolean(studyDir());
+      toggleHidden('studySetupSection', !uploadOpen && !hasInputs);
+      toggleHidden('recognizedEvidenceSection', !hasInputs);
+      toggleHidden('chooseOutputSection', !hasInputs);
+      toggleHidden('generateRunSection', !(hasTargets || hasCodeContext));
+    }
+
+    function nodeHasClass(node, className) {
+      if (!node) return false;
+      if (node.classList?.contains) return node.classList.contains(className);
+      return String(node.className || '').split(/\s+/).includes(className);
+    }
+
+    function updateDashboardPanelVisibility(fileCount, targets, runnable, blocked) {
+      const hasInputs = fileCount > 0;
+      const selected = selectedTargets();
+      const hasTargetContext = Boolean(state.selectedTarget || selected.length || targets.length || state.plan || state.runProgress);
+      const hasReviewItems = humanReviewQueueItems().length > 0;
+      const hasAudit = Boolean(
+        state.lastStudyLoopResult ||
+        (activeAgentDecisions().length || activeAgentNodeTrace().length || activeRiskFlags().length) ||
+        state.runProgress?.native_resume ||
+        state.graphState
+      );
+      toggleHidden('dashboardEmptyGuide', true);
+      toggleHidden('dashboardRuntimePanels', !hasInputs);
+      toggleHidden('dashboardCurrentPanel', !(hasInputs && Boolean(state.selectedTarget)));
+      toggleHidden('sideDatasetQueuePanel', !(hasInputs && (selected.length || targets.length || state.plan || state.runProgress)));
+      toggleHidden('humanReviewQueuePanel', !hasReviewItems);
+      toggleHidden('metricGrid', !(hasInputs && (state.plan || state.runProgress || targets.length)));
+      toggleHidden('dependencyPanel', !(hasInputs && shouldShowDependencyExplanation(blocked)));
+      toggleHidden('advancedRunAudit', !(hasInputs && hasAudit));
+      toggleHidden('inspectorEmptyGuide', hasInputs && (shouldShowDependencyExplanation(blocked) || hasAudit));
+      const hideInspector = !(hasInputs || state.selectedTarget || hasReviewItems || hasAudit);
+      toggleHidden('inspectorRail', hideInspector);
+      byId('appMain')?.classList.toggle('wide-main', hideInspector);
+    }
+
+    function toggleHidden(id, shouldHide) {
+      const node = byId(id);
+      if (!node) return;
+      node.classList.toggle('hidden', Boolean(shouldHide));
+    }
+
+    function shouldShowDependencyExplanation(blocked) {
+      const target = state.selectedTarget || '';
+      if (!target) return false;
+      if (waitingRuntimeDependenciesFor(target).length) return true;
+      if ((blocked || []).some((item) => String(item.dataset || '').toUpperCase() === target)) return true;
+      const progress = datasetProgressFor(target);
+      return Boolean(
+        progress?.blocked ||
+        progress?.next_action === 'resolve_dependency' ||
+        activeDependencyBlock()
+      );
     }
 
     function renderPrimaryNextAction() {
@@ -3301,7 +4905,172 @@ INDEX_HTML = r"""<!doctype html>
       byId('primaryNextActionTitle').textContent = view.title;
       byId('primaryNextActionDetail').textContent = view.detail;
       byId('primaryNextActionButtons').innerHTML = view.buttons.map(primaryNextActionButtonHtml).join('');
+      renderStickyNextAction(view);
       attachPrimaryNextActionHandlers();
+      applyI18n();
+    }
+
+    function renderStickyNextAction(view = primaryNextActionView()) {
+      const bar = byId('stickyNextActionBar');
+      if (!bar) return;
+      bar.className = `sticky-action-bar ${view.tone || ''}`.trim();
+      byId('stickyNextActionTitle').textContent = view.title;
+      byId('stickyNextActionDetail').textContent = view.detail;
+      byId('stickyNextActionButtons').innerHTML = view.buttons.map(primaryNextActionButtonHtml).join('');
+    }
+
+    function renderActiveDatasetPanel(runnable, blocked) {
+      const target = state.selectedTarget || '';
+      const body = byId('activeDatasetBody');
+      if (!target) {
+        byId('activeDatasetTitle').textContent = 'No dataset selected';
+        byId('activeDatasetSubtitle').textContent = '';
+        setPill('activeDatasetStatus', 'waiting');
+        body.innerHTML = '<div class="muted">Select an output.</div>';
+        return;
+      }
+      const status = datasetStatus(target, runnable, blocked);
+      const progress = datasetProgressFor(target);
+      const isBlocked = Boolean((blocked || []).find((item) => item.dataset === target) || progress?.blocked);
+      const waiting = waitingRuntimeDependenciesFor(target);
+      const qualityStatus = datasetOutputQualityStatus(target);
+      const qualityText = activeDatasetQualityText(target, status, qualityStatus);
+      const nextText = nextActionText(target, status, isBlocked);
+      const sourceText = targetSourcePlainText(target);
+      const failureText = terminalFailureActionSummary(target);
+      const reasonText = waiting.length
+        ? runtimeDependencyWaitText(target, waiting)
+        : dependencyDecisionSummary(target, dependencyDecisionFor(target), dependenciesForTarget(target));
+      const evidenceText = activeDatasetEvidenceBoundaryText(target, qualityText, sourceText);
+      const rows = [
+        {label: 'Status', text: activeDatasetStatusPlainText(target, status, qualityStatus), tone: status === 'failed' || isBlocked ? 'fail' : status === 'waiting' ? 'warn' : ''},
+        {label: 'Reason', text: reasonText, tone: waiting.length ? 'warn' : ''},
+        {label: 'Evidence', text: evidenceText, tone: isReferenceOnlyTarget(target) || evidenceText.includes('draft spec') ? 'warn' : ''},
+        {label: 'Next action', text: nextText, tone: isBlocked || waiting.length || status === 'failed' ? 'fail' : 'warn'}
+      ];
+      if (failureText) rows.push({label: 'Failure choices', text: failureText, tone: 'fail'});
+      byId('activeDatasetTitle').textContent = target;
+      byId('activeDatasetSubtitle').textContent = activeDatasetSubtitle(target, status);
+      setPill('activeDatasetStatus', status);
+      body.innerHTML = `
+        <div class="active-stage-strip">
+          <div class="stage done">inputs</div>
+          <div class="stage ${state.plan ? isBlocked ? 'blocked' : 'done' : 'active'}">plan</div>
+          <div class="stage ${codeStageClassFor(target, progress, true, selectedTargets().includes(target), isBlocked || waiting.length, isReferenceOnlyTarget(target))}">code</div>
+          <div class="stage ${reviewStageClassFor(target, progress)}">review</div>
+          <div class="stage ${runStageClassFor(target, progress, ['structural_stub', 'not_real_derivation'].includes(qualityStatus))}">run</div>
+        </div>
+        <div class="active-dataset-summary">
+        ${rows.map((row) => `
+          <div class="active-dataset-summary-item ${row.tone || ''}">
+            <strong>${escapeHtml(row.label)}</strong>
+            <span>${escapeHtml(row.text)}</span>
+          </div>
+        `).join('')}
+        </div>
+      `;
+    }
+
+    function activeDatasetStatusPlainText(target, status, qualityStatus) {
+      if (qualityStatus === 'real_runtime_output') return `${target} has a completed local R output.`;
+      if (targetInDraftSpecReview(target)) return `${target} is waiting for draft spec review.`;
+      if (generatedFor(target) && !reviewFor(target)?.approved) return `${target} has generated code waiting for human review.`;
+      if (reviewFor(target)?.approved && !executionFor(target)) return `${target} code is approved and ready to run locally.`;
+      if (executionFor(target)?.status === 'terminal_failure') return `${target} failed during local R execution.`;
+      return `${target} is ${status || 'waiting'}.`;
+    }
+
+    function activeDatasetEvidenceBoundaryText(target, qualityText, sourceText) {
+      const parts = [];
+      if (targetHasInputSpec(target) || finalizedInputsFor(target)?.input_spec_available) {
+        parts.push('Uploaded spec is the primary instruction.');
+      } else if (draftSpecReviewFor(target)?.approved || finalizedInputsFor(target)?.approved_draft_spec_available) {
+        parts.push('Approved draft spec is valid for this run only.');
+      } else if (draftSpecFor(target)) {
+        parts.push('Generated draft spec exists but needs review.');
+      } else {
+        parts.push('No approved spec yet; draft spec review is required.');
+      }
+      if (isReferenceOnlyTarget(target)) {
+        parts.push('Reference-only candidate: reference ADaM is comparison evidence only, not derivation authority.');
+      } else {
+        parts.push(`Target source: ${sourceText}.`);
+      }
+      if (qualityText.includes('completed local R runtime output') || qualityText.includes('completed local R')) {
+        parts.push('Runtime output exists.');
+      }
+      return parts.join(' ');
+    }
+
+    function activeDatasetSubtitle(target, status) {
+      if (status === 'reference evidence') return 'Reference file exists, but generation still needs a spec or reviewed draft spec.';
+      if (waitingRuntimeDependenciesFor(target).length) return 'This dataset is paused until its upstream runtime output exists.';
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) return 'Generated output exists for review and optional comparison.';
+      if (targetInDraftSpecReview(target)) return 'Draft spec review is open before code generation.';
+      if (generatedFor(target) && !reviewFor(target)) return 'Generated code is waiting for human review before local R execution.';
+      return `Current status: ${status || 'candidate'}.`;
+    }
+
+    function activeDatasetSpecText(target) {
+      if (targetHasInputSpec(target) || finalizedInputsFor(target)?.input_spec_available) return 'Uploaded input spec is available and is the primary derivation instruction.';
+      if (draftSpecReviewFor(target)?.approved || finalizedInputsFor(target)?.approved_draft_spec_available) return 'A draft spec has been approved for this run only.';
+      if (draftSpecFor(target)) return 'A generated draft spec is waiting for review. It is not approved production logic yet.';
+      return 'No uploaded spec is available. The graph must generate and review a draft spec before code generation.';
+    }
+
+    function activeDatasetCodeText(target) {
+      const generated = generatedFor(target);
+      const execution = executionFor(target);
+      if (execution?.status === 'terminal_failure') return 'Local R execution failed. Review diagnostics before repair, retry, or skip.';
+      if (!generated) return 'No R code has been generated for this dataset.';
+      if (generated.status === 'stale') return 'Generated code is stale because inputs changed.';
+      if (!generated.generated_code) return 'Generated-code metadata exists, but code text is not loaded in this browser.';
+      if (reviewFor(target)?.approved) return 'Generated R code has been approved for local execution.';
+      return 'Generated R code needs human review before it can run.';
+    }
+
+    function activeDatasetQualityText(target, status, qualityStatus) {
+      if (qualityStatus === 'real_runtime_output') return `${target} has a completed local R runtime output. It can be considered runtime evidence for downstream order, subject to review.`;
+      if (qualityStatus === 'structural_stub' || qualityStatus === 'not_real_derivation') return `${target} output is review-only and cannot satisfy downstream runtime dependencies.`;
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) return `${target} has generated output available for review. Completion is evidence, not clinical proof.`;
+      if (status === 'reference evidence') return 'Reference ADaM is compare/output-shape evidence only, not runtime output generated by this graph.';
+      return 'No generated runtime output exists yet.';
+    }
+
+    function targetSourcePlainText(target) {
+      const sources = targetSources(target);
+      if (!sources.length) return 'Manual or graph candidate. Confirm the target before planning.';
+      const labels = sources.map((source) => ({
+        input_spec: 'uploaded spec',
+        legacy_code: 'legacy code',
+        reference_adam: 'reference ADaM',
+        manual: 'manual selection'
+      }[source] || source));
+      if (isReferenceOnlyTarget(target)) return `${labels.join(', ')}. Reference-only candidate: selecting it requests generation, but the reference file is not derivation authority.`;
+      return labels.join(', ');
+    }
+
+    function terminalFailureActionSummary(target) {
+      const progress = datasetProgressFor(target);
+      const execution = executionFor(target);
+      if (!(execution?.status === 'terminal_failure' || progress?.execution_status === 'terminal_failure')) return '';
+      const actions = Array.isArray(progress?.available_actions) ? progress.available_actions : [];
+      if (!actions.length) return 'Refresh progress to load graph-owned failure actions.';
+      return actions
+        .map((item) => terminalFailureActionPlainText(item.action, item.label))
+        .filter(Boolean)
+        .join(' / ');
+    }
+
+    function terminalFailureActionPlainText(action, label) {
+      const labels = {
+        retry_execution: 'rerun the approved code',
+        repair_code: 'repair the generated code',
+        revise_spec: 'go back to spec review',
+        request_inputs: 'ask for more input evidence',
+        skip_dataset: 'skip this dataset'
+      };
+      return labels[action] || label || titleFromToken(action);
     }
 
     function primaryNextActionView() {
@@ -3314,12 +5083,9 @@ INDEX_HTML = r"""<!doctype html>
       const waitingRuntimeDependencies = waitingRuntimeDependenciesFor(target);
       if (!inputCount) {
         return {
-          title: 'Load demo data or upload your study files',
-          detail: 'Start with SDTM data. Specs are preferred. Reference ADaM can be uploaded for final comparison only.',
-          buttons: [
-            {label: 'Load Demo', action: 'loadDemo', primary: true},
-            {label: 'Start Upload', action: 'startUpload'}
-          ]
+          title: 'Start by uploading your study files',
+          detail: 'Upload SDTM source data first. Specs are preferred. Reference ADaM can be uploaded later for final comparison only.',
+          buttons: [{label: 'Start Upload', action: 'startUpload', primary: true}]
         };
       }
       if (!selected.length || !target) {
@@ -3338,16 +5104,29 @@ INDEX_HTML = r"""<!doctype html>
           tone: 'warn'
         };
       }
+      const dependencyReview = activeDependencyReviewSummary();
+      if (dependencyReview) {
+        return {
+          title: 'Review dependency plan',
+          detail: dependencyReviewSummaryText(dependencyReview),
+          buttons: [
+            {label: 'Approve Dependency Plan', action: 'approveDependencyPlan', primary: true},
+            {label: 'Reject Dependency Plan', action: 'rejectDependencyPlan'},
+            {label: 'Show Dependency Note', action: 'scrollDependency'}
+          ],
+          tone: dependencyReview.status === 'blocked' || dependencyReview.status === 'rejected' ? 'fail' : 'warn'
+        };
+      }
       const dependencyBlocked = availability.finalize.reason && !availability.finalize.ready && (
         String(progress?.next_action || '') === 'resolve_dependency' ||
         Boolean(activeDependencyBlock())
       );
       if (dependencyBlocked) {
         return {
-          title: `${target} is waiting for a dependency decision`,
+          title: `${target} is waiting for dependency evidence`,
           detail: availability.finalize.reason,
           buttons: [
-            {label: 'Review Dependency Plan', action: 'scrollDependency', primary: true},
+            {label: 'Show Dependency Note', action: 'scrollDependency', primary: true},
             {label: 'Refresh Progress', action: 'refreshProgress'}
           ],
           tone: 'fail'
@@ -3364,6 +5143,20 @@ INDEX_HTML = r"""<!doctype html>
             : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
           tone: 'warn'
         };
+      }
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) {
+        const nextDataset = nextDatasetNeedingAction(target);
+        if (nextDataset) {
+          return {
+            title: `${target} finished. Continue with ${nextDataset}`,
+            detail: `${target} has a generated output in this run. ${nextActionText(nextDataset, datasetStatus(nextDataset, state.runProgress?.runnable_datasets || state.plan?.runnable_datasets || [], state.runProgress?.blocked_datasets || state.plan?.blocked_datasets || []), Boolean((state.runProgress?.blocked_datasets || state.plan?.blocked_datasets || []).find((item) => item.dataset === nextDataset)))}`,
+            buttons: [
+              {label: `Open ${nextDataset}`, action: 'selectTarget', target: nextDataset, primary: true},
+              {label: `Inspect ${target}`, action: 'showOutput'}
+            ],
+            tone: 'done'
+          };
+        }
       }
       if (availability.approveDraft.ready || targetInDraftSpecReview(target)) {
         return {
@@ -3455,20 +5248,35 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function primaryNextActionButtonHtml(item) {
-      return `<button class="${item.primary ? '' : 'secondary'}" data-primary-action="${escapeHtml(item.action)}" type="button">${escapeHtml(item.label)}</button>`;
+      const targetAttr = item.target ? ` data-primary-target="${escapeHtml(item.target)}"` : '';
+      return `<button class="${item.primary ? '' : 'secondary'}" data-primary-action="${escapeHtml(item.action)}"${targetAttr} type="button">${escapeHtml(tt(item.label))}</button>`;
     }
 
     function attachPrimaryNextActionHandlers() {
       for (const button of document.querySelectorAll('[data-primary-action]')) {
-        button.addEventListener('click', () => runPrimaryAction(button.dataset.primaryAction));
+        if (button.dataset.primaryActionBound === '1') continue;
+        button.dataset.primaryActionBound = '1';
+        button.addEventListener('click', () => runPrimaryAction(button.dataset.primaryAction, button.dataset.primaryTarget || ''));
       }
     }
 
-    async function runPrimaryAction(action) {
+    async function runPrimaryAction(action, target = '') {
       if (action === 'loadDemo') return createDemoStudy();
       if (action === 'startUpload') return startUploadWorkspace();
+      if (action === 'selectTarget') {
+        const normalized = String(target || '').toUpperCase();
+        if (normalized) {
+          state.selectedTarget = normalized;
+          renderTargetButtons(state.targetCandidates || []);
+          resetActiveDatasetView();
+          byId('datasetBoard')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+        }
+        return;
+      }
       if (action === 'preparePlan') return preparePlan();
       if (action === 'finalizeInputs') return finalizeInputsForDraftSpec();
+      if (action === 'approveDependencyPlan') return submitDependencyReviewDecision('approve');
+      if (action === 'rejectDependencyPlan') return submitDependencyReviewDecision('reject');
       if (action === 'approveDraft') return approveDraftSpec();
       if (action === 'rejectDraft') return rejectDraftSpec();
       if (action === 'startStudy') return startNativeStudyLoop();
@@ -3482,6 +5290,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (action === 'showCode') {
         state.selectedView = 'code';
+        await ensureReviewSummaryDetail('summary');
         renderPane();
         document.querySelector('[data-view="code"]')?.scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
@@ -3489,6 +5298,7 @@ INDEX_HTML = r"""<!doctype html>
       if (action === 'showOutput') {
         state.selectedView = 'output';
         state.selectedResultView = 'generated';
+        await ensureReviewSummaryDetail('full');
         renderPane();
         document.querySelector('[data-view="output"]')?.scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
@@ -3498,8 +5308,9 @@ INDEX_HTML = r"""<!doctype html>
         if (review) {
           state.selectedView = 'output';
           state.selectedResultView = 'compare';
+          await ensureReviewSummaryDetail('full');
           renderPane();
-          await refreshCompare(review);
+          await refreshCompare(datasetReviewFor(state.selectedTarget) || review);
         }
         return;
       }
@@ -3515,14 +5326,17 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderStudyProgress(targets, runnable, blocked) {
       const summary = studyProgressSummary(targets, runnable, blocked);
-      byId('studyProgressTitle').textContent = summary.title;
-      byId('studyProgressDetail').textContent = summary.detail;
-      setPill('studyNextAction', summary.action);
+      byId('sideWorkflowTarget').textContent = summary.title;
+      byId('sideWorkflowDetail').textContent = summary.detail;
+      setPill('sideWorkflowStatus', summary.action);
       updateHeaderStatusOverview();
-      byId('studyProgressSteps').innerHTML = summary.steps.map((step) => `
-        <div class="progress-step ${step.state}">
-          ${escapeHtml(step.label)}
-          <span>${escapeHtml(step.detail)}</span>
+      byId('sideWorkflowSteps').innerHTML = summary.steps.map((step, index) => `
+        <div class="side-progress-step ${step.state}">
+          <div class="side-progress-dot">${index + 1}</div>
+          <div>
+            <strong>${escapeHtml(step.label)}</strong>
+            <span>${escapeHtml(step.detail)}</span>
+          </div>
         </div>
       `).join('') + nativeResumeProgressNote();
     }
@@ -3585,9 +5399,12 @@ INDEX_HTML = r"""<!doctype html>
         ? `Native resume: available for ${humanNativeResumeScope(resume.scope)}.`
         : nativeResumeUnavailableText(resume);
       return `
-        <div class="progress-step ${resume.available ? 'done' : ''}">
-          Recovery
-          <span>${escapeHtml(detail)}</span>
+        <div class="side-progress-step ${resume.available ? 'done' : ''}">
+          <div class="side-progress-dot">R</div>
+          <div>
+            <strong>Recovery</strong>
+            <span>${escapeHtml(detail)}</span>
+          </div>
         </div>
       `;
     }
@@ -3616,7 +5433,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function progressStepsFromReadModel(progress, activeProgress, inputCount) {
-      const planBlocked = progress.plan_stale || ['blocked', 'warning', 'review_required', 'stale'].includes(progress.dependency_review_status);
+      const planBlocked = dependencyReviewBlocksDatasetStart(progress.runnable_datasets || []);
       const specStatus = activeProgress?.spec_status || '';
       const codeStatus = activeProgress?.code_status || '';
       const executionStatus = activeProgress?.execution_status || '';
@@ -3658,7 +5475,7 @@ INDEX_HTML = r"""<!doctype html>
           source: item.source || 'graph_progress',
           reason: item.reason || item.action_label || '',
           availableActions: Array.isArray(item.available_actions) ? item.available_actions : []
-        })).filter((item) => item.name);
+        })).filter(isProductHumanReviewGate);
       }
       const graph = state.graphState || {};
       const items = [];
@@ -3711,7 +5528,12 @@ INDEX_HTML = r"""<!doctype html>
           });
         }
       }
-      return items;
+      return items.filter(isProductHumanReviewGate);
+    }
+
+    function isProductHumanReviewGate(item) {
+      const name = String(item?.name || '').trim();
+      return ['draft_spec_review', 'code_review', 'terminal_failure'].includes(name);
     }
 
     function addReviewQueueItem(items, seen, interrupt, context) {
@@ -3778,11 +5600,11 @@ INDEX_HTML = r"""<!doctype html>
 
     function progressInterruptName(nextAction) {
       const names = {
-        review_dependency_plan: 'dependency_review',
+        review_dependency_plan: 'dependency_notice',
         review_draft_spec: 'draft_spec_review',
         review_code: 'code_review',
         review_terminal_failure: 'terminal_failure',
-        resolve_dependency: 'dependency_user_action_required'
+        resolve_dependency: 'dependency_notice'
       };
       return names[nextAction] || 'review_required';
     }
@@ -4306,6 +6128,38 @@ INDEX_HTML = r"""<!doctype html>
       return (state.plan?.dependency_decisions || []).find((item) => item.dataset === target) || null;
     }
 
+    function nextDatasetNeedingAction(currentTarget = '') {
+      const current = String(currentTarget || '').toUpperCase();
+      const targets = dashboardTargets();
+      const ordered = [
+        ...targets.filter((target) => target !== current),
+        ...targets.filter((target) => target === current)
+      ];
+      return ordered.find((target) => {
+        const progress = datasetProgressFor(target);
+        const status = datasetStatus(target, state.runProgress?.runnable_datasets || state.plan?.runnable_datasets || [], state.runProgress?.blocked_datasets || state.plan?.blocked_datasets || []);
+        if (status === 'reference evidence') return false;
+        if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview || progress?.execution_status === 'completed') return false;
+        if (waitingRuntimeDependenciesFor(target).length) return true;
+        if (progress?.blocked) return true;
+        const next = String(progress?.next_action || '').toLowerCase();
+        return Boolean(
+          next ||
+          !targetSpecGateSatisfied(target) ||
+          generatedFor(target) ||
+          selectedTargets().includes(target)
+        );
+      }) || null;
+    }
+
+    function dashboardTargets() {
+      const progressTargets = (state.runProgress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const candidates = (state.targetCandidates || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      const selected = selectedTargets();
+      const graphTargets = (state.graphState?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      return Array.from(new Set([...selected, ...progressTargets, ...graphTargets, ...candidates])).filter(Boolean);
+    }
+
     function nextActionText(target, status, isBlocked) {
       const progress = datasetProgressFor(target);
       const waitingDependencies = waitingRuntimeDependenciesFor(target);
@@ -4345,7 +6199,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const blockedNames = new Set((blocked || []).map((item) => item.dataset));
-      node.innerHTML = targets.map((target) => {
+      const cards = targets.map((target) => {
         const progress = datasetProgressFor(target);
         const status = datasetStatus(target, runnable, blocked);
         const isActive = target === state.selectedTarget;
@@ -4357,27 +6211,23 @@ INDEX_HTML = r"""<!doctype html>
         const isBlocked = blockedNames.has(target) || progress?.blocked;
         const isWaiting = waitingDependencies.length > 0;
         const isReferenceOnly = status === 'reference evidence' && !isPlanned;
-        const planStageClass = state.plan ? (isBlocked ? 'blocked' : isPlanned ? 'done' : '') : (isPlanned || isActive ? 'active' : '');
-        const codeStageClass = codeStageClassFor(target, progress, isActive, isPlanned, isBlocked || isWaiting, isReferenceOnly);
-        const reviewStageClass = reviewStageClassFor(target, progress);
-        const runStageClass = runStageClassFor(target, progress, reviewOnlyOutput);
-        return `
+        const lane = datasetLaneFor(target, status, progress, isBlocked, isWaiting, reviewOnlyOutput, isReferenceOnly);
+        return {
+          target,
+          lane,
+          html: `
           <div class="dataset-card ${isActive ? 'active' : ''} ${isBlocked ? 'blocked' : ''} ${isWaiting ? 'waiting' : ''}" data-card-target="${escapeHtml(target)}">
             <div class="dataset-top">
               <span class="dataset-name">${escapeHtml(target)}</span>
               <span class="pill ${statusClass}">${escapeHtml(status)}</span>
             </div>
             <div class="dataset-context">${escapeHtml(datasetPlanningContext(target, isPlanned, isActive, status))}</div>
-            <div class="stage-strip">
-              <div class="stage done">inputs</div>
-              <div class="stage ${planStageClass}">plan</div>
-              <div class="stage ${codeStageClass}">code</div>
-              <div class="stage ${reviewStageClass}">review</div>
-              <div class="stage ${runStageClass}">run</div>
-            </div>
+            <div class="dataset-next"><strong>Next:</strong> ${escapeHtml(nextActionText(target, status, isBlocked))}</div>
           </div>
-        `;
-      }).join('');
+        `
+        };
+      });
+      node.innerHTML = renderDatasetLanes(cards);
       for (const card of node.querySelectorAll('[data-card-target]')) {
         card.addEventListener('click', () => {
           state.selectedTarget = card.dataset.cardTarget;
@@ -4385,6 +6235,41 @@ INDEX_HTML = r"""<!doctype html>
           resetActiveDatasetView();
         });
       }
+    }
+
+    function datasetLaneFor(target, status, progress, isBlocked, isWaiting, reviewOnlyOutput, isReferenceOnly) {
+      const next = String(progress?.next_action || '').toLowerCase();
+      const executionStatus = String(progress?.execution_status || '').toLowerCase();
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview || executionStatus === 'completed') return 'done';
+      if (reviewOnlyOutput || isReferenceOnly) return 'done';
+      if (isBlocked || status === 'blocked' || status === 'failed' || ['terminal_failure', 'failed'].includes(executionStatus)) return 'blocked';
+      if (isWaiting || status === 'waiting upstream') return 'waiting';
+      if (['review_draft_spec', 'review_code', 'review_terminal_failure', 'resolve_dependency'].includes(next) || targetInDraftSpecReview(target) || generatedFor(target)?.generated_code) return 'review';
+      return 'ready';
+    }
+
+    function renderDatasetLanes(cards) {
+      const lanes = [
+        {key: 'review', title: 'Needs review', detail: 'Approve, reject, or repair before the graph continues.'},
+        {key: 'ready', title: 'Ready to continue', detail: 'These datasets can move to the next graph step.'},
+        {key: 'waiting', title: 'Waiting upstream', detail: 'Complete the named upstream ADaM first, then refresh progress.'},
+        {key: 'blocked', title: 'Blocked', detail: 'A dependency or runtime failure needs a decision.'},
+        {key: 'done', title: 'Finished or reference-only', detail: 'Inspect results or use reference ADaM only for comparison.'}
+      ];
+      return lanes.map((lane) => {
+        const laneCards = cards.filter((card) => card.lane === lane.key);
+        if (!laneCards.length) return '';
+        return `
+          <div class="dataset-lane ${lane.key}">
+            <div class="dataset-lane-head">
+              <span>${escapeHtml(lane.title)}</span>
+              <span>${laneCards.length} dataset(s)</span>
+            </div>
+            <div class="muted">${escapeHtml(lane.detail)}</div>
+            ${laneCards.map((card) => card.html).join('')}
+          </div>
+        `;
+      }).join('') || '<div class="muted">No dataset is currently in the work queue.</div>';
     }
 
     function codeStageClassFor(target, progress, isActive, isPlanned, isBlocked, isReferenceOnly) {
@@ -4768,11 +6653,11 @@ INDEX_HTML = r"""<!doctype html>
           expected_outputs: sameCodeArtifact ? existingGenerated.expected_outputs || [] : []
         };
       }
-      await loadReviewSummary(payload.run_id || runId());
+      await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
       syncActiveDatasetState();
     }
 
-    async function approveCode() {
+    async function approveCode(button = byId('approveButton')) {
       const generated = generatedFor(state.selectedTarget);
       if (!generated) return;
       const availability = actionAvailability().approveCode;
@@ -4782,9 +6667,10 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       state.generated = generated;
+      const restorePending = setPendingButton(button, 'Recording...');
       beginOperation(
-        'Approving generated R code',
-        `Recording human approval for ${generated.dataset}. R will not run in this step.`
+        'Saving code approval',
+        `Recording human approval for ${generated.dataset}. This only updates the graph state; R will not run in this step.`
       );
       setPill('codeStatus', 'review');
       try {
@@ -4814,6 +6700,9 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Code approval failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -4847,7 +6736,7 @@ INDEX_HTML = r"""<!doctype html>
         });
         state.executionByDataset[generated.dataset] = state.execution;
         await refreshGraphReadModels();
-        await loadReviewSummary(generated.run_id);
+        await loadReviewSummary(generated.run_id, {detailLevel: 'full', refreshGraph: false});
         addEvent('Sandbox completed', `${generated.dataset} finished with status ${state.execution.status}.`);
         setPill('codeStatus', state.execution.status);
         if (state.execution.status === 'completed') {
@@ -4867,27 +6756,53 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
-    async function loadReviewSummary(id) {
+    async function loadReviewSummary(id, {detailLevel = 'full', refreshGraph = false, render = true} = {}) {
       try {
-        state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}`);
-        await refreshGraphReadModels();
+        const normalizedDetail = String(detailLevel || 'full').toLowerCase() === 'summary' ? 'summary' : 'full';
+        state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}&detail_level=${encodeURIComponent(normalizedDetail)}`);
+        state.runReviewDetailLevel = state.runReview?.detail_level || normalizedDetail;
+        if (refreshGraph) await refreshGraphReadModels();
+        if (!state.graphState && reviewSummaryHasGeneratedCode(state.runReview)) {
+          await refreshGraphState();
+        }
         for (const review of state.runReview?.dataset_reviews || []) {
           applyReviewSummaryDataset(review);
-          if (review?.compare_summary) {
+          if (review?.compare_summary && review.compare_summary.status !== 'not_run') {
             state.compareResults[review.dataset] = review.compare_summary;
           }
         }
         syncActiveDatasetState();
         setPill('codeStatus', codeStatusForActiveDataset());
-        renderAdvanced();
-        renderGraphAwareDashboard();
-        renderActionAvailability();
-        renderPane();
+        if (render) {
+          renderAdvanced();
+          renderGraphAwareDashboard();
+          renderActionAvailability();
+          renderPane();
+        }
       } catch {
         state.runReview = null;
+        state.runReviewDetailLevel = null;
         renderAdvanced();
         renderGraphAwareDashboard();
       }
+    }
+
+    function reviewSummaryHasGeneratedCode(summary) {
+      return Boolean((summary?.dataset_reviews || []).some((review) => review?.generated_code_path || review?.generated_code));
+    }
+
+    async function ensureReviewSummaryDetail(detailLevel = 'full') {
+      if (!runId() || !studyDir()) return null;
+      const normalizedDetail = String(detailLevel || 'full').toLowerCase() === 'summary' ? 'summary' : 'full';
+      if (
+        state.runReview &&
+        state.runReview.run_id === runId() &&
+        (normalizedDetail === 'summary' || state.runReviewDetailLevel === 'full')
+      ) {
+        return state.runReview;
+      }
+      await loadReviewSummary(runId(), {detailLevel: normalizedDetail, refreshGraph: false, render: false});
+      return state.runReview;
     }
 
     function applyReviewSummaryDataset(review) {
@@ -5019,18 +6934,30 @@ INDEX_HTML = r"""<!doctype html>
         ? `<p class="note strong">Last failure decision: ${escapeHtml(titleFromToken(reviewed))}. Continue with the matching next action from the graph.</p>`
         : '';
       const actionControls = graphActions.length
-        ? graphActions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(item.label || titleFromToken(item.action))}</button>`).join('')
+        ? graphActions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(terminalFailureActionButtonLabel(item.action, item.label))}</button>`).join('')
         : '<p class="note">Waiting for graph-owned terminal-failure actions to load. Refresh progress before choosing a follow-up.</p>';
       return `
         <div class="card terminal-failure-panel">
           <h3>Terminal Failure Triage</h3>
           <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, spec revision, new input request, or batch continuation.</p>
+          <p class="note">Repair generated code creates a new code artifact for review. Rerun approved code repeats the already approved artifact. Go back to spec review when the failure suggests the derivation instruction is wrong.</p>
           ${reviewedNote}
           <div class="button-row">
             ${actionControls}
           </div>
         </div>
       `;
+    }
+
+    function terminalFailureActionButtonLabel(action, fallbackLabel) {
+      const labels = {
+        retry_execution: 'Rerun Approved Code',
+        repair_code: 'Repair Generated Code',
+        revise_spec: 'Back To Spec Review',
+        request_inputs: 'Request More Inputs',
+        skip_dataset: 'Skip Dataset'
+      };
+      return labels[action] || fallbackLabel || titleFromToken(action);
     }
 
     function resultWorkspace(review) {
@@ -5075,7 +7002,16 @@ INDEX_HTML = r"""<!doctype html>
     function outputPreview(review, kind) {
       const preview = review?.output_preview;
       const selectedPreview = kind === 'reference' ? review?.reference_preview : preview;
-      if (!selectedPreview) return `<p class="note">${kind === 'reference' ? 'No reference ADaM found for this dataset.' : 'No generated ADaM output found yet.'}</p>`;
+      if (!selectedPreview) {
+        const available = downloadAvailable(review, kind === 'reference' ? 'reference' : 'generated');
+        if (available) {
+          return `
+            <p class="note strong">${kind === 'reference' ? 'Reference ADaM' : 'Generated ADaM'} exists, but table preview has not been loaded yet.</p>
+            <p class="note">Open this output tab to load detailed previews, or use Downloads for the file directly. SAS tables may take longer because the backend reads them through local R.</p>
+          `;
+        }
+        return `<p class="note">${kind === 'reference' ? 'No reference ADaM found for this dataset.' : 'No generated ADaM output found yet.'}</p>`;
+      }
       const key = tableKey(review.dataset, kind);
       const page = state.tablePages[key] || null;
       const columns = page?.columns || selectedPreview.columns || [];
@@ -5101,9 +7037,13 @@ INDEX_HTML = r"""<!doctype html>
 
     function comparePane(review) {
       const compare = state.compareResults[review.dataset] || review.compare_summary;
-      const canRunCompare = Boolean(review?.output_preview && review?.reference_preview);
-      const compareButtonLabel = compare ? 'Run Compare Again' : 'Run Compare';
-      if (!compare) {
+      const canRunCompare = Boolean(
+        (review?.output_preview && review?.reference_preview) ||
+        (downloadAvailable(review, 'generated') && downloadAvailable(review, 'reference'))
+      );
+      const hasRecordedCompare = compare && String(compare.status || '') !== 'not_run';
+      const compareButtonLabel = hasRecordedCompare ? 'Run Compare Again' : 'Run Compare';
+      if (!hasRecordedCompare) {
         if (!canRunCompare) return '<p class="note">Compare is not available yet. A generated table and a reference ADaM table are both required.</p>';
         return `
           <p class="note">Compare has not been run yet. Reference ADaM is used only as comparison evidence.</p>
@@ -5143,6 +7083,10 @@ INDEX_HTML = r"""<!doctype html>
         <h3 style="margin-top:12px;">Mismatch Samples</h3>
         <div class="table-wrap"><table><thead><tr><th>Key</th><th>Column</th><th>Generated</th><th>Reference</th></tr></thead><tbody>${mismatchRows || '<tr><td class="muted" colspan="4">No mismatch samples.</td></tr>'}</tbody></table></div>
       `;
+    }
+
+    function downloadAvailable(review, kind) {
+      return Boolean((review?.downloads || []).find((item) => item.kind === kind && item.available));
     }
 
     function compareVerdict(compare) {
@@ -5225,7 +7169,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function attachTerminalFailureHandlers() {
       for (const button of document.querySelectorAll('[data-terminal-action]')) {
-        button.addEventListener('click', () => submitTerminalFailureReview(button.dataset.terminalDataset, button.dataset.terminalAction));
+        button.addEventListener('click', () => submitTerminalFailureReview(button.dataset.terminalDataset, button.dataset.terminalAction, button));
       }
     }
 
@@ -5236,12 +7180,13 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => submitReviewQueueGraphCommand({
           dataset: button.dataset.reviewCommandDataset,
           interrupt: button.dataset.reviewCommandInterrupt,
-          action: button.dataset.reviewCommandAction
+          action: button.dataset.reviewCommandAction,
+          button
         }));
       }
     }
 
-    async function submitReviewQueueGraphCommand({dataset = '', interrupt = '', action = ''} = {}) {
+    async function submitReviewQueueGraphCommand({dataset = '', interrupt = '', action = '', button = null} = {}) {
       const normalizedInterrupt = String(interrupt || '').trim();
       const normalizedDataset = String(dataset || '').toUpperCase();
       const normalizedAction = String(action || '').trim();
@@ -5251,9 +7196,14 @@ INDEX_HTML = r"""<!doctype html>
         String(candidate.dataset || '').toUpperCase() === normalizedDataset
       ));
       if (!graphCommandReviewActionAllowed(item, normalizedInterrupt, normalizedAction)) return;
+      const restorePending = setPendingButtonGroup(
+        button,
+        `[data-review-command-dataset="${normalizedDataset}"][data-review-command-interrupt="${normalizedInterrupt}"]`,
+        'Recording...'
+      );
       beginOperation(
-        'Recording graph review decision',
-        `${readableInterruptName(normalizedInterrupt)}: ${titleFromToken(normalizedAction)}. This records the decision only.`
+        'Saving review decision',
+        `${readableInterruptName(normalizedInterrupt)}: ${titleFromToken(normalizedAction)}. This records the decision only; R is not running.`
       );
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
@@ -5268,7 +7218,7 @@ INDEX_HTML = r"""<!doctype html>
           })
         });
         await refreshGraphReadModels();
-        await loadReviewSummary(payload.run_id || runId());
+        await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
         applyReviewQueueGraphCommandResponse(payload, normalizedInterrupt);
         addEvent(
           'Graph review decision recorded',
@@ -5285,6 +7235,60 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
       } catch (error) {
         failOperation('Graph review decision failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
+      }
+    }
+
+    async function submitDependencyReviewDecision(action, button = null) {
+      const normalizedAction = String(action || '').trim();
+      const summary = activeDependencyReviewSummary();
+      if (!summary || !['approve', 'reject'].includes(normalizedAction)) return;
+      const restorePending = setPendingButtonGroup(
+        button,
+        '[data-primary-action="approveDependencyPlan"], [data-primary-action="rejectDependencyPlan"]',
+        'Recording...'
+      );
+      beginOperation(
+        normalizedAction === 'approve' ? 'Approving dependency plan' : 'Rejecting dependency plan',
+        dependencyReviewSummaryText(summary)
+      );
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: graphCommandRequestBody({
+            interrupt: 'dependency_review',
+            action: normalizedAction,
+            notes: byId('reviewNotes').value.trim() || `${normalizedAction === 'approve' ? 'Approved' : 'Rejected'} dependency plan from the main workflow step.`,
+            payload: graphCommandPayloadForReview('dependency_review', normalizedAction)
+          })
+        });
+        await refreshGraphReadModels();
+        await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
+        applyReviewQueueGraphCommandResponse(payload, 'dependency_review');
+        const next = state.runProgress?.action_label || state.runProgress?.next_action || payload.next_action || payload.status;
+        addEvent(
+          'Dependency plan decision recorded',
+          `${titleFromToken(normalizedAction)} -> ${titleFromToken(next)}.`
+        );
+        completeOperation(
+          'Dependency plan decision recorded',
+          normalizedAction === 'approve'
+            ? `Dependency evidence is accepted for this run. Next: ${titleFromToken(next)}.`
+            : 'Dependency plan was rejected. Update inputs or prepare a new plan before continuing.'
+        );
+        renderPlan(state.plan || {});
+        renderDraftSpecPane();
+        renderPane();
+        renderGraphAwareDashboard();
+        renderActionAvailability();
+      } catch (error) {
+        failOperation('Dependency plan decision failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -5350,18 +7354,24 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => submitNativeResumeReview(
           button.dataset.savedGraphDataset,
           button.dataset.savedGraphAction,
-          button.dataset.savedGraphInterrupt
+          button.dataset.savedGraphInterrupt,
+          button
         ));
       }
     }
 
-    async function submitNativeResumeReview(dataset, decision, interruptName) {
+    async function submitNativeResumeReview(dataset, decision, interruptName, button = null) {
       const target = String(dataset || state.selectedTarget || '').toUpperCase();
       const item = nativeResumeQueueItem(target, interruptName);
       const interrupt = normalizeNativeResumeInterruptName(interruptName);
       const allowedNow = nativeResumeItemAllowsDecision(item, interrupt, decision);
       if (!target || !decision || !item || !allowedNow) return;
-      beginOperation('Resuming saved graph gate', `Recording ${titleFromToken(decision)} for ${target} through durable LangGraph resume.`);
+      const restorePending = setPendingButtonGroup(
+        button,
+        `[data-saved-graph-dataset="${target}"][data-saved-graph-interrupt="${interrupt}"]`,
+        'Recording...'
+      );
+      beginOperation('Saving saved-graph decision', `Recording ${titleFromToken(decision)} for ${target}. This updates durable LangGraph state before the next step.`);
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/native-resume`, {
           method: 'POST',
@@ -5408,7 +7418,7 @@ INDEX_HTML = r"""<!doctype html>
           };
         }
         await refreshGraphReadModels();
-        await loadReviewSummary(payload.run_id || runId());
+        await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
         addEvent('Saved graph gate resumed', `${target}: ${titleFromToken(payload.decision)} -> ${titleFromToken(payload.next_action || payload.status)}.`);
         completeOperation('Saved graph gate resumed', `${target} next action: ${titleFromToken(payload.next_action || payload.status)}.`);
         renderDraftSpecPane();
@@ -5417,6 +7427,9 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
       } catch (error) {
         failOperation('Saved graph resume failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -5427,10 +7440,15 @@ INDEX_HTML = r"""<!doctype html>
       return item.available_actions.some((available) => String(available.action || '').trim() === action);
     }
 
-    async function submitTerminalFailureReview(dataset, action) {
+    async function submitTerminalFailureReview(dataset, action, button = null) {
       const target = String(dataset || state.selectedTarget || '').toUpperCase();
       if (!target || !action) return;
-      beginOperation('Recording failure decision', `Recording ${titleFromToken(action)} for ${target}.`);
+      const restorePending = setPendingButtonGroup(
+        button,
+        `[data-terminal-dataset="${target}"]`,
+        'Recording...'
+      );
+      beginOperation('Saving failure decision', `Recording ${titleFromToken(action)} for ${target}. No repair or rerun starts until the graph accepts this decision.`);
       try {
         const payload = await api(`/runs/${encodeURIComponent(runId())}/graph-command`, {
           method: 'POST',
@@ -5455,6 +7473,9 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
       } catch (error) {
         failOperation('Failure decision failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -5542,28 +7563,63 @@ INDEX_HTML = r"""<!doctype html>
     byId('startUploadButton').addEventListener('click', startUploadWorkspace);
     byId('finalizeInputsButton').addEventListener('click', finalizeInputsForDraftSpec);
     byId('startStudyLoopButton').addEventListener('click', startNativeStudyLoop);
-    byId('approveDraftSpecButton').addEventListener('click', approveDraftSpec);
+    byId('approveDraftSpecButton').addEventListener('click', (event) => approveDraftSpec(event.currentTarget));
     byId('generateCodeButton').addEventListener('click', generateCode);
-    byId('approveButton').addEventListener('click', approveCode);
+    byId('approveButton').addEventListener('click', (event) => approveCode(event.currentTarget));
     byId('runApprovedButton').addEventListener('click', runApprovedCode);
     byId('addTargetButton').addEventListener('click', addManualTarget);
+    byId('openLlmSettingsButton').addEventListener('click', openLlmSettings);
+    byId('closeLlmSettingsButton').addEventListener('click', closeLlmSettings);
+    byId('llmSettingsModal').addEventListener('click', (event) => {
+      if (event.target === byId('llmSettingsModal')) closeLlmSettings();
+    });
+    if (document.addEventListener) {
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !byId('llmSettingsModal').classList.contains('hidden')) {
+          closeLlmSettings();
+        }
+      });
+    }
     byId('modelMode').addEventListener('change', updateLlmModeControls);
     byId('testLlmButton').addEventListener('click', testLlmConnection);
+    for (const button of document.querySelectorAll('[data-lang-option]')) {
+      button.addEventListener('click', () => setLanguage(button.dataset.langOption));
+    }
     for (const button of document.querySelectorAll('[data-upload-role]')) {
       button.addEventListener('click', () => uploadRole(button.dataset.uploadRole));
     }
     for (const button of document.querySelectorAll('[data-view]')) {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', async () => {
         state.selectedView = button.dataset.view;
         setActiveTab();
+        if (state.selectedView === 'output') {
+          beginOperation('Loading output review', 'Reading generated/reference table previews and downloadable artifact details.');
+          await ensureReviewSummaryDetail('full');
+          completeOperation('Output review loaded', 'Generated ADaM review details are ready.');
+        } else if (state.selectedView === 'code' || state.selectedView === 'risk') {
+          await ensureReviewSummaryDetail('summary');
+        }
         renderPane();
       });
     }
-    updateLlmModeControls();
-    renderActionAvailability();
-    updateHeaderStatusOverview();
-    renderPrimaryNextAction();
-    checkHealth();
+    async function initializePage() {
+      updateLlmModeControls();
+      applyI18n();
+      renderActionAvailability();
+      updateHeaderStatusOverview();
+      renderGraphAwareDashboard();
+      renderPrimaryNextAction();
+      await checkHealth();
+      const restored = await restoreBrowserSession();
+      if (!restored) {
+        renderActionAvailability();
+        updateHeaderStatusOverview();
+        renderGraphAwareDashboard();
+        renderPrimaryNextAction();
+      }
+    }
+
+    initializePage();
   </script>
 </body>
 </html>

@@ -351,9 +351,10 @@ def create_app() -> FastAPI:
     def run_review_summary(
         run_id: str,
         study_dir: str = Query(..., description="Path to the local study folder."),
+        detail_level: str = Query("full", description="summary or full."),
     ) -> RunReviewSummary:
         try:
-            return build_run_review_summary(study_dir, run_id)
+            return build_run_review_summary(study_dir, run_id, detail_level=detail_level)
         except ApiServiceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
