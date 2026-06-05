@@ -7,8 +7,10 @@ import unittest
 import uuid
 from pathlib import Path
 
+from tests.temp_workspace import test_session_root
+
 ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = ROOT / ".tmp_tests"
+TMP_ROOT = test_session_root()
 
 try:
     from adam_agent.tools.reference_store import (

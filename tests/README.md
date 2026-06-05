@@ -11,6 +11,22 @@ Initial tests should prove architecture behavior before ADaM correctness:
 Real ADaM derivation tests should be added after the graph skeleton and tool
 interfaces are stable.
 
+## Temporary Workspaces
+
+Most tests write study folders, run folders, sqlite checkpoints, and generated
+artifacts under `.tmp_tests/session_*`. The session folder is removed
+automatically when the test process exits.
+
+To keep failed test artifacts for debugging:
+
+```powershell
+$env:ADAM_AGENT_KEEP_TEST_ARTIFACTS = "1"
+python -B -m unittest tests.test_graph_gateway
+```
+
+Unset that variable for normal regression runs so `.tmp_tests/` does not keep
+accumulating UUID workspaces.
+
 ## Optional Live LLM Smoke Test
 
 `test_live_llm_smoke.py` is skipped by default. It is only for manual provider

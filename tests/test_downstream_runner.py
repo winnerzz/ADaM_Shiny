@@ -7,10 +7,12 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+
+from tests.temp_workspace import test_session_root
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = ROOT / ".tmp_tests"
+TMP_ROOT = test_session_root()
 LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
 
 try:

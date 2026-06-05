@@ -14,11 +14,13 @@ import tomllib
 import unittest
 import uuid
 from pathlib import Path
+
+from tests.temp_workspace import test_session_root
 from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = ROOT / ".tmp_tests"
+TMP_ROOT = test_session_root()
 
 try:
     from fastapi.testclient import TestClient
@@ -91,13 +93,25 @@ def _assert_run_projection(testcase: unittest.TestCase, study_dir: Path, run_id:
 class Phase8ApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._old_backend = os.environ.get("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND")
+        self._old_demo_root = os.environ.get("ADAM_AGENT_DEMO_STUDY_ROOT")
+        self._old_product_root = os.environ.get("ADAM_AGENT_PRODUCT_STUDY_ROOT")
         os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = "memory"
+        os.environ["ADAM_AGENT_DEMO_STUDY_ROOT"] = str(TMP_ROOT / "ui_demo_study")
+        os.environ["ADAM_AGENT_PRODUCT_STUDY_ROOT"] = str(TMP_ROOT / "local_product_studies")
 
     def tearDown(self) -> None:
         if self._old_backend is None:
             os.environ.pop("ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND", None)
         else:
             os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = self._old_backend
+        if self._old_demo_root is None:
+            os.environ.pop("ADAM_AGENT_DEMO_STUDY_ROOT", None)
+        else:
+            os.environ["ADAM_AGENT_DEMO_STUDY_ROOT"] = self._old_demo_root
+        if self._old_product_root is None:
+            os.environ.pop("ADAM_AGENT_PRODUCT_STUDY_ROOT", None)
+        else:
+            os.environ["ADAM_AGENT_PRODUCT_STUDY_ROOT"] = self._old_product_root
 
     def test_health_endpoint(self) -> None:
         client = TestClient(create_app())
@@ -7237,6 +7251,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertTrue(payload["study_id"].startswith("study_"))
         self.assertTrue(payload["run_id"].startswith("run_"))
         self.assertTrue((Path(payload["study_dir"]) / "input_sdtm").is_dir())
+        self.assertTrue(Path(payload["study_dir"]).is_relative_to(TMP_ROOT))
         self.assertIn("input_summary", payload)
 
     def test_workspace_endpoint_creates_canonical_folders(self) -> None:

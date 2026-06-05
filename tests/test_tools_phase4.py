@@ -9,12 +9,14 @@ import unittest
 import uuid
 from http.client import RemoteDisconnected
 from pathlib import Path
+
+from tests.temp_workspace import test_session_root
 from unittest.mock import patch
 
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = ROOT / ".tmp_tests"
+TMP_ROOT = test_session_root()
 
 
 def workspace_tempdir(name: str) -> Path:

@@ -125,6 +125,16 @@ MAX_TABLE_PAGE_SIZE = 200
 _GRAPH_STATE_UNSET = object()
 SERVICE_CHECKPOINTER_BACKEND_ENV = "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"
 DEFAULT_SERVICE_CHECKPOINTER_BACKEND = "sqlite"
+DEMO_STUDY_ROOT_ENV = "ADAM_AGENT_DEMO_STUDY_ROOT"
+PRODUCT_STUDY_ROOT_ENV = "ADAM_AGENT_PRODUCT_STUDY_ROOT"
+
+
+def _default_demo_study_root() -> Path:
+    return Path(os.environ.get(DEMO_STUDY_ROOT_ENV, DEFAULT_DEMO_STUDY_ROOT)).expanduser()
+
+
+def _default_product_study_root() -> Path:
+    return Path(os.environ.get(PRODUCT_STUDY_ROOT_ENV, DEFAULT_PRODUCT_STUDY_ROOT)).expanduser()
 
 
 # Keep service-layer GraphGateway construction centralized here. Endpoint
@@ -242,7 +252,7 @@ def create_default_product_workspace() -> ProductWorkspaceResponse:
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     study_id = f"study_{stamp[:14]}"
-    root = DEFAULT_PRODUCT_STUDY_ROOT / study_id
+    root = _default_product_study_root() / study_id
     summary = ensure_study_workspace(StudyWorkspaceRequest(study_dir=str(root), study_id=study_id))
     return ProductWorkspaceResponse(
         study_id=study_id,
@@ -356,7 +366,7 @@ def prepare_demo_study(
         raise ApiServiceError(f"Demo source folder does not exist: {source}")
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    target = Path(study_dir).expanduser() if study_dir else DEFAULT_DEMO_STUDY_ROOT / f"demo_adam_{stamp}"
+    target = Path(study_dir).expanduser() if study_dir else _default_demo_study_root() / f"demo_adam_{stamp}"
     if study_dir is None:
         _clear_demo_input_folders(target)
     target.mkdir(parents=True, exist_ok=True)
