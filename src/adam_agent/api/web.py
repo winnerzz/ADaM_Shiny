@@ -152,6 +152,9 @@ INDEX_HTML = r"""<!doctype html>
       gap: 6px;
       margin-top: 7px;
     }
+    .status-meta-grid .status-chip:nth-child(n+3) {
+      display: none;
+    }
     .header-next-chip { display: none; }
     .header-now-chip { display: none; }
     .status-chip {
@@ -303,6 +306,40 @@ INDEX_HTML = r"""<!doctype html>
       padding: 16px;
       background: #fff;
     }
+    #currentWorkSection {
+      border-color: #9db8c8;
+    }
+    #currentWorkSection .section-head {
+      min-height: 50px;
+      background: #f2f7f9;
+    }
+    #currentWorkSection .section-body {
+      padding: 18px;
+    }
+    #studySetupSection,
+    #chooseOutputSection,
+    #generateRunSection {
+      border-color: #d8e0ea;
+      box-shadow: none;
+    }
+    #studySetupSection .section-head,
+    #chooseOutputSection .section-head,
+    #generateRunSection .section-head {
+      padding: 10px 14px;
+      background: #fbfcfe;
+    }
+    #studySetupSection .section-head h2,
+    #chooseOutputSection .section-head h2,
+    #generateRunSection .section-head h2 {
+      padding-left: 0;
+      border-left: 0;
+      font-size: 16px;
+    }
+    #studySetupSection .section-body,
+    #chooseOutputSection .section-body,
+    #generateRunSection .section-body {
+      padding: 14px;
+    }
     .step {
       display: grid;
       grid-template-columns: 28px 1fr;
@@ -358,28 +395,27 @@ INDEX_HTML = r"""<!doctype html>
     }
     .side-progress-steps {
       display: grid;
-      gap: 6px;
+      gap: 4px;
     }
     .side-progress-step {
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr);
-      gap: 7px;
+      grid-template-columns: 8px minmax(0, 1fr);
+      gap: 8px;
       align-items: start;
-      padding: 7px;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fbfdff;
+      padding: 4px 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
     }
     .side-progress-dot {
-      display: grid;
-      place-items: center;
-      width: 18px;
-      height: 18px;
+      display: block;
+      width: 8px;
+      height: 8px;
+      margin-top: 4px;
       border-radius: 999px;
       color: #fff;
       background: #bdc8d7;
-      font-size: 10px;
-      font-weight: 800;
+      font-size: 0;
     }
     .side-progress-step strong {
       display: block;
@@ -394,13 +430,13 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.3;
       overflow-wrap: anywhere;
     }
-    .side-progress-step.done { border-color: #b8dfc9; background: #f2fbf5; }
+    .side-progress-step.done { border-color: transparent; background: transparent; }
     .side-progress-step.done .side-progress-dot { background: var(--ok); }
-    .side-progress-step.active { border-color: #a7d8cf; background: #eef8f6; }
+    .side-progress-step.active { border-color: transparent; background: transparent; }
     .side-progress-step.active .side-progress-dot { background: var(--accent); }
-    .side-progress-step.blocked { border-color: #efc4be; background: #fff8f7; }
+    .side-progress-step.blocked { border-color: transparent; background: transparent; }
     .side-progress-step.blocked .side-progress-dot { background: var(--danger); }
-    .side-progress-step.waiting { border-color: #f0d19b; background: #fff8ea; }
+    .side-progress-step.waiting { border-color: transparent; background: transparent; }
     .side-progress-step.waiting .side-progress-dot { background: var(--warn); }
     .side-queue-panel {
       margin-bottom: 12px;
@@ -456,6 +492,9 @@ INDEX_HTML = r"""<!doctype html>
       margin-bottom: 12px;
     }
     .card { padding: 13px; min-width: 0; }
+    .quiet-card {
+      display: none;
+    }
     .card, .metric, .setup-action-card, .drop-card, .operation-banner, .active-dataset-panel, .dashboard-audit-details, .focus-panel, .graph-canvas, .note {
       box-shadow: none;
     }
@@ -542,7 +581,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .upload-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 10px;
     }
     .drop-card {
@@ -555,6 +594,11 @@ INDEX_HTML = r"""<!doctype html>
     .drop-card h3 {
       margin-bottom: 0;
       font-size: 14px;
+    }
+    .drop-card button {
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 12px;
     }
     .drop-card p {
       display: none;
@@ -596,6 +640,9 @@ INDEX_HTML = r"""<!doctype html>
     textarea { min-height: 74px; resize: vertical; }
     .field { margin-bottom: 12px; }
     .button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .legacy-action-row {
+      display: none;
+    }
     .button-row.compact-row {
       margin-top: 8px;
       justify-content: flex-start;
@@ -652,7 +699,7 @@ INDEX_HTML = r"""<!doctype html>
       animation: spin 0.8s linear infinite;
     }
     .action-hints {
-      display: grid;
+      display: none;
       gap: 6px;
       margin-top: 10px;
     }
@@ -678,8 +725,8 @@ INDEX_HTML = r"""<!doctype html>
     .action-hint.waiting { background: #fbfdff; }
     .target-picker {
       display: grid;
-      gap: 10px;
-      padding: 12px;
+      gap: 8px;
+      padding: 10px;
       border: 1px solid #d5dde8;
       border-radius: 8px;
       background: #fbfdff;
@@ -689,7 +736,7 @@ INDEX_HTML = r"""<!doctype html>
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 12px;
       align-items: center;
-      padding-bottom: 10px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #e1e7ef;
     }
     .target-current-label {
@@ -704,7 +751,7 @@ INDEX_HTML = r"""<!doctype html>
       display: block;
       margin-top: 2px;
       color: var(--text);
-      font-size: 24px;
+      font-size: 28px;
       font-weight: 900;
       line-height: 1.1;
     }
@@ -724,15 +771,14 @@ INDEX_HTML = r"""<!doctype html>
     .target-list {
       display: flex;
       flex-wrap: wrap;
-      gap: 7px;
+      gap: 6px;
     }
     .target-option {
-      display: inline-grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      display: inline-flex;
       align-items: center;
-      gap: 7px;
-      min-height: 34px;
-      padding: 6px 8px;
+      gap: 4px;
+      min-height: 30px;
+      padding: 5px 7px;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: #fff;
@@ -751,9 +797,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .target-name { min-width: 44px; }
     .target-hint {
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
+      display: none;
     }
     .target-view {
       min-height: 26px;
@@ -765,6 +809,29 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       font-size: 12px;
       line-height: 1.4;
+    }
+    .target-plan-summary {
+      padding: 9px 10px;
+      border: 1px solid #d8e0ea;
+      border-radius: 8px;
+      background: #fbfdff;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .target-plan-summary strong {
+      color: var(--text);
+      font-weight: 800;
+    }
+    .target-plan-summary.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+      color: #6f4700;
+    }
+    .target-plan-summary.fail {
+      border-color: #efc4be;
+      background: #fff8f7;
+      color: var(--danger);
     }
     .target-manual-details {
       margin-top: 0;
@@ -809,7 +876,7 @@ INDEX_HTML = r"""<!doctype html>
       gap: 14px;
       align-items: center;
       margin-bottom: 0;
-      padding: 0 0 14px;
+      padding: 0 0 16px;
       border: 0;
       border-bottom: 1px solid #d7e1ec;
       border-left: 0;
@@ -866,9 +933,9 @@ INDEX_HTML = r"""<!doctype html>
     .next-action-title {
       margin-bottom: 4px;
       color: var(--text);
-      font-size: 18px;
-      font-weight: 800;
-      line-height: 1.25;
+      font-size: 22px;
+      font-weight: 900;
+      line-height: 1.2;
     }
     .next-action-detail {
       color: var(--muted);
@@ -947,6 +1014,10 @@ INDEX_HTML = r"""<!doctype html>
     }
     .active-dataset-panel {
       min-height: 0;
+      padding: 12px;
+      border: 1px solid #cfd9e6;
+      border-radius: 8px;
+      background: #fbfdff;
     }
     .active-dataset-head {
       display: flex;
@@ -958,8 +1029,8 @@ INDEX_HTML = r"""<!doctype html>
     .active-dataset-title {
       display: block;
       margin: 2px 0 3px;
-      font-size: 18px;
-      font-weight: 800;
+      font-size: 24px;
+      font-weight: 900;
     }
     .active-dataset-body {
       display: grid;
@@ -981,6 +1052,8 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
+    .active-dataset-line.warn { color: #6f4700; }
+    .active-dataset-line.fail { color: var(--danger); }
     .active-dataset-line strong {
       color: var(--text);
       font-weight: 800;
@@ -1039,6 +1112,9 @@ INDEX_HTML = r"""<!doctype html>
     .active-dataset-row.fail {
       border-color: #efc4be;
       background: #fff8f7;
+    }
+    .active-dataset-technical {
+      display: none;
     }
     .active-stage-strip {
       display: none;
@@ -1415,14 +1491,15 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       line-height: 1.45;
     }
-    .dataset-board { display: grid; gap: 8px; }
+    .dataset-board { display: grid; gap: 6px; }
     .dataset-lane {
       display: grid;
-      gap: 5px;
-      padding: 8px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfdff;
+      gap: 4px;
+      padding: 0 0 8px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
     }
     .dataset-lane-head {
       display: flex;
@@ -1441,22 +1518,31 @@ INDEX_HTML = r"""<!doctype html>
       text-transform: none;
     }
     .dataset-lane .muted {
-      font-size: 11px;
-      line-height: 1.25;
+      display: none;
     }
-    .dataset-lane.review { border-color: #f0d19b; background: #fffdf7; }
-    .dataset-lane.waiting { border-color: #f0d19b; background: #fff8ea; }
-    .dataset-lane.blocked { border-color: #efc4be; background: #fff8f7; }
-    .dataset-lane.done { border-color: #b8dfc9; background: #f2fbf5; }
+    .dataset-lane.review,
+    .dataset-lane.waiting,
+    .dataset-lane.blocked,
+    .dataset-lane.done {
+      background: transparent;
+    }
     .dataset-card {
-      padding: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 8px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fff;
       cursor: pointer;
     }
     .dataset-card:hover { border-color: rgba(15, 118, 110, 0.35); background: #fbfffe; }
-    .dataset-card.active { border-color: rgba(15, 118, 110, 0.45); background: #fbfffe; }
+    .dataset-card.active {
+      border-color: rgba(15, 118, 110, 0.45);
+      background: #fbfffe;
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
     .dataset-card.blocked { border-color: #efc4be; background: #fff8f7; }
     .dataset-card.waiting { border-color: #f0d19b; background: #fff8ea; }
     .dataset-top {
@@ -1464,19 +1550,14 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      margin-bottom: 4px;
+      margin-bottom: 0;
     }
     .dataset-name { font-size: 13px; font-weight: 800; }
     .dataset-context {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.3;
+      display: none;
     }
     .dataset-next {
-      margin: 4px 0 0;
-      color: var(--text);
-      font-size: 11px;
-      line-height: 1.3;
+      display: none;
     }
     .dataset-next strong {
       font-weight: 800;
@@ -1759,6 +1840,46 @@ INDEX_HTML = r"""<!doctype html>
     }
     .inline-details-body {
       padding: 14px 16px 16px;
+    }
+    .evidence-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 10px;
+    }
+    .evidence-chip {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 8px;
+      border: 1px solid #d8e0ea;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .evidence-chip strong {
+      color: var(--text);
+      font-weight: 900;
+    }
+    .evidence-chip.warn {
+      border-color: #f0d19b;
+      background: #fff8ea;
+      color: #6f4700;
+    }
+    .evidence-chip.optional {
+      opacity: 0.78;
+    }
+    .evidence-summary-compact {
+      margin-bottom: 10px;
+    }
+    .evidence-summary-compact > summary {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
     }
     .evidence-details summary {
       display: flex;
@@ -2075,13 +2196,13 @@ INDEX_HTML = r"""<!doctype html>
         <div class="status-detail" id="globalStatusDetail">Waiting for the local API health check.</div>
         <div class="status-meta-grid" id="headerStatusGrid">
           <div class="status-chip header-now-chip" aria-hidden="true"><span data-i18n="now">Now</span><strong id="headerOperation">Idle</strong></div>
-          <div class="status-chip"><span>Environment</span><strong id="headerRuntime">Checking</strong></div>
+          <div class="status-chip"><span data-i18n="environment">Environment</span><strong id="headerRuntime">Checking</strong></div>
           <div class="status-chip"><span data-i18n="study">Study</span><strong id="headerStudy">Not loaded</strong></div>
           <div class="status-chip"><span data-i18n="target">Target</span><strong id="headerTarget">None</strong></div>
           <div class="status-chip header-next-chip" aria-hidden="true"><span data-i18n="next">Next</span><strong id="headerNextAction">Setup</strong></div>
         </div>
         <div class="button-row compact-row">
-          <button class="secondary" id="refreshRuntimeButton" type="button">Check Environment</button>
+          <button class="secondary" id="refreshRuntimeButton" type="button" data-i18n="checkEnvironment">Check Environment</button>
         </div>
         <div class="header-progress-track"><div class="header-progress-bar" id="headerOperationProgress"></div></div>
       </div>
@@ -2298,13 +2419,13 @@ INDEX_HTML = r"""<!doctype html>
             </details>
           </div>
           <div id="planView" class="note">Load inputs first, then choose a target.</div>
-          <div class="button-row">
+          <div class="button-row legacy-action-row">
             <button class="secondary" id="finalizeInputsButton" disabled data-i18n="finalizeInputs">Finalize Inputs / Draft Spec</button>
             <button class="secondary" id="startStudyLoopButton" disabled data-i18n="startRunnable">Prepare Review Steps</button>
           </div>
           <div id="specActionHints" class="action-hints"></div>
           <div id="draftSpecPane" class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</div>
-          <div class="button-row">
+          <div class="button-row legacy-action-row">
             <button class="secondary" id="approveDraftSpecButton" disabled data-i18n="approveDraftSpec">Approve Draft Spec</button>
           </div>
         </div>
@@ -2316,13 +2437,13 @@ INDEX_HTML = r"""<!doctype html>
           <span id="codeStatus" class="pill warn">not generated</span>
         </div>
         <div class="section-body">
-          <div class="button-row">
+          <div class="button-row legacy-action-row">
             <button id="generateCodeButton" disabled data-i18n="generateRCode">Generate R Code</button>
             <button id="approveButton" disabled data-i18n="approveCode">Approve Code</button>
             <button id="runApprovedButton" disabled data-i18n="runApprovedCode">Run Approved Code</button>
           </div>
           <div id="generationActionHints" class="action-hints"></div>
-          <p class="note">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
+          <p class="note quiet-helper">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
           <div class="tabs">
             <button class="tab active" data-view="summary" data-i18n="summary">Summary</button>
             <button class="tab" data-view="code" data-i18n="rCode">R Code</button>
@@ -2496,6 +2617,8 @@ INDEX_HTML = r"""<!doctype html>
       en: {
         llmConfig: 'LLM Config',
         currentStatus: 'Current Status',
+        environment: 'Environment',
+        checkEnvironment: 'Check Environment',
         now: 'Now',
         study: 'Study',
         target: 'Target',
@@ -2545,6 +2668,8 @@ INDEX_HTML = r"""<!doctype html>
         llmConfig: '模型设置',
         newStudy: '重新开始',
         currentStatus: '当前状态',
+        environment: '运行环境',
+        checkEnvironment: '检查环境',
         now: '当前',
         study: '研究',
         target: '目标',
@@ -2596,6 +2721,9 @@ INDEX_HTML = r"""<!doctype html>
         'Mock LLM': 'Mock 模型',
         'Real LLM': '真实模型',
         'Checking API...': '检查 API...',
+        'Checking': '检查中',
+        'Limited': '受限',
+        'Environment can run the app, but one or more runtime capabilities are limited.': '应用可以运行，但部分运行能力受限。',
         'API ready': 'API 就绪',
         'unavailable': '不可用',
         'Not loaded': '未加载',
@@ -2609,6 +2737,20 @@ INDEX_HTML = r"""<!doctype html>
         'No dataset selected': '未选择数据集',
         'Select an output.': '请选择输出。',
         'Start by uploading your study files': '先上传研究文件',
+        'Upload SDTM source data first. Specs are preferred. Reference ADaM can be uploaded later for final comparison only.': '先上传 SDTM 源数据。最好同时上传 Spec；参考 ADaM 之后也可以上传，只用于最终对比。',
+        'Choose the ADaM output you want to generate': '选择要生成的 ADaM 输出',
+        'Pick one or more ADaM datasets. The selected dataset becomes the active review panel below.': '选择一个或多个 ADaM 数据集。当前选中的数据集会进入下面的审核与运行流程。',
+        'Build the dependency plan': '准备依赖计划',
+        'The plan explains whether the selected output can run now or needs another ADaM dataset first.': '系统会判断当前输出能否继续，还是需要先完成上游 ADaM。',
+        'Plan ready. Runnable now:': '计划已准备。当前可继续：',
+        'Plan details': '计划详情',
+        'Planned:': '已计划：',
+        'Active:': '当前：',
+        'Planned targets:': '计划目标：',
+        'Active detail target:': '当前查看目标：',
+        'Runnable now:': '当前可继续：',
+        'No blocking dependency action is required.': '没有阻塞性依赖需要处理。',
+        'No explicit dependency was detected for this target.': '当前目标没有检测到明确上游依赖。',
         'Start Upload': '开始上传',
         'Try Sample Demo': '试用示例',
         'Prepare Plan': '准备计划',
@@ -2788,6 +2930,7 @@ INDEX_HTML = r"""<!doctype html>
         'activeDatasetStatus',
         'activeDatasetBody',
         'primaryNextActionTitle',
+        'primaryNextActionDetail',
         'operationStatus',
         'workspaceStatus',
         'inputSummaryLine',
@@ -3595,22 +3738,34 @@ INDEX_HTML = r"""<!doctype html>
           tone: inferredTargets.length ? '' : 'optional'
         }
       ];
+      const visibleRows = rows.filter((row) => row.count || ['SDTM', 'ADaM Specs', 'Target Candidates'].includes(row.role));
       node.innerHTML = `
-        <div class="evidence-summary-table">
-          <table>
-            <thead><tr><th>Role</th><th>Count</th><th>Meaning</th><th>Status</th></tr></thead>
-            <tbody>
-              ${rows.map((row) => `
-                <tr>
-                  <td class="evidence-summary-role">${escapeHtml(row.role)}</td>
-                  <td>${escapeHtml(row.count)}</td>
-                  <td>${escapeHtml(row.meaning)}</td>
-                  <td><span class="evidence-summary-status ${escapeHtml(row.tone)}">${escapeHtml(row.status)}</span></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+        <div class="evidence-chip-row">
+          ${visibleRows.map((row) => `
+            <span class="evidence-chip ${escapeHtml(row.tone)}">
+              <strong>${escapeHtml(row.role)}</strong>
+              ${escapeHtml(row.count)} · ${escapeHtml(row.status)}
+            </span>
+          `).join('')}
         </div>
+        <details class="evidence-summary-compact">
+          <summary>Evidence meaning</summary>
+          <div class="evidence-summary-table">
+            <table>
+              <thead><tr><th>Role</th><th>Count</th><th>Meaning</th><th>Status</th></tr></thead>
+              <tbody>
+                ${rows.map((row) => `
+                  <tr>
+                    <td class="evidence-summary-role">${escapeHtml(row.role)}</td>
+                    <td>${escapeHtml(row.count)}</td>
+                    <td>${escapeHtml(row.meaning)}</td>
+                    <td><span class="evidence-summary-status ${escapeHtml(row.tone)}">${escapeHtml(row.status)}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </details>
       `;
     }
 
@@ -3835,7 +3990,7 @@ INDEX_HTML = r"""<!doctype html>
                 <span class="target-name">${escapeHtml(target)}</span>
                 <span class="target-hint">${escapeHtml(targetSourceHint(target))}</span>
               </label>
-              <button class="secondary target-view ${target === active ? 'active' : ''}" data-target-view="${escapeHtml(target)}">${target === active ? 'Active' : 'Open'}</button>
+              <button class="secondary target-view ${target === active ? 'active' : ''}" data-target-view="${escapeHtml(target)}" title="${escapeHtml(targetSourceHint(target))}">${target === active ? 'Active' : 'Open'}</button>
             </span>
           `).join('')}
         </div>
@@ -5023,12 +5178,14 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function preparePlan() {
+      const button = arguments.length ? arguments[0] : null;
       if (!studyDir()) return;
       const targets = selectedTargets();
       if (!targets.length) {
         byId('planView').innerHTML = '<p class="note warn">Select at least one ADaM dataset for planning.</p>';
         return;
       }
+      const restorePending = setPendingButton(button, 'Preparing plan...', `Checking dependencies for ${targets.join(', ')}.`);
       beginOperation('Preparing dependency plan', `Checking dependencies for ${targets.join(', ')}.`);
       const payload = {
         study_dir: studyDir(),
@@ -5056,18 +5213,34 @@ INDEX_HTML = r"""<!doctype html>
         setPill('planStatus', 'failed');
         byId('planView').textContent = String(error);
         failOperation('Dependency planning failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
     function renderPlan(plan) {
       const blocks = (plan.blocked_datasets || []).map((item) => `<li>${escapeHtml(item.dataset)} needs ${escapeHtml(item.blocked_by)}: ${humanDependencyReason(item.reason)}</li>`).join('');
       const decisions = (plan.dependency_decisions || []).map((item) => `<li>${escapeHtml(item.dataset)}: ${dependencyDecisionText(item)}</li>`).join('');
+      const plannedTargets = plannedTargetsForDisplay(plan).join(', ') || 'None';
+      const runnableTargets = (plan.runnable_datasets || []).join(', ') || 'None';
+      const summaryTone = blocks ? 'warn' : '';
+      const summaryText = blocks
+        ? `${(plan.blocked_datasets || []).length} dependency decision(s) need review before generation.`
+        : `Plan ready. Runnable now: ${runnableTargets}.`;
       byId('planView').innerHTML = `
-        <p><strong>Planned targets:</strong> ${escapeHtml(plannedTargetsForDisplay(plan).join(', ') || 'None')}</p>
-        <p><strong>Active detail target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
-        <p><strong>Runnable now:</strong> ${escapeHtml((plan.runnable_datasets || []).join(', ') || 'None')}</p>
-        ${blocks ? `<p class="note warn">Dependency action needed before generation:</p><ul class="clean">${blocks}</ul>` : '<p class="note strong">No blocking dependency action is required.</p>'}
-        <ul class="clean">${decisions || '<li>No explicit dependency was detected for this target.</li>'}</ul>
+        <div class="target-plan-summary ${summaryTone}">
+          <strong>${escapeHtml(summaryText)}</strong>
+          <span> Planned: ${escapeHtml(plannedTargets)}. Active: ${escapeHtml(state.selectedTarget || 'None')}.</span>
+        </div>
+        <details class="evidence-summary-compact">
+          <summary>Plan details</summary>
+          <p><strong>Planned targets:</strong> ${escapeHtml(plannedTargets)}</p>
+          <p><strong>Active detail target:</strong> ${escapeHtml(state.selectedTarget || '')}</p>
+          <p><strong>Runnable now:</strong> ${escapeHtml(runnableTargets)}</p>
+          ${blocks ? `<p class="note warn">Dependency action needed before generation:</p><ul class="clean">${blocks}</ul>` : '<p class="note strong">No blocking dependency action is required.</p>'}
+          <ul class="clean">${decisions || '<li>No explicit dependency was detected for this target.</li>'}</ul>
+        </details>
       `;
     }
 
@@ -5113,6 +5286,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function finalizeInputsForDraftSpec() {
+      const button = arguments.length ? arguments[0] : byId('finalizeInputsButton');
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
       const availability = actionAvailability().finalize;
@@ -5121,6 +5295,7 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
         return;
       }
+      const restorePending = setPendingButton(button, 'Checking inputs...', `Checking whether ${state.selectedTarget} has an approved spec or needs a draft spec.`);
       beginOperation('Finalizing inputs', `Checking whether ${state.selectedTarget} has an approved spec or needs a draft spec.`);
       byId('draftSpecPane').innerHTML = '<p class="note warn">Finalizing uploaded inputs...</p>';
       setPill('codeStatus', 'running');
@@ -5157,10 +5332,14 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', 'failed');
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Finalize inputs failed', error);
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
     async function startNativeStudyLoop() {
+      const button = arguments.length ? arguments[0] : byId('startStudyLoopButton');
       const targets = selectedTargets();
       if (!targets.length) return;
       if (!state.plan) await preparePlan();
@@ -5170,7 +5349,8 @@ INDEX_HTML = r"""<!doctype html>
         renderActionAvailability();
         return;
       }
-        beginOperation('Preparing review steps', `Preparing ${targets.join(', ')} for the next user review step. R will not run.`);
+      const restorePending = setPendingButton(button, 'Preparing...', `Preparing ${targets.join(', ')} for the next user review step. R will not run.`);
+      beginOperation('Preparing review steps', `Preparing ${targets.join(', ')} for the next user review step. R will not run.`);
       try {
         const payload = await api('/runs/native-study-loop', {
           method: 'POST',
@@ -5213,6 +5393,9 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         failOperation('Study loop start failed', error);
         byId('planView').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+      } finally {
+        restorePending();
+        renderActionAvailability();
       }
     }
 
@@ -5515,6 +5698,7 @@ INDEX_HTML = r"""<!doctype html>
       const reasonText = waiting.length
         ? runtimeDependencyWaitText(target, waiting)
         : dependencyDecisionSummary(target, dependencyDecisionFor(target), dependenciesForTarget(target));
+      const shortReasonText = activeDatasetShortReason(target, status, waiting, isBlocked);
       const evidenceText = activeDatasetEvidenceBoundaryText(target, qualityText, sourceText);
       const statusTone = status === 'failed' || isBlocked ? 'fail' : status === 'waiting' ? 'warn' : '';
       const detailRows = [
@@ -5535,10 +5719,14 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="active-dataset-compact">
           <div class="active-dataset-line ${statusTone}"><strong>Status:</strong> ${escapeHtml(activeDatasetStatusPlainText(target, status, qualityStatus))}</div>
-          <div class="active-dataset-line ${waiting.length ? 'warn' : ''}"><strong>Why:</strong> ${escapeHtml(reasonText)}</div>
+          <div class="active-dataset-line ${waiting.length || isBlocked ? 'warn' : ''}"><strong>Why:</strong> ${escapeHtml(shortReasonText)}</div>
           <details class="active-dataset-more">
             <summary>More details</summary>
             <div class="active-dataset-summary">
+              <div class="active-dataset-summary-item ${waiting.length || isBlocked ? 'warn' : ''}">
+                <strong>Reason</strong>
+                <span>${escapeHtml(reasonText)}</span>
+              </div>
             ${detailRows.map((row) => `
               <div class="active-dataset-summary-item ${row.tone || ''}">
                 <strong>${escapeHtml(row.label)}</strong>
@@ -5549,6 +5737,18 @@ INDEX_HTML = r"""<!doctype html>
           </details>
         </div>
       `;
+    }
+
+    function activeDatasetShortReason(target, status, waiting, isBlocked) {
+      if (waiting.length) return `Waiting for ${waiting.join(', ')} runtime output.`;
+      if (isBlocked || status === 'blocked') return 'A dependency or review gate needs a decision.';
+      if (targetInDraftSpecReview(target)) return 'Draft spec needs your review.';
+      if (generatedFor(target) && !reviewFor(target)?.approved) return 'Generated R code needs review.';
+      if (reviewFor(target)?.approved && !executionFor(target)) return 'Code is approved and ready to run.';
+      if (executionFor(target)?.status === 'terminal_failure') return 'R execution failed; choose a recovery action.';
+      if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) return 'Output is ready to inspect.';
+      if (!targetSpecGateSatisfied(target)) return 'Spec gate is not complete yet.';
+      return 'Ready for the next graph step.';
     }
 
     function activeDatasetStatusPlainText(target, status, qualityStatus) {
@@ -5855,16 +6055,16 @@ INDEX_HTML = r"""<!doctype html>
         }
         return;
       }
-      if (action === 'preparePlan') return preparePlan();
-      if (action === 'finalizeInputs') return finalizeInputsForDraftSpec();
+      if (action === 'preparePlan') return preparePlan(button);
+      if (action === 'finalizeInputs') return finalizeInputsForDraftSpec(button);
       if (action === 'approveDependencyPlan') return submitDependencyReviewDecision('approve');
       if (action === 'rejectDependencyPlan') return submitDependencyReviewDecision('reject');
       if (action === 'approveDraft') return approveDraftSpec(button);
       if (action === 'rejectDraft') return rejectDraftSpec(button);
-      if (action === 'startStudy') return startNativeStudyLoop();
-      if (action === 'generateCode') return generateCode();
-      if (action === 'approveCode') return approveCode();
-      if (action === 'runApproved') return runApprovedCode();
+      if (action === 'startStudy') return startNativeStudyLoop(button);
+      if (action === 'generateCode') return generateCode(button);
+      if (action === 'approveCode') return approveCode(button);
+      if (action === 'runApproved') return runApprovedCode(button);
       if (action === 'refreshProgress') {
         await refreshGraphReadModels();
         renderGraphAwareDashboard();
@@ -7143,6 +7343,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function generateCode() {
+      const button = arguments.length ? arguments[0] : byId('generateCodeButton');
       if (!state.selectedTarget) return;
       if (!state.plan) await preparePlan();
       const availability = actionAvailability().generate;
@@ -7161,7 +7362,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const restorePending = setPendingButton(
-        byId('generateCodeButton'),
+        button || byId('generateCodeButton'),
         revisingSpec ? 'Generating draft spec...' : 'Generating R code...',
         revisingSpec
           ? 'The model is preparing a revised draft spec. Please wait.'
@@ -7307,6 +7508,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function runApprovedCode() {
+      const button = arguments.length ? arguments[0] : byId('runApprovedButton');
       const generated = generatedFor(state.selectedTarget);
       const target = String(generated?.dataset || state.selectedTarget || '').toUpperCase();
       if (!target) return;
@@ -7318,7 +7520,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       state.generated = generated;
       const restorePending = setPendingButton(
-        byId('runApprovedButton'),
+        button || byId('runApprovedButton'),
         'Running R...',
         'R is executing the approved code locally. This can take a while.'
       );
