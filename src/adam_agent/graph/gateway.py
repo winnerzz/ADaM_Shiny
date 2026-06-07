@@ -2859,6 +2859,14 @@ class GraphGateway:
         if target not in [item.strip().upper() for item in graph_state.target_datasets]:
             raise ValueError(f"{target} is not part of the current graph dependency plan.")
         result = _dependency_gate_result(root, graph_state)
+        if _dependency_gate_should_refresh_for_runtime_outputs(graph_state, result, target):
+            graph_state = self.start_dependency_plan(
+                study_dir=root,
+                study_id=study_id,
+                run_id=run_id,
+                target_datasets=list(graph_state.requested_datasets or graph_state.target_datasets or [target]),
+            ).graph_state
+            result = _dependency_gate_result(root, graph_state)
         _assert_dependency_gate_open(result, target)
         return result
 
@@ -3617,6 +3625,8 @@ class GraphGateway:
         if terminal_followup is not None:
             dataset_state.execution_state["terminal_failure_followup"] = terminal_followup
             dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "execute"
+        if not terminal_failure:
+            dataset_state.execution_state.pop("next_action", None)
         dataset_state.validation_summary.update(validation_summary)
         dataset_state.current_interrupt = (
             InterruptState(
@@ -5526,6 +5536,23 @@ def _assert_dependency_gate_open(gate: GraphGatewayDependencyGateResult, target:
         )
 
 
+def _dependency_gate_should_refresh_for_runtime_outputs(
+    state: StudyRunState,
+    gate: GraphGatewayDependencyGateResult,
+    target: str,
+) -> bool:
+    """Return whether a blocked target should replan against current run outputs."""
+
+    dataset = target.strip().upper()
+    if bool(state.dependency_plan.get("plan_stale")) or gate.dependency_review_status == "stale":
+        return False
+    return any(
+        str(block.get("dataset", "")).strip().upper() == dataset
+        and str(block.get("reason") or "").strip() == "dependency_user_action_required"
+        for block in gate.blocked_datasets
+    )
+
+
 def _clear_nonblocking_dependency_review_interrupt(state: StudyRunState, gate: GraphGatewayDependencyGateResult) -> None:
     """Clear study-level dependency review after the gate proves the target can continue."""
 
@@ -6253,7 +6280,7 @@ def _dataset_progress_item(state: StudyRunState, dataset: str) -> dict[str, Any]
         "blocked": bool(block),
         "blocked_reason": block,
         "waiting_for_runtime_dependencies": waiting_dependencies,
-        "current_interrupt": _interrupt_payload(dataset_state.current_interrupt),
+        "current_interrupt": _dataset_progress_interrupt_payload(dataset_state, next_item),
         "spec_status": str(dataset_state.spec_state.get("status") or ""),
         "code_status": str(dataset_state.code_state.get("status") or ""),
         "execution_status": str(dataset_state.execution_state.get("status") or ""),
@@ -6273,25 +6300,6 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
     interrupt = dataset_state.current_interrupt
     terminal_review = dataset_state.execution_state.get("terminal_failure_review")
     has_terminal_review = isinstance(terminal_review, dict)
-    if (
-        interrupt is not None
-        and interrupt.status == "open"
-        and not (interrupt.name == "terminal_failure" and has_terminal_review)
-    ):
-        return {
-            "next_action": _action_for_interrupt(interrupt.name),
-            "action_label": _interrupt_label(interrupt.name),
-        }
-    if blocked_reason:
-        return {"next_action": "blocked", "action_label": blocked_reason}
-    execution_next = str(dataset_state.execution_state.get("next_action") or "").strip()
-    if execution_next:
-        return {"next_action": execution_next, "action_label": _next_action_label(execution_next)}
-    if dataset_state.status == "terminal_failure":
-        return {
-            "next_action": "review_terminal_failure",
-            "action_label": "Review execution diagnostics and choose a controlled follow-up.",
-        }
     if dataset_state.status in {"completed", "completed_stub"}:
         output_quality = dataset_output_quality(
             status=dataset_state.status,
@@ -6306,6 +6314,27 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
                 "action_label": "Review-only/demo output is available. It cannot satisfy downstream runtime dependencies.",
             }
         return {"next_action": "complete", "action_label": "Real runtime output is available for review and compare."}
+    if (
+        interrupt is not None
+        and interrupt.status == "open"
+        and not (interrupt.name == "terminal_failure" and has_terminal_review)
+    ):
+        return {
+            "next_action": _action_for_interrupt(interrupt.name),
+            "action_label": _interrupt_label(interrupt.name),
+        }
+    if blocked_reason:
+        return {"next_action": "blocked", "action_label": blocked_reason}
+    execution_next = str(dataset_state.execution_state.get("next_action") or "").strip()
+    if has_terminal_review and execution_next:
+        return {"next_action": execution_next, "action_label": _next_action_label(execution_next)}
+    if dataset_state.status == "terminal_failure":
+        return {
+            "next_action": "review_terminal_failure",
+            "action_label": "Review execution diagnostics and choose a controlled follow-up.",
+        }
+    if execution_next:
+        return {"next_action": execution_next, "action_label": _next_action_label(execution_next)}
     spec_status = str(dataset_state.spec_state.get("status") or "").strip()
     code_status = str(dataset_state.code_state.get("status") or "").strip()
     execution_status = str(dataset_state.execution_state.get("status") or "").strip()
@@ -6341,6 +6370,8 @@ REVIEW_GATE_ACTIONS_BY_INTERRUPT: dict[str, tuple[dict[str, str], ...]] = {
 def _available_dataset_actions(dataset_state: DatasetRunState, *, blocked_reason: str = "") -> list[dict[str, str]]:
     if blocked_reason:
         return []
+    if dataset_state.status in {"completed", "completed_stub"}:
+        return []
     interrupt = dataset_state.current_interrupt
     review = dataset_state.execution_state.get("terminal_failure_review")
     if (
@@ -6359,6 +6390,22 @@ def _available_actions_for_interrupt(name: str) -> list[dict[str, str]]:
     if name == "terminal_failure":
         return [dict(item) for item in TERMINAL_FAILURE_REVIEW_ACTIONS]
     return [dict(item) for item in REVIEW_GATE_ACTIONS_BY_INTERRUPT.get(name, ())]
+
+
+def _dataset_progress_interrupt_payload(
+    dataset_state: DatasetRunState,
+    next_item: dict[str, str],
+) -> dict[str, Any] | None:
+    """Expose only the interrupt that actually drives the current UI action."""
+
+    if dataset_state.status in {"completed", "completed_stub"}:
+        return None
+    interrupt = dataset_state.current_interrupt
+    if interrupt is None or interrupt.status != "open":
+        return None
+    if interrupt.name == "terminal_failure" and next_item.get("next_action") != "review_terminal_failure":
+        return None
+    return _interrupt_payload(interrupt)
 
 
 def _resolve_graph_command_interrupt(
@@ -7393,10 +7440,21 @@ def _dataset_progress_warnings(dataset_state: DatasetRunState) -> list[str]:
         stale_reason = str(state_map.get("stale_reason") or "").strip()
         if stale_reason and stale_reason not in warnings:
             warnings.append(stale_reason)
-    for failure in dataset_state.failures:
-        message = str(getattr(failure, "message", "") or "").strip()
-        if message and message not in warnings:
-            warnings.append(message)
+    current_terminal_failure = (
+        dataset_state.status in {"terminal_failure", "failed"}
+        or (
+            dataset_state.current_interrupt is not None
+            and dataset_state.current_interrupt.name == "terminal_failure"
+            and dataset_state.current_interrupt.status == "open"
+        )
+        or dataset_state.execution_state.get("terminal_failure") is True
+        or dataset_state.validation_summary.get("terminal_failure") is True
+    )
+    if current_terminal_failure:
+        for failure in dataset_state.failures:
+            message = str(getattr(failure, "message", "") or "").strip()
+            if message and message not in warnings:
+                warnings.append(message)
     return warnings
 
 

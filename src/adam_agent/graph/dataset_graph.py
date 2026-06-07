@@ -766,6 +766,7 @@ def generate_r_code_agent_node(
             code_path=Path(artifacts.code_artifact.path),
             required_identifiers=_required_identifiers_from_spec(target_spec),
             required_identifier_source_id=_spec_source_id(target_spec),
+            rscript_path=state.get("rscript_path") or None,
         )
     except (LLMGeneratedCodeError, LLMProviderResponseError, StaticRuleError, ValueError) as exc:
         return _product_failure("code_generation_error", str(exc), next_action="generate_code")
@@ -1945,6 +1946,7 @@ def _write_static_check_report(
     code_path: Path,
     required_identifiers: list[str] | None = None,
     required_identifier_source_id: str | None = None,
+    rscript_path: str | Path | None = None,
 ) -> Path:
     static_dir = study_dir / "runs" / run_id / "static_checks"
     static_dir.mkdir(parents=True, exist_ok=True)
@@ -1957,6 +1959,7 @@ def _write_static_check_report(
         expected_output_path=f"outputs/{target.lower()}.csv",
         required_identifiers=required_identifiers,
         required_identifier_source_id=required_identifier_source_id,
+        rscript_path=rscript_path,
     )
     write_static_rule_report(report, path=path)
     assert_no_blocking_static_findings(report)

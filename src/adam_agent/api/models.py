@@ -489,6 +489,27 @@ class LLMConnectionTestResponse(StrictBaseModel):
     note: str = ""
 
 
+class RuntimeReadinessCheck(StrictBaseModel):
+    """One environment capability check for local or container deployment."""
+
+    name: str
+    status: str
+    user_message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeReadinessResponse(StrictBaseModel):
+    """User-safe environment readiness report."""
+
+    status: str
+    user_status: str
+    user_message: str
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    checks: list[RuntimeReadinessCheck] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
 class GenerateCodeResponse(StrictBaseModel):
     """Generated-code review bundle returned before sandbox execution."""
 
@@ -617,6 +638,9 @@ class ProductWorkspaceResponse(StrictBaseModel):
     target_datasets: list[str] = Field(default_factory=list)
     config_path: str
     rscript_path: str | None = None
+    workspace_mode: str = "managed"
+    config_mode: str = "server_default"
+    rscript_mode: str = "path_lookup"
     input_summary: StudyInputSummary
     notes: list[str] = Field(default_factory=list)
 

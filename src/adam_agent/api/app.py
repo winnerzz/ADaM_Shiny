@@ -41,6 +41,7 @@ from adam_agent.api.models import (
     NativeStudyStartRequest,
     NativeStudyStartResponse,
     ProductWorkspaceResponse,
+    RuntimeReadinessResponse,
     RunReviewSummary,
     RunProgressResponse,
     RunPlanRequest,
@@ -75,6 +76,7 @@ from adam_agent.api.service import (
     read_run_graph_state,
     read_run_json_artifact,
     read_run_progress,
+    build_runtime_readiness,
     resume_native_dataset_full_run,
     execute_native_dataset_full_run,
     resume_native_dataset_interrupt,
@@ -101,6 +103,13 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/runtime/readiness", response_model=RuntimeReadinessResponse)
+    def runtime_readiness() -> RuntimeReadinessResponse:
+        try:
+            return build_runtime_readiness()
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

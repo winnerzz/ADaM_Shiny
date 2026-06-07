@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -38,6 +39,8 @@ from adam_agent.api.models import (
     NativeStudyDatasetStartResult,
     NativeStudyStartResponse,
     ProductWorkspaceResponse,
+    RuntimeReadinessCheck,
+    RuntimeReadinessResponse,
     RunReviewSummary,
     RunProgressResponse,
     RunPlanRequest,
@@ -108,9 +111,13 @@ class ApiServiceError(RuntimeError):
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DEMO_SOURCE_DIR = ROOT.parent / "ADaM_Shiny-ADaM_Shiny_experimental" / "demo-data"
 DEFAULT_DEMO_STUDY_ROOT = ROOT / ".tmp_tests" / "ui_demo_study"
-DEFAULT_PRODUCT_STUDY_ROOT = ROOT / ".tmp_tests" / "local_product_studies"
+DEFAULT_PRODUCT_STUDY_ROOT = Path(
+    os.environ.get("LOCALAPPDATA")
+    or os.environ.get("APPDATA")
+    or (Path.home() / ".adam_agent_studio")
+) / "ADaMAgentStudio" / "studies"
 DEFAULT_DEMO_CONFIG_PATH = ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"
-DEFAULT_LOCAL_RSCRIPT = Path(r"C:\Dev\R-4.5.2\bin\Rscript.exe")
+DEFAULT_LOCAL_RSCRIPT_ENV = "ADAM_AGENT_RSCRIPT_PATH"
 STUDY_INPUT_FOLDERS = ["input_sdtm", "input_spec", "input_define", "reference_adam", "legacy_code", "runs"]
 UPLOAD_ROLE_TO_FOLDER = {
     "sdtm": "input_sdtm",
@@ -127,6 +134,25 @@ SERVICE_CHECKPOINTER_BACKEND_ENV = "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"
 DEFAULT_SERVICE_CHECKPOINTER_BACKEND = "sqlite"
 DEMO_STUDY_ROOT_ENV = "ADAM_AGENT_DEMO_STUDY_ROOT"
 PRODUCT_STUDY_ROOT_ENV = "ADAM_AGENT_PRODUCT_STUDY_ROOT"
+
+
+def _default_rscript_path() -> str | None:
+    """Resolve Rscript without baking one developer machine path into the product."""
+
+    configured = os.environ.get(DEFAULT_LOCAL_RSCRIPT_ENV, "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        return str(path) if path.exists() else configured
+    return shutil.which("Rscript")
+
+
+def _request_rscript_path(request: Any) -> str:
+    """Resolve the per-request Rscript path, falling back to the service default."""
+
+    requested = str(getattr(request, "rscript_path", "") or "").strip()
+    if requested:
+        return requested
+    return _default_rscript_path() or ""
 
 
 def _default_demo_study_root() -> Path:
@@ -247,6 +273,169 @@ def ensure_study_workspace(request: StudyWorkspaceRequest) -> StudyInputSummary:
     return summarize_study_inputs(root, study_id=request.study_id or root.name)
 
 
+def build_runtime_readiness() -> RuntimeReadinessResponse:
+    """Report environment capabilities without reading study data or calling an external LLM."""
+
+    checks: list[RuntimeReadinessCheck] = []
+    next_actions: list[str] = []
+    capabilities: dict[str, bool] = {}
+
+    workspace_root = _default_product_study_root()
+    workspace_ok, workspace_details = _check_workspace_root(workspace_root)
+    capabilities["managed_workspace"] = workspace_ok
+    checks.append(
+        RuntimeReadinessCheck(
+            name="managed_workspace",
+            status="ready" if workspace_ok else "needs_setup",
+            user_message=(
+                "Study workspace storage is ready."
+                if workspace_ok
+                else "Study workspace storage is not writable."
+            ),
+            details=workspace_details,
+        )
+    )
+    if not workspace_ok:
+        next_actions.append("Check that the application data folder or configured study volume is writable.")
+
+    rscript_path = _default_rscript_path()
+    r_ok, r_details = _check_rscript(rscript_path)
+    capabilities["r_execution"] = r_ok
+    checks.append(
+        RuntimeReadinessCheck(
+            name="r_execution",
+            status="ready" if r_ok else "needs_setup",
+            user_message=(
+                "R execution is available."
+                if r_ok
+                else "R execution is not available; generated code can be reviewed but not run here."
+            ),
+            details=r_details,
+        )
+    )
+    if not r_ok:
+        next_actions.append("Install R in the runtime image or set ADAM_AGENT_RSCRIPT_PATH for this service.")
+
+    haven_ok, haven_details = _check_r_package(rscript_path, "haven") if r_ok else (False, {"skipped": "Rscript is unavailable."})
+    capabilities["sas7bdat_preview"] = bool(r_ok and haven_ok)
+    checks.append(
+        RuntimeReadinessCheck(
+            name="sas7bdat_preview",
+            status="ready" if r_ok and haven_ok else "needs_setup",
+            user_message=(
+                "SAS7BDAT preview and comparison support is available."
+                if r_ok and haven_ok
+                else "SAS7BDAT files can be uploaded, but preview/compare needs R with the haven package."
+            ),
+            details=haven_details,
+        )
+    )
+    if r_ok and not haven_ok:
+        next_actions.append("Install the R package haven in the runtime image or local R library.")
+
+    config = ConfigLoader().load(None, study_id="READINESS", run_id="runtime_readiness")
+    llm_is_mock = config.llm_provider.provider.strip().lower() == "mock"
+    capabilities["offline_mock_llm"] = llm_is_mock
+    capabilities["external_llm_configured"] = not llm_is_mock
+    checks.append(
+        RuntimeReadinessCheck(
+            name="llm_default",
+            status="ready" if llm_is_mock else "needs_review",
+            user_message=(
+                "Default LLM mode is offline mock. No external model call is made until Real LLM is selected."
+                if llm_is_mock
+                else "A real LLM provider is configured. Test the connection before generation."
+            ),
+            details={
+                "provider": config.llm_provider.provider,
+                "model": config.llm_provider.model,
+                "external_connection_tested": False,
+            },
+        )
+    )
+
+    hard_blocked = not workspace_ok
+    degraded = not hard_blocked and (not r_ok or not haven_ok)
+    status = "blocked" if hard_blocked else "degraded" if degraded else "ready"
+    user_status = "Needs setup" if hard_blocked else "Limited" if degraded else "Ready"
+    if status == "ready":
+        message = "Environment is ready for upload, review, R execution, and SAS7BDAT preview."
+    elif status == "degraded":
+        message = "Environment can run the app, but one or more runtime capabilities are limited."
+    else:
+        message = "Environment needs setup before study files can be managed safely."
+
+    return RuntimeReadinessResponse(
+        status=status,
+        user_status=user_status,
+        user_message=message,
+        capabilities=capabilities,
+        checks=checks,
+        next_actions=next_actions,
+        diagnostics={
+            "workspace_root": str(workspace_root),
+            "rscript_resolution": "env_or_path",
+            "rscript_path": rscript_path,
+            "config_mode": "server_default",
+            "llm_connection_test": "manual_only",
+        },
+    )
+
+
+def _check_workspace_root(root: Path) -> tuple[bool, dict[str, Any]]:
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=".readiness_", suffix=".tmp", dir=root, delete=True) as handle:
+            handle.write(b"ok")
+            handle.flush()
+        return True, {"path": str(root), "writable": True}
+    except OSError as exc:
+        return False, {"path": str(root), "writable": False, "error": str(exc)}
+
+
+def _check_rscript(rscript_path: str | None) -> tuple[bool, dict[str, Any]]:
+    if not rscript_path:
+        return False, {"resolved_path": None, "error": "Rscript was not found on PATH or ADAM_AGENT_RSCRIPT_PATH."}
+    try:
+        completed = subprocess.run(
+            [rscript_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, {"resolved_path": rscript_path, "error": str(exc)}
+    output = (completed.stdout or completed.stderr or "").strip()
+    return completed.returncode == 0, {
+        "resolved_path": rscript_path,
+        "exit_code": completed.returncode,
+        "version": output,
+    }
+
+
+def _check_r_package(rscript_path: str | None, package: str) -> tuple[bool, dict[str, Any]]:
+    if not rscript_path:
+        return False, {"package": package, "error": "Rscript is unavailable."}
+    expression = f"if (!requireNamespace('{package}', quietly = TRUE)) quit(status = 12)"
+    try:
+        completed = subprocess.run(
+            [rscript_path, "-e", expression],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, {"package": package, "error": str(exc)}
+    return completed.returncode == 0, {
+        "package": package,
+        "installed": completed.returncode == 0,
+        "exit_code": completed.returncode,
+        "stderr": (completed.stderr or "").strip(),
+    }
+
+
 def create_default_product_workspace() -> ProductWorkspaceResponse:
     """Create a default local workspace without making the user choose a path."""
 
@@ -260,11 +449,14 @@ def create_default_product_workspace() -> ProductWorkspaceResponse:
         run_id=f"run_{stamp[:14]}",
         target_datasets=[],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
-        rscript_path=str(DEFAULT_LOCAL_RSCRIPT.as_posix()) if DEFAULT_LOCAL_RSCRIPT.exists() else None,
+        rscript_path=None,
+        workspace_mode="managed",
+        config_mode="server_default",
+        rscript_mode="path_lookup",
         input_summary=summary,
         notes=[
             "A local workspace was created automatically for this browser session.",
-            "Technical paths are hidden in Advanced settings unless needed for debugging.",
+            "The default config and Rscript lookup are managed by the backend. Advanced path overrides are optional.",
         ],
     )
 
@@ -405,8 +597,8 @@ def prepare_demo_study(
         run_id=f"run_ui_{stamp[:14]}",
         target_datasets=["ADSL", "ADAE"],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
-        execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if DEFAULT_LOCAL_RSCRIPT.exists() else LLM_DOWNSTREAM_PROVIDER_MODE,
-        rscript_path=str(DEFAULT_LOCAL_RSCRIPT.as_posix()) if DEFAULT_LOCAL_RSCRIPT.exists() else None,
+        execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if _default_rscript_path() else LLM_DOWNSTREAM_PROVIDER_MODE,
+        rscript_path=_default_rscript_path(),
         created_files=created_files,
         notes=notes,
     )
@@ -459,7 +651,7 @@ def run_study_from_request(request: RunStudyRequest) -> RunStudyResponse:
             target_datasets=list(request.target_datasets),
             execution_mode=execution_mode,
             approved_dependency_datasets=request.approved_dependency_datasets,
-            rscript_path=request.rscript_path or "",
+            rscript_path=_request_rscript_path(request),
             llm_exposure=config.llm_exposure.model_dump(mode="json"),
             llm_provider={
                 key: value
@@ -543,7 +735,7 @@ def start_native_study_product_loop(request: Any) -> NativeStudyStartResponse:
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -607,7 +799,7 @@ def start_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> Na
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -676,7 +868,7 @@ def resume_native_dataset_interrupt(run_id: str, dataset: str, request: Any) -> 
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -737,7 +929,7 @@ def resume_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> N
                 llm_exposure=exposure.model_dump(mode="json") if exposure is not None else None,
                 llm_client_builder=build_llm_client if provider_config is not None else None,
                 target_context_builder=build_target_llm_context if provider_config is not None else None,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -921,7 +1113,7 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -972,7 +1164,7 @@ def finalize_dataset_inputs(run_id: str, dataset: str, request: Any) -> Finalize
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -1059,7 +1251,7 @@ def generate_dataset_draft_spec(run_id: str, dataset: str, request: Any) -> Draf
                 llm_exposure=exposure.model_dump(mode="json"),
                 llm_client_builder=build_llm_client,
                 target_context_builder=build_target_llm_context,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(f"Draft spec generation failed: {exc}") from exc
@@ -1164,7 +1356,7 @@ def execute_approved_dataset_code(run_id: str, dataset: str, request: Any) -> Ex
                 study_id=study_id,
                 run_id=run_id,
                 dataset=target,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -1199,7 +1391,7 @@ def execute_native_dataset_full_run(run_id: str, dataset: str, request: Any) -> 
                 study_id=study_id,
                 run_id=run_id,
                 dataset=target,
-                rscript_path=getattr(request, "rscript_path", None) or "",
+                rscript_path=_request_rscript_path(request),
             )
     except ValueError as exc:
         raise ApiServiceError(str(exc)) from exc
@@ -2025,7 +2217,7 @@ def _sas7bdat_table_reader() -> TableReader:
 
 
 def _read_sas7bdat_table(path: Path) -> dict[str, Any]:
-    rscript_path = str(DEFAULT_LOCAL_RSCRIPT) if DEFAULT_LOCAL_RSCRIPT.exists() else None
+    rscript_path = _default_rscript_path()
     runner = LocalRRunner(rscript_path=rscript_path)
     if not runner.rscript_path:
         return {
@@ -2200,7 +2392,7 @@ def _preview_table_file(
 
 
 def _preview_sas7bdat_with_r(path: Path, *, role: str, dataset: str, sample_rows: int) -> FilePreview | None:
-    rscript_path = str(DEFAULT_LOCAL_RSCRIPT) if DEFAULT_LOCAL_RSCRIPT.exists() else None
+    rscript_path = _default_rscript_path()
     runner = LocalRRunner(rscript_path=rscript_path)
     if not runner.rscript_path:
         return None

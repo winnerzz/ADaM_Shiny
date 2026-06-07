@@ -329,6 +329,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
             else:
                 failed.add(summary.dataset)
 
+    existing_blocked = list(state.get("blocked_datasets", []))
     return {
         "dataset_results": dataset_results,
         "audit_artifacts": audit_artifacts,
@@ -336,7 +337,7 @@ def run_dependency_batches(state: StudyGraphState) -> StudyGraphState:
         "agent_node_inputs": agent_node_inputs,
         "agent_node_outputs": agent_node_outputs,
         "risk_flags": risk_flags,
-        "blocked_datasets": blocked_datasets,
+        "blocked_datasets": existing_blocked + blocked_datasets,
     }
 
 

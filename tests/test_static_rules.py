@@ -8,6 +8,8 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from tests.temp_workspace import test_session_root
 
@@ -120,6 +122,62 @@ class StaticRuleTests(unittest.TestCase):
         self.assertTrue(blocked)
         self.assertEqual(blocked[0].category, "artifact_contract")
         self.assertEqual(blocked[0].source_type, "system_contract")
+
+    def test_static_rules_block_r_syntax_parse_error_when_rscript_is_configured(self) -> None:
+        workspace = _workspace_dir("static_rules_r_parse")
+        code_path = workspace / "build_any.R"
+        code_path.write_text(
+            "x$__ORDER <- seq_len(1)\n"
+            "write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+
+        with patch(
+            "adam_agent.tools.static_rules.subprocess.run",
+            return_value=SimpleNamespace(returncode=1, stderr='Error: unexpected input in "x$_"\n', stdout=""),
+        ) as mock_run:
+            report = run_generated_r_static_checks(
+                study_id="STUDY",
+                run_id="run_static",
+                dataset="ANY",
+                code_path=code_path,
+                expected_output_path="outputs/any.csv",
+                rscript_path="C:/R/bin/Rscript.exe",
+            )
+
+        self.assertEqual(report.status, "blocked")
+        parse_findings = [finding for finding in report.blocking_errors if finding.rule_id == "R_SYNTAX_PARSE"]
+        self.assertTrue(parse_findings)
+        self.assertEqual(parse_findings[0].category, "execution_boundary")
+        self.assertEqual(parse_findings[0].source_type, "system_contract")
+        self.assertIn("unexpected input", parse_findings[0].evidence)
+        called_args = mock_run.call_args.args[0]
+        self.assertEqual(called_args[0], "C:/R/bin/Rscript.exe")
+        self.assertIn("--vanilla", called_args)
+        self.assertIn("-e", called_args)
+        self.assertIn("parse(file=", called_args[-1])
+        with self.assertRaises(StaticRuleError):
+            assert_no_blocking_static_findings(report)
+
+    def test_static_rules_warn_when_r_syntax_parse_precheck_is_not_configured(self) -> None:
+        workspace = _workspace_dir("static_rules_r_parse_skipped")
+        code_path = workspace / "build_any.R"
+        code_path.write_text(
+            "write.csv(data.frame(ID = '01'), 'outputs/any.csv', row.names = FALSE)\n",
+            encoding="utf-8",
+        )
+
+        report = run_generated_r_static_checks(
+            study_id="STUDY",
+            run_id="run_static",
+            dataset="ANY",
+            code_path=code_path,
+            expected_output_path="outputs/any.csv",
+        )
+
+        self.assertEqual(report.status, "pass")
+        self.assertFalse(report.blocking_errors)
+        self.assertTrue(any("R syntax parse precheck skipped" in warning for warning in report.warnings))
 
     def test_static_rules_required_identifier_is_policy_driven_warning(self) -> None:
         workspace = _workspace_dir("static_rules_identifier")

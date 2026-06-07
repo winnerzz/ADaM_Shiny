@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -213,6 +214,7 @@ def run_generated_r_static_checks(
     expected_output_path: str | None = None,
     required_identifiers: list[str] | tuple[str, ...] | None = None,
     required_identifier_source_id: str | None = None,
+    rscript_path: str | Path | None = None,
     policy: StaticRulePolicy | None = None,
 ) -> StaticRuleReport:
     """Run narrow static checks against generated R code."""
@@ -243,6 +245,8 @@ def run_generated_r_static_checks(
     text = path.read_text(encoding="utf-8", errors="replace")
     code_for_calls = _strip_r_comments_and_strings(text)
     code_for_identifiers = _strip_r_comments(text)
+    syntax_findings, syntax_warnings = _r_syntax_parse_findings(path, rscript_path=rscript_path)
+    findings.extend(syntax_findings)
     findings.extend(_dangerous_call_findings(code_for_calls, active_policy.forbidden_calls))
     string_literals = _r_string_literals(text)
     for output_path in active_policy.required_output_paths:
@@ -271,7 +275,7 @@ def run_generated_r_static_checks(
                     source_id=active_policy.required_identifier_source_id,
                 )
             )
-    return _report(study_id, run_id, target, path, active_policy, findings)
+    return _report(study_id, run_id, target, path, active_policy, findings, extra_warnings=syntax_warnings)
 
 
 def write_static_rule_report(report: StaticRuleReport, *, path: str | Path) -> Path:
@@ -535,6 +539,57 @@ def _dangerous_call_findings(code_without_strings: str, forbidden_calls: tuple[s
     return findings
 
 
+def _r_syntax_parse_findings(
+    code_path: Path,
+    *,
+    rscript_path: str | Path | None,
+) -> tuple[list[StaticRuleFinding], list[str]]:
+    """Check that generated R can be parsed without executing it."""
+
+    if not rscript_path or not str(rscript_path).strip():
+        return [], ["R syntax parse precheck skipped because Rscript is not configured."]
+    script = str(rscript_path)
+    try:
+        parse_target = code_path.resolve().as_posix()
+    except OSError:
+        parse_target = code_path.as_posix()
+    expression = f"invisible(parse(file={json.dumps(parse_target)}))"
+    try:
+        result = subprocess.run(
+            [script, "--vanilla", "-e", expression],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError:
+        return [], [f"R syntax parse precheck skipped because Rscript was not found: {script}."]
+    except subprocess.TimeoutExpired:
+        return [], ["R syntax parse precheck skipped because Rscript timed out while parsing generated code."]
+    except OSError as exc:
+        return [], [f"R syntax parse precheck skipped because Rscript could not be started: {exc}."]
+    if result.returncode == 0:
+        return [], []
+    evidence = _compact_process_output(result.stderr, result.stdout)
+    return [
+        StaticRuleFinding(
+            rule_id="R_SYNTAX_PARSE",
+            severity="error",
+            message="Generated R code is not syntactically parseable by R.",
+            category="execution_boundary",
+            source_type="system_contract",
+            evidence=evidence,
+        )
+    ], []
+
+
+def _compact_process_output(stderr: str | None, stdout: str | None) -> str:
+    text = "\n".join(part.strip() for part in (stderr or "", stdout or "") if part and part.strip()).strip()
+    if not text:
+        return "Rscript parse returned a non-zero exit code without output."
+    return text[:2000]
+
+
 def _writes_required_output(string_literals: list[str], required_output_path: str) -> bool:
     normalized_expected = _normalize_output_path(required_output_path)
     return any(_normalize_output_path(value).endswith(normalized_expected) for value in string_literals)
@@ -689,6 +744,8 @@ def _report(
     code_path: Path,
     policy: StaticRulePolicy,
     findings: list[StaticRuleFinding],
+    *,
+    extra_warnings: list[str] | None = None,
 ) -> StaticRuleReport:
     has_error = any(finding.severity == "error" for finding in findings)
     has_warning = any(finding.severity == "warning" for finding in findings)
@@ -697,6 +754,7 @@ def _report(
         "Static rules are limited guardrails before human code review.",
         "This report does not prove full CDISC/ADaM IG/P21 compliance.",
     ]
+    warnings.extend(extra_warnings or [])
     return StaticRuleReport(
         study_id=study_id,
         run_id=run_id,
@@ -709,6 +767,7 @@ def _report(
         warnings=warnings,
         notes=[
             "Blocking checks currently cover generic R safety calls and caller-provided output contracts.",
+            "R syntax parse precheck runs when Rscript is configured; skipped parse prechecks are reported as warnings.",
             "Identifier checks are caller-provided visibility checks, not proof of clinical derivation correctness.",
             "Demo observations must be promoted into source-backed rule packs before becoming static rules.",
             "A new blocking static rule must first be justified as a generic declared contract or as an admitted source-backed rule-pack item.",

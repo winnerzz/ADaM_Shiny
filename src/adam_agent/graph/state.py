@@ -175,7 +175,7 @@ class StudyGraphState(TypedDict, total=False):
     dataset_tasks: list[DatasetTask]
     downstream_tasks: list[DatasetTask]
     dataset_results: Annotated[list[DatasetResultSummary], operator.add]
-    blocked_datasets: Annotated[list[BlockedDataset], operator.add]
+    blocked_datasets: list[BlockedDataset]
     audit_artifacts: Annotated[list[ArtifactRef], operator.add]
     agent_decisions: Annotated[list[dict[str, object]], operator.add]
     agent_node_inputs: Annotated[list[dict[str, object]], operator.add]

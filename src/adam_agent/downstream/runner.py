@@ -419,6 +419,7 @@ def _run_generated_response_attempt(
         code_path=Path(generated_artifacts.code_artifact.path),
         required_identifiers=required_identifiers,
         required_identifier_source_id=required_identifier_source_id,
+        rscript_path=getattr(runner, "rscript_path", None),
         attempt_label=attempt_label,
     )
     artifacts[f"static_check{artifact_suffix}"] = static_artifact
@@ -920,6 +921,7 @@ def _write_static_check_artifact(
     code_path: Path,
     required_identifiers: list[str],
     required_identifier_source_id: str | None,
+    rscript_path: str | Path | None,
     attempt_label: str | None,
 ) -> tuple[StaticRuleReport, ArtifactRef]:
     target_lower = target.lower()
@@ -933,6 +935,7 @@ def _write_static_check_artifact(
         expected_output_path=f"outputs/{target_lower}.csv",
         required_identifiers=required_identifiers,
         required_identifier_source_id=required_identifier_source_id,
+        rscript_path=rscript_path,
     )
     write_static_rule_report(report, path=static_path)
     artifact = ArtifactRef(
