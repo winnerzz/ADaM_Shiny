@@ -115,13 +115,14 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.45;
     }
     .header-status {
-      display: grid;
-      gap: 7px;
-      min-width: min(560px, 50vw);
-      max-width: 640px;
+      display: flex;
+      justify-content: flex-end;
+      min-width: min(360px, 42vw);
+      max-width: 520px;
     }
     .status-card {
-      padding: 8px 10px;
+      width: 100%;
+      padding: 7px 9px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfdff;
@@ -131,7 +132,7 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 6px;
+      margin-bottom: 0;
     }
     .status-label {
       color: var(--muted);
@@ -141,16 +142,15 @@ INDEX_HTML = r"""<!doctype html>
       letter-spacing: 0;
     }
     .status-detail {
-      color: var(--text);
-      font-size: 13px;
-      line-height: 1.35;
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
       overflow-wrap: anywhere;
     }
     .status-meta-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-      margin-top: 7px;
+      display: none;
     }
     .status-meta-grid .status-chip:nth-child(n+3) {
       display: none;
@@ -181,11 +181,14 @@ INDEX_HTML = r"""<!doctype html>
       overflow-wrap: anywhere;
     }
     .header-progress-track {
-      height: 5px;
+      height: 4px;
       overflow: hidden;
-      margin-top: 7px;
+      margin-top: 6px;
       border-radius: 999px;
       background: #e4e9f0;
+    }
+    .header-status .compact-row {
+      display: none;
     }
     .header-progress-bar {
       width: 0%;
@@ -581,29 +584,48 @@ INDEX_HTML = r"""<!doctype html>
     }
     .upload-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 10px;
+      grid-template-columns: 1fr;
+      gap: 6px;
     }
     .drop-card {
       display: grid;
-      gap: 7px;
-      align-content: start;
-      border: 1px dashed #b9c4d3;
-      background: #fbfdff;
+      grid-template-columns: 140px minmax(0, 1fr) auto minmax(120px, 0.6fr);
+      gap: 10px;
+      align-items: center;
+      min-height: 44px;
+      padding: 7px 9px;
+      border: 1px solid #d8e0ea;
+      border-radius: 8px;
+      background: #fff;
     }
     .drop-card h3 {
       margin-bottom: 0;
-      font-size: 14px;
+      font-size: 13px;
+      line-height: 1.2;
     }
     .drop-card button {
       min-height: 32px;
       padding: 0 10px;
       font-size: 12px;
+      white-space: nowrap;
     }
     .drop-card p {
       display: none;
     }
-    .drop-card input { margin-top: 0; }
+    .drop-card input {
+      margin-top: 0;
+      min-width: 0;
+      font-size: 12px;
+    }
+    .drop-card .file-meta {
+      min-height: 0;
+      margin-top: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
     label {
       display: block;
       margin-bottom: 6px;
@@ -2149,7 +2171,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       .command-center-grid { grid-template-columns: 1fr; }
       .grid3, .grid5, .metric-grid, .agent-audit-grid, .agent-trace-card, .dependency-summary { grid-template-columns: 1fr; }
-      .upload-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+      .upload-grid { grid-template-columns: 1fr; }
       .side-queue-panel .dataset-board { max-height: none; overflow: visible; }
     }
     @media (max-width: 760px) {
@@ -2159,6 +2181,13 @@ INDEX_HTML = r"""<!doctype html>
       .setup-actions { grid-template-columns: 1fr; }
       .setup-action-card { grid-template-columns: 1fr; }
       .upload-grid { grid-template-columns: 1fr; }
+      .drop-card {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+      }
+      .drop-card .file-meta {
+        text-align: left;
+      }
       .evidence-grid.compact .evidence-card { grid-template-columns: 1fr; }
       .compact-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .next-action-panel { grid-template-columns: 1fr; }
@@ -2722,8 +2751,11 @@ INDEX_HTML = r"""<!doctype html>
         'Real LLM': '真实模型',
         'Checking API...': '检查 API...',
         'Checking': '检查中',
+        'Idle': '空闲',
         'Limited': '受限',
         'Environment can run the app, but one or more runtime capabilities are limited.': '应用可以运行，但部分运行能力受限。',
+        'Waiting for the local API health check.': '等待本地 API 健康检查。',
+        'Upload SDTM source data first. Specs are preferred. Reference ADaM can be uploaded later for final comparison only.': '先上传 SDTM 源数据。最好同时上传 Spec；参考 ADaM 之后也可以上传，只用于最终对比。',
         'API ready': 'API 就绪',
         'unavailable': '不可用',
         'Not loaded': '未加载',
@@ -2737,7 +2769,6 @@ INDEX_HTML = r"""<!doctype html>
         'No dataset selected': '未选择数据集',
         'Select an output.': '请选择输出。',
         'Start by uploading your study files': '先上传研究文件',
-        'Upload SDTM source data first. Specs are preferred. Reference ADaM can be uploaded later for final comparison only.': '先上传 SDTM 源数据。最好同时上传 Spec；参考 ADaM 之后也可以上传，只用于最终对比。',
         'Choose the ADaM output you want to generate': '选择要生成的 ADaM 输出',
         'Pick one or more ADaM datasets. The selected dataset becomes the active review panel below.': '选择一个或多个 ADaM 数据集。当前选中的数据集会进入下面的审核与运行流程。',
         'Build the dependency plan': '准备依赖计划',
@@ -3407,9 +3438,9 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const statusText = readiness.user_status || titleFromToken(readiness.status || 'unknown');
-      byId('headerRuntime').textContent = statusText;
+      byId('headerRuntime').textContent = tt(statusText);
       if (!byId('globalStatusDetail').textContent || byId('globalStatusDetail').textContent === 'Waiting for the local API health check.') {
-        byId('globalStatusDetail').textContent = readiness.user_message || '';
+        byId('globalStatusDetail').textContent = tt(readiness.user_message || '');
       }
     }
 
