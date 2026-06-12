@@ -205,17 +205,17 @@ INDEX_HTML = r"""<!doctype html>
     .header-progress-bar.failed { width: 100%; background: var(--danger); }
     main {
       display: grid;
-      grid-template-columns: 260px minmax(0, 1fr);
+      grid-template-columns: 250px minmax(0, 1fr) 340px;
       gap: 18px;
       align-items: start;
       padding: 18px;
       min-height: calc(100vh - 74px);
     }
     main.wide-main {
-      grid-template-columns: 280px minmax(0, 1fr);
+      grid-template-columns: 250px minmax(0, 1fr) 340px;
     }
     main.with-inspector {
-      grid-template-columns: 260px minmax(0, 1fr) 320px;
+      grid-template-columns: 250px minmax(0, 1fr) 340px;
     }
     aside, section, .card {
       background: var(--panel);
@@ -249,7 +249,16 @@ INDEX_HTML = r"""<!doctype html>
     .inspector-rail {
       display: grid;
       gap: 12px;
-      background: #fbfdff;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .inspector-rail #currentWorkSection {
+      order: -2;
+    }
+    .inspector-rail .inspector-title {
+      order: -1;
     }
     .inspector-title {
       display: flex;
@@ -317,7 +326,25 @@ INDEX_HTML = r"""<!doctype html>
       background: #f2f7f9;
     }
     #currentWorkSection .section-body {
-      padding: 18px;
+      padding: 12px;
+    }
+    .inspector-rail #currentWorkSection .next-action-panel {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .inspector-rail #currentWorkSection .next-action-buttons {
+      justify-content: stretch;
+      min-width: 0;
+    }
+    .inspector-rail #currentWorkSection .next-action-buttons button {
+      width: 100%;
+    }
+    .inspector-rail #currentWorkSection .active-dataset-head,
+    .inspector-rail #currentWorkSection .operation-head {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 8px;
     }
     #studySetupSection,
     #chooseOutputSection,
@@ -975,11 +1002,37 @@ INDEX_HTML = r"""<!doctype html>
     .next-action-buttons button {
       white-space: nowrap;
     }
+    .spec-status-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid #cfe0dc;
+      border-radius: 8px;
+      background: #f6fbf9;
+    }
+    .spec-status-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .spec-status-head strong,
+    .spec-status-head span {
+      display: block;
+    }
+    .spec-status-head > div > span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legacy-action-row {
+      display: none;
+    }
     .sticky-action-bar {
       position: sticky;
       bottom: 0;
       z-index: 20;
-      display: none;
+      display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 12px;
       align-items: center;
@@ -1027,6 +1080,18 @@ INDEX_HTML = r"""<!doctype html>
     }
     .sticky-action-buttons button {
       white-space: nowrap;
+    }
+    .spec-preview-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      margin-top: 2px;
+    }
+    .spec-preview-table {
+      max-height: 260px;
+      overflow: auto;
     }
     .active-dataset-panel, .dashboard-audit-details {
       padding: 0;
@@ -2280,68 +2345,6 @@ INDEX_HTML = r"""<!doctype html>
     </aside>
 
     <div class="workstream">
-      <section id="currentWorkSection">
-        <div class="section-head">
-          <h2 data-i18n="currentWork">Current Work</h2>
-          <span class="pill warn" id="graphStatus">waiting</span>
-        </div>
-        <div class="section-body">
-          <div class="note strong hidden" id="dashboardEmptyGuide">
-            Start by uploading SDTM source data. Specs are best when available; reference ADaM is only for output review and comparison.
-          </div>
-          <div class="command-center-grid">
-            <div class="command-action-stack">
-              <div class="next-action-panel" id="primaryNextActionPanel">
-                <div>
-                  <span class="next-action-eyebrow" data-i18n="nextStep">Next Step</span>
-                  <div class="next-action-title" id="primaryNextActionTitle">Start by uploading your study files</div>
-                  <div class="next-action-detail" id="primaryNextActionDetail"></div>
-                </div>
-                <div class="next-action-buttons" id="primaryNextActionButtons">
-                  <button data-primary-action="startUpload" type="button">Start Upload</button>
-                </div>
-              </div>
-              <div class="operation-banner" id="operationBanner">
-                <div class="operation-head">
-                  <div>
-                    <span class="operation-title" id="operationTitle">Ready for study setup</span>
-                    <div class="muted" id="operationDetail"></div>
-                  </div>
-                  <span class="pill" id="operationStatus">idle</span>
-                </div>
-                <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
-              </div>
-            </div>
-            <div class="active-dataset-panel" id="activeDatasetPanel">
-              <div class="active-dataset-head">
-                <div>
-                  <span class="status-label" data-i18n="currentDataset">Current ADaM</span>
-                  <span class="active-dataset-title" id="activeDatasetTitle">No dataset selected</span>
-                  <div class="muted" id="activeDatasetSubtitle"></div>
-                </div>
-                <span class="pill warn" id="activeDatasetStatus">waiting</span>
-              </div>
-              <div class="active-dataset-body" id="activeDatasetBody">
-                <div class="muted">No active dataset yet.</div>
-              </div>
-            </div>
-          </div>
-          <div id="dashboardRuntimePanels" class="hidden">
-            <div class="dashboard-current-panel focus-panel hidden" id="dashboardCurrentPanel" aria-hidden="true"></div>
-            <div class="metric-grid compact-metrics hidden" id="metricGrid" aria-hidden="true">
-              <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
-              <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
-              <div class="metric"><span class="metric-value" id="metricRunnable">0</span><span class="metric-label">runnable now</span></div>
-              <div class="metric"><span class="metric-value" id="metricBlocked">0</span><span class="metric-label">blocked</span></div>
-            </div>
-            <div class="details-toggle-row">
-              <button class="secondary" id="toggleTechnicalDetailsButton" type="button">Show Technical Details</button>
-            </div>
-          </div>
-          <span class="sr-only">Study Details</span>
-        </div>
-      </section>
-
       <section id="studySetupSection" class="hidden">
         <div class="section-head">
           <h2 data-i18n="startStudy">Start A Study</h2>
@@ -2456,6 +2459,7 @@ INDEX_HTML = r"""<!doctype html>
           <div id="draftSpecPane" class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</div>
           <div class="button-row legacy-action-row">
             <button class="secondary" id="approveDraftSpecButton" disabled data-i18n="approveDraftSpec">Approve Draft Spec</button>
+            <button class="secondary danger" id="rejectDraftSpecButton" disabled>Reject Draft Spec</button>
           </div>
         </div>
       </section>
@@ -2469,6 +2473,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="button-row legacy-action-row">
             <button id="generateCodeButton" disabled data-i18n="generateRCode">Generate R Code</button>
             <button id="approveButton" disabled data-i18n="approveCode">Approve Code</button>
+            <button class="secondary danger" id="rejectCodeButton" disabled>Reject Code</button>
             <button id="runApprovedButton" disabled data-i18n="runApprovedCode">Run Approved Code</button>
           </div>
           <div id="generationActionHints" class="action-hints"></div>
@@ -2481,7 +2486,7 @@ INDEX_HTML = r"""<!doctype html>
             <button class="tab" data-view="timeline" data-i18n="auditTimeline">Audit Timeline</button>
           </div>
           <div id="reviewPane"><p class="note">No code generated yet.</p></div>
-          <details>
+          <details id="advancedSetupDetails">
             <summary data-i18n="advancedSetup">Advanced setup and audit files (usually not needed)</summary>
             <p class="note">Use this panel only when troubleshooting local R or inspecting audit file locations. LLM provider settings are in the top LLM Config panel.</p>
             <div class="grid3" style="margin-top:12px;">
@@ -2532,7 +2537,68 @@ INDEX_HTML = r"""<!doctype html>
       </div>
     </div>
 
-    <aside class="inspector-rail hidden" id="inspectorRail">
+    <aside class="inspector-rail" id="inspectorRail">
+      <section id="currentWorkSection">
+        <div class="section-head">
+          <h2 data-i18n="currentWork">Current Work</h2>
+          <span class="pill warn" id="graphStatus">waiting</span>
+        </div>
+        <div class="section-body">
+          <div class="note strong hidden" id="dashboardEmptyGuide">
+            Start by uploading SDTM source data. Specs are best when available; reference ADaM is only for output review and comparison.
+          </div>
+          <div class="command-center-grid">
+            <div class="command-action-stack">
+              <div class="next-action-panel" id="primaryNextActionPanel">
+                <div>
+                  <span class="next-action-eyebrow" data-i18n="nextStep">Next Step</span>
+                  <div class="next-action-title" id="primaryNextActionTitle">Start by uploading your study files</div>
+                  <div class="next-action-detail" id="primaryNextActionDetail"></div>
+                </div>
+                <div class="next-action-buttons" id="primaryNextActionButtons">
+                  <button data-primary-action="startUpload" type="button">Start Upload</button>
+                </div>
+              </div>
+              <div class="operation-banner" id="operationBanner">
+                <div class="operation-head">
+                  <div>
+                    <span class="operation-title" id="operationTitle">Ready for study setup</span>
+                    <div class="muted" id="operationDetail"></div>
+                  </div>
+                  <span class="pill" id="operationStatus">idle</span>
+                </div>
+                <div class="progress-track"><div class="progress-bar" id="operationProgress"></div></div>
+              </div>
+            </div>
+            <div class="active-dataset-panel" id="activeDatasetPanel">
+              <div class="active-dataset-head">
+                <div>
+                  <span class="status-label" data-i18n="currentDataset">Current ADaM</span>
+                  <span class="active-dataset-title" id="activeDatasetTitle">No dataset selected</span>
+                  <div class="muted" id="activeDatasetSubtitle"></div>
+                </div>
+                <span class="pill warn" id="activeDatasetStatus">waiting</span>
+              </div>
+              <div class="active-dataset-body" id="activeDatasetBody">
+                <div class="muted">No active dataset yet.</div>
+              </div>
+            </div>
+          </div>
+          <div id="dashboardRuntimePanels" class="hidden">
+            <div class="dashboard-current-panel focus-panel hidden" id="dashboardCurrentPanel" aria-hidden="true"></div>
+            <div class="metric-grid compact-metrics hidden" id="metricGrid" aria-hidden="true">
+              <div class="metric"><span class="metric-value" id="metricInputs">0</span><span class="metric-label">input files</span></div>
+              <div class="metric"><span class="metric-value" id="metricTargets">0</span><span class="metric-label">ADaM targets</span></div>
+              <div class="metric"><span class="metric-value" id="metricRunnable">0</span><span class="metric-label">runnable now</span></div>
+              <div class="metric"><span class="metric-value" id="metricBlocked">0</span><span class="metric-label">blocked</span></div>
+            </div>
+            <div class="details-toggle-row">
+              <button class="secondary" id="toggleTechnicalDetailsButton" type="button">Show Technical Details</button>
+            </div>
+          </div>
+          <span class="sr-only">Study Details</span>
+        </div>
+      </section>
       <div class="inspector-title">
         <div>
           <span class="status-label" data-i18n="runContext">Details</span>
@@ -2770,6 +2836,7 @@ INDEX_HTML = r"""<!doctype html>
         'Select an output.': '请选择输出。',
         'Start by uploading your study files': '先上传研究文件',
         'Choose the ADaM output you want to generate': '选择要生成的 ADaM 输出',
+        'Reject Code': '拒绝代码',
         'Pick one or more ADaM datasets. The selected dataset becomes the active review panel below.': '选择一个或多个 ADaM 数据集。当前选中的数据集会进入下面的审核与运行流程。',
         'Build the dependency plan': '准备依赖计划',
         'The plan explains whether the selected output can run now or needs another ADaM dataset first.': '系统会判断当前输出能否继续，还是需要先完成上游 ADaM。',
@@ -2788,15 +2855,29 @@ INDEX_HTML = r"""<!doctype html>
         'Finalize Inputs / Draft Spec': '确认输入 / Draft Spec',
         'Approve Dependency Plan': '批准依赖计划',
         'Reject Dependency Plan': '拒绝依赖计划',
+        'Continue To Spec Step': '继续到 Spec 步骤',
+        'Add More Files': '添加更多文件',
+        'Stop And Replan': '停止并重新计划',
         'Approve Draft Spec': '批准 Draft Spec',
         'Reject Draft Spec': '拒绝 Draft Spec',
         'Prepare Review Steps': '准备审核步骤',
         'Generate R Code': '生成 R 代码',
+        'Create Revised Draft Spec': '重新生成 Draft Spec',
         'Generate Revised Draft Spec': '重新生成 Draft Spec',
         'Approve Code': '批准代码',
+        'Reject Code': '拒绝代码',
         'Run Approved Code': '运行已批准代码',
         'Review Failure': '审核失败',
         'Retry Run': '重试运行',
+        'Repair Generated Code': '修复生成代码',
+        'Rerun Approved Code': '重跑已批准代码',
+        'Back To Spec Review': '回到 Spec 审核',
+        'Request More Inputs': '请求更多输入',
+        'Skip Dataset': '跳过该数据集',
+        'Continue Other Datasets': '继续其他数据集',
+        'Show R Code': '查看 R 代码',
+        'Confirm Inputs': '确认输入',
+        'Create Draft Spec': '生成 Draft Spec',
         'Show Results': '查看结果',
         'Run Compare': '运行对比',
         'Run Compare Again': '再次运行对比',
@@ -3098,6 +3179,30 @@ INDEX_HTML = r"""<!doctype html>
         (state.inputSummary?.reference_adam?.length || 0) +
         (state.inputSummary?.define?.length || 0) +
         (state.inputSummary?.legacy_code?.length || 0)
+      );
+    }
+
+    function hasStudyContext() {
+      return Boolean(
+        recognizedInputCount() > 0 ||
+        state.studyId ||
+        studyDir() ||
+        state.runProgress ||
+        state.graphState ||
+        state.plan ||
+        selectedTargets().length ||
+        state.selectedTarget
+      );
+    }
+
+    function hasRuntimeWorkflowContext() {
+      return Boolean(
+        state.runProgress ||
+        state.graphState ||
+        state.plan ||
+        selectedTargets().length ||
+        state.selectedTarget ||
+        recognizedInputCount() > 0
       );
     }
 
@@ -4158,6 +4263,68 @@ INDEX_HTML = r"""<!doctype html>
       return graph;
     }
 
+    async function readRunJsonArtifact(relativePath) {
+      const path = String(relativePath || '').trim();
+      if (!path || !studyDir() || !runId()) return null;
+      try {
+        return await api(`/runs/${encodeURIComponent(runId())}/artifacts/read?study_dir=${encodeURIComponent(studyDir())}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({relative_path: runRelativeArtifactPath(path)})
+        });
+      } catch {
+        return null;
+      }
+    }
+
+    function runRelativeArtifactPath(path) {
+      const normalized = String(path || '').replaceAll('\\', '/');
+      const anyRunMatch = normalized.match(/(?:^|\/)runs\/[^/]+\/(.+)$/);
+      if (anyRunMatch) return anyRunMatch[1];
+      const marker = `/runs/${runId()}/`;
+      const markerIndex = normalized.indexOf(marker);
+      if (markerIndex >= 0) return normalized.slice(markerIndex + marker.length);
+      const leadingMarker = `runs/${runId()}/`;
+      if (normalized.startsWith(leadingMarker)) return normalized.slice(leadingMarker.length);
+      return normalized;
+    }
+
+    async function hydrateApprovedDraftSpecFromArtifact(target) {
+      const normalized = String(target || '').toUpperCase();
+      if (!normalized) return false;
+      const existing = state.draftSpecByDataset[normalized] || {};
+      if (Array.isArray(existing.variables) && existing.variables.length) return false;
+      const spec = graphDatasetFor(normalized)?.spec_state || {};
+      const path = spec.approved_spec_path || spec.draft_spec_path || existing.approved_spec_path || existing.spec_path;
+      if (!path) return false;
+      const payload = await readRunJsonArtifact(path);
+      if (!payload || String(payload.dataset || normalized).toUpperCase() !== normalized) return false;
+      const variables = Array.isArray(payload.variables) ? payload.variables : [];
+      const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+      state.draftSpecByDataset[normalized] = {
+        ...existing,
+        dataset: normalized,
+        status: String(spec.status || existing.status || '').trim() === 'approved' ? 'approved' : existing.status || payload.status || 'draft',
+        spec_path: spec.approved_spec_path || spec.draft_spec_path || existing.spec_path || path,
+        approved_spec_path: spec.approved_spec_path || existing.approved_spec_path || null,
+        variables,
+        warnings
+      };
+      return true;
+    }
+
+    async function hydrateActiveApprovedDraftSpecAndRender() {
+      const target = state.selectedTarget;
+      const spec = graphDatasetFor(target)?.spec_state || {};
+      if (String(spec.status || '').trim() !== 'approved') return false;
+      const changed = await hydrateApprovedDraftSpecFromArtifact(target);
+      if (changed) {
+        renderDraftSpecPane();
+        renderGraphAwareDashboard();
+      }
+      return changed;
+    }
+
     function applyRunProgress(progress) {
       state.runProgress = progress || null;
       const progressTargets = (progress?.target_datasets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
@@ -4232,6 +4399,15 @@ INDEX_HTML = r"""<!doctype html>
             approved: true,
             approved_spec_path: spec.approved_spec_path
           };
+          state.draftSpecByDataset[target] = {
+            ...(state.draftSpecByDataset[target] || {}),
+            dataset: target,
+            status: 'approved',
+            spec_path: spec.approved_spec_path || spec.draft_spec_path || state.draftSpecByDataset[target]?.spec_path || null,
+            approved_spec_path: spec.approved_spec_path || null,
+            variables: spec.variables || state.draftSpecByDataset[target]?.variables || [],
+            warnings: spec.warnings || state.draftSpecByDataset[target]?.warnings || []
+          };
           state.finalizedInputsByDataset[target] = {
             ...(state.finalizedInputsByDataset[target] || {}),
             dataset: target,
@@ -4252,6 +4428,10 @@ INDEX_HTML = r"""<!doctype html>
         const code = datasetState.code_state || {};
         if (graphDatasetInDraftSpecReview(datasetState)) {
           delete state.generatedByDataset[target];
+          delete state.reviewByDataset[target];
+        } else if (['rejected', 'stale'].includes(String(code.status || ''))) {
+          delete state.generatedByDataset[target];
+          delete state.reviewByDataset[target];
         } else if (code.code_path && code.status) {
           const existingGenerated = state.generatedByDataset[target] || {};
           state.generatedByDataset[target] = {
@@ -4352,11 +4532,25 @@ INDEX_HTML = r"""<!doctype html>
       const codeState = graphDataset?.code_state || {};
       const nextAction = String(progress?.next_action || '');
       const codeStatus = String(progress?.code_status || codeState.status || '').trim();
+      const followupAction = graphTerminalFailureFollowupAction(target);
       const reviewSummaryRecoveryAllowed = graphAllowsReviewSummaryCodeRecovery(target);
       const graphCodePath = codeState.code_path || null;
       const reviewCodePath = reviewSummaryRecoveryAllowed ? review?.generated_code_path || null : null;
       const cachedCodePath = cached?.code_path || null;
       const effectiveCodePath = graphCodePath || reviewCodePath || cachedCodePath || null;
+      if (
+        state.runProgress &&
+        (['rejected', 'stale'].includes(codeStatus) || (nextAction === 'generate_code' && codeStatus === 'rejected'))
+      ) {
+        return null;
+      }
+      if (
+        state.runProgress &&
+        followupAction === 'revise_approved_spec' &&
+        !['review_draft_spec', 'review_code', 'execute_approved_code', 'retry_approved_execution'].includes(nextAction)
+      ) {
+        return null;
+      }
       const graphOwnedArtifactPath = graphCodePath || reviewCodePath || null;
       const reviewMatchesCode = Boolean(
         review?.generated_code &&
@@ -4423,8 +4617,20 @@ INDEX_HTML = r"""<!doctype html>
       return waitingRuntimeDependenciesFor(target).length > 0;
     }
 
+    function datasetHasOutputEvidence(target) {
+      const progress = datasetProgressFor(target);
+      return Boolean(
+        progress?.execution_status === 'completed' ||
+        executionFor(target)?.status === 'completed' ||
+        datasetReviewFor(target)?.output_preview
+      );
+    }
+
     function targetInDraftSpecReview(target) {
       const progress = datasetProgressFor(target);
+      const specStatus = String(progress?.spec_status || graphDatasetFor(target)?.spec_state?.status || '').trim();
+      if (specStatus === 'rejected') return false;
+      if (state.runProgress) return String(progress?.next_action || '') === 'review_draft_spec' || specStatus === 'draft_generated';
       if (String(progress?.next_action || '') === 'review_draft_spec') return true;
       const graphDataset = state.graphState?.datasets?.[target] || {};
       return graphDatasetInDraftSpecReview(graphDataset);
@@ -4492,6 +4698,23 @@ INDEX_HTML = r"""<!doctype html>
       ].filter(Boolean).join(' ');
     }
 
+    function dependencyReviewPlainTitle(summary, target) {
+      const name = String(target || summary?.dataset || state.selectedTarget || 'this output').toUpperCase();
+      const hasNoDependencyEvidence = (summary?.decisions || []).some((item) => String(item.source || '') === 'no_dependency_evidence');
+      if (hasNoDependencyEvidence) return `Continue with ${name}?`;
+      return `${name} needs a dependency decision`;
+    }
+
+    function dependencyReviewPlainDetail(summary) {
+      const decisions = Array.isArray(summary?.decisions) ? summary.decisions : [];
+      const noEvidence = decisions.find((item) => String(item.source || '') === 'no_dependency_evidence');
+      if (noEvidence) {
+        const name = String(noEvidence.dataset || state.selectedTarget || 'this output').toUpperCase();
+        return `The app did not find a user spec, legacy program, define.xml, or clear upstream ADaM dependency for ${name}. It will not invent an ADSL dependency. If this looks right, continue to the spec step; if not, add more files and prepare the plan again.`;
+      }
+      return dependencyReviewSummaryText(summary);
+    }
+
     function graphActionGate(progress, actionGroup) {
       if (!progress || !progress.next_action) return null;
       const next = String(progress.next_action || '');
@@ -4505,7 +4728,7 @@ INDEX_HTML = r"""<!doctype html>
       const allowed = {
         finalize: ['finalize_inputs', 'reconfirm_inputs'],
         approveDraft: ['review_draft_spec'],
-        generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec'],
+        generate: ['generate_code', 'repair_generated_code', 'revise_approved_spec', 'regenerate_draft_spec'],
         approveCode: ['review_code'],
         runApproved: ['execute_approved_code', 'retry_approved_execution']
       }[actionGroup] || [];
@@ -4534,7 +4757,28 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function graphAllowsCodeGeneration(progress) {
-      return ['generate_code', 'repair_generated_code', 'revise_approved_spec'].includes(String(progress?.next_action || ''));
+      return ['generate_code', 'repair_generated_code', 'revise_approved_spec', 'regenerate_draft_spec'].includes(String(progress?.next_action || ''));
+    }
+
+    function graphTerminalFailureFollowupAction(target) {
+      const normalized = String(target || '').toUpperCase();
+      if (!normalized) return '';
+      const directNext = String(datasetProgressFor(normalized)?.next_action || '').trim();
+      const followupActions = [
+        'retry_approved_execution',
+        'repair_generated_code',
+        'revise_approved_spec',
+        'regenerate_draft_spec',
+        'request_new_study_input',
+        'skip_failed_dataset',
+        'continue_other_datasets'
+      ];
+      if (followupActions.includes(directNext)) return directNext;
+      if (directNext) return '';
+      const graphDataset = graphDatasetFor(normalized);
+      const review = graphDataset?.execution_state?.terminal_failure_review || {};
+      const reviewedNext = String(review.next_action || graphDataset?.execution_state?.next_action || '').trim();
+      return followupActions.includes(reviewedNext) ? reviewedNext : '';
     }
 
     function nativeFullRunResumeAvailable(target) {
@@ -4643,10 +4887,25 @@ INDEX_HTML = r"""<!doctype html>
       ));
     }
 
+    function dependencyReviewRequiresBlockingDecision(runnable = []) {
+      const runnableSet = new Set((runnable || []).map((dataset) => String(dataset || '').toUpperCase()).filter(Boolean));
+      const decisions = [
+        ...(Array.isArray(state.runProgress?.dependency_review_summary?.decisions) ? state.runProgress.dependency_review_summary.decisions : []),
+        ...(Array.isArray(state.plan?.dependency_decisions) ? state.plan.dependency_decisions : [])
+      ];
+      return decisions.some((decision) => {
+        if (!decision || decision.review_required !== true) return false;
+        if (String(decision.source || '') === 'no_dependency_evidence') return false;
+        const dataset = String(decision.dataset || '').toUpperCase();
+        return !runnableSet.size || runnableSet.has(dataset);
+      });
+    }
+
     function dependencyReviewBlocksDatasetStart(runnable = []) {
       const status = currentDependencyReviewStatus();
       if (state.runProgress?.plan_stale) return true;
-      if (['blocked', 'review_required', 'rejected', 'stale'].includes(status)) return true;
+      if (['blocked', 'rejected', 'stale'].includes(status)) return true;
+      if (status === 'review_required') return dependencyReviewRequiresBlockingDecision(runnable);
       if (status === 'warning') return !dependencyWarningAllowsDatasetReviewHandoff(runnable);
       return false;
     }
@@ -4752,7 +5011,7 @@ INDEX_HTML = r"""<!doctype html>
             : !targetIsPlanned
               ? planRequiredReason
             : !state.plan
-              ? 'Clicking will prepare the dependency plan first, then finalize inputs if the target is runnable.'
+              ? 'Use Next Step to prepare the dependency plan first, then finalize inputs if the target is runnable.'
               : graphProgressMissingTarget && !graphProgressMissingCanFinalize
                 ? graphProgressMissingReason
               : waitingRuntimeReason
@@ -4815,13 +5074,17 @@ INDEX_HTML = r"""<!doctype html>
         },
         generate: {
           ready: generateReady,
-          label: generateGate?.nextAction === 'revise_approved_spec' ? 'Generate Revised Draft Spec' : 'Generate R Code',
+          label: generateGate?.nextAction === 'repair_generated_code'
+            ? 'Repair Generated Code'
+            : ['revise_approved_spec', 'regenerate_draft_spec'].includes(generateGate?.nextAction)
+              ? 'Create Revised Draft Spec'
+              : 'Generate R Code',
           reason: !target
             ? 'Choose an ADaM output first.'
             : !targetIsPlanned
               ? planRequiredReason
             : !state.plan
-              ? 'Clicking will prepare the dependency plan first, then generate only if the target is runnable.'
+              ? 'Use Next Step to prepare the dependency plan first, then generate only if the target is runnable.'
               : graphProgressMissingTarget
                 ? graphProgressMissingReason
               : waitingRuntimeReason
@@ -4834,7 +5097,7 @@ INDEX_HTML = r"""<!doctype html>
                 ? generateGate.reason
                 : blocked
                 ? `${target} is blocked by ${blocked.blocked_by}; generation is paused until dependency review is resolved.`
-                : generateGate?.nextAction === 'revise_approved_spec'
+                : ['revise_approved_spec', 'regenerate_draft_spec'].includes(generateGate?.nextAction)
                   ? 'A revised draft spec is needed before new R code can be generated.'
                 : !effectiveSpecGate
                   ? 'Confirm the uploaded input spec or review/approve the generated draft spec first.'
@@ -4921,8 +5184,10 @@ INDEX_HTML = r"""<!doctype html>
       setButtonAvailability('finalizeInputsButton', availability.finalize);
       setButtonAvailability('startStudyLoopButton', availability.startStudy);
       setButtonAvailability('approveDraftSpecButton', availability.approveDraft);
+      setButtonAvailability('rejectDraftSpecButton', availability.approveDraft);
       setButtonAvailability('generateCodeButton', availability.generate);
       setButtonAvailability('approveButton', availability.approveCode);
+      setButtonAvailability('rejectCodeButton', availability.approveCode);
       setButtonAvailability('runApprovedButton', availability.runApproved);
       renderActionHints('specActionHints', visibleSpecActionHints(availability));
       renderActionHints('generationActionHints', visibleGenerationActionHints(availability));
@@ -4932,6 +5197,9 @@ INDEX_HTML = r"""<!doctype html>
       const button = byId(id);
       if (!button) return;
       if (button.dataset.pendingAction === '1') return;
+      if (id === 'generateCodeButton') {
+        button.textContent = tt(item.label || 'Generate R Code');
+      }
       button.title = item.reason;
       button.setAttribute('aria-disabled-reason', item.reason);
       button.dataset.actionReady = String(Boolean(item.ready));
@@ -5087,6 +5355,21 @@ INDEX_HTML = r"""<!doctype html>
       const specState = graphDataset?.spec_state || {};
       const specStatus = String(progress?.spec_status || specState.status || '').trim();
       const nextAction = String(progress?.next_action || '');
+      if (specStatus === 'rejected') return null;
+      if (state.runProgress && specStatus === 'approved') {
+        const cachedDraft = state.draftSpecByDataset[target] || {};
+        return {
+          ...cachedDraft,
+          dataset: target,
+          status: 'approved',
+          spec_path: specState.approved_spec_path || cachedDraft.approved_spec_path || cachedDraft.spec_path || null,
+          variables: specState.variables || cachedDraft.variables || [],
+          warnings: specState.warnings || cachedDraft.warnings || []
+        };
+      }
+      if (state.runProgress && specStatus !== 'draft_generated' && nextAction !== 'review_draft_spec') {
+        return null;
+      }
       const draftReviewOpen = nextAction === 'review_draft_spec' || graphDatasetInDraftSpecReview(graphDataset);
       if (state.runProgress && specStatus !== 'draft_generated' && !draftReviewOpen) {
         return null;
@@ -5120,6 +5403,16 @@ INDEX_HTML = r"""<!doctype html>
             dataset: target,
             approved: true,
             approved_spec_path: specState.approved_spec_path || state.draftSpecReviewByDataset[target]?.approved_spec_path || null,
+            source: 'graph_progress'
+          };
+        }
+        if (specStatus === 'rejected') {
+          return {
+            ...(state.draftSpecReviewByDataset[target] || {}),
+            dataset: target,
+            approved: false,
+            decision: 'reject',
+            review_path: specState.review_path || state.draftSpecReviewByDataset[target]?.review_path || null,
             source: 'graph_progress'
           };
         }
@@ -5196,8 +5489,9 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.selectedTarget) return 'not generated';
       const activeProgress = datasetProgressFor(state.selectedTarget);
       if (String(activeProgress?.next_action || '') === 'review_draft_spec') return 'draft review';
+      if (String(activeProgress?.next_action || '') === 'retry_approved_execution') return 'retry ready';
       const execution = executionFor(state.selectedTarget);
-      if (execution) return execution.status;
+      if (execution && graphNeedsTerminalFailureReview(state.selectedTarget)) return execution.status;
       const generated = generatedFor(state.selectedTarget);
       if (generated?.status === 'stale') return 'stale';
       if (generated?.generated_code) return 'review';
@@ -5246,7 +5540,7 @@ INDEX_HTML = r"""<!doctype html>
         failOperation('Dependency planning failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -5319,6 +5613,9 @@ INDEX_HTML = r"""<!doctype html>
     async function finalizeInputsForDraftSpec() {
       const button = arguments.length ? arguments[0] : byId('finalizeInputsButton');
       if (!state.selectedTarget) return;
+      if (draftSpecReviewFor(state.selectedTarget)?.approved === false) {
+        return regenerateRejectedDraftSpec(button);
+      }
       if (!state.plan) await preparePlan();
       const availability = actionAvailability().finalize;
       if (!availability.ready) {
@@ -5357,15 +5654,77 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', payload.next_action === 'review_draft_spec' ? 'draft review' : 'not generated');
         addEvent('Inputs finalized', payload.message);
         completeOperation('Inputs finalized', payload.message);
-        renderDraftSpecPane();
-        renderActionAvailability();
+        renderAfterGraphRefresh();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Finalize inputs failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
+      }
+    }
+
+    async function regenerateRejectedDraftSpec(button = byId('finalizeInputsButton')) {
+      const target = String(state.selectedTarget || '').toUpperCase();
+      if (!target) return;
+      if (!state.plan) await preparePlan();
+      const review = draftSpecReviewFor(target);
+      if (review?.approved !== false) {
+        return finalizeInputsForDraftSpec(button);
+      }
+      const restorePending = setPendingButton(
+        button,
+        'Regenerating...',
+        `Creating a revised draft spec for ${target}. R code will not be generated.`
+      );
+      beginOperation(
+        'Creating revised draft spec',
+        `Using the current uploaded evidence and review notes to create a new draft spec for ${target}.`
+      );
+      byId('draftSpecPane').innerHTML = '<p class="note warn">Creating a revised draft spec for review...</p>';
+      setPill('codeStatus', 'running');
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/draft-spec`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            config_path: optionalAdvancedPath('configPath'),
+            rscript_path: optionalAdvancedPath('rscriptPath'),
+            ...llmOverridePayload()
+          })
+        });
+        const reviewedDataset = String(payload.dataset || target).toUpperCase();
+        state.draftSpecByDataset[reviewedDataset] = payload;
+        delete state.draftSpecReviewByDataset[reviewedDataset];
+        delete state.generatedByDataset[reviewedDataset];
+        state.finalizedInputsByDataset[reviewedDataset] = {
+          ...(state.finalizedInputsByDataset[reviewedDataset] || {}),
+          study_id: payload.study_id || state.studyId,
+          run_id: payload.run_id || runId(),
+          dataset: reviewedDataset,
+          status: 'draft_spec_review_required',
+          input_spec_available: false,
+          draft_spec_required: true,
+          draft_spec_generated: true,
+          next_action: 'review_draft_spec',
+          draft_spec: payload,
+          warnings: payload.warnings || []
+        };
+        await refreshGraphReadModels();
+        setPill('codeStatus', 'draft review');
+        addEvent('Revised draft spec created', `${reviewedDataset} draft spec is ready for review. R code has not been generated.`);
+        completeOperation('Revised draft spec ready', `Review and approve the new ${reviewedDataset} draft spec before generating R code.`);
+        renderAfterGraphRefresh();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Draft spec regeneration failed', error);
+      } finally {
+        restorePending();
+        renderWorkflowShell();
       }
     }
 
@@ -5426,7 +5785,7 @@ INDEX_HTML = r"""<!doctype html>
         byId('planView').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -5453,6 +5812,7 @@ INDEX_HTML = r"""<!doctype html>
           graph_command: true
         };
         await refreshGraphReadModels();
+        await hydrateActiveApprovedDraftSpecAndRender();
         const stillWaitingForDraft = targetInDraftSpecReview(reviewedDataset);
         setPill('codeStatus', stillWaitingForDraft ? 'draft review' : generatedFor(reviewedDataset) ? 'review' : 'not generated');
         addEvent(
@@ -5461,17 +5821,15 @@ INDEX_HTML = r"""<!doctype html>
         );
         completeOperation(
           'Draft spec approved',
-          `${reviewedDataset} can now use the approved draft spec for code generation. Use Generate R Code when ready.`
+          `${reviewedDataset} can now use the approved draft spec for code generation. Use Next Step when ready.`
         );
-        renderDraftSpecPane();
-        renderPane();
-        renderActionAvailability();
+        renderAfterGraphRefresh();
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Draft spec approval failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -5502,16 +5860,14 @@ INDEX_HTML = r"""<!doctype html>
         await refreshGraphReadModels();
         setPill('codeStatus', 'draft rejected');
         addEvent('Draft spec rejected', `${reviewedDataset} draft spec was rejected. Revise inputs or generate a new draft before code generation.`);
-        completeOperation('Draft spec rejected', `${reviewedDataset} is back at draft-spec review. Update notes or inputs, then finalize again.`);
-        renderDraftSpecPane();
-        renderPane();
-        renderActionAvailability();
+        completeOperation('Draft spec rejected', `${reviewedDataset} needs a revised draft spec before code generation. Update notes or inputs, then create a revised draft spec.`);
+        renderAfterGraphRefresh();
       } catch (error) {
         byId('draftSpecPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Draft spec rejection failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -5524,6 +5880,17 @@ INDEX_HTML = r"""<!doctype html>
       }
       const finalized = finalizedInputsFor(state.selectedTarget);
       const progress = datasetProgressFor(state.selectedTarget);
+      const graphDataset = graphDatasetFor(state.selectedTarget);
+      const specStatus = String(progress?.spec_status || graphDataset?.spec_state?.status || '').trim();
+      if (specStatus === 'rejected') {
+        node.innerHTML = `
+          <p class="note warn">
+            Draft spec for ${escapeHtml(state.selectedTarget)} was rejected. Code generation is blocked until you revise the evidence or create a new draft spec.
+            ${artifactRecordedNote('Draft-spec rejection')}
+          </p>
+        `;
+        return;
+      }
       const graphRequiresDraftReview = progress?.next_action === 'review_draft_spec';
       const draft = draftSpecFor(state.selectedTarget);
       const review = draftSpecReviewFor(state.selectedTarget);
@@ -5532,11 +5899,31 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (finalized?.input_spec_available || targetHasInputSpec(state.selectedTarget)) {
-        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} has an uploaded input spec. The code generator will use that spec directly. ${artifactRecordedNote('Input spec artifact')}</p>`;
+        renderUploadedSpecCard(node, {
+          dataset: state.selectedTarget,
+          title: 'Uploaded spec confirmed',
+          status: 'Ready for R code generation',
+          detail: 'The uploaded spec is the active derivation instruction for this run. The app will use it directly instead of creating a draft spec.',
+          artifactLabel: 'Input spec artifact',
+          warnings: finalized?.warnings || [],
+          inputSpecPath: finalized?.input_spec_path || graphDataset?.spec_state?.input_spec_path || null
+        });
         return;
       }
       if (finalized?.approved_draft_spec_available) {
-        node.innerHTML = `<p class="note strong">${escapeHtml(state.selectedTarget)} already has a user-approved draft spec for this run. The code generator can use it now. ${artifactRecordedNote('Approved draft-spec artifact')}</p>`;
+        const approvedDraft = draftSpecFor(state.selectedTarget);
+        if (approvedDraft && Array.isArray(approvedDraft.variables) && approvedDraft.variables.length) {
+          renderDraftSpecReviewTable(node, approvedDraft, draftSpecReviewFor(state.selectedTarget));
+          return;
+        }
+        renderFinalizedSpecCard(node, {
+          dataset: state.selectedTarget,
+          title: 'Draft spec approved',
+          status: 'Ready for R code generation',
+          detail: 'A generated draft spec has been approved for this run only. The app can now use it as the code-generation instruction.',
+          artifactLabel: 'Approved draft-spec artifact',
+          warnings: finalized?.warnings || []
+        });
         return;
       }
       if (!draft) {
@@ -5544,6 +5931,84 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       renderDraftSpecReviewTable(node, draft, review);
+    }
+
+    function uploadedSpecPreviewFor(dataset, inputSpecPath = null) {
+      const target = String(dataset || '').toUpperCase();
+      const specs = state.inputSummary?.specs || [];
+      if (!target || !Array.isArray(specs) || !specs.length) return null;
+      const normalizedPath = String(inputSpecPath || '').replaceAll('\\', '/').toLowerCase();
+      const fileName = normalizedPath.split('/').filter(Boolean).pop() || '';
+      const exact = specs.find((item) => {
+        const itemDataset = String(item.dataset || '').toUpperCase();
+        const itemName = String(item.file_name || '').toLowerCase();
+        const itemPath = String(item.path || '').replaceAll('\\', '/').toLowerCase();
+        return itemDataset === target || (fileName && itemName === fileName) || (normalizedPath && itemPath.endsWith(normalizedPath));
+      });
+      if (exact) return exact;
+      return specs.find((item) => {
+        const haystack = `${item.file_name || ''} ${item.dataset || ''} ${(item.columns || []).join(' ')}`.toUpperCase();
+        return haystack.includes(target);
+      }) || null;
+    }
+
+    function renderUploadedSpecCard(node, {dataset, title, status, detail, artifactLabel, warnings = [], inputSpecPath = null} = {}) {
+      const preview = uploadedSpecPreviewFor(dataset, inputSpecPath);
+      const warningItems = Array.isArray(warnings) ? warnings.filter(Boolean).slice(0, 8) : [];
+      const columns = (preview?.columns || []).slice(0, 12);
+      const rows = (preview?.sample_rows || []).slice(0, 8);
+      const table = rows.length && columns.length
+        ? `
+          <div class="table-wrap spec-preview-table">
+            <table>
+              <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead>
+              <tbody>${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] || '')}</td>`).join('')}</tr>`).join('')}</tbody>
+            </table>
+          </div>
+        `
+        : preview?.text_preview
+          ? `<div class="mini-pre">${escapeHtml(preview.text_preview)}</div>`
+          : '<p class="note">Spec file is recorded, but no browser preview is available for this file.</p>';
+      const previewMeta = preview
+        ? `${preview.file_name || 'uploaded spec'} | ${preview.format || 'file'} | ${preview.row_count ?? preview.line_count ?? '-'} ${preview.preview_type === 'code' || preview.preview_type === 'text' ? 'lines' : 'rows'}`
+        : 'Uploaded spec artifact is recorded for this run.';
+      node.innerHTML = `
+        <div class="spec-status-card">
+          <div class="spec-status-head">
+            <div>
+              <strong>${escapeHtml(title || 'Uploaded spec confirmed')}</strong>
+              <span>${escapeHtml(dataset || state.selectedTarget || '')}</span>
+            </div>
+            <span class="pill">${escapeHtml(status || 'ready')}</span>
+          </div>
+          <p>${escapeHtml(detail || 'The uploaded spec is the active derivation instruction for this run.')}</p>
+          <p class="note strong">${artifactRecordedNote(artifactLabel || 'Input spec artifact')}</p>
+          <div class="spec-preview-head">
+            <strong>Spec preview</strong>
+            <span class="file-meta">${escapeHtml(previewMeta)}</span>
+          </div>
+          ${table}
+          ${warningItems.length ? `<details><summary>Warnings</summary><ul class="clean">${listItems(warningItems, 'None reported.')}</ul></details>` : ''}
+        </div>
+      `;
+    }
+
+    function renderFinalizedSpecCard(node, {dataset, title, status, detail, artifactLabel, warnings = []} = {}) {
+      const warningItems = Array.isArray(warnings) ? warnings.filter(Boolean).slice(0, 8) : [];
+      node.innerHTML = `
+        <div class="spec-status-card">
+          <div class="spec-status-head">
+            <div>
+              <strong>${escapeHtml(title || 'Spec confirmed')}</strong>
+              <span>${escapeHtml(dataset || state.selectedTarget || '')}</span>
+            </div>
+            <span class="pill">${escapeHtml(status || 'ready')}</span>
+          </div>
+          <p>${escapeHtml(detail || 'The current spec gate is satisfied for this run.')}</p>
+          <p class="note strong">${artifactRecordedNote(artifactLabel || 'Spec artifact')}</p>
+          ${warningItems.length ? `<details><summary>Warnings</summary><ul class="clean">${listItems(warningItems, 'None reported.')}</ul></details>` : ''}
+        </div>
+      `;
     }
 
     function renderDraftSpecReviewTable(node, draft, review) {
@@ -5603,9 +6068,21 @@ INDEX_HTML = r"""<!doctype html>
       applyI18n();
     }
 
+    function renderWorkflowShell() {
+      renderActionAvailability();
+      renderPrimaryNextAction();
+      updateHeaderStatusOverview();
+    }
+
+    function renderAfterGraphRefresh() {
+      renderDraftSpecPane();
+      renderPane();
+      renderGraphAwareDashboard();
+    }
+
     function updateMainSectionVisibility() {
       const hasInputs = recognizedInputCount() > 0;
-      const hasTargets = Boolean(state.selectedTarget || selectedTargets().length || dashboardTargets().length || state.plan || state.runProgress);
+      const hasTargets = hasRuntimeWorkflowContext() || Boolean(dashboardTargets().length);
       const hasCodeContext = Boolean(
         state.generated ||
         state.review ||
@@ -5618,7 +6095,7 @@ INDEX_HTML = r"""<!doctype html>
       const uploadOpen = !nodeHasClass(byId('uploadPanel'), 'hidden');
       toggleHidden('studySetupSection', !uploadOpen);
       toggleHidden('recognizedEvidenceSection', !hasInputs);
-      toggleHidden('chooseOutputSection', !hasInputs);
+      toggleHidden('chooseOutputSection', !hasInputs && !hasTargets);
       toggleHidden('generateRunSection', !(hasTargets || hasCodeContext));
     }
 
@@ -5630,6 +6107,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function updateDashboardPanelVisibility(fileCount, targets, runnable, blocked) {
       const hasInputs = fileCount > 0;
+      const hasWorkflowContext = hasRuntimeWorkflowContext() || targets.length > 0;
       const selected = selectedTargets();
       const hasTargetContext = Boolean(state.selectedTarget || selected.length || targets.length || state.plan || state.runProgress);
       const hasReviewItems = humanReviewQueueItems().length > 0;
@@ -5640,20 +6118,19 @@ INDEX_HTML = r"""<!doctype html>
         state.graphState
       );
       toggleHidden('dashboardEmptyGuide', true);
-      toggleHidden('dashboardRuntimePanels', !hasInputs);
-      toggleHidden('dashboardCurrentPanel', !(hasInputs && Boolean(state.selectedTarget)));
-      toggleHidden('sideDatasetQueuePanel', !(hasInputs && (selected.length || targets.length || state.plan || state.runProgress)));
+      toggleHidden('dashboardRuntimePanels', !hasWorkflowContext);
+      toggleHidden('dashboardCurrentPanel', !(hasWorkflowContext && Boolean(state.selectedTarget)));
+      toggleHidden('sideDatasetQueuePanel', !(hasWorkflowContext && (selected.length || targets.length || state.plan || state.runProgress)));
       toggleHidden('humanReviewQueuePanel', true);
       toggleHidden('metricGrid', true);
-      const showDependency = hasInputs && shouldShowDependencyExplanation(blocked);
+      const showDependency = hasWorkflowContext && shouldShowDependencyExplanation(blocked);
       const showInspector = state.showTechnicalDetails && (showDependency || hasAudit);
       toggleHidden('dependencyPanel', !showInspector || !showDependency);
-      toggleHidden('advancedRunAudit', !showInspector || !(hasInputs && hasAudit));
-      toggleHidden('inspectorEmptyGuide', showDependency || hasAudit);
-      const hideInspector = !showInspector;
-      toggleHidden('inspectorRail', hideInspector);
+      toggleHidden('advancedRunAudit', !showInspector || !(hasWorkflowContext && hasAudit));
+      toggleHidden('inspectorEmptyGuide', showInspector && (showDependency || hasAudit));
+      toggleHidden('inspectorRail', false);
       const main = byId('appMain');
-      main?.classList.toggle('with-inspector', !hideInspector);
+      main?.classList.toggle('with-inspector', true);
       main?.classList.toggle('wide-main', false);
       const detailsButton = byId('toggleTechnicalDetailsButton');
       if (detailsButton) {
@@ -5699,11 +6176,12 @@ INDEX_HTML = r"""<!doctype html>
     function renderStickyNextAction(view = primaryNextActionView()) {
       const bar = byId('stickyNextActionBar');
       if (!bar) return;
-      bar.className = `sticky-action-bar hidden ${view.tone || ''}`.trim();
-      bar.setAttribute('aria-hidden', 'true');
+      const shouldShow = hasRuntimeWorkflowContext();
+      bar.className = `sticky-action-bar ${shouldShow ? '' : 'hidden'} ${view.tone || ''}`.trim();
+      bar.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
       byId('stickyNextActionTitle').textContent = view.title;
-      byId('stickyNextActionDetail').textContent = view.detail;
-      byId('stickyNextActionButtons').innerHTML = view.buttons.map(primaryNextActionButtonHtml).join('');
+      byId('stickyNextActionDetail').textContent = 'Use the Current Work panel for the only active action.';
+      byId('stickyNextActionButtons').innerHTML = '<button class="secondary" data-primary-action="scrollCurrentWork" type="button">Back To Current Work</button>';
     }
 
     function renderActiveDatasetPanel(runnable, blocked) {
@@ -5746,7 +6224,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="stage ${state.plan ? isBlocked ? 'blocked' : 'done' : 'active'}">plan</div>
           <div class="stage ${codeStageClassFor(target, progress, true, selectedTargets().includes(target), isBlocked || waiting.length, isReferenceOnlyTarget(target))}">code</div>
           <div class="stage ${reviewStageClassFor(target, progress)}">review</div>
-          <div class="stage ${runStageClassFor(target, progress, ['structural_stub', 'not_real_derivation'].includes(qualityStatus))}">run</div>
+          <div class="stage ${runStageClassFor(target, progress, datasetHasOutputEvidence(target) && ['structural_stub', 'not_real_derivation'].includes(qualityStatus))}">run</div>
         </div>
         <div class="active-dataset-compact">
           <div class="active-dataset-line ${statusTone}"><strong>Status:</strong> ${escapeHtml(activeDatasetStatusPlainText(target, status, qualityStatus))}</div>
@@ -5832,7 +6310,10 @@ INDEX_HTML = r"""<!doctype html>
     function activeDatasetCodeText(target) {
       const generated = generatedFor(target);
       const execution = executionFor(target);
-      if (execution?.status === 'terminal_failure') return 'Local R execution failed. Review diagnostics before repair, retry, or skip.';
+      if (execution?.status === 'terminal_failure' && graphNeedsTerminalFailureReview(target)) return terminalFailurePrimaryDetail(target);
+      if (String(datasetProgressFor(target)?.next_action || '') === 'retry_approved_execution') {
+        return 'The previous R failure has been reviewed. The current step is to rerun the already approved code, not to repair code.';
+      }
       if (!generated) return 'No R code has been generated for this dataset.';
       if (generated.status === 'stale') return 'Generated code is stale because inputs changed.';
       if (!generated.generated_code) return 'Generated-code metadata exists, but code text is not loaded in this browser.';
@@ -5842,7 +6323,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function activeDatasetQualityText(target, status, qualityStatus) {
       if (qualityStatus === 'real_runtime_output') return `${target} has a completed local R runtime output. It can be considered runtime evidence for downstream order, subject to review.`;
-      if (qualityStatus === 'structural_stub' || qualityStatus === 'not_real_derivation') return `${target} output is review-only and cannot satisfy downstream runtime dependencies.`;
+      if (datasetHasOutputEvidence(target) && (qualityStatus === 'structural_stub' || qualityStatus === 'not_real_derivation')) return `${target} output is review-only and cannot satisfy downstream runtime dependencies.`;
       if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) return `${target} has generated output available for review. Completion is evidence, not clinical proof.`;
       if (status === 'reference evidence') return 'Reference ADaM is compare/output-shape evidence only, not runtime output generated by this graph.';
       return 'No generated runtime output exists yet.';
@@ -5864,24 +6345,31 @@ INDEX_HTML = r"""<!doctype html>
     function terminalFailureActionSummary(target) {
       const progress = datasetProgressFor(target);
       const execution = executionFor(target);
+      if (!graphNeedsTerminalFailureReview(target)) return '';
       if (!(execution?.status === 'terminal_failure' || progress?.execution_status === 'terminal_failure')) return '';
       const actions = Array.isArray(progress?.available_actions) ? progress.available_actions : [];
       if (!actions.length) return 'Refresh progress to load the available failure actions.';
-      return actions
+      const prefix = terminalFailureIsEnvironmentIssue(terminalFailureDiagnostics(target))
+        ? 'Environment issue: configure R, then rerun the approved code. Available controls: '
+        : '';
+      return prefix + terminalFailureSortedActions(target, actions)
         .map((item) => terminalFailureActionPlainText(item.action, item.label))
         .filter(Boolean)
         .join(' / ');
     }
 
     function terminalFailureActionPlainText(action, label) {
+      const normalizedAction = normalizeTerminalFailureAction(action);
       const labels = {
         retry_execution: 'rerun the approved code',
         repair_code: 'repair the generated code',
         revise_spec: 'go back to spec review',
+        request_new_input: 'ask for more input evidence',
         request_inputs: 'ask for more input evidence',
-        skip_dataset: 'skip this dataset'
+        skip_dataset: 'skip this dataset',
+        continue_other_datasets: 'continue other datasets'
       };
-      return labels[action] || label || titleFromToken(action);
+      return labels[normalizedAction] || label || titleFromToken(action);
     }
 
     function primaryNextActionView() {
@@ -5892,7 +6380,7 @@ INDEX_HTML = r"""<!doctype html>
       const availability = actionAvailability();
       const compare = target ? (state.compareResults[target] || datasetReviewFor(target)?.compare_summary) : null;
       const waitingRuntimeDependencies = waitingRuntimeDependenciesFor(target);
-      if (!inputCount) {
+      if (!hasStudyContext()) {
         return {
           title: 'Start by uploading your study files',
           detail: 'Upload SDTM source data first. Specs are preferred. Reference ADaM can be uploaded later for final comparison only.',
@@ -5922,25 +6410,25 @@ INDEX_HTML = r"""<!doctype html>
       if (dependencyBlocked) {
         return {
           title: `${target} needs a dependency decision`,
-          detail: `${availability.finalize.reason} If you accept this dependency plan, the app will continue and still stop for spec/code review before running R. If the evidence is wrong, add the missing files and prepare the plan again.`,
+          detail: `${availability.finalize.reason} If this dependency plan looks right, continue to the spec step. The app will still stop for spec/code review before running R. If the evidence is wrong, add the missing files and prepare the plan again.`,
           buttons: [
-            {label: 'Accept Dependency Plan', action: 'approveDependencyPlan', primary: true},
-            {label: 'Reject Dependency Plan', action: 'rejectDependencyPlan'},
-            {label: 'Add Files', action: 'startUpload'},
-            {label: 'Show Dependency Note', action: 'scrollDependency'}
+            {label: 'Continue To Spec Step', action: 'approveDependencyPlan', primary: true},
+            {label: 'Add More Files', action: 'startUpload'},
+            {label: 'Stop And Replan', action: 'rejectDependencyPlan'}
           ],
           tone: 'warn'
         };
       }
       const dependencyReview = activeDependencyReviewSummary();
       if (dependencyReview) {
+        const hasNoDependencyEvidence = (dependencyReview.decisions || []).some((item) => String(item.source || '') === 'no_dependency_evidence');
         return {
-          title: 'Review dependency plan',
-          detail: dependencyReviewSummaryText(dependencyReview),
+          title: dependencyReviewPlainTitle(dependencyReview, target),
+          detail: dependencyReviewPlainDetail(dependencyReview),
           buttons: [
-            {label: 'Approve Dependency Plan', action: 'approveDependencyPlan', primary: true},
-            {label: 'Reject Dependency Plan', action: 'rejectDependencyPlan'},
-            {label: 'Show Dependency Note', action: 'scrollDependency'}
+            {label: hasNoDependencyEvidence ? 'Continue To Spec Step' : 'Approve Dependency Plan', action: 'approveDependencyPlan', primary: true},
+            {label: 'Add More Files', action: 'startUpload'},
+            {label: hasNoDependencyEvidence ? 'Stop And Replan' : 'Reject Dependency Plan', action: 'rejectDependencyPlan'}
           ],
           tone: dependencyReview.status === 'blocked' || dependencyReview.status === 'rejected' ? 'fail' : 'warn'
         };
@@ -5955,6 +6443,19 @@ INDEX_HTML = r"""<!doctype html>
             ? [{label: 'Start Upstream Dataset', action: 'startStudy', primary: true}, {label: 'Refresh Progress', action: 'refreshProgress'}]
             : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
           tone: 'warn'
+        };
+      }
+      const failureFollowup = terminalFailureFollowupView(target);
+      if (failureFollowup && !graphNeedsTerminalFailureReview(target)) {
+        return failureFollowup;
+      }
+      if (graphNeedsTerminalFailureReview(target)) {
+        const buttons = terminalFailurePrimaryButtons(target);
+        return {
+          title: `${target} failed in R`,
+          detail: terminalFailurePrimaryDetail(target),
+          buttons: buttons.length ? buttons : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
+          tone: 'fail'
         };
       }
       if (executionFor(target)?.status === 'completed' || datasetReviewFor(target)?.output_preview) {
@@ -5983,6 +6484,17 @@ INDEX_HTML = r"""<!doctype html>
           tone: 'warn'
         };
       }
+      if (String(datasetProgressFor(target)?.next_action || '') === 'regenerate_draft_spec' || draftSpecReviewFor(target)?.approved === false) {
+        return {
+          title: `${target} draft spec was rejected`,
+          detail: 'Code generation is blocked. Update the inputs or notes, then create a revised draft spec before continuing.',
+          buttons: [
+            {label: 'Create Revised Draft Spec', action: 'regenerateDraftSpec', primary: true},
+            {label: 'Add More Files', action: 'startUpload'}
+          ],
+          tone: 'fail'
+        };
+      }
       if (availability.finalize.ready) {
         return {
           title: targetHasInputSpec(target)
@@ -6001,12 +6513,13 @@ INDEX_HTML = r"""<!doctype html>
         };
       }
       if (availability.approveCode.ready) {
+        const codeReviewButtons = codeReviewPrimaryButtons(target);
         return {
           title: `Review generated R code for ${target}`,
           detail: 'Approve only after checking assumptions and risk points. Approval still does not run R.',
           buttons: [
             {label: 'Show R Code', action: 'showCode', primary: true},
-            {label: 'Approve Code', action: 'approveCode'}
+            ...codeReviewButtons
           ],
           tone: 'warn'
         };
@@ -6060,9 +6573,205 @@ INDEX_HTML = r"""<!doctype html>
       };
     }
 
+    function codeReviewPrimaryButtons(target) {
+      const progress = datasetProgressFor(target);
+      const item = {
+        dataset: target,
+        name: 'code_review',
+        available_actions: Array.isArray(progress?.available_actions) ? progress.available_actions : []
+      };
+      const graphButtons = graphCommandActionsForReviewItem(item).map((action) => ({
+        label: action.label,
+        action: action.action === 'reject' ? 'rejectCode' : 'approveCode',
+        danger: action.tone === 'reject'
+      }));
+      if (graphButtons.length) return graphButtons;
+      return [{label: 'Approve Code', action: 'approveCode'}];
+    }
+
+    function terminalFailurePrimaryButtons(target) {
+      const progress = datasetProgressFor(target);
+      const actions = Array.isArray(progress?.available_actions) ? progress.available_actions : [];
+      const sortedActions = terminalFailureSortedActions(target, actions);
+      const buttons = sortedActions.map((item, index) => ({
+          label: terminalFailureActionButtonLabel(item.action, item.label),
+          action: 'terminalFailureAction',
+          target,
+          terminalAction: item.action,
+          primary: index === 0
+        }));
+      if (terminalFailureIsEnvironmentIssue(terminalFailureDiagnostics(target)) && !rExecutionReady()) {
+        return [
+          {label: 'Configure R Runtime', action: 'configureRuntime', primary: true},
+          ...buttons.map((item) => ({...item, primary: false}))
+        ];
+      }
+      return buttons;
+    }
+
+    function graphNeedsTerminalFailureReview(target) {
+      const progress = datasetProgressFor(target);
+      return Boolean(progress && String(progress.next_action || '') === 'review_terminal_failure');
+    }
+
+    function terminalFailureFollowupView(target, nextAction) {
+      const normalized = String(target || '').toUpperCase();
+      const next = String(nextAction || graphTerminalFailureFollowupAction(normalized) || '').trim();
+      if (!normalized || !next) return null;
+      const commonDetail = `${normalized} already has a recorded failure decision. Continue with the matching next step instead of choosing another recovery action.`;
+      if (next === 'retry_approved_execution') {
+        return {
+          title: `Rerun approved R code for ${normalized}`,
+          detail: commonDetail,
+          buttons: [{label: 'Run Approved Code', action: 'runApproved', primary: true}]
+        };
+      }
+      if (next === 'repair_generated_code') {
+        return {
+          title: `Repair R code for ${normalized}`,
+          detail: 'The failure decision was saved as code repair. Generate a repaired R artifact, review it, then run it explicitly.',
+          buttons: [{label: 'Repair Generated Code', action: 'generateCode', primary: true}],
+          tone: 'warn'
+        };
+      }
+      if (next === 'revise_approved_spec') {
+        return {
+          title: `Revise spec for ${normalized}`,
+          detail: 'The failure decision was saved as spec revision. Create a revised draft spec, review it, then generate new R code.',
+          buttons: [{label: 'Create Revised Draft Spec', action: 'generateCode', primary: true}],
+          tone: 'warn'
+        };
+      }
+      if (next === 'request_new_study_input') {
+        return {
+          title: `Add corrected inputs for ${normalized}`,
+          detail: 'The failure decision says more or corrected study evidence is needed before continuing this output.',
+          buttons: [{label: 'Add More Files', action: 'startUpload', primary: true}, {label: 'Refresh Progress', action: 'refreshProgress'}],
+          tone: 'warn'
+        };
+      }
+      if (next === 'skip_failed_dataset') {
+        const nextDataset = nextDatasetNeedingAction(normalized);
+        return {
+          title: `${normalized} was skipped`,
+          detail: nextDataset ? `Continue with ${nextDataset}.` : 'This dataset is marked skipped. Select another output or refresh progress.',
+          buttons: nextDataset
+            ? [{label: `Open ${nextDataset}`, action: 'selectTarget', target: nextDataset, primary: true}]
+            : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
+          tone: 'warn'
+        };
+      }
+      if (next === 'continue_other_datasets') {
+        const nextDataset = nextDatasetNeedingAction(normalized);
+        return {
+          title: `Continue other datasets`,
+          detail: nextDataset ? `${normalized} remains failed; continue with ${nextDataset}.` : `${normalized} remains failed. No other actionable dataset is visible in this run.`,
+          buttons: nextDataset
+            ? [{label: `Open ${nextDataset}`, action: 'selectTarget', target: nextDataset, primary: true}]
+            : [{label: 'Refresh Progress', action: 'refreshProgress', primary: true}],
+          tone: 'warn'
+        };
+      }
+      return null;
+    }
+
+    function terminalFailureSortedActions(target, actions) {
+      const environmentIssue = terminalFailureIsEnvironmentIssue(terminalFailureDiagnostics(target));
+      const rank = environmentIssue
+        ? {
+            retry_execution: 1,
+            repair_code: 2,
+            revise_spec: 3,
+            request_new_input: 4,
+            request_inputs: 4,
+            skip_dataset: 5,
+            continue_other_datasets: 6
+          }
+        : {
+            repair_code: 1,
+            retry_execution: 2,
+            revise_spec: 3,
+            request_new_input: 4,
+            request_inputs: 4,
+            skip_dataset: 5,
+            continue_other_datasets: 6
+          };
+      return (actions || [])
+        .map((item) => ({...item, action: normalizeTerminalFailureAction(item.action)}))
+        .filter((item) => rank[String(item.action || '')])
+        .sort((a, b) => rank[String(a.action || '')] - rank[String(b.action || '')]);
+    }
+
+    function terminalFailurePrimaryDetail(target) {
+      const diagnostics = terminalFailureDiagnostics(target);
+      if (terminalFailureIsEnvironmentIssue(diagnostics)) {
+        if (rExecutionReady()) {
+          return 'This looks like a local R setup failure, not a proven code-logic failure. R is available now, so rerun the approved code before asking the model to repair it.';
+        }
+        return 'This looks like a local R setup failure, not a proven code-logic failure. Configure Rscript first, then rerun the approved code. Repair code is for bad generated R logic.';
+      }
+      return 'Repair generated code creates a new code artifact for review. Rerun approved code repeats the already approved artifact. Go back to spec review when the failure suggests the derivation instruction is wrong.';
+    }
+
+    function terminalFailureDiagnostics(target) {
+      const graphDataset = graphDatasetFor(target) || {};
+      const failures = Array.isArray(graphDataset.failures) ? graphDataset.failures : [];
+      const latestFailure = failures.length ? failures[failures.length - 1] : {};
+      const validation = graphDataset.validation_summary || {};
+      const execution = graphDataset.execution_state || {};
+      const artifactMetadata = Array.isArray(graphDataset.artifacts)
+        ? (graphDataset.artifacts.find((artifact) => String(artifact.kind || artifact.kind_id || '').includes('failure_report'))?.metadata || {})
+        : {};
+      const messages = [
+        latestFailure.message,
+        validation.r_stderr,
+        validation.errors,
+        execution.real_run_error,
+        artifactMetadata.latest_root_cause
+      ].flat().filter(Boolean);
+      return {
+        rootCause: latestFailure.root_cause || artifactMetadata.latest_root_cause || '',
+        messages
+      };
+    }
+
+    function terminalFailureIsEnvironmentIssue(diagnostics) {
+      const root = String(diagnostics?.rootCause || '').toLowerCase();
+      const text = (diagnostics?.messages || []).join(' ').toLowerCase();
+      return (
+        root === 'r_environment_error' ||
+        text.includes('rscript is not available') ||
+        text.includes('rscript was not found') ||
+        text.includes("package 'haven' is required") ||
+        text.includes('requires rscript') ||
+        text.includes('requires r with the haven package')
+      );
+    }
+
+    function rExecutionReady() {
+      if (optionalAdvancedPath('rscriptPath')) return true;
+      const readiness = state.runtimeReadiness;
+      if (!readiness) return false;
+      if (readiness.capabilities?.r_execution === true) return true;
+      return (readiness.checks || []).some((check) => check.name === 'r_execution' && check.status === 'ready');
+    }
+
+    function openRuntimeSettings() {
+      const details = byId('advancedSetupDetails');
+      if (details) details.open = true;
+      byId('rscriptPath')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+      byId('rscriptPath')?.focus();
+      beginOperation(
+        'Configure R runtime',
+        'Set Local Rscript executable, or restart the service with ADAM_AGENT_RSCRIPT_PATH. Then rerun the approved code.'
+      );
+    }
+
     function primaryNextActionButtonHtml(item) {
       const targetAttr = item.target ? ` data-primary-target="${escapeHtml(item.target)}"` : '';
-      return `<button class="${item.primary ? '' : 'secondary'}" data-primary-action="${escapeHtml(item.action)}"${targetAttr} type="button">${escapeHtml(tt(item.label))}</button>`;
+      const terminalAttr = item.terminalAction ? ` data-terminal-action="${escapeHtml(item.terminalAction)}"` : '';
+      const className = item.primary ? '' : `secondary${item.danger ? ' danger' : ''}`;
+      return `<button class="${className}" data-primary-action="${escapeHtml(item.action)}"${targetAttr}${terminalAttr} type="button">${escapeHtml(tt(item.label))}</button>`;
     }
 
     function attachPrimaryNextActionHandlers() {
@@ -6086,8 +6795,10 @@ INDEX_HTML = r"""<!doctype html>
         }
         return;
       }
+      if (action === 'configureRuntime') return openRuntimeSettings();
       if (action === 'preparePlan') return preparePlan(button);
       if (action === 'finalizeInputs') return finalizeInputsForDraftSpec(button);
+      if (action === 'regenerateDraftSpec') return regenerateRejectedDraftSpec(button);
       if (action === 'approveDependencyPlan') return submitDependencyReviewDecision('approve');
       if (action === 'rejectDependencyPlan') return submitDependencyReviewDecision('reject');
       if (action === 'approveDraft') return approveDraftSpec(button);
@@ -6095,11 +6806,11 @@ INDEX_HTML = r"""<!doctype html>
       if (action === 'startStudy') return startNativeStudyLoop(button);
       if (action === 'generateCode') return generateCode(button);
       if (action === 'approveCode') return approveCode(button);
+      if (action === 'rejectCode') return rejectCode(button);
       if (action === 'runApproved') return runApprovedCode(button);
+      if (action === 'terminalFailureAction') return submitTerminalFailureReview(target || state.selectedTarget, button?.dataset?.terminalAction || '', button);
       if (action === 'refreshProgress') {
-        await refreshGraphReadModels();
-        renderGraphAwareDashboard();
-        return;
+        return refreshProgressFromPrimaryAction(button);
       }
       if (action === 'showCode') {
         state.selectedView = 'code';
@@ -6128,6 +6839,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const scrollTargets = {
+        scrollCurrentWork: 'currentWorkSection',
         scrollTargets: 'targetButtons',
         scrollDependency: 'dependencyGraph',
         scrollDraft: 'draftSpecPane',
@@ -6135,6 +6847,29 @@ INDEX_HTML = r"""<!doctype html>
       };
       const id = scrollTargets[action];
       if (id) byId(id)?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+
+    async function refreshProgressFromPrimaryAction(button = null) {
+      const restorePending = setPendingButton(button, 'Refreshing...');
+      beginOperation('Refreshing progress', 'Checking saved run state and local R readiness.');
+      try {
+        await Promise.all([
+          refreshGraphReadModels(),
+          checkRuntimeReadiness()
+        ]);
+        await hydrateActiveApprovedDraftSpecAndRender();
+        syncActiveDatasetState();
+        renderGraphAwareDashboard();
+        renderPane();
+        renderWorkflowShell();
+        const next = primaryNextActionView();
+        completeOperation(next.title || 'Progress refreshed', next.detail || 'Saved run state has been refreshed.');
+        addEvent('Progress refreshed', `${next.title || 'Next step updated'}${state.selectedTarget ? ` for ${state.selectedTarget}` : ''}.`);
+      } catch (error) {
+        failOperation('Progress refresh failed', error);
+      } finally {
+        restorePending();
+      }
     }
 
     function renderStudyProgress(targets, runnable, blocked) {
@@ -6188,7 +6923,7 @@ INDEX_HTML = r"""<!doctype html>
             : 'No study loaded',
         detail: [
           progress?.status ? `Run status: ${progress.status}.` : state.graphState?.status ? `Run status: ${state.graphState.status}.` : '',
-          progress?.output_quality_rollup ? studyQualityText(progress.output_quality_rollup) : '',
+          progress?.output_quality_rollup ? studyQualityText(progress.output_quality_rollup, targets) : '',
           progress?.plan_stale ? 'Dependency plan is stale after input changes.' : '',
           progress?.current_interrupt ? `Needs review: ${readableInterruptName(progress.current_interrupt.name)}.` : interrupt ? `Needs review: ${interrupt}.` : '',
           activeNext
@@ -6199,10 +6934,18 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function studyStatusPill(progress, blocked, targets) {
-      if (progress?.output_quality_rollup?.completion_quality === 'review_only_complete') return 'review only';
-      if (progress?.output_quality_rollup?.completion_quality === 'mixed_output_quality_complete') return 'mixed output';
+      const activeNextAction = String(progress?.next_action || '');
+      const completeActions = new Set(['complete', 'completed', 'review_summary']);
+      const qualityCanOwnStatus = completeActions.has(activeNextAction) || allTargetsHaveOutputEvidence(targets);
+      if (qualityCanOwnStatus && progress?.output_quality_rollup?.completion_quality === 'review_only_complete') return 'review only';
+      if (qualityCanOwnStatus && progress?.output_quality_rollup?.completion_quality === 'mixed_output_quality_complete') return 'mixed output';
       if ((progress?.datasets || []).some((item) => (item.waiting_for_runtime_dependencies || []).length)) return 'waiting upstream';
       return progress?.next_action || (blocked.length ? 'blocked' : targets.length ? 'ready' : 'waiting');
+    }
+
+    function allTargetsHaveOutputEvidence(targets) {
+      const normalized = (targets || []).map((target) => String(target || '').toUpperCase()).filter(Boolean);
+      return Boolean(normalized.length && normalized.every((target) => datasetHasOutputEvidence(target)));
     }
 
     function nativeResumeProgressNote() {
@@ -6222,8 +6965,12 @@ INDEX_HTML = r"""<!doctype html>
       `;
     }
 
-    function studyQualityText(rollup) {
+    function studyQualityText(rollup, targets) {
       const quality = rollup?.completion_quality || '';
+      const qualityCanOwnStatus = allTargetsHaveOutputEvidence(targets);
+      if (!qualityCanOwnStatus && ['review_only_complete', 'mixed_output_quality_complete', 'real_runtime_complete'].includes(quality)) {
+        return '';
+      }
       if (quality === 'review_only_complete') {
         return `Output quality: ${rollup.review_only_outputs || 0} review-only/demo output(s); none can satisfy downstream runtime dependencies.`;
       }
@@ -6436,7 +7183,6 @@ INDEX_HTML = r"""<!doctype html>
             <div class="review-queue-detail">${escapeHtml(reviewQueueDetailText(item))}</div>
             ${reviewQueueActionHints(item)}
             ${reviewQueueGraphCommandActionHtml(item)}
-            ${nativeResumeActionHtml(item.dataset, item.name)}
           </div>
         </div>
       `;
@@ -6445,11 +7191,18 @@ INDEX_HTML = r"""<!doctype html>
     function reviewQueueActionHints(item) {
       const actions = item.availableActions || item.available_actions || [];
       if (!Array.isArray(actions) || !actions.length) return '';
-      const hintActions = item.name === 'dependency_review'
-        ? actions.filter((action) => new Set(graphCommandActionsForReviewItem(item).map((allowed) => allowed.action)).has(String(action.action || '').trim()))
-        : actions;
+      const allowedActions = graphCommandActionsForReviewItem(item);
+      const allowedActionNames = new Set(allowedActions.map((allowed) => allowed.action));
+      const hintActions = allowedActionNames.size
+        ? actions.filter((action) => {
+            const normalized = item.name === 'terminal_failure'
+              ? normalizeTerminalFailureAction(action.action)
+              : String(action.action || '').trim();
+            return allowedActionNames.has(normalized);
+          })
+        : [];
       const labels = hintActions
-        .map((action) => action.label || titleFromToken(action.action || 'review'))
+        .map((action) => graphCommandActionLabel(item.name, item.name === 'terminal_failure' ? normalizeTerminalFailureAction(action.action) : String(action.action || '').trim(), actions))
         .filter(Boolean)
         .join(' / ');
       if (!labels) return '';
@@ -6473,12 +7226,15 @@ INDEX_HTML = r"""<!doctype html>
         ? item.availableActions || item.available_actions
         : [];
       const advertisedActions = advertised
-        .map((action) => String(action.action || '').trim())
+        .map((action) => interrupt === 'terminal_failure'
+          ? normalizeTerminalFailureAction(action.action)
+          : String(action.action || '').trim())
         .filter(Boolean);
       const allowedByGate = {
         dependency_review: ['approve', 'reject'],
         draft_spec_review: ['approve', 'reject'],
-        code_review: ['approve', 'reject']
+        code_review: ['approve', 'reject'],
+        terminal_failure: ['retry_execution', 'repair_code', 'revise_spec', 'request_new_input', 'skip_dataset', 'continue_other_datasets']
       }[interrupt] || [];
       const actionNames = advertisedActions.filter((action) => allowedByGate.includes(action));
       return Array.from(new Set(actionNames)).map((action) => ({
@@ -6489,8 +7245,6 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function graphCommandActionLabel(interrupt, action, advertised) {
-      const advertisedMatch = (advertised || []).find((item) => String(item.action || '').trim() === action);
-      if (advertisedMatch?.label) return advertisedMatch.label;
       const labels = {
         dependency_review: {
           approve: 'Approve Dependency Plan',
@@ -6503,9 +7257,24 @@ INDEX_HTML = r"""<!doctype html>
         code_review: {
           approve: 'Approve Code',
           reject: 'Reject Code'
+        },
+        terminal_failure: {
+          retry_execution: 'Rerun Approved Code',
+          repair_code: 'Repair Generated Code',
+          revise_spec: 'Back To Spec Review',
+          request_new_input: 'Request More Inputs',
+          skip_dataset: 'Skip Dataset',
+          continue_other_datasets: 'Continue Other Datasets'
         }
       };
-      return labels[interrupt]?.[action] || titleFromToken(action);
+      if (labels[interrupt]?.[action]) return labels[interrupt][action];
+      const advertisedMatch = (advertised || []).find((item) => (
+        interrupt === 'terminal_failure'
+          ? normalizeTerminalFailureAction(item.action) === action
+          : String(item.action || '').trim() === action
+      ));
+      if (advertisedMatch?.label) return advertisedMatch.label;
+      return titleFromToken(action);
     }
 
     function readableInterruptName(name) {
@@ -6645,8 +7414,7 @@ INDEX_HTML = r"""<!doctype html>
             dataset,
             tone: 'warn',
             label,
-            detail: `${dataset} stopped at ${label}. Review this item before any code approval or local R execution.${warnings}`,
-            extraHtml: nativeResumeActionHtml(dataset, nextAction)
+            detail: `${dataset} stopped at ${label}. Review this item from the main Next Step panel before any code approval or local R execution.${warnings}`
           });
         });
     }
@@ -6672,8 +7440,7 @@ INDEX_HTML = r"""<!doctype html>
           dataset,
           tone: 'info',
           label: 'Preserved',
-          detail: `${dataset} already has saved progress (${item.status || 'unknown'}). Prepare Review Steps left it unchanged. Next action: ${nextAction}.${interrupt}`,
-          extraHtml: nativeResumeActionHtml(dataset, item.interrupt || item.name || item.next_action)
+          detail: `${dataset} already has saved progress (${item.status || 'unknown'}). Prepare Review Steps left it unchanged. Next action: ${nextAction}.${interrupt}`
         });
       });
     }
@@ -6690,11 +7457,7 @@ INDEX_HTML = r"""<!doctype html>
           dataset: String(item.dataset || 'Study').toUpperCase(),
           tone: 'warn',
           label: readableInterruptName(item.name || item.interrupt || progressInterruptName(item.action)),
-          detail: item.reason || 'A review item is open in the saved run progress.',
-          extraHtml: nativeResumeActionHtml(
-            String(item.dataset || '').toUpperCase(),
-            item.name || item.interrupt || progressInterruptName(item.action)
-          )
+          detail: item.reason || 'A review item is open in the saved run progress.'
         }));
     }
 
@@ -6768,7 +7531,7 @@ INDEX_HTML = r"""<!doctype html>
       const allowed = {
         draft_spec_review: ['approve', 'reject'],
         code_review: ['approve', 'reject'],
-        terminal_failure: ['retry_execution', 'repair_code', 'revise_spec', 'request_inputs', 'skip_dataset']
+        terminal_failure: ['retry_execution', 'repair_code', 'revise_spec', 'request_new_input', 'request_inputs', 'skip_dataset', 'continue_other_datasets']
       }[interrupt] || [];
       return allowed.includes(action);
     }
@@ -6917,8 +7680,8 @@ INDEX_HTML = r"""<!doctype html>
       const quality = datasetOutputQualityStatus(target);
       if (isBlocked || status === 'blocked') return `${target} cannot generate until the dependency gate is resolved.`;
       if (status === 'ready') return `${target} can move to spec/code review; review must still confirm that the dependency assumption is correct.`;
-      if (quality === 'structural_stub') return `${target} has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.`;
-      if (quality === 'not_real_derivation') return `${target} has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.`;
+      if (datasetHasOutputEvidence(target) && quality === 'structural_stub') return `${target} has a structural demo output for review only. It cannot satisfy downstream runtime dependencies.`;
+      if (datasetHasOutputEvidence(target) && quality === 'not_real_derivation') return `${target} has a mock/offline output for review only. It cannot satisfy downstream runtime dependencies.`;
       if (quality === 'real_runtime_output' || status === 'completed') return `${target} has a completed local R runtime output for review.`;
       if (status === 'reference evidence') return 'Reference ADaM supports comparison/output-shape review only; it is not derivation authority.';
       return `${target} is tracked as ${status || 'candidate'} in the current study plan.`;
@@ -6991,8 +7754,8 @@ INDEX_HTML = r"""<!doctype html>
         return `The saved run has no task step for ${target}. Refresh progress or prepare the plan again before continuing.`;
       }
       if (!state.plan) return 'Next: prepare the dependency plan for this target.';
-      if (!targetSpecGateSatisfied(target)) return 'Next: click Finalize Inputs / Draft Spec, then approve the draft spec if no uploaded spec exists.';
-      if (!generatedFor(target)) return 'Next: click Generate R Code. This will not run R yet.';
+      if (!targetSpecGateSatisfied(target)) return 'Next: use Next Step to finalize inputs, then approve the draft spec if no uploaded spec exists.';
+      if (!generatedFor(target)) return 'Next: use Next Step to generate R code. This will not run R yet.';
       if (generatedFor(target)?.status === 'stale') return 'Inputs changed after code generation. Regenerate R code before review or execution.';
       if (!generatedFor(target)?.generated_code) return 'Generated-code state exists, but the code text is not loaded in this browser. Reload the run review before approving.';
       if (!reviewFor(target) && !executionFor(target)) return 'Next: review the generated R code, then approve local execution.';
@@ -7021,7 +7784,7 @@ INDEX_HTML = r"""<!doctype html>
         const isPlanned = selectedTargets().includes(target);
         const waitingDependencies = waitingRuntimeDependenciesFor(target);
         const qualityStatus = datasetOutputQualityStatus(target);
-        const reviewOnlyOutput = ['structural_stub', 'not_real_derivation'].includes(qualityStatus);
+        const reviewOnlyOutput = datasetHasOutputEvidence(target) && ['structural_stub', 'not_real_derivation'].includes(qualityStatus);
         const statusClass = progress?.blocked || status === 'blocked' || status === 'failed' ? 'fail' : waitingDependencies.length || reviewOnlyOutput ? 'warn' : ['ready', 'completed', 'reference'].includes(status) ? '' : 'warn';
         const isBlocked = blockedNames.has(target) || progress?.blocked;
         const isWaiting = waitingDependencies.length > 0;
@@ -7124,8 +7887,9 @@ INDEX_HTML = r"""<!doctype html>
       const executionStatus = String(progress?.execution_status || '').toLowerCase();
       const nextAction = String(progress?.next_action || '').toLowerCase();
       if (executionStatus === 'completed' || nextAction === 'complete') return 'done';
+      if (['execute_approved_code', 'retry_approved_execution'].includes(nextAction)) return 'active';
       if (['terminal_failure', 'failed', 'stale'].includes(executionStatus) || nextAction === 'review_terminal_failure') return 'blocked';
-      if (executionStatus || ['execute_approved_code', 'retry_approved_execution'].includes(nextAction)) return 'active';
+      if (executionStatus) return 'active';
       return '';
     }
 
@@ -7341,8 +8105,9 @@ INDEX_HTML = r"""<!doctype html>
       if (progress?.blocked) return 'blocked';
       if (waitingRuntimeDependenciesFor(target).length) return 'waiting upstream';
       const quality = datasetOutputQualityStatus(target);
-      if (quality === 'structural_stub') return 'demo output';
-      if (quality === 'not_real_derivation') return 'review only';
+      const hasOutputEvidence = datasetHasOutputEvidence(target);
+      if (hasOutputEvidence && quality === 'structural_stub') return 'demo output';
+      if (hasOutputEvidence && quality === 'not_real_derivation') return 'review only';
       if (progress?.status) return progress.status;
       if ((blocked || []).find((item) => item.dataset === target)) return 'blocked';
       if (state.runProgress) {
@@ -7385,24 +8150,29 @@ INDEX_HTML = r"""<!doctype html>
       }
       const activeProgress = datasetProgressFor(state.selectedTarget);
       const nextAction = String(activeProgress?.next_action || '');
-      const revisingSpec = nextAction === 'revise_approved_spec';
+      const repairingCode = nextAction === 'repair_generated_code';
+      const revisingSpec = nextAction === 'revise_approved_spec' || nextAction === 'regenerate_draft_spec';
       const graphOwnedGeneration = graphAllowsCodeGeneration(activeProgress);
       if (!graphOwnedGeneration && !targetSpecGateSatisfied(state.selectedTarget)) {
-        byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Click Finalize Inputs / Draft Spec, review the draft spec, then approve it before generating R code.</p>';
+        byId('reviewPane').innerHTML = '<p class="note warn">No approved input spec is available. Use Next Step to finalize inputs, review the draft spec, then approve it before generating R code.</p>';
         byId('draftSpecPane').scrollIntoView({behavior: 'smooth', block: 'center'});
         return;
       }
       const restorePending = setPendingButton(
         button || byId('generateCodeButton'),
-        revisingSpec ? 'Generating draft spec...' : 'Generating R code...',
+        revisingSpec ? 'Generating draft spec...' : repairingCode ? 'Repairing R code...' : 'Generating R code...',
         revisingSpec
           ? 'The model is preparing a revised draft spec. Please wait.'
+          : repairingCode
+            ? 'The model is repairing the generated R code. Please wait.'
           : 'The model is generating R code. This can take a while.'
       );
       beginOperation(
-        revisingSpec ? 'Generating revised draft spec' : 'Starting dataset generation',
+        revisingSpec ? 'Generating revised draft spec' : repairingCode ? 'Repairing generated R code' : 'Starting dataset generation',
         revisingSpec
           ? `Continuing ${state.selectedTarget}. It will stop for draft-spec review before new R code is generated.`
+          : repairingCode
+            ? `Continuing ${state.selectedTarget}. It will stop for code review before any R execution.`
           : `Starting ${state.selectedTarget}. It will stop for draft-spec or code review before any R execution.`
       );
       setPill('codeStatus', 'running');
@@ -7426,15 +8196,19 @@ INDEX_HTML = r"""<!doctype html>
         const waitingForDraft = interruptName === 'draft_spec_review';
         setPill('codeStatus', waitingForDraft ? 'draft review' : 'review');
         addEvent(
-          waitingForDraft ? 'Draft spec generated' : 'R code generated',
+          waitingForDraft ? 'Draft spec generated' : repairingCode ? 'R code repaired' : 'R code generated',
           waitingForDraft
             ? `${payload.dataset} draft spec is ready for review. R has not been generated yet.`
+            : repairingCode
+              ? `${payload.dataset} repaired code is ready for review.`
             : `${payload.dataset} code is ready for review.`
         );
         completeOperation(
-          waitingForDraft ? 'Draft spec ready' : 'R code generated',
+          waitingForDraft ? 'Draft spec ready' : repairingCode ? 'Repaired R code ready' : 'R code generated',
           waitingForDraft
             ? `${payload.dataset} draft spec is ready for human review.`
+            : repairingCode
+              ? `${payload.dataset} repaired code is ready for review. R has not been executed yet.`
             : `${payload.dataset} code is ready for review. R has not been executed yet.`
         );
         renderDraftSpecPane();
@@ -7448,7 +8222,7 @@ INDEX_HTML = r"""<!doctype html>
         failOperation('R code generation failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -7525,16 +8299,67 @@ INDEX_HTML = r"""<!doctype html>
         setPill('codeStatus', 'approved');
         addEvent('Code approved', `${reviewedDataset} code approval was saved to this run. R has not been executed yet.`);
         completeOperation('Code approved', `${reviewedDataset} is ready for explicit local R execution.`);
-        renderActionAvailability();
-        renderPane();
-        renderGraphAwareDashboard();
+        renderAfterGraphRefresh();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Code approval failed', error);
       } finally {
         restorePending();
+        renderWorkflowShell();
+      }
+    }
+
+    async function rejectCode(button = null) {
+      const generated = generatedFor(state.selectedTarget);
+      const target = String(generated?.dataset || state.selectedTarget || '').toUpperCase();
+      if (!target) return;
+      const progress = datasetProgressFor(target);
+      const item = {
+        dataset: target,
+        name: 'code_review',
+        available_actions: Array.isArray(progress?.available_actions) ? progress.available_actions : []
+      };
+      if (!graphCommandReviewActionAllowed(item, 'code_review', 'reject')) {
+        byId('reviewPane').innerHTML = '<p class="note warn">Reject Code is not available for the current graph step. Refresh progress before trying again.</p>';
         renderActionAvailability();
+        return;
+      }
+      const restorePending = setPendingButtonGroup(
+        button,
+        '[data-primary-action="approveCode"], [data-primary-action="rejectCode"], [data-review-command-dataset="' + target + '"][data-review-command-interrupt="code_review"]',
+        'Recording...'
+      );
+      beginOperation(
+        'Saving code rejection',
+        `Recording human rejection for ${target}. This only updates the graph state; R will not run in this step.`
+      );
+      setPill('codeStatus', 'review');
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(generated?.run_id || runId())}/graph-command`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: graphCommandRequestBody({
+            dataset: target,
+            interrupt: 'code_review',
+            action: 'reject',
+            notes: byId('reviewNotes').value.trim() || 'Rejected generated R code from the main workflow step.'
+          })
+        });
+        applyReviewQueueGraphCommandResponse(payload, 'code_review');
+        await refreshGraphReadModels();
+        await loadReviewSummary(payload.run_id || generated?.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
+        setPill('codeStatus', 'rejected');
+        addEvent('Code rejected', `${target} code rejection was saved to this run. Generate a revised code artifact before execution.`);
+        completeOperation('Code rejected', `${target} is ready for revised R code generation.`);
+        renderAfterGraphRefresh();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Code rejection failed', error);
+      } finally {
+        restorePending();
+        renderWorkflowShell();
       }
     }
 
@@ -7586,15 +8411,14 @@ INDEX_HTML = r"""<!doctype html>
         state.selectedView = 'output';
         setActiveTab();
         setStep(6);
-        renderPane();
-        renderGraphAwareDashboard();
+        renderAfterGraphRefresh();
       } catch (error) {
         setPill('codeStatus', 'failed');
         byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
         failOperation('Approved-code execution failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -7604,6 +8428,7 @@ INDEX_HTML = r"""<!doctype html>
         state.runReview = await api(`/runs/${encodeURIComponent(id)}/review-summary?study_dir=${encodeURIComponent(studyDir())}&detail_level=${encodeURIComponent(normalizedDetail)}`);
         state.runReviewDetailLevel = state.runReview?.detail_level || normalizedDetail;
         if (refreshGraph) await refreshGraphReadModels();
+        await hydrateActiveApprovedDraftSpecAndRender();
         if (!state.graphState && reviewSummaryHasGeneratedCode(state.runReview)) {
           await refreshGraphState();
         }
@@ -7685,7 +8510,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!state.runProgress && !state.graphState) return false;
       const graphDataset = state.graphState?.datasets?.[target] || {};
       const codeStatus = String(graphDataset.code_state?.status || '');
-      return ['generated', 'approved', 'stale'].includes(codeStatus);
+      return ['generated', 'approved'].includes(codeStatus);
     }
 
     function graphRequiresCodeReview(target) {
@@ -7770,7 +8595,7 @@ INDEX_HTML = r"""<!doctype html>
       const datasetProgress = datasetProgressFor(target);
       const review = terminalFailureReviewFor(target);
       const graphActions = Array.isArray(datasetProgress?.available_actions) ? datasetProgress.available_actions : [];
-      const graphGateOpen = Boolean(datasetProgress && datasetProgress.next_action === 'review_terminal_failure');
+      const graphGateOpen = graphNeedsTerminalFailureReview(target);
       const progressTerminalFailure = datasetProgress?.status === 'terminal_failure' || datasetProgress?.execution_status === 'terminal_failure';
       const executionTerminalFailure = execution?.status === 'terminal_failure';
       if (!target || (!executionTerminalFailure && !progressTerminalFailure) || !graphGateOpen) return '';
@@ -7781,14 +8606,15 @@ INDEX_HTML = r"""<!doctype html>
       const reviewedNote = reviewed
         ? `<p class="note strong">Last failure decision: ${escapeHtml(titleFromToken(reviewed))}. Continue with the matching next action from the graph.</p>`
         : '';
-      const actionControls = graphActions.length
-        ? graphActions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(terminalFailureActionButtonLabel(item.action, item.label))}</button>`).join('')
+      const sortedActions = terminalFailureSortedActions(target, graphActions);
+      const actionControls = sortedActions.length
+        ? sortedActions.map((item) => `<button class="secondary" data-terminal-action="${escapeHtml(item.action)}" data-terminal-dataset="${escapeHtml(target)}">${escapeHtml(terminalFailureActionButtonLabel(item.action, item.label))}</button>`).join('')
         : '<p class="note">Waiting for failure actions to load. Refresh progress before choosing a follow-up.</p>';
       return `
         <div class="card terminal-failure-panel">
           <h3>Terminal Failure Triage</h3>
           <p class="note warn">${escapeHtml(target)} failed during local R execution.${diagnostics} Choose one controlled next step; the graph will record the decision before any retry, repair, spec revision, new input request, or batch continuation.</p>
-          <p class="note">Repair generated code creates a new code artifact for review. Rerun approved code repeats the already approved artifact. Go back to spec review when the failure suggests the derivation instruction is wrong.</p>
+          <p class="note">${escapeHtml(terminalFailurePrimaryDetail(target))}</p>
           ${reviewedNote}
           <div class="button-row">
             ${actionControls}
@@ -7798,19 +8624,28 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function terminalFailureActionButtonLabel(action, fallbackLabel) {
+      const normalizedAction = normalizeTerminalFailureAction(action);
       const labels = {
         retry_execution: 'Rerun Approved Code',
         repair_code: 'Repair Generated Code',
         revise_spec: 'Back To Spec Review',
+        request_new_input: 'Request More Inputs',
         request_inputs: 'Request More Inputs',
-        skip_dataset: 'Skip Dataset'
+        skip_dataset: 'Skip Dataset',
+        continue_other_datasets: 'Continue Other Datasets'
       };
-      return labels[action] || fallbackLabel || titleFromToken(action);
+      return labels[normalizedAction] || fallbackLabel || titleFromToken(action);
+    }
+
+    function normalizeTerminalFailureAction(action) {
+      const raw = String(action || '').trim();
+      if (raw === 'request_inputs') return 'request_new_input';
+      return raw;
     }
 
     function terminalFailureActionAvailability(dataset, action) {
       const target = String(dataset || '').toUpperCase();
-      const requestedAction = String(action || '').trim();
+      const requestedAction = normalizeTerminalFailureAction(action);
       const progress = datasetProgressFor(target);
       const actions = Array.isArray(progress?.available_actions) ? progress.available_actions : [];
       if (!target || !requestedAction) {
@@ -7822,7 +8657,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!actions.length) {
         return {ready: false, reason: 'Failure actions are not loaded from graph progress. Refresh the run state before choosing a follow-up.'};
       }
-      const allowed = actions.some((item) => String(item.action || '').trim() === requestedAction);
+      const allowed = actions.some((item) => normalizeTerminalFailureAction(item.action) === requestedAction);
       if (!allowed) {
         return {ready: false, reason: `${titleFromToken(requestedAction)} is not an available graph action for ${target}.`};
       }
@@ -8098,15 +8933,12 @@ INDEX_HTML = r"""<!doctype html>
           `${readableInterruptName(normalizedInterrupt)} is now ${titleFromToken(payload.status || payload.action || normalizedAction)}.`
         );
         renderPlan(state.plan || {});
-        renderDraftSpecPane();
-        renderPane();
-        renderGraphAwareDashboard();
-        renderActionAvailability();
+        renderAfterGraphRefresh();
       } catch (error) {
         failOperation('Review decision failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -8149,15 +8981,12 @@ INDEX_HTML = r"""<!doctype html>
             : 'Dependency plan was rejected. Update inputs or prepare a new plan before continuing.'
         );
         renderPlan(state.plan || {});
-        renderDraftSpecPane();
-        renderPane();
-        renderGraphAwareDashboard();
-        renderActionAvailability();
+        renderAfterGraphRefresh();
       } catch (error) {
         failOperation('Dependency plan decision failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -8195,8 +9024,20 @@ INDEX_HTML = r"""<!doctype html>
           graph_command: true
         };
         if (payload.action === 'reject' || payload.approved === false) {
+          delete state.generatedByDataset[target];
+          delete state.reviewByDataset[target];
           delete state.executionByDataset[target];
         }
+        return;
+      }
+      if (interrupt === 'terminal_failure' && target) {
+        state.terminalFailureReviewByDataset[target] = {
+          ...payload,
+          action: payload.action,
+          next_action: payload.next_action,
+          current_interrupt: payload.current_interrupt,
+          graph_command: true
+        };
         return;
       }
       if (interrupt !== 'dependency_review') return;
@@ -8342,15 +9183,22 @@ INDEX_HTML = r"""<!doctype html>
           graph_command: true
         };
         await refreshGraphReadModels();
+        syncActiveDatasetState();
+        await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
         addEvent('Failure decision recorded', `${target}: ${titleFromToken(payload.action)} -> ${titleFromToken(payload.next_action)}.`);
-        completeOperation('Failure decision recorded', `${target} next action: ${titleFromToken(payload.next_action)}.`);
+        const nextView = terminalFailureFollowupView(target, payload.next_action);
+        completeOperation(
+          'Failure decision recorded',
+          nextView ? `${nextView.title}. ${nextView.detail}` : `${target} next action: ${titleFromToken(payload.next_action)}.`
+        );
+        renderDraftSpecPane();
         renderPane();
-        renderActionAvailability();
+        renderGraphAwareDashboard();
       } catch (error) {
         failOperation('Failure decision failed', error);
       } finally {
         restorePending();
-        renderActionAvailability();
+        renderWorkflowShell();
       }
     }
 
@@ -8457,8 +9305,10 @@ INDEX_HTML = r"""<!doctype html>
     byId('finalizeInputsButton').addEventListener('click', finalizeInputsForDraftSpec);
     byId('startStudyLoopButton').addEventListener('click', startNativeStudyLoop);
     byId('approveDraftSpecButton').addEventListener('click', (event) => approveDraftSpec(event.currentTarget));
+    byId('rejectDraftSpecButton').addEventListener('click', (event) => rejectDraftSpec(event.currentTarget));
     byId('generateCodeButton').addEventListener('click', generateCode);
     byId('approveButton').addEventListener('click', (event) => approveCode(event.currentTarget));
+    byId('rejectCodeButton').addEventListener('click', (event) => rejectCode(event.currentTarget));
     byId('runApprovedButton').addEventListener('click', runApprovedCode);
     byId('addTargetButton').addEventListener('click', addManualTarget);
     byId('openLlmSettingsButton').addEventListener('click', openLlmSettings);

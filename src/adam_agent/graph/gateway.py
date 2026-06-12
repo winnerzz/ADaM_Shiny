@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 from typing import Any
+from uuid import uuid4
 
 from langgraph.types import Command
 
@@ -1094,6 +1095,12 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
+        self._recover_approved_draft_spec_state_for_code_generation(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+        )
         plan = self.dependency_gate_for_product_step(
             study_dir=root,
             study_id=study_id,
@@ -1107,6 +1114,12 @@ class GraphGateway:
             checkpointer=self._checkpointer,
             llm_client_builder=llm_client_builder or build_llm_client,
             target_context_builder=target_context_builder or build_target_llm_context,
+        )
+        dataset_config = self._fresh_dataset_product_step_config(
+            study_id,
+            run_id,
+            target,
+            step="code_review",
         )
         result = dataset_graph.invoke(
             {
@@ -1122,11 +1135,11 @@ class GraphGateway:
                 "native_code_review": True,
                 "audit_artifacts": [],
             },
-            config=self._dataset_config(study_id, run_id, target),
+            config=dataset_config,
         )
         if "__interrupt__" not in result:
             self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native code_review")
-        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        snapshot = dataset_graph.get_state(dataset_config)
         gateway_result = self._record_code_generation_from_dataset_result(
             root=root,
             study_id=study_id,
@@ -1140,6 +1153,7 @@ class GraphGateway:
                 "native_code_review_interrupt": _native_interrupt_payload(
                     snapshot,
                     boundary="code_review_pilot_only",
+                    thread_id=dataset_config["configurable"]["thread_id"],
                 )
             },
         )
@@ -1168,6 +1182,12 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         target = dataset.strip().upper()
+        self._recover_approved_draft_spec_state_for_code_generation(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+        )
         plan = self.dependency_gate_for_product_step(
             study_dir=root,
             study_id=study_id,
@@ -1181,6 +1201,12 @@ class GraphGateway:
             checkpointer=self._checkpointer,
             llm_client_builder=llm_client_builder or build_llm_client,
             target_context_builder=target_context_builder or build_target_llm_context,
+        )
+        dataset_config = self._fresh_dataset_product_step_config(
+            study_id,
+            run_id,
+            target,
+            step="full_run",
         )
         result = dataset_graph.invoke(
             {
@@ -1198,11 +1224,11 @@ class GraphGateway:
                 "native_full_loop": True,
                 "audit_artifacts": [],
             },
-            config=self._dataset_config(study_id, run_id, target),
+            config=dataset_config,
         )
         if "__interrupt__" not in result:
             self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native dataset-loop interrupt")
-        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        snapshot = dataset_graph.get_state(dataset_config)
         snapshot_values = dict(snapshot.values)
         if snapshot_values.get("current_interrupt") == "draft_spec_review":
             return self._record_draft_spec_generation_from_dataset_result(
@@ -1216,6 +1242,7 @@ class GraphGateway:
                     "native_dataset_product_loop_interrupt": _native_interrupt_payload(
                         snapshot,
                         boundary="dataset_product_loop_pilot_only",
+                        thread_id=dataset_config["configurable"]["thread_id"],
                     )
                 },
             )
@@ -1234,6 +1261,7 @@ class GraphGateway:
                 "native_dataset_product_loop_interrupt": _native_interrupt_payload(
                     snapshot,
                     boundary="dataset_product_loop_pilot_only",
+                    thread_id=dataset_config["configurable"]["thread_id"],
                 )
             },
         )
@@ -1553,7 +1581,12 @@ class GraphGateway:
                         "notes": notes,
                     }
                 ),
-                config=self._dataset_config(graph_state.study_id, run_id, target),
+                config=self._dataset_resume_config(
+                    graph_state,
+                    run_id=run_id,
+                    dataset=target,
+                    interrupt="code_review",
+                ),
             )
             if resumed.get("native_code_review_status") != expected_native_status:
                 raise ValueError(f"DatasetGraph did not resume native code_review for {target}.")
@@ -2169,13 +2202,8 @@ class GraphGateway:
                 "input_fingerprint": fingerprint,
             }
         )
-        dataset_state.current_interrupt = None if command.action == "approve" else InterruptState(
-            name="code_review",
-            dataset=target,
-            reason="Generated code was rejected and requires revision before execution.",
-            payload={"review_path": str(Path(review_path).as_posix())},
-        )
-        dataset_state.status = "pending" if command.action == "approve" else "needs_review"
+        dataset_state.current_interrupt = None
+        dataset_state.status = "pending"
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "code_review", "audit", review_path, kind="tool_log"))
         _upsert_artifact(dataset_state, _artifact_ref(target, "generated_code", "output", code_path, kind="generated_code"))
@@ -2428,12 +2456,26 @@ class GraphGateway:
             spec_sha256=f"sha256:{sha256_file(spec_path)}",
             input_fingerprint_payload=fingerprint,
         )
+        spec_payload = _read_json_if_exists(spec_path)
+        variables = spec_payload.get("variables")
+        warnings = spec_payload.get("warnings")
         if terminal_followup is not None:
             dataset_state.execution_state["terminal_failure_followup_consumed_by"] = "finalize_inputs"
             dataset_state.execution_state.pop("terminal_failure_review", None)
             dataset_state.execution_state.pop("terminal_failure_followup", None)
             dataset_state.execution_state.pop("next_action", None)
-        dataset_state.spec_state["terminal_failure_followup"] = terminal_followup
+        dataset_state.spec_state.update(
+            {
+                "status": "approved",
+                "spec_source": "draft_spec",
+                "approved_spec_path": str(spec_path.as_posix()),
+                "approved_spec_sha256": f"sha256:{sha256_file(spec_path)}",
+                "variables": variables if isinstance(variables, list) else [],
+                "warnings": warnings if isinstance(warnings, list) else [],
+                "input_fingerprint": fingerprint,
+                "terminal_failure_followup": terminal_followup,
+            }
+        )
         dataset_state.current_interrupt = None
         dataset_state.status = "pending"
         dataset_state.updated_at = utc_now()
@@ -2685,6 +2727,12 @@ class GraphGateway:
             llm_client_builder=llm_client_builder or build_llm_client,
             target_context_builder=target_context_builder or build_target_llm_context,
         )
+        dataset_config = self._fresh_dataset_product_step_config(
+            study_id,
+            run_id,
+            target,
+            step="draft_spec",
+        )
         result = dataset_graph.invoke(
             {
                 "study_id": study_id,
@@ -2700,11 +2748,11 @@ class GraphGateway:
                 "native_draft_spec_review": True,
                 "audit_artifacts": [],
             },
-            config=self._dataset_config(study_id, run_id, target),
+            config=dataset_config,
         )
         if "__interrupt__" not in result:
             self._raise_dataset_graph_start_error(result, target=target, expected_interrupt="native draft_spec_review")
-        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        snapshot = dataset_graph.get_state(dataset_config)
         gateway_result = self._record_draft_spec_generation_from_dataset_result(
             root=root,
             study_id=study_id,
@@ -2716,6 +2764,7 @@ class GraphGateway:
                 "native_draft_spec_review_interrupt": _native_interrupt_payload(
                     snapshot,
                     boundary="draft_spec_review_pilot_only",
+                    thread_id=dataset_config["configurable"]["thread_id"],
                 )
             },
         )
@@ -2768,7 +2817,12 @@ class GraphGateway:
                         "notes": notes,
                     }
                 ),
-                config=self._dataset_config(graph_state.study_id, run_id, target),
+                config=self._dataset_resume_config(
+                    graph_state,
+                    run_id=run_id,
+                    dataset=target,
+                    interrupt="draft_spec_review",
+                ),
             )
             if resumed.get("native_draft_spec_review_status") != expected_native_status:
                 raise ValueError(f"DatasetGraph did not resume native draft_spec_review for {target}.")
@@ -2916,16 +2970,33 @@ class GraphGateway:
             preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
         )
         if runtime_persistence_extra:
+            persisted_state = _attach_dataset_interrupt_thread_id(
+                gateway_result.graph_state,
+                dataset=target,
+                thread_id=_native_interrupt_thread_id(runtime_persistence_extra),
+            )
             self._persist_graph_state(
                 root,
-                gateway_result.graph_state,
+                persisted_state,
                 node="native_draft_spec_review_interrupt",
                 runtime_persistence_extra=runtime_persistence_extra,
             )
             projection = project_graph_state_to_workflow(
                 root,
-                gateway_result.graph_state,
+                persisted_state,
                 node="graph_gateway_native_draft_spec_review_interrupt",
+            )
+            gateway_result = GraphGatewayFinalizeInputsResult(
+                graph_state=persisted_state,
+                workflow_projection=projection,
+                spec_source=spec_source or "draft_spec",
+                warnings=warnings,
+                dependency_review_status=persisted_state.dependency_review_status,
+                dependency_warnings=list(gate.dependency_warnings),
+                draft_spec_path=str(draft_path),
+                draft_spec_prompt_path=str(prompt_path),
+                draft_spec_response_path=str(response_path),
+                draft_spec_variables=draft_variables,
             )
         return GraphGatewayFinalizeInputsResult(
             graph_state=gateway_result.graph_state,
@@ -3017,6 +3088,9 @@ class GraphGateway:
         dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
         draft_path = Path(draft_spec_path)
         review = Path(review_path)
+        draft_payload = _read_json_if_exists(draft_path)
+        variables = draft_payload.get("variables")
+        warnings = draft_payload.get("warnings")
         dataset_state.human_commands.append(command)
         dataset_state.spec_state.update(
             {
@@ -3029,16 +3103,13 @@ class GraphGateway:
                 "draft_spec_sha256": f"sha256:{sha256_file(draft_path)}",
                 "approved_spec_path": str(Path(approved_spec_path).as_posix()) if approved_spec_path else None,
                 "approved_spec_sha256": approved_spec_sha256,
+                "variables": variables if isinstance(variables, list) else [],
+                "warnings": warnings if isinstance(warnings, list) else [],
                 "input_fingerprint": fingerprint,
             }
         )
-        dataset_state.current_interrupt = None if command.action == "approve" else InterruptState(
-            name="draft_spec_review",
-            dataset=target,
-            reason="Generated draft spec was rejected and requires revision before R code generation.",
-            payload={"review_path": str(review.as_posix())},
-        )
-        dataset_state.status = "pending" if command.action == "approve" else "needs_review"
+        dataset_state.current_interrupt = None
+        dataset_state.status = "pending"
         dataset_state.updated_at = utc_now()
         _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec_review", "audit", review, kind="tool_log"))
         _upsert_artifact(dataset_state, _artifact_ref(target, "draft_spec", "intermediate", draft_path, kind="draft_spec"))
@@ -3375,6 +3446,26 @@ class GraphGateway:
             )
         except StaticRuleError as exc:
             raise ValueError(str(exc)) from exc
+        if spec_source == "input_spec" and spec_path:
+            dataset_state.spec_state.update(
+                {
+                    "status": "input_spec_ready",
+                    "spec_source": "input_spec",
+                    "input_spec_path": str(Path(spec_path).as_posix()),
+                    "input_spec_sha256": spec_sha256,
+                    "input_fingerprint": fingerprint,
+                }
+            )
+        elif spec_source == "approved_draft_spec" and spec_path:
+            dataset_state.spec_state.update(
+                {
+                    "status": "approved",
+                    "spec_source": "draft_spec",
+                    "approved_spec_path": str(Path(spec_path).as_posix()),
+                    "approved_spec_sha256": spec_sha256,
+                    "input_fingerprint": fingerprint,
+                }
+            )
         dataset_state.code_state.update(
             {
                 "status": "generated",
@@ -3552,17 +3643,23 @@ class GraphGateway:
             preferred_interrupt=gateway_result.graph_state.datasets[target].current_interrupt,
         )
         if runtime_persistence_extra:
+            persisted_state = _attach_dataset_interrupt_thread_id(
+                gateway_result.graph_state,
+                dataset=target,
+                thread_id=_native_interrupt_thread_id(runtime_persistence_extra),
+            )
             self._persist_graph_state(
                 root,
-                gateway_result.graph_state,
+                persisted_state,
                 node="native_code_review_interrupt",
                 runtime_persistence_extra=runtime_persistence_extra,
             )
             projection = project_graph_state_to_workflow(
                 root,
-                gateway_result.graph_state,
+                persisted_state,
                 node="graph_gateway_native_code_review_interrupt",
             )
+            gateway_result = GraphGatewayResult(graph_state=persisted_state, workflow_projection=projection)
         context_artifact = result.get("product_context_artifact")
         return GraphGatewayCodeGenerationResult(
             graph_state=gateway_result.graph_state,
@@ -3908,6 +4005,12 @@ class GraphGateway:
         self.validate_product_step_start(study_dir=root, run_id=run_id, dataset=target, step="execute")
         self._assert_approved_code_execution_ready(study_dir=root, run_id=run_id, dataset=target)
         dataset_graph = compile_dataset_graph(checkpointer=self._checkpointer)
+        dataset_config = self._fresh_dataset_product_step_config(
+            study_id,
+            run_id,
+            target,
+            step="terminal_failure",
+        )
         result = dataset_graph.invoke(
             {
                 "study_id": study_id,
@@ -3919,11 +4022,11 @@ class GraphGateway:
                 "native_terminal_failure_review": True,
                 "audit_artifacts": [],
             },
-            config=self._dataset_config(study_id, run_id, target),
+            config=dataset_config,
         )
         if "__interrupt__" not in result:
             raise ValueError(f"DatasetGraph did not stop at native terminal_failure for {target}.")
-        snapshot = dataset_graph.get_state(self._dataset_config(study_id, run_id, target))
+        snapshot = dataset_graph.get_state(dataset_config)
         values = dict(snapshot.values or {})
         if not bool(values.get("terminal_failure")):
             raise ValueError(f"DatasetGraph native terminal_failure pilot requires a failed execution for {target}.")
@@ -3961,24 +4064,31 @@ class GraphGateway:
             agent_node_outputs=list(values.get("agent_node_outputs", [])),
             risk_flags=list(values.get("risk_flags", [])),
         )
+        runtime_persistence_extra = {
+            "native_terminal_failure_review_interrupt": _native_interrupt_payload(
+                snapshot,
+                boundary="terminal_failure_review_pilot_only",
+                thread_id=dataset_config["configurable"]["thread_id"],
+            )
+        }
+        persisted_state = _attach_dataset_interrupt_thread_id(
+            gateway_result.graph_state,
+            dataset=target,
+            thread_id=_native_interrupt_thread_id(runtime_persistence_extra),
+        )
         self._persist_graph_state(
             root,
-            gateway_result.graph_state,
+            persisted_state,
             node="native_terminal_failure_review_interrupt",
-            runtime_persistence_extra={
-                "native_terminal_failure_review_interrupt": _native_interrupt_payload(
-                    snapshot,
-                    boundary="terminal_failure_review_pilot_only",
-                )
-            },
+            runtime_persistence_extra=runtime_persistence_extra,
         )
         projection = project_graph_state_to_workflow(
             root,
-            gateway_result.graph_state,
+            persisted_state,
             node="graph_gateway_native_terminal_failure_review_interrupt",
         )
         return GraphGatewayExecutionResult(
-            graph_state=gateway_result.graph_state,
+            graph_state=persisted_state,
             workflow_projection=projection,
             status=response_status,
             validation_status=validation_status,
@@ -4033,7 +4143,12 @@ class GraphGateway:
                     "notes": notes,
                 }
             ),
-            config=self._dataset_config(graph_state.study_id, run_id, target),
+            config=self._dataset_resume_config(
+                graph_state,
+                run_id=run_id,
+                dataset=target,
+                interrupt="terminal_failure",
+            ),
         )
         if resumed.get("native_terminal_failure_review_status") != "triaged":
             raise ValueError(f"DatasetGraph did not resume native terminal_failure for {target}.")
@@ -5074,6 +5189,34 @@ class GraphGateway:
     def _dataset_config(study_id: str, run_id: str, dataset: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": f"{study_id}:{run_id}:{dataset.strip().upper()}"}}
 
+    def _dataset_resume_config(
+        self,
+        state: StudyRunState,
+        *,
+        run_id: str,
+        dataset: str,
+        interrupt: str,
+    ) -> dict[str, Any]:
+        target = dataset.strip().upper()
+        thread_id = _dataset_interrupt_thread_id(state, target, interrupt)
+        if thread_id:
+            return {"configurable": {"thread_id": thread_id}}
+        return self._dataset_config(state.study_id, run_id, target)
+
+    @staticmethod
+    def _fresh_dataset_product_step_config(
+        study_id: str,
+        run_id: str,
+        dataset: str,
+        *,
+        step: str,
+    ) -> dict[str, Any]:
+        """Start a new product step without reusing a stale dataset interrupt checkpoint."""
+
+        target = dataset.strip().upper()
+        token = uuid4().hex
+        return {"configurable": {"thread_id": f"{study_id}:{run_id}:{target}:{step}:{token}"}}
+
     def _graph_command_can_resume_native_interrupt(self, graph_state: StudyRunState) -> bool:
         return _native_resume_runtime_bound_to_state(
             graph_state,
@@ -5135,6 +5278,105 @@ class GraphGateway:
             risk_flags=["recovered_draft_spec_review_state", "draft_spec_requires_human_review"],
         )
         return recovered.graph_state
+
+    def _recover_approved_draft_spec_state_for_code_generation(
+        self,
+        *,
+        root: Path,
+        study_id: str,
+        run_id: str,
+        target: str,
+    ) -> StudyRunState | None:
+        """Repair a verified approved draft-spec artifact back into canonical state.
+
+        This is intentionally narrow: it only repairs runs where the review and
+        approved spec artifacts prove that a human approved the draft spec for
+        the current study inputs. It does not accept a loose file on disk as a
+        spec source.
+        """
+
+        try:
+            state = self.load_graph_state(study_dir=root, run_id=run_id)
+        except FileNotFoundError:
+            return None
+        if _open_study_interrupt(state) is not None or _study_next_action_requires_dependency_review(state):
+            return state
+        target = target.strip().upper()
+        dataset_state = state.datasets.get(target)
+        if dataset_state is None:
+            return state
+        spec_state = dataset_state.spec_state
+        if spec_state.get("status") == "approved" and spec_state.get("decision") == "approve":
+            return state
+        current_interrupt = dataset_state.current_interrupt
+        if (
+            current_interrupt is not None
+            and current_interrupt.status == "open"
+            and current_interrupt.name != "draft_spec_review"
+        ):
+            return state
+        recovered_spec_state = _validated_approved_draft_spec_recovery_state(
+            root,
+            state=state,
+            run_id=run_id,
+            target=target,
+        )
+        if recovered_spec_state is None:
+            return state
+
+        next_state = state.model_copy(deep=True)
+        fingerprint = recovered_spec_state["input_fingerprint"]
+        next_state.input_fingerprint = fingerprint
+        if target not in next_state.target_datasets:
+            next_state.target_datasets.append(target)
+        if target not in next_state.runnable_datasets:
+            next_state.runnable_datasets.append(target)
+        next_dataset = next_state.datasets[target]
+        next_dataset.input_fingerprint = fingerprint
+        next_dataset.spec_state.update(recovered_spec_state)
+        next_dataset.current_interrupt = None
+        if next_dataset.status == "needs_review" and not next_dataset.code_state:
+            next_dataset.status = "pending"
+        next_dataset.updated_at = utc_now()
+
+        review_path = Path(str(recovered_spec_state["review_path"]))
+        draft_path = Path(str(recovered_spec_state["draft_spec_path"]))
+        approved_path = Path(str(recovered_spec_state["approved_spec_path"]))
+        _upsert_artifact(next_dataset, _artifact_ref(target, "draft_spec_review", "audit", review_path, kind="tool_log"))
+        _upsert_artifact(next_dataset, _artifact_ref(target, "draft_spec", "intermediate", draft_path, kind="draft_spec"))
+        _upsert_artifact(
+            next_dataset,
+            _artifact_ref(target, "approved_spec", "intermediate", approved_path, kind="approved_spec"),
+        )
+        _append_agent_decisions(
+            next_dataset,
+            [
+                record_agent_decision(
+                    agent="audit_agent",
+                    node="approved_draft_spec_state_recovery",
+                    decision="approved_draft_spec_state_recovered",
+                    dataset=target,
+                    status=next_dataset.status,
+                    reason=(
+                        "Recovered canonical graph state from current approved draft-spec artifacts "
+                        "before R code generation."
+                    ),
+                    outputs={
+                        "approved_spec_path": str(approved_path.as_posix()),
+                        "review_path": str(review_path.as_posix()),
+                        "next_action": "generate_code",
+                    },
+                    risk_flags=["recovered_approved_draft_spec_state"],
+                )
+            ],
+        )
+        _append_risk_flags(next_dataset, ["recovered_approved_draft_spec_state", "uses_approved_draft_spec"])
+        next_state.datasets[target] = next_dataset
+        _roll_up_study_state(next_state)
+        _sync_study_agent_decisions(next_state)
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="approved_draft_spec_state_recovery")
+        return next_state
 
     @staticmethod
     def _raise_dataset_graph_start_error(result: dict[str, Any], *, target: str, expected_interrupt: str) -> None:
@@ -6011,6 +6253,124 @@ def _assert_approved_draft_spec_current(
         )
 
 
+def _validated_approved_draft_spec_recovery_state(
+    study_dir: Path,
+    *,
+    state: StudyRunState,
+    run_id: str,
+    target: str,
+) -> dict[str, Any] | None:
+    """Return an approved spec_state recovered from current approved artifacts.
+
+    Missing artifacts mean there is nothing to recover. Present but inconsistent
+    artifacts fail closed because code generation must not proceed from a stale
+    or mismatched draft spec.
+    """
+
+    target = target.strip().upper()
+    target_lower = target.lower()
+    dataset_state = state.datasets.get(target)
+    if dataset_state is None:
+        return None
+    run_dir = study_dir / "runs" / run_id
+    approved_path = run_dir / "approved_specs" / f"{target_lower}_approved_spec.json"
+    review_path = run_dir / "reviews" / f"{target_lower}_draft_spec_review.json"
+    if not approved_path.exists() and not review_path.exists():
+        return None
+    if not review_path.exists() or not review_path.is_file():
+        raise ValueError(f"Draft spec review artifact is missing for {target}: {review_path}")
+
+    review = _read_json_if_exists(review_path)
+    if not review:
+        raise ValueError(f"Draft spec review artifact is not readable JSON for {target}: {review_path}")
+    if review.get("decision") != "approve" or review.get("approved") is not True:
+        return None
+    if not approved_path.exists() or not approved_path.is_file():
+        raise ValueError(f"Approved draft spec artifact is missing for {target}: {approved_path}")
+
+    approved_payload = _read_json_if_exists(approved_path)
+    if not approved_payload:
+        raise ValueError(f"Approved draft spec artifact is not readable JSON for {target}: {approved_path}")
+    review_dataset = str(review.get("dataset") or target).strip().upper()
+    approved_dataset = str(approved_payload.get("dataset") or target).strip().upper()
+    if review_dataset != target or approved_dataset != target:
+        raise ValueError(f"Approved draft spec artifacts do not belong to {target}.")
+
+    recorded_review_path = str(dataset_state.spec_state.get("review_path") or "").strip()
+    if recorded_review_path and str(Path(recorded_review_path).as_posix()) != str(review_path.as_posix()):
+        raise ValueError("Graph draft-spec approval points to a different review artifact. Review the draft spec again.")
+    recorded_approved_path = str(dataset_state.spec_state.get("approved_spec_path") or "").strip()
+    if recorded_approved_path and str(Path(recorded_approved_path).as_posix()) != str(approved_path.as_posix()):
+        raise ValueError("Graph draft-spec approval points to a different approved spec. Review the draft spec again.")
+    review_approved_path = str(review.get("approved_spec_path") or "").strip()
+    if review_approved_path and str(Path(review_approved_path).as_posix()) != str(approved_path.as_posix()):
+        raise ValueError("Draft spec review points to a different approved spec. Review the draft spec again.")
+
+    approved_sha = str(review.get("approved_spec_sha256") or dataset_state.spec_state.get("approved_spec_sha256") or "")
+    if not approved_sha:
+        raise ValueError("Approved draft spec review is missing the approved spec hash. Review the draft spec again.")
+    current_approved_sha = f"sha256:{sha256_file(approved_path)}"
+    if approved_sha != current_approved_sha:
+        raise ValueError("Approved draft spec changed after approval. Review and approve the draft spec again.")
+    recorded_approved_sha = str(dataset_state.spec_state.get("approved_spec_sha256") or "").strip()
+    if recorded_approved_sha and recorded_approved_sha != current_approved_sha:
+        raise ValueError("Graph draft-spec approval is stale. Review and approve the draft spec again.")
+
+    draft_path_raw = (
+        review.get("draft_spec_path")
+        or dataset_state.spec_state.get("draft_spec_path")
+        or run_dir / "specs" / f"{target_lower}_draft_spec.json"
+    )
+    draft_path = Path(str(draft_path_raw))
+    if not draft_path.exists() or not draft_path.is_file():
+        raise ValueError(f"Draft spec artifact is missing for {target}: {draft_path}")
+    current_draft_sha = f"sha256:{sha256_file(draft_path)}"
+    recorded_draft_sha = str(dataset_state.spec_state.get("draft_spec_sha256") or "").strip()
+    if recorded_draft_sha and recorded_draft_sha != current_draft_sha:
+        raise ValueError("Draft spec changed after graph draft generation. Regenerate the draft spec before review.")
+
+    draft_payload = _read_json_if_exists(draft_path)
+    fingerprint = approved_payload.get("input_fingerprint") or review.get("input_fingerprint") or dataset_state.spec_state.get("input_fingerprint")
+    if not isinstance(fingerprint, dict) or not fingerprint.get("digest"):
+        fingerprint = draft_payload.get("input_fingerprint") if isinstance(draft_payload, dict) else {}
+    if not isinstance(fingerprint, dict) or not fingerprint.get("digest"):
+        raise ValueError("Approved draft spec is missing its input fingerprint. Regenerate and approve the draft spec again.")
+    current_fingerprint = input_fingerprint(study_dir)
+    if fingerprint.get("digest") != current_fingerprint.get("digest"):
+        diff = compare_fingerprints(fingerprint, current_fingerprint)
+        raise ValueError(
+            "Approved draft spec is stale because study inputs changed after approval. "
+            "Regenerate and approve the draft spec before generating R code. "
+            f"Input diff: added={diff.get('added', [])}; removed={diff.get('removed', [])}; "
+            f"changed={diff.get('changed_files', [])}."
+        )
+
+    recovered = dict(dataset_state.spec_state)
+    variables = approved_payload.get("variables")
+    if not isinstance(variables, list):
+        variables = draft_payload.get("variables") if isinstance(draft_payload, dict) else []
+    warnings = approved_payload.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = draft_payload.get("warnings") if isinstance(draft_payload, dict) else []
+    recovered.update(
+        {
+            "status": "approved",
+            "decision": "approve",
+            "reviewer": review.get("reviewer") or recovered.get("reviewer") or "local_user",
+            "notes": review.get("notes") or recovered.get("notes") or "",
+            "review_path": str(review_path.as_posix()),
+            "draft_spec_path": str(draft_path.as_posix()),
+            "draft_spec_sha256": current_draft_sha,
+            "approved_spec_path": str(approved_path.as_posix()),
+            "approved_spec_sha256": current_approved_sha,
+            "variables": variables if isinstance(variables, list) else [],
+            "warnings": warnings if isinstance(warnings, list) else [],
+            "input_fingerprint": current_fingerprint,
+        }
+    )
+    return recovered
+
+
 def _input_spec_available_for_target(study_dir: Path, study_id: str, target: str) -> bool:
     """Return whether uploads contain an input_spec candidate for the target dataset."""
 
@@ -6300,6 +6660,9 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
     interrupt = dataset_state.current_interrupt
     terminal_review = dataset_state.execution_state.get("terminal_failure_review")
     has_terminal_review = isinstance(terminal_review, dict)
+    spec_status = str(dataset_state.spec_state.get("status") or "").strip()
+    code_status = str(dataset_state.code_state.get("status") or "").strip()
+    execution_status = str(dataset_state.execution_state.get("status") or "").strip()
     if dataset_state.status in {"completed", "completed_stub"}:
         output_quality = dataset_output_quality(
             status=dataset_state.status,
@@ -6314,6 +6677,21 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
                 "action_label": "Review-only/demo output is available. It cannot satisfy downstream runtime dependencies.",
             }
         return {"next_action": "complete", "action_label": "Real runtime output is available for review and compare."}
+    if (
+        interrupt is not None
+        and interrupt.status == "open"
+        and interrupt.name == "code_review"
+        and code_status == "rejected"
+        and spec_status in {"input_spec_ready", "approved"}
+    ):
+        return {"next_action": "generate_code", "action_label": "Generate revised R code from the approved spec evidence."}
+    if (
+        interrupt is not None
+        and interrupt.status == "open"
+        and interrupt.name == "draft_spec_review"
+        and spec_status == "rejected"
+    ):
+        return {"next_action": "regenerate_draft_spec", "action_label": "Create a revised draft spec from current evidence."}
     if (
         interrupt is not None
         and interrupt.status == "open"
@@ -6335,13 +6713,14 @@ def _dataset_next_action(dataset_state: DatasetRunState, *, blocked_reason: str)
         }
     if execution_next:
         return {"next_action": execution_next, "action_label": _next_action_label(execution_next)}
-    spec_status = str(dataset_state.spec_state.get("status") or "").strip()
-    code_status = str(dataset_state.code_state.get("status") or "").strip()
-    execution_status = str(dataset_state.execution_state.get("status") or "").strip()
     if code_status == "approved":
         return {"next_action": "execute_approved_code", "action_label": "Run the approved R code locally."}
     if code_status == "generated":
         return {"next_action": "review_code", "action_label": "Review generated R code before execution."}
+    if code_status == "rejected" and spec_status in {"input_spec_ready", "approved"}:
+        return {"next_action": "generate_code", "action_label": "Generate revised R code from the approved spec evidence."}
+    if spec_status == "rejected":
+        return {"next_action": "regenerate_draft_spec", "action_label": "Create a revised draft spec from current evidence."}
     if spec_status == "draft_generated":
         return {"next_action": "review_draft_spec", "action_label": "Review the generated draft spec before code generation."}
     if spec_status in {"input_spec_ready", "approved"}:
@@ -6373,6 +6752,10 @@ def _available_dataset_actions(dataset_state: DatasetRunState, *, blocked_reason
     if dataset_state.status in {"completed", "completed_stub"}:
         return []
     interrupt = dataset_state.current_interrupt
+    if dataset_state.spec_state.get("status") == "rejected":
+        return []
+    if interrupt is not None and interrupt.name == "code_review" and dataset_state.code_state.get("status") == "rejected":
+        return []
     review = dataset_state.execution_state.get("terminal_failure_review")
     if (
         interrupt is not None
@@ -6793,6 +7176,83 @@ def _can_fallback_to_graph_state_dataset_review(state: StudyRunState, dataset: s
         return False
     interrupt = dataset_state.current_interrupt
     return interrupt is not None and interrupt.status == "open" and interrupt.name == interrupt_name
+
+
+def _dataset_interrupt_thread_id(state: StudyRunState, dataset: str, interrupt_name: str) -> str:
+    """Return the active DatasetGraph thread id for a graph-owned interrupt, when recorded."""
+
+    target = dataset.strip().upper()
+    dataset_state = state.datasets.get(target)
+    interrupt = dataset_state.current_interrupt if dataset_state is not None else None
+    if interrupt is not None and interrupt.name == interrupt_name:
+        thread_id = str((interrupt.payload or {}).get("thread_id") or "").strip()
+        if thread_id:
+            return thread_id
+
+    contract = _lg3_full_run_contract_payload(state, target)
+    thread_id = str(contract.get("thread_id") or "").strip()
+    if thread_id:
+        return thread_id
+
+    runtime = state.runtime_persistence or {}
+    keys_by_interrupt = {
+        "draft_spec_review": (
+            "native_draft_spec_review_interrupt",
+            "native_dataset_product_loop_interrupt",
+        ),
+        "code_review": (
+            "native_code_review_interrupt",
+            "native_dataset_product_loop_interrupt",
+        ),
+        "terminal_failure": (
+            "native_terminal_failure_review_interrupt",
+        ),
+    }
+    for key in keys_by_interrupt.get(interrupt_name, ()):
+        payload = runtime.get(key)
+        if not isinstance(payload, dict):
+            continue
+        thread_id = str(payload.get("thread_id") or "").strip()
+        if thread_id:
+            return thread_id
+    return ""
+
+
+def _native_interrupt_thread_id(runtime_persistence_extra: dict[str, Any] | None) -> str:
+    """Extract the DatasetGraph thread id from a single native interrupt payload."""
+
+    for payload in (runtime_persistence_extra or {}).values():
+        if not isinstance(payload, dict):
+            continue
+        thread_id = str(payload.get("thread_id") or "").strip()
+        if thread_id:
+            return thread_id
+    return ""
+
+
+def _attach_dataset_interrupt_thread_id(state: StudyRunState, *, dataset: str, thread_id: str) -> StudyRunState:
+    """Persist a native DatasetGraph thread id on the dataset-local interrupt."""
+
+    target = dataset.strip().upper()
+    if not thread_id:
+        return state
+    dataset_state = state.datasets.get(target)
+    if dataset_state is None or dataset_state.current_interrupt is None:
+        return state
+    next_state = state.model_copy(deep=True)
+    next_dataset = next_state.datasets[target]
+    interrupt = next_dataset.current_interrupt
+    if interrupt is None:
+        return state
+    payload = dict(interrupt.payload or {})
+    if payload.get("thread_id") == thread_id:
+        return state
+    payload["thread_id"] = thread_id
+    next_dataset.current_interrupt = interrupt.model_copy(update={"payload": payload})
+    next_dataset.updated_at = utc_now()
+    next_state.datasets[target] = next_dataset
+    next_state.updated_at = utc_now()
+    return next_state
 
 
 def _append_native_resume_fallback_note(notes: str, exc: ValueError) -> str:
@@ -7587,7 +8047,12 @@ def _write_graph_sqlite_checkpoint(
         conn.close()
 
 
-def _native_interrupt_payload(snapshot: Any, *, boundary: str = "native_interrupt_pilot_only") -> dict[str, Any]:
+def _native_interrupt_payload(
+    snapshot: Any,
+    *,
+    boundary: str = "native_interrupt_pilot_only",
+    thread_id: str | None = None,
+) -> dict[str, Any]:
     """Summarize native LangGraph interrupt state without exposing internals as product truth."""
 
     tasks = list(getattr(snapshot, "tasks", ()) or ())
@@ -7600,13 +8065,16 @@ def _native_interrupt_payload(snapshot: Any, *, boundary: str = "native_interrup
                     "value": getattr(item, "value", None),
                 }
             )
-    return {
+    payload = {
         "enabled": True,
         "open_interrupt_count": len(interrupts),
         "next_nodes": list(getattr(snapshot, "next", ()) or ()),
         "interrupts": interrupts,
         "boundary": boundary,
     }
+    if thread_id:
+        payload["thread_id"] = thread_id
+    return payload
 
 
 def _assert_resume_command_matches_open_interrupt(state: StudyRunState, command: HumanCommand) -> None:

@@ -1081,6 +1081,98 @@ class GraphGatewayTests(unittest.TestCase):
             "approved",
         )
 
+    def test_sqlite_rejected_draft_regeneration_uses_fresh_dataset_thread(self) -> None:
+        study_dir = _workspace_dir("lg2_native_draft_regenerate_sqlite") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        (sdtm_dir / "eg.csv").write_text("USUBJID,EGTESTCD\n01,QT\n", encoding="utf-8")
+        (legacy_dir / "adeg.sas").write_text("data adeg; set eg; run;\n", encoding="utf-8")
+        run_id = "run_lg2_native_draft_regenerate_sqlite"
+        sqlite_path = default_sqlite_checkpointer_path(study_dir, run_id)
+
+        try:
+            gateway = GraphGateway(checkpointer_backend="sqlite", sqlite_checkpointer_path=sqlite_path)
+        except ValueError as exc:
+            if "not installed" in str(exc) or "cannot be imported" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        try:
+            first = gateway.start_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADEG",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+            self.assertEqual(first.current_interrupt, "draft_spec_review")
+            first_thread = first.graph_state.runtime_persistence["native_dataset_product_loop_interrupt"]["thread_id"]
+
+            rejected = gateway.resume_native_dataset_full_run(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADEG",
+                decision="reject",
+                reviewer="tester",
+                notes="Reject the first ADEG draft spec.",
+            )
+            self.assertFalse(rejected.approved)
+            self.assertIsNone(rejected.current_interrupt)
+            rejected_progress = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+            adeg_progress = next(item for item in rejected_progress["datasets"] if item["dataset"] == "ADEG")
+            self.assertEqual(adeg_progress["next_action"], "regenerate_draft_spec")
+            self.assertEqual(adeg_progress["spec_status"], "rejected")
+
+            regenerated = gateway.generate_draft_spec(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADEG",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+            regenerated_thread = regenerated.graph_state.runtime_persistence["native_draft_spec_review_interrupt"][
+                "thread_id"
+            ]
+            self.assertNotEqual(regenerated_thread, first_thread)
+
+            approved = gateway.resume_native_draft_spec_review(
+                study_dir=study_dir,
+                run_id=run_id,
+                dataset="ADEG",
+                decision="approve",
+                reviewer="tester",
+                notes="Approve the regenerated ADEG draft spec.",
+            )
+            self.assertTrue(approved.approved)
+            self.assertIsNone(approved.graph_state.datasets["ADEG"].current_interrupt)
+            self.assertEqual(approved.graph_state.datasets["ADEG"].spec_state["status"], "approved")
+            self.assertEqual(
+                approved.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
+                "langgraph_command_resume",
+            )
+
+            code_review = gateway.start_native_dataset_full_run(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADEG",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+        finally:
+            gateway.close()
+
+        dataset_state = code_review.graph_state.datasets["ADEG"]
+        self.assertEqual(code_review.current_interrupt, "code_review")
+        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.spec_state["status"], "approved")
+        self.assertEqual(dataset_state.code_state["status"], "generated")
+        self.assertEqual(dataset_state.code_state["spec_source"], "approved_draft_spec")
+
     def test_gateway_persists_canonical_state_for_process_restart_resume(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_persisted_state") / "PSY201"
         study_dir.mkdir(parents=True)
@@ -1619,7 +1711,19 @@ class GraphGatewayTests(unittest.TestCase):
             "ADAE",
             code_path,
         )
+        spec_dir = study_dir / "input_spec"
+        spec_dir.mkdir(parents=True)
+        spec_path = spec_dir / "adae.json"
+        spec_path.write_text(json.dumps({"dataset": "ADAE", "variables": []}), encoding="utf-8")
         gateway = GraphGateway()
+        gateway.record_input_spec_ready(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg2_native_code_review_bridge_reject",
+            dataset="ADAE",
+            input_spec_path=spec_path,
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
         gateway.record_code_generation(
             study_dir=study_dir,
             study_id="PSY201",
@@ -1629,6 +1733,9 @@ class GraphGatewayTests(unittest.TestCase):
             code_sha256=f"sha256:{sha256_file(code_path)}",
             static_check_path=static_path,
             static_check_sha256=static_sha,
+            spec_source="input_spec",
+            spec_path=spec_path,
+            spec_sha256=f"sha256:{sha256_file(spec_path)}",
             input_fingerprint_payload=input_fingerprint(study_dir),
         )
 
@@ -1655,9 +1762,14 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(review_payload["static_check_sha256"], static_sha)
         self.assertEqual(dataset_state.code_state["status"], "rejected")
         self.assertEqual(dataset_state.code_state["review_path"], str(review_path.as_posix()))
-        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
-        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(dataset_state.status, "pending")
         self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["code_state"]["status"], "rejected")
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_code_review_bridge_reject")
+        adae_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADAE")
+        self.assertEqual(adae_progress["next_action"], "generate_code")
+        self.assertEqual(adae_progress["code_status"], "rejected")
+        self.assertEqual(adae_progress["available_actions"], [])
 
     def test_gateway_review_code_from_command_rejects_mismatched_interrupt_without_artifact(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_code_review_bridge_mismatch") / "PSY201"
@@ -1870,7 +1982,22 @@ class GraphGatewayTests(unittest.TestCase):
         fingerprint = input_fingerprint(study_dir)
         draft_path = spec_dir / "adae_draft_spec.json"
         draft_path.write_text(
-            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "variables": [
+                        {
+                            "variable": "AETERM",
+                            "type": "text",
+                            "source_domains": ["AE"],
+                            "derivation": "copy AE.AETERM",
+                            "risk_level": "low",
+                        }
+                    ],
+                    "warnings": ["review retained after approval"],
+                    "input_fingerprint": fingerprint,
+                }
+            ),
             encoding="utf-8",
         )
         prompt_path = llm_dir / "adae_draft_prompt.txt"
@@ -1958,7 +2085,14 @@ class GraphGatewayTests(unittest.TestCase):
         fingerprint = input_fingerprint(study_dir)
         draft_path = spec_dir / "adae_draft_spec.json"
         draft_path.write_text(
-            json.dumps({"dataset": "ADAE", "variables": [], "input_fingerprint": fingerprint}),
+            json.dumps(
+                {
+                    "dataset": "ADAE",
+                    "variables": [{"variable": "AETERM", "derivation": "copy AE.AETERM"}],
+                    "warnings": ["review retained after approval"],
+                    "input_fingerprint": fingerprint,
+                }
+            ),
             encoding="utf-8",
         )
         prompt_path = llm_dir / "adae_draft_prompt.txt"
@@ -2002,7 +2136,13 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.spec_state["status"], "approved")
         self.assertEqual(dataset_state.spec_state["review_path"], str(review_path.as_posix()))
         self.assertEqual(dataset_state.spec_state["approved_spec_path"], str(approved_path.as_posix()))
+        self.assertEqual(dataset_state.spec_state["variables"][0]["variable"], "AETERM")
+        self.assertEqual(dataset_state.spec_state["warnings"], ["review retained after approval"])
         self.assertEqual(result.workflow_projection["datasets"]["ADAE"]["spec_state"]["status"], "approved")
+        self.assertEqual(
+            result.workflow_projection["datasets"]["ADAE"]["spec_state"]["variables"][0]["derivation"],
+            "copy AE.AETERM",
+        )
 
     def test_gateway_review_draft_spec_cleans_artifacts_when_recording_fails(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_review_draft_spec_cleanup") / "PSY201"
@@ -2299,7 +2439,7 @@ class GraphGatewayTests(unittest.TestCase):
             ).exists()
         )
 
-    def test_gateway_native_draft_spec_review_reject_roundtrip_keeps_review_locked(self) -> None:
+    def test_gateway_native_draft_spec_review_reject_roundtrip_returns_to_regenerate_draft(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_draft_spec_reject_roundtrip") / "PSY201"
         sdtm_dir = study_dir / "input_sdtm"
         legacy_dir = study_dir / "legacy_code"
@@ -2331,8 +2471,8 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(reviewed.approved)
         self.assertEqual(review_payload["decision"], "reject")
         self.assertEqual(dataset_state.spec_state["status"], "rejected")
-        self.assertEqual(dataset_state.status, "needs_review")
-        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
         self.assertEqual(
             reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["native_status"],
             "rejected",
@@ -2341,6 +2481,14 @@ class GraphGatewayTests(unittest.TestCase):
             reviewed.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
             "langgraph_command_resume",
         )
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_native_draft_spec_reject_roundtrip",
+        )
+        adae_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADAE")
+        self.assertEqual(adae_progress["next_action"], "regenerate_draft_spec")
+        self.assertEqual(adae_progress["spec_status"], "rejected")
+        self.assertEqual(adae_progress["available_actions"], [])
 
     def test_gateway_native_draft_spec_review_resume_requires_canonical_draft_interrupt(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_draft_spec_resume_gate") / "PSY201"
@@ -2928,9 +3076,17 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertFalse(reviewed.approved)
         self.assertEqual(review_payload["decision"], "reject")
         self.assertEqual(dataset_state.code_state["status"], "rejected")
-        self.assertEqual(dataset_state.status, "needs_review")
-        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
         self.assertEqual(reviewed.graph_state.runtime_persistence["native_code_review_resume"]["native_status"], "rejected")
+        progress = gateway.progress_summary(
+            study_dir=study_dir,
+            run_id="run_lg2_native_code_review_reject_roundtrip",
+        )
+        adsl_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADSL")
+        self.assertEqual(adsl_progress["next_action"], "generate_code")
+        self.assertEqual(adsl_progress["code_status"], "rejected")
+        self.assertEqual(adsl_progress["available_actions"], [])
 
     def test_gateway_native_code_review_resume_requires_canonical_code_interrupt(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_code_review_resume_gate") / "PSY201"
@@ -3234,9 +3390,14 @@ class GraphGatewayTests(unittest.TestCase):
         dataset_state = rejected.graph_state.datasets["ADSL"]
         self.assertFalse(rejected.approved)
         self.assertIsNone(rejected.execution)
-        self.assertEqual(dataset_state.status, "needs_review")
+        self.assertEqual(dataset_state.status, "pending")
         self.assertEqual(dataset_state.code_state["status"], "rejected")
-        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertIsNone(dataset_state.current_interrupt)
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_loop_reject")
+        adsl_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADSL")
+        self.assertEqual(adsl_progress["next_action"], "generate_code")
+        self.assertEqual(adsl_progress["code_status"], "rejected")
+        self.assertEqual(adsl_progress["available_actions"], [])
         self.assertNotIn("native_dataset_product_loop_resume", rejected.graph_state.runtime_persistence)
 
     def test_gateway_native_dataset_product_loop_missing_spec_stops_at_draft_review(self) -> None:
@@ -3423,7 +3584,13 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertIsNone(rejected.code_generation)
         self.assertEqual(dataset_state.spec_state["status"], "rejected")
         self.assertFalse(dataset_state.code_state)
-        self.assertEqual(dataset_state.current_interrupt.name, "draft_spec_review")
+        self.assertEqual(dataset_state.status, "pending")
+        self.assertIsNone(dataset_state.current_interrupt)
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg2_native_loop_draft_reject")
+        adae_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADAE")
+        self.assertEqual(adae_progress["next_action"], "regenerate_draft_spec")
+        self.assertEqual(adae_progress["spec_status"], "rejected")
+        self.assertEqual(adae_progress["available_actions"], [])
         self.assertEqual(
             rejected.graph_state.runtime_persistence["native_draft_spec_review_resume"]["resume_source"],
             "langgraph_command_resume",
@@ -4762,14 +4929,16 @@ class GraphGatewayTests(unittest.TestCase):
         execute_approved.assert_not_called()
         dataset_state = result.graph_state.datasets["ADAE"]
         contract = result.graph_state.runtime_persistence["native_dataset_full_run"]
-        self.assertEqual(result.phase, "waiting_for_human_gate")
-        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertEqual(result.phase, "reviewed")
+        self.assertIsNone(result.current_interrupt)
         self.assertFalse(result.approved)
         self.assertIsNone(result.execution)
-        self.assertEqual(dataset_state.current_interrupt.name, "code_review")
+        self.assertIsNone(dataset_state.current_interrupt)
+        self.assertEqual(dataset_state.status, "pending")
         self.assertEqual(dataset_state.code_state["status"], "rejected")
         self.assertEqual(contract["boundary"], "lg3_backend_contract")
-        self.assertEqual(contract["phase"], "waiting_for_human_gate")
+        self.assertEqual(contract["phase"], "reviewed")
+        self.assertIsNone(contract["current_interrupt"])
         self.assertFalse(contract["approved"])
         self.assertFalse(contract["executed_after_approval"])
         self.assertEqual(
@@ -4781,6 +4950,11 @@ class GraphGatewayTests(unittest.TestCase):
             "langgraph_command_resume",
         )
         self.assertNotIn("native_dataset_product_loop_resume", result.graph_state.runtime_persistence)
+        progress = gateway.progress_summary(study_dir=study_dir, run_id="run_lg3_native_full_run_reject")
+        adae_progress = next(item for item in progress["datasets"] if item["dataset"] == "ADAE")
+        self.assertEqual(adae_progress["next_action"], "generate_code")
+        self.assertEqual(adae_progress["code_status"], "rejected")
+        self.assertEqual(adae_progress["available_actions"], [])
 
     def test_gateway_lg3_native_dataset_full_run_uses_approved_draft_spec(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_approved_draft") / "PSY201"
@@ -4846,6 +5020,78 @@ class GraphGatewayTests(unittest.TestCase):
                 / "build_adae.R"
             ).exists()
         )
+
+    def test_gateway_lg3_full_run_recovers_approved_draft_state_before_code_generation(self) -> None:
+        study_dir = _workspace_dir("lg3_gateway_recover_approved_draft_state") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        spec_dir = study_dir / "runs" / "run_lg3_recover_approved_draft_state" / "specs"
+        sdtm_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (sdtm_dir / "eg.csv").write_text("USUBJID,EGTESTCD\n01,QT\n", encoding="utf-8")
+        fingerprint = input_fingerprint(study_dir)
+        draft_path = spec_dir / "adeg_draft_spec.json"
+        draft_path.write_text(
+            json.dumps(
+                {
+                    "dataset": "ADEG",
+                    "input_fingerprint": fingerprint,
+                    "variables": [{"variable": "EGTESTCD", "source_domains": ["EG"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        gateway = GraphGateway()
+        gateway.record_draft_spec_generation(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_recover_approved_draft_state",
+            dataset="ADEG",
+            draft_spec_path=draft_path,
+            input_fingerprint_payload=fingerprint,
+        )
+        reviewed = gateway.review_draft_spec(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_recover_approved_draft_state",
+            dataset="ADEG",
+            decision="approve",
+            reviewer="tester",
+            notes="Approve ADEG draft spec.",
+            input_fingerprint_payload=fingerprint,
+        )
+
+        corrupted = reviewed.graph_state.model_copy(deep=True)
+        dataset_state = corrupted.datasets["ADEG"]
+        dataset_state.spec_state["status"] = "draft_generated"
+        dataset_state.spec_state["decision"] = "approve"
+        dataset_state.current_interrupt = InterruptState(
+            name="draft_spec_review",
+            dataset="ADEG",
+            reason="Old backend left a stale draft-spec interrupt open after approval.",
+        )
+        dataset_state.status = "needs_review"
+        corrupted.datasets["ADEG"] = dataset_state
+        corrupted.current_interrupt = dataset_state.current_interrupt
+        corrupted.status = "needs_review"
+        gateway._persist_graph_state(study_dir, corrupted, node="test_seed_corrupt_approved_draft_state")
+
+        result = gateway.start_native_dataset_full_run(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id="run_lg3_recover_approved_draft_state",
+            dataset="ADEG",
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+
+        recovered_state = result.graph_state.datasets["ADEG"]
+        self.assertEqual(result.current_interrupt, "code_review")
+        self.assertEqual(recovered_state.current_interrupt.name, "code_review")
+        self.assertEqual(recovered_state.spec_state["status"], "approved")
+        self.assertEqual(recovered_state.spec_state["approved_spec_path"], reviewed.approved_spec_path)
+        self.assertEqual(recovered_state.code_state["status"], "generated")
+        self.assertEqual(recovered_state.code_state["spec_source"], "approved_draft_spec")
+        self.assertIn("recovered_approved_draft_spec_state", recovered_state.risk_flags)
 
     def test_gateway_lg3_native_dataset_full_run_draft_approval_continues_to_code_review(self) -> None:
         study_dir = _workspace_dir("lg3_gateway_native_full_run_draft_to_code") / "PSY201"

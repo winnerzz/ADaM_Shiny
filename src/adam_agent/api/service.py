@@ -2818,7 +2818,16 @@ def _existing_run_artifact_path(run_dir: Path, artifact_path: str) -> Path | Non
 
 def _json_artifact_path_for_read(root: Path, run_id: str, relative_path: str) -> Path:
     run_dir = (root / "runs" / run_id).resolve()
-    normalized = Path(str(relative_path).replace("\\", "/"))
+    normalized_text = str(relative_path).replace("\\", "/").strip()
+    run_prefix = f"runs/{run_id}/"
+    if normalized_text.startswith(run_prefix):
+        normalized_text = normalized_text[len(run_prefix) :]
+    else:
+        marker = f"/runs/{run_id}/"
+        marker_index = normalized_text.find(marker)
+        if marker_index >= 0:
+            normalized_text = normalized_text[marker_index + len(marker) :]
+    normalized = Path(normalized_text)
     target_path = (run_dir / normalized).resolve()
     try:
         canonical_relative = target_path.relative_to(run_dir)
@@ -2835,6 +2844,9 @@ def _json_artifact_path_for_read(root: Path, run_id: str, relative_path: str) ->
     study_artifact_path = _graph_study_artifact_path(run_dir, graph_state, canonical_relative)
     if study_artifact_path is not None:
         return study_artifact_path.resolve()
+    dataset_artifact_path = _graph_dataset_artifact_path_by_relative(run_dir, graph_state, canonical_relative)
+    if dataset_artifact_path is not None:
+        return dataset_artifact_path.resolve()
     guarded = _guarded_dataset_artifact_request(canonical_relative)
     if guarded is None:
         raise ApiServiceError(f"Artifact is not recorded in canonical graph state: {relative_path}")
@@ -2844,6 +2856,28 @@ def _json_artifact_path_for_read(root: Path, run_id: str, relative_path: str) ->
     if guarded_path is None:
         raise ApiServiceError(f"Artifact is not recorded in canonical graph state: {relative_path}")
     return guarded_path.resolve()
+
+
+def _graph_dataset_artifact_path_by_relative(
+    run_dir: Path,
+    graph_state: StudyRunState,
+    relative_path: Path,
+) -> Path | None:
+    """Read any dataset artifact only when its exact path is in graph_state."""
+
+    requested = Path(str(relative_path).replace("\\", "/"))
+    for dataset_state in graph_state.datasets.values():
+        for artifact in dataset_state.artifacts:
+            candidate = _existing_run_artifact_path(run_dir, str(artifact.path))
+            if candidate is None:
+                continue
+            try:
+                candidate_relative = candidate.resolve().relative_to(run_dir.resolve())
+            except ValueError:
+                continue
+            if Path(str(candidate_relative).replace("\\", "/")) == requested:
+                return candidate
+    return None
 
 
 def _guarded_dataset_artifact_request(relative_path: Path) -> tuple[str, str] | None:

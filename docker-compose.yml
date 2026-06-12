@@ -1,0 +1,20 @@
+services:
+  adam-agent-studio:
+    build:
+      context: .
+    image: adam-agent-studio:internal-demo
+    container_name: adam-agent-studio
+    restart: unless-stopped
+    ports:
+      - "${ADAM_AGENT_HOST_PORT:-8005}:8005"
+    environment:
+      ADAM_AGENT_PRODUCT_STUDY_ROOT: /app/workspace/studies
+      ADAM_AGENT_DEMO_STUDY_ROOT: /app/workspace/demo_studies
+      ADAM_AGENT_RSCRIPT_PATH: /usr/bin/Rscript
+      ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND: sqlite
+      ADAM_AGENT_LIVE_LLM_TIMEOUT: "${ADAM_AGENT_LIVE_LLM_TIMEOUT:-300}"
+    volumes:
+      - adam_agent_workspace:/app/workspace
+
+volumes:
+  adam_agent_workspace:
