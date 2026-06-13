@@ -3742,14 +3742,17 @@ INDEX_HTML = r"""<!doctype html>
       try {
         const payload = await api('/demo-study', {method: 'POST'});
         applyWorkspacePayload(payload);
-        await scanInputs();
-        autoSelectFirstTarget(inferTargets(state.inputSummary));
+        await scanInputs({autoSelectTarget: false});
+        state.selectedTarget = null;
+        state.selectedTargetsForPlan = [];
+        resetActiveDatasetView();
+        renderTargetButtons(inferTargets(state.inputSummary), {autoSelect: false});
         saveBrowserSession();
-        addEvent('Demo loaded', 'Shiny demo inputs were copied into the study workspace.');
+        addEvent('Demo loaded', 'Bundled demo inputs were copied into the study workspace. No ADaM generation was started.');
         setPill('workspaceStatus', 'ready');
-        byId('workspaceMessage').textContent = 'Demo loaded. Files are already organized by role.';
-        completeOperation('Demo study ready', 'Demo inputs are organized. Choose a target and review the dependency plan.');
-        setStep(3);
+        byId('workspaceMessage').textContent = 'Demo loaded. Files are organized by role. Choose an ADaM output when ready.';
+        completeOperation('Demo inputs loaded', 'The demo stopped after upload organization. Choose an output to continue manually.');
+        setStep(2);
       } catch (error) {
         setPill('workspaceStatus', 'error');
         byId('workspaceMessage').textContent = String(error);
@@ -3895,17 +3898,17 @@ INDEX_HTML = r"""<!doctype html>
       return `${payload.saved_files?.length || 0} file(s) added and inputs rescanned.${parts.length ? ` Input diff: ${parts.join(', ')}.` : ''}${touched}${skipped}`;
     }
 
-    async function scanInputs({restoreMode = false} = {}) {
+    async function scanInputs({restoreMode = false, autoSelectTarget = false} = {}) {
       const payload = await api(`/study-inputs?study_dir=${encodeURIComponent(studyDir())}`);
       state.inputSummary = payload;
-      renderInputSummary(payload);
+      renderInputSummary(payload, {autoSelectTarget});
       if (!restoreMode) addEvent('Inputs scanned', 'The app refreshed study evidence and target candidates.');
       if (byId('runId').value.trim()) await refreshGraphReadModels();
       saveBrowserSession();
       return payload;
     }
 
-    function renderInputSummary(summary) {
+    function renderInputSummary(summary, {autoSelectTarget = true} = {}) {
       const inferredTargets = inferTargets(summary);
       renderInputProfile(summary, inferredTargets);
       renderEvidenceCards(summary);
@@ -3933,7 +3936,7 @@ INDEX_HTML = r"""<!doctype html>
       const warningsNode = byId('inputWarnings');
       warningsNode.textContent = warnings.join(' ');
       warningsNode.classList.toggle('hidden', !warnings.length);
-      renderTargetButtons(inferredTargets);
+      renderTargetButtons(inferredTargets, {autoSelect: autoSelectTarget});
       renderGraphAwareDashboard();
       const existingRunId = byId('runId').value.trim();
       if (existingRunId) {
@@ -4203,7 +4206,7 @@ INDEX_HTML = r"""<!doctype html>
       return normalized[0] || null;
     }
 
-    function renderTargetButtons(targets) {
+    function renderTargetButtons(targets, {autoSelect = true} = {}) {
       const node = byId('targetButtons');
       if (!targets.length) {
         node.innerHTML = `
@@ -4218,12 +4221,15 @@ INDEX_HTML = r"""<!doctype html>
         updateHeaderStatusOverview();
         return;
       }
-      if (!state.selectedTarget || !targets.includes(state.selectedTarget)) {
+      if (autoSelect && (!state.selectedTarget || !targets.includes(state.selectedTarget))) {
         state.selectedTarget = targets[0];
+      }
+      if (state.selectedTarget && !targets.includes(state.selectedTarget)) {
+        state.selectedTarget = null;
       }
       const allowed = new Set(targets);
       state.selectedTargetsForPlan = selectedTargets().filter((target) => allowed.has(target));
-      if (!state.selectedTargetsForPlan.length && state.selectedTarget && targetCanAutoPlan(state.selectedTarget)) {
+      if (autoSelect && !state.selectedTargetsForPlan.length && state.selectedTarget && targetCanAutoPlan(state.selectedTarget)) {
         state.selectedTargetsForPlan = [state.selectedTarget];
       }
       const planned = planSelectionSet();

@@ -111,7 +111,7 @@ class ApiServiceError(RuntimeError):
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEMO_SOURCE_DIR = ROOT.parent / "ADaM_Shiny-ADaM_Shiny_experimental" / "demo-data"
+DEFAULT_DEMO_SOURCE_DIR = ROOT / "demo-data" / "shiny_minimal"
 DEFAULT_DEMO_STUDY_ROOT = ROOT / ".tmp_tests" / "ui_demo_study"
 DEFAULT_PRODUCT_STUDY_ROOT = Path(
     os.environ.get("LOCALAPPDATA")
@@ -771,7 +771,7 @@ def prepare_demo_study(
     demo_source_dir: str | Path | None = None,
     study_dir: str | Path | None = None,
 ) -> DemoStudyResponse:
-    """Prepare a local demo study from the root files in the Shiny demo-data folder."""
+    """Prepare a local demo study from the bundled minimal demo-data package."""
 
     source = Path(demo_source_dir).expanduser() if demo_source_dir else DEFAULT_DEMO_SOURCE_DIR
     if not source.exists() or not source.is_dir():
@@ -802,11 +802,12 @@ def prepare_demo_study(
 
     notes.extend(
         [
-            "Demo data is copied only from root-level files in the original Shiny demo-data folder.",
+            "Demo data is copied only from the bundled minimal Shiny demo-data package.",
             "input_sdtm contains AE/DM/EX CSV source data.",
             "input_spec contains ads_adae_full.csv and ads_adsl_full.csv as user-provided spec evidence.",
             "reference_adam contains adsl.csv and adae.csv as final comparison evidence.",
-            "PSY201 is a separate project and is intentionally not copied into this demo.",
+            "Load Demo only organizes inputs; target selection, dependency review, code generation, and R execution remain user-driven.",
+            "PSY201 is a separate project and is intentionally not copied into this minimal demo.",
         ]
     )
 
@@ -815,7 +816,7 @@ def prepare_demo_study(
         study_dir=str(target.resolve().as_posix()),
         demo_source_dir=str(source.resolve().as_posix()),
         run_id=f"run_ui_{stamp[:14]}",
-        target_datasets=["ADSL", "ADAE"],
+        target_datasets=[],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
         execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if _default_rscript_path() else LLM_DOWNSTREAM_PROVIDER_MODE,
         rscript_path=_default_rscript_path(),

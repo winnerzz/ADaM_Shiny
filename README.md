@@ -168,12 +168,16 @@ The page starts with a demo-first native LangGraph workflow:
 6. Review generated output, generated R code, validation, risk points, and audit
    artifacts
 
-The demo preparation endpoint copies only the root-level demo files from
-`D:\Archive\Research\Projects\ADaM_Shiny-ADaM_Shiny_experimental\demo-data`
-when that sibling folder exists. In that source folder, `ae.csv`, `dm.csv`, and
-`ex.csv` are SDTM inputs; `adsl.csv` and `adae.csv` are reference ADaM outputs;
-and `ads_adae_full.csv` / `ads_adsl_full.csv` are the spec files. The separate
-`PSY201/` folder is not used by this demo workflow.
+The demo preparation endpoint uses the bundled minimal demo package under
+`demo-data/shiny_minimal`. In that package, `ae.csv`, `dm.csv`, and `ex.csv`
+are SDTM inputs; `adsl.csv` and `adae.csv` are reference ADaM outputs; and
+`ads_adae_full.csv` / `ads_adsl_full.csv` are the spec files.
+
+`Load Demo` only copies and organizes those inputs into the study workspace. It
+does not select an ADaM output, prepare a dependency plan, generate R code, or
+run R. The user must choose the output and drive the remaining review/generation
+steps manually. The larger `PSY201/` folder is not used by this minimal demo
+workflow.
 
 The main UI is not meant to expose raw backend JSON first. Dependency plans,
 manifests, validation JSON, and LLM context files remain available under the

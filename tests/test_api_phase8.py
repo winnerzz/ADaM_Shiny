@@ -3314,7 +3314,7 @@ console.log(JSON.stringify({
 
         self.assertEqual(response.status_code, 200)
         html = response.text
-        summary_body = html.split("function renderInputSummary(summary)", 1)[1].split("function renderFiles(containerId, files)", 1)[0]
+        summary_body = html.split("function renderInputSummary(summary,", 1)[1].split("function renderFiles(containerId, files)", 1)[0]
         self.assertIn("inputWarningText", summary_body)
         self.assertIn("Skipped ${fileName}", summary_body)
         self.assertIn("split(/[\\\\/]/)", summary_body)
@@ -3372,7 +3372,7 @@ console.log(JSON.stringify({
 
         self.assertEqual(response.status_code, 200)
         html = response.text
-        scan_body = html.split("async function scanInputs(", 1)[1].split("function renderInputSummary(summary)", 1)[0]
+        scan_body = html.split("async function scanInputs(", 1)[1].split("function renderInputSummary(summary,", 1)[0]
         self.assertIn("await refreshGraphReadModels()", scan_body)
         self.assertNotIn("await refreshRunProgress()", scan_body)
 
@@ -3384,7 +3384,9 @@ console.log(JSON.stringify({
         self.assertEqual(response.status_code, 200)
         html = response.text
         demo_body = html.split("async function createDemoStudy()", 1)[1].split("function applyWorkspacePayload(payload)", 1)[0]
-        self.assertIn("await scanInputs()", demo_body)
+        self.assertIn("await scanInputs({autoSelectTarget: false})", demo_body)
+        self.assertNotIn("autoSelectFirstTarget", demo_body)
+        self.assertNotIn("preparePlan()", demo_body)
         self.assertNotIn("await refreshRunProgress()", demo_body)
 
     def test_index_does_not_default_target_selection_to_adae(self) -> None:
@@ -3396,7 +3398,7 @@ console.log(JSON.stringify({
         html = response.text
         infer_body = html.split("function inferTargets(summary)", 1)[1].split("function inferAdTokens(text)", 1)[0]
         auto_body = html.split("function autoSelectFirstTarget(targets)", 1)[1].split("function renderTargetButtons(targets)", 1)[0]
-        render_body = html.split("function renderTargetButtons(targets)", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
+        render_body = html.split("function renderTargetButtons(targets,", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
         progress_body = html.split("function applyRunProgress(progress)", 1)[1].split("function applyGraphState(graph)", 1)[0]
         graph_body = html.split("function applyGraphState(graph)", 1)[1].split("function planFromGraphState(graph)", 1)[0]
         self.assertNotIn("merged.add('ADAE')", infer_body)
@@ -3404,7 +3406,7 @@ console.log(JSON.stringify({
         self.assertIn("const preferred = preferredInitialTarget(autoPlanned.length ? autoPlanned : available);", auto_body)
         self.assertIn("if (normalized.includes('ADSL')) return 'ADSL';", auto_body)
         self.assertIn("if (state.selectedTargetsForPlan.length) preparePlan();", auto_body)
-        self.assertIn("state.selectedTarget = targets[0];", render_body)
+        self.assertIn("if (autoSelect && (!state.selectedTarget || !targets.includes(state.selectedTarget)))", render_body)
         self.assertIn("targetCanAutoPlan(state.selectedTarget)", render_body)
         self.assertIn("state.selectedTarget = requestedTargets[0];", progress_body)
         self.assertIn("state.graphState = graph || null;", graph_body)
@@ -3564,7 +3566,7 @@ console.log(JSON.stringify({
         helper_body = html.split("function recordTargetSource(target, source)", 1)[1].split("function llmProviderOverride()", 1)[0]
         infer_body = html.split("function inferTargets(summary)", 1)[1].split("function inferAdTokens(text)", 1)[0]
         auto_body = html.split("function autoSelectFirstTarget(targets)", 1)[1].split("function renderTargetButtons(targets)", 1)[0]
-        render_body = html.split("function renderTargetButtons(targets)", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
+        render_body = html.split("function renderTargetButtons(targets,", 1)[1].split("function renderTargetSelectionSummary()", 1)[0]
         summary_body = html.split("function renderTargetSelectionSummary()", 1)[1].split("function addManualTarget()", 1)[0]
         action_body = html.split("function actionAvailability()", 1)[1].split("function reviewFor(dataset)", 1)[0]
         self.assertIn("targetEvidenceSources", html)
@@ -11526,6 +11528,11 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertIn("rm -rf /app/workspace/studies/* /app/workspace/demo_studies/*", compose)
         self.assertIn("python -m uvicorn adam_agent.api.app:create_app --factory", compose)
 
+    def test_dockerfile_copies_bundled_demo_data(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("COPY demo-data ./demo-data", dockerfile)
+
     def test_workspace_endpoint_creates_canonical_folders(self) -> None:
         study_dir = _workspace_dir("phase8_workspace_endpoint") / "MY_STUDY"
         client = TestClient(create_app())
@@ -11913,7 +11920,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["study_id"], "demo_adam")
-        self.assertEqual(payload["target_datasets"], ["ADSL", "ADAE"])
+        self.assertEqual(payload["target_datasets"], [])
         self.assertIn(payload["execution_mode"], {"llm_downstream_provider", "llm_downstream_r_sandbox"})
         self.assertTrue((target / "input_sdtm" / "ae.csv").exists())
         self.assertTrue((target / "input_sdtm" / "dm.csv").exists())
@@ -11925,7 +11932,22 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertTrue((target / "reference_adam" / "adsl.csv").exists())
         self.assertTrue((target / "reference_adam" / "adae.csv").exists())
         self.assertFalse((target / "legacy_code" / "adae.sas").exists())
+        self.assertTrue(any("Load Demo only organizes inputs" in note for note in payload["notes"]))
         self.assertTrue(any("PSY201 is a separate project" in note for note in payload["notes"]))
+
+    def test_demo_study_endpoint_uses_bundled_minimal_demo_by_default(self) -> None:
+        target = _workspace_dir("phase8_api_bundled_demo_target") / "demo_adam"
+        client = TestClient(create_app())
+
+        response = client.post("/demo-study", params={"study_dir": str(target)})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(Path(payload["demo_source_dir"]).is_relative_to(ROOT / "demo-data" / "shiny_minimal"))
+        self.assertEqual(payload["target_datasets"], [])
+        self.assertTrue((target / "input_sdtm" / "ae.csv").exists())
+        self.assertTrue((target / "input_spec" / "ads_adae_full.csv").exists())
+        self.assertTrue((target / "reference_adam" / "adae.csv").exists())
 
     def test_study_inputs_endpoint_returns_human_oriented_file_summary(self) -> None:
         source = _demo_source("phase8_api_input_summary_source")
@@ -11977,7 +11999,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
             json={
                 "study_dir": demo["study_dir"],
                 "run_id": "run_demo_from_endpoint",
-                "target_datasets": demo["target_datasets"],
+                "target_datasets": ["ADAE"],
                 "config_path": demo["config_path"],
                 "execution_mode": "llm_downstream_provider",
             },

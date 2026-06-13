@@ -96,6 +96,22 @@ curl http://127.0.0.1:8005/runtime/readiness
 
 不要把真实 API key 写进 `Dockerfile`、`docker-compose.yml` 或 git 仓库。
 
+## 内置最小 Demo 数据
+
+镜像会复制仓库内的最小 demo 包：
+
+```text
+demo-data/shiny_minimal
+```
+
+这个包只包含旧 Shiny root demo 的最小文件：AE/DM/EX SDTM、ADSL/ADAE
+reference ADaM，以及 ADSL/ADAE spec。服务器不再依赖开发机上的旧 Shiny
+兄弟目录。
+
+网页里的 `Load Demo` 只负责把这些文件放进当前 study workspace。它不会自动选择
+ADaM output，不会准备 dependency plan，也不会生成或运行 R code。后续步骤仍由用户
+在页面上自己触发。
+
 ## 建议的访问保护
 
 不要裸露到公网。至少使用其中一种：
