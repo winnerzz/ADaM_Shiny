@@ -355,6 +355,22 @@ class GenerateCodeRequest(StrictBaseModel):
     llm_exposure_override: "LLMExposureOverride | None" = None
 
 
+class ImportExternalCodePackageRequest(StrictBaseModel):
+    """Import a Codex-authored R package into Studio's code-review gate."""
+
+    study_dir: NonEmptyStr
+    study_id: str | None = None
+    staging_root: NonEmptyStr
+    source_workspace: str | None = None
+    package_id: str | None = None
+    codex_thread_id: str | None = None
+    code_path: str | None = None
+    assumptions_path: str | None = None
+    rscript_path: str | None = None
+    required_identifiers: list[str] = Field(default_factory=list)
+    required_identifier_source_id: str | None = None
+
+
 class DraftSpecRequest(StrictBaseModel):
     """Generate a review-required draft spec when no approved input spec exists."""
 
@@ -528,6 +544,12 @@ class GenerateCodeResponse(StrictBaseModel):
     response_path: str | None = None
     parsed_response_path: str | None = None
     static_check_path: str | None = None
+    code_agent_package_path: str | None = None
+    code_agent_review_path: str | None = None
+    code_agent_attempts: list[dict[str, Any]] = Field(default_factory=list)
+    trial_run_status: str | None = None
+    trial_runtime_report_path: str | None = None
+    trial_output_path: str | None = None
     dependency_review_status: str | None = None
     warnings: list[str] = Field(default_factory=list)
     workflow_control: str = "graph_gateway_compatibility_shim"

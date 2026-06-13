@@ -2058,6 +2058,50 @@ INDEX_HTML = r"""<!doctype html>
       overflow-wrap: anywhere;
     }
     .tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 12px; }
+    .codex-import-panel {
+      margin: 12px 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .codex-import-panel summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 800;
+    }
+    .codex-import-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 12px 12px;
+    }
+    .codex-import-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 10px;
+    }
+    .codex-import-grid .wide {
+      grid-column: 1 / -1;
+    }
+    .codex-import-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .codex-import-status {
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .codex-import-status.warn {
+      color: var(--danger);
+      font-weight: 700;
+    }
+    .codex-import-status.ok {
+      color: var(--ok);
+      font-weight: 700;
+    }
     .tab {
       min-height: 33px;
       padding: 0 10px;
@@ -2243,6 +2287,7 @@ INDEX_HTML = r"""<!doctype html>
       header { align-items: flex-start; flex-direction: column; }
       .header-status { min-width: 0; width: 100%; max-width: none; }
       .grid2 { grid-template-columns: 1fr; }
+      .codex-import-grid { grid-template-columns: 1fr; }
       .setup-actions { grid-template-columns: 1fr; }
       .setup-action-card { grid-template-columns: 1fr; }
       .upload-grid { grid-template-columns: 1fr; }
@@ -2472,13 +2517,45 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="section-body">
           <div class="button-row legacy-action-row">
-            <button id="generateCodeButton" disabled data-i18n="generateRCode">Generate R Code</button>
+            <button id="generateCodeButton" disabled data-i18n="generateRCode">Build Code Package</button>
             <button id="approveButton" disabled data-i18n="approveCode">Approve Code</button>
             <button class="secondary danger" id="rejectCodeButton" disabled>Reject Code</button>
             <button id="runApprovedButton" disabled data-i18n="runApprovedCode">Run Approved Code</button>
           </div>
           <div id="generationActionHints" class="action-hints"></div>
           <p class="note quiet-helper">Generation creates R code only. Running happens after approval, using the local R sandbox.</p>
+          <details class="codex-import-panel" id="codexImportPanel">
+            <summary data-i18n="importCodexPackage">Import Codex R Package</summary>
+            <div class="codex-import-body">
+              <p class="codex-import-note" data-i18n="codexImportHelp">Use this when Codex generated a staged R package outside Studio. Import only records the code for review; it does not approve or run R.</p>
+              <div class="codex-import-grid">
+                <div class="field wide">
+                  <label for="codexStagingRoot" data-i18n="codexStagingRoot">Codex staging folder</label>
+                  <input id="codexStagingRoot" placeholder="D:\...\_codex_adam_build">
+                </div>
+                <div class="field">
+                  <label for="codexCodePath" data-i18n="codexCodePath">R code file override</label>
+                  <input id="codexCodePath" placeholder="Optional, relative to staging folder">
+                </div>
+                <div class="field">
+                  <label for="codexAssumptionsPath" data-i18n="codexAssumptionsPath">Assumptions file</label>
+                  <input id="codexAssumptionsPath" placeholder="Optional, e.g. report.md">
+                </div>
+                <div class="field">
+                  <label for="codexThreadId" data-i18n="codexThreadId">Codex thread id</label>
+                  <input id="codexThreadId" placeholder="Optional audit label">
+                </div>
+                <div class="field">
+                  <label for="codexPackageId" data-i18n="codexPackageId">Package id</label>
+                  <input id="codexPackageId" placeholder="Optional audit label">
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary" id="importCodexPackageButton" disabled data-i18n="importForReview">Import For Code Review</button>
+              </div>
+              <div class="codex-import-status" id="codexImportStatus">Choose an ADaM output and provide a staging folder.</div>
+            </div>
+          </details>
           <div class="tabs">
             <button class="tab active" data-view="summary" data-i18n="summary">Summary</button>
             <button class="tab" data-view="code" data-i18n="rCode">R Code</button>
@@ -2750,9 +2827,17 @@ INDEX_HTML = r"""<!doctype html>
         startRunnable: 'Prepare Review Steps',
         approveDraftSpec: 'Approve Draft Spec',
         generateReviewRun: 'Work On Current ADaM',
-        generateRCode: 'Generate R Code',
+        generateRCode: 'Build Code Package',
         approveCode: 'Approve Code',
         runApprovedCode: 'Run Approved Code',
+        importCodexPackage: 'Import Codex R Package',
+        codexImportHelp: 'Use this when Codex generated a staged R package outside Studio. Import only records the code for review; it does not approve or run R.',
+        codexStagingRoot: 'Codex staging folder',
+        codexCodePath: 'R code file override',
+        codexAssumptionsPath: 'Assumptions file',
+        codexThreadId: 'Codex thread id',
+        codexPackageId: 'Package id',
+        importForReview: 'Import For Code Review',
         summary: 'Summary',
         rCode: 'R Code',
         risks: 'Assumptions & Risks',
@@ -2802,9 +2887,17 @@ INDEX_HTML = r"""<!doctype html>
         startRunnable: '启动可运行数据集',
         approveDraftSpec: '批准 Draft Spec',
         generateReviewRun: '处理当前 ADaM',
-        generateRCode: '生成 R 代码',
+        generateRCode: '构建代码包',
         approveCode: '批准代码',
         runApprovedCode: '运行已批准代码',
+        importCodexPackage: '导入 Codex R 代码包',
+        codexImportHelp: '当 Codex 在 Studio 外生成了分阶段 R 代码包时使用。导入只会进入代码审核，不会批准，也不会运行 R。',
+        codexStagingRoot: 'Codex 代码包文件夹',
+        codexCodePath: 'R 代码文件覆盖',
+        codexAssumptionsPath: '假设说明文件',
+        codexThreadId: 'Codex 线程 ID',
+        codexPackageId: '代码包 ID',
+        importForReview: '导入并进入代码审核',
         summary: '摘要',
         rCode: 'R 代码',
         risks: '假设与风险',
@@ -2865,7 +2958,7 @@ INDEX_HTML = r"""<!doctype html>
         'Approve Draft Spec': '批准 Draft Spec',
         'Reject Draft Spec': '拒绝 Draft Spec',
         'Prepare Review Steps': '准备审核步骤',
-        'Generate R Code': '生成 R 代码',
+        'Build Code Package': '构建代码包',
         'Create Revised Draft Spec': '重新生成 Draft Spec',
         'Generate Revised Draft Spec': '重新生成 Draft Spec',
         'Approve Code': '批准代码',
@@ -4863,7 +4956,7 @@ INDEX_HTML = r"""<!doctype html>
       const labels = {
         finalize: 'Finalize Inputs / Draft Spec',
         approveDraft: 'Approve Draft Spec',
-        generate: 'Generate R Code',
+        generate: 'Build Code Package',
         approveCode: 'Approve Code',
         runApproved: 'Run Approved Code'
       };
@@ -5220,7 +5313,7 @@ INDEX_HTML = r"""<!doctype html>
             ? 'Repair Generated Code'
             : ['revise_approved_spec', 'regenerate_draft_spec'].includes(generateGate?.nextAction)
               ? 'Create Revised Draft Spec'
-              : 'Generate R Code',
+              : 'Build Code Package',
           reason: !target
             ? 'Choose an ADaM output first.'
             : !targetIsPlanned
@@ -5264,7 +5357,7 @@ INDEX_HTML = r"""<!doctype html>
               ? graphActionMissingReason
             : approveCodeGate?.ready && !codeApprovalReady
               ? !generated
-                ? 'Generate R code first.'
+                ? 'Build a code package first.'
                 : generated.status === 'stale'
                   ? 'Generated code is stale because inputs changed; regenerate before approval.'
                   : !generated.generated_code
@@ -5279,7 +5372,7 @@ INDEX_HTML = r"""<!doctype html>
             : execution?.status === 'terminal_failure' || execution?.status === 'failed'
               ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
                 : !generated
-                  ? 'Generate R code first.'
+                  ? 'Build a code package first.'
                   : approveCodeGate?.nextAction !== 'review_code'
                     ? approveCodeGate?.reason || `Code approval is not the current graph step for ${target}.`
                   : generated.status === 'stale'
@@ -5313,7 +5406,7 @@ INDEX_HTML = r"""<!doctype html>
             : execution?.status === 'terminal_failure' || execution?.status === 'failed'
               ? `${target} execution failed. Review diagnostics before retrying or regenerating code.`
               : !generated
-                ? 'Generate R code first.'
+                ? 'Build a code package first.'
                 : !reviewFor(target)?.approved
                   ? 'Approve the generated code before running local R.'
                   : `Ready to execute the graph-approved code artifact for ${target}.`
@@ -5331,8 +5424,43 @@ INDEX_HTML = r"""<!doctype html>
       setButtonAvailability('approveButton', availability.approveCode);
       setButtonAvailability('rejectCodeButton', availability.approveCode);
       setButtonAvailability('runApprovedButton', availability.runApproved);
+      updateCodexImportAvailability();
       renderActionHints('specActionHints', visibleSpecActionHints(availability));
       renderActionHints('generationActionHints', visibleGenerationActionHints(availability));
+    }
+
+    function codexImportReadiness() {
+      const target = String(state.selectedTarget || '').toUpperCase();
+      const stagingRoot = byId('codexStagingRoot')?.value.trim() || '';
+      if (!studyDir()) return {ready: false, reason: 'Start or load a study first.'};
+      if (!runId()) return {ready: false, reason: 'No active run id is available.'};
+      if (!target) return {ready: false, reason: 'Choose an ADaM output before importing code.'};
+      if (!stagingRoot) return {ready: false, reason: 'Provide the Codex staging folder that contains the R package.'};
+      return {
+        ready: true,
+        reason: `Import external Codex R code for ${target}. It will still require code review before execution.`
+      };
+    }
+
+    function updateCodexImportAvailability() {
+      const readiness = codexImportReadiness();
+      const button = byId('importCodexPackageButton');
+      const status = byId('codexImportStatus');
+      if (button && button.dataset.pendingAction !== '1') {
+        button.disabled = !readiness.ready;
+        button.title = readiness.reason;
+        button.setAttribute('aria-disabled-reason', readiness.reason);
+      }
+      if (status && !status.dataset.locked && !status.dataset.pinnedMessage) {
+        status.textContent = readiness.reason;
+        status.className = `codex-import-status ${readiness.ready ? 'ok' : ''}`;
+      }
+    }
+
+    function clearCodexImportPinnedStatus() {
+      const status = byId('codexImportStatus');
+      if (status) delete status.dataset.pinnedMessage;
+      updateCodexImportAvailability();
     }
 
     function setButtonAvailability(id, item) {
@@ -5340,7 +5468,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!button) return;
       if (button.dataset.pendingAction === '1') return;
       if (id === 'generateCodeButton') {
-        button.textContent = tt(item.label || 'Generate R Code');
+        button.textContent = tt(item.label || 'Build Code Package');
       }
       button.title = item.reason;
       button.setAttribute('aria-disabled-reason', item.reason);
@@ -6044,7 +6172,7 @@ INDEX_HTML = r"""<!doctype html>
         renderUploadedSpecCard(node, {
           dataset: state.selectedTarget,
           title: 'Uploaded spec confirmed',
-          status: 'Ready for R code generation',
+          status: 'Ready to build a code package',
           detail: 'The uploaded spec is the active derivation instruction for this run. The app will use it directly instead of creating a draft spec.',
           artifactLabel: 'Input spec artifact',
           warnings: finalized?.warnings || [],
@@ -6061,7 +6189,7 @@ INDEX_HTML = r"""<!doctype html>
         renderFinalizedSpecCard(node, {
           dataset: state.selectedTarget,
           title: 'Draft spec approved',
-          status: 'Ready for R code generation',
+          status: 'Ready to build a code package',
           detail: 'A generated draft spec has been approved for this run only. The app can now use it as the code-generation instruction.',
           artifactLabel: 'Approved draft-spec artifact',
           warnings: finalized?.warnings || []
@@ -6649,8 +6777,8 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (availability.generate.ready) {
         return {
-          title: `Generate R code for ${target}`,
-          detail: 'This calls the selected code generator and stops before local R execution.',
+          title: `Build code package for ${target}`,
+          detail: 'This builds a review package with generated R code and evidence. It stops before official R execution.',
           buttons: [{label: availability.generate.label, action: 'generateCode', primary: true}]
         };
       }
@@ -8174,7 +8302,7 @@ INDEX_HTML = r"""<!doctype html>
         input_spec_ready: 'Input spec ready',
         approved_draft_spec_ready: 'Approved draft spec ready',
         draft_spec_generated: 'Draft spec generated',
-        r_code_generated: 'R code generated',
+        r_code_generated: 'Code package built',
         static_check_recorded: 'Static check recorded',
         r_execution_completed: 'R execution completed',
         r_execution_terminal_failure: 'R execution failed',
@@ -8190,8 +8318,8 @@ INDEX_HTML = r"""<!doctype html>
         dependency_plan: 'Dependency planning',
         prepare_dataset_context: 'Evidence context',
         draft_spec_agent: 'Draft spec',
-        generate_r_code_agent: 'Code generation',
-        code_generation: 'Code generation',
+        generate_r_code_agent: 'Code package build',
+        code_generation: 'Code package build',
         execute_approved_code: 'R execution',
         compare_reference_output: 'Reference compare',
         terminal_failure_review: 'Failure triage',
@@ -8338,7 +8466,7 @@ INDEX_HTML = r"""<!doctype html>
         const waitingForDraft = interruptName === 'draft_spec_review';
         setPill('codeStatus', waitingForDraft ? 'draft review' : 'review');
         addEvent(
-          waitingForDraft ? 'Draft spec generated' : repairingCode ? 'R code repaired' : 'R code generated',
+          waitingForDraft ? 'Draft spec generated' : repairingCode ? 'Code package repaired' : 'Code package built',
           waitingForDraft
             ? `${payload.dataset} draft spec is ready for review. R has not been generated yet.`
             : repairingCode
@@ -8346,12 +8474,12 @@ INDEX_HTML = r"""<!doctype html>
             : `${payload.dataset} code is ready for review.`
         );
         completeOperation(
-          waitingForDraft ? 'Draft spec ready' : repairingCode ? 'Repaired R code ready' : 'R code generated',
+          waitingForDraft ? 'Draft spec ready' : repairingCode ? 'Repaired code package ready' : 'Code package built',
           waitingForDraft
             ? `${payload.dataset} draft spec is ready for human review.`
             : repairingCode
               ? `${payload.dataset} repaired code is ready for review. R has not been executed yet.`
-            : `${payload.dataset} code is ready for review. R has not been executed yet.`
+            : `${payload.dataset} code package is ready for review. R has not been executed yet.`
         );
         renderDraftSpecPane();
         renderGraphAwareDashboard();
@@ -8397,6 +8525,87 @@ INDEX_HTML = r"""<!doctype html>
       }
       await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
       syncActiveDatasetState();
+    }
+
+    async function importCodexPackageForReview(button = byId('importCodexPackageButton')) {
+      const readiness = codexImportReadiness();
+      if (!readiness.ready) {
+        const status = byId('codexImportStatus');
+        if (status) {
+          status.textContent = readiness.reason;
+          status.className = 'codex-import-status warn';
+        }
+        updateCodexImportAvailability();
+        return;
+      }
+      const target = String(state.selectedTarget || '').toUpperCase();
+      const stagingRoot = byId('codexStagingRoot').value.trim();
+      const codePath = byId('codexCodePath').value.trim();
+      const assumptionsPath = byId('codexAssumptionsPath').value.trim();
+      const codexThreadId = byId('codexThreadId').value.trim();
+      const packageId = byId('codexPackageId').value.trim();
+      const status = byId('codexImportStatus');
+      const restorePending = setPendingButton(button, 'Importing...', `Importing Codex R package for ${target}.`);
+      if (status) {
+        delete status.dataset.pinnedMessage;
+        status.dataset.locked = '1';
+        status.textContent = `Importing Codex package for ${target}. This will not approve or run R.`;
+        status.className = 'codex-import-status';
+      }
+      beginOperation('Importing Codex R package', `Recording external Codex code for ${target} into the graph code-review gate.`);
+      try {
+        const payload = await api(`/runs/${encodeURIComponent(runId())}/datasets/${encodeURIComponent(target)}/import-external-code-package`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            study_dir: studyDir(),
+            study_id: state.studyId,
+            staging_root: stagingRoot,
+            code_path: codePath || null,
+            assumptions_path: assumptionsPath || null,
+            codex_thread_id: codexThreadId || null,
+            package_id: packageId || null,
+            rscript_path: optionalAdvancedPath('rscriptPath')
+          })
+        });
+        const importedDataset = String(payload.dataset || target).toUpperCase();
+        state.generatedByDataset[importedDataset] = {
+          ...payload,
+          dataset: importedDataset,
+          status: 'generated',
+          source: 'external_codex_package'
+        };
+        state.selectedTarget = importedDataset;
+        state.selectedView = 'summary';
+        setActiveTab();
+        await refreshGraphReadModels();
+        await loadReviewSummary(payload.run_id || runId(), {detailLevel: 'summary', refreshGraph: false});
+        syncActiveDatasetState();
+        setPill('codeStatus', 'review');
+        addEvent('Codex code imported', `${importedDataset} external Codex R package was imported for code review. R has not been executed.`);
+        completeOperation('Codex code ready for review', `${importedDataset} imported code is now waiting for human code approval.`);
+        if (status) {
+          status.textContent = `${importedDataset} imported. Review the R code, then approve or reject it.`;
+          status.className = 'codex-import-status ok';
+          status.dataset.pinnedMessage = '1';
+        }
+        renderAfterGraphRefresh();
+        renderPane();
+      } catch (error) {
+        setPill('codeStatus', 'failed');
+        if (status) {
+          status.textContent = String(error);
+          status.className = 'codex-import-status warn';
+          status.dataset.pinnedMessage = '1';
+        }
+        byId('reviewPane').innerHTML = `<p class="note warn">${escapeHtml(String(error))}</p>`;
+        failOperation('Codex package import failed', error);
+      } finally {
+        if (status) delete status.dataset.locked;
+        restorePending();
+        renderWorkflowShell();
+        updateCodexImportAvailability();
+      }
     }
 
     async function approveCode(button = byId('approveButton')) {
@@ -8698,7 +8907,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (state.selectedView === 'code') {
-        pane.innerHTML = generated ? `<pre>${escapeHtml(generated.generated_code)}</pre>` : '<p class="note">No R code generated yet.</p>';
+        pane.innerHTML = generated ? `<pre>${escapeHtml(generated.generated_code)}</pre>` : '<p class="note">No code package has been built yet.</p>';
         return;
       }
       if (state.selectedView === 'risk') {
@@ -9450,6 +9659,10 @@ INDEX_HTML = r"""<!doctype html>
     byId('approveDraftSpecButton').addEventListener('click', (event) => approveDraftSpec(event.currentTarget));
     byId('rejectDraftSpecButton').addEventListener('click', (event) => rejectDraftSpec(event.currentTarget));
     byId('generateCodeButton').addEventListener('click', generateCode);
+    byId('importCodexPackageButton').addEventListener('click', (event) => importCodexPackageForReview(event.currentTarget));
+    for (const id of ['codexStagingRoot', 'codexCodePath', 'codexAssumptionsPath', 'codexThreadId', 'codexPackageId']) {
+      byId(id)?.addEventListener('input', clearCodexImportPinnedStatus);
+    }
     byId('approveButton').addEventListener('click', (event) => approveCode(event.currentTarget));
     byId('rejectCodeButton').addEventListener('click', (event) => rejectCode(event.currentTarget));
     byId('runApprovedButton').addEventListener('click', runApprovedCode);

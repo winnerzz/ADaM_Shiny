@@ -914,10 +914,15 @@ class Phase8ApiTests(unittest.TestCase):
         self.assertIn("missing; draft spec review required", response.text)
         self.assertIn("compare only, not derivation authority", response.text)
         self.assertIn("Work On Current ADaM", response.text)
-        self.assertIn("Generate R Code", response.text)
+        self.assertIn("Build Code Package", response.text)
         self.assertIn("Approve Code", response.text)
         self.assertIn("Reject Code", response.text)
         self.assertIn("Run Approved Code", response.text)
+        self.assertIn("Import Codex R Package", response.text)
+        self.assertIn("codexStagingRoot", response.text)
+        self.assertIn("importCodexPackageForReview", response.text)
+        self.assertIn("import-external-code-package", response.text)
+        self.assertIn("Import only records the code for review", response.text)
         self.assertIn("runApprovedButton", response.text)
         self.assertIn("Prepare Review Steps", response.text)
         self.assertIn("startStudyLoopButton", response.text)
@@ -3750,7 +3755,7 @@ console.log(JSON.stringify({
         for button_id in primary_buttons:
             self.assertNotIn(f"byId('{button_id}').disabled =", script)
         self.assertIn("function setButtonAvailability(id, item)", script)
-        self.assertIn("button.textContent = tt(item.label || 'Generate R Code')", script)
+        self.assertIn("button.textContent = tt(item.label || 'Build Code Package')", script)
         self.assertIn("button.disabled = !item.ready", script)
         self.assertIn("function setPendingButton(button, label = 'Working...', title = 'This step is running. Please wait.')", script)
         self.assertIn("button.classList.add('button-pending')", script)
@@ -4108,7 +4113,7 @@ console.log(JSON.stringify({
         self.assertTrue(result["reviewCleared"])
         self.assertTrue(result["generatedCleared"])
         self.assertEqual(result["afterActions"], ["generateCode"])
-        self.assertEqual(result["afterLabels"], ["Generate R Code"])
+        self.assertEqual(result["afterLabels"], ["Build Code Package"])
         self.assertEqual(result["operationTitle"], "Code rejected")
 
     def test_index_primary_actions_use_progress_read_model_without_local_lifecycle_cache(self) -> None:
@@ -6137,7 +6142,7 @@ console.log(JSON.stringify({
         self.assertEqual(result["generatedCode"], "")
         self.assertIn(result["codeStatus"], {"not generated", "未生成"})
         self.assertEqual(result["graphStatus"], "generate_code")
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
         self.assertEqual(result["nextActions"], ["generateCode"])
         self.assertFalse(result["graphStillHasContract"])
         self.assertTrue(result["draftGraphCommand"])
@@ -6642,7 +6647,7 @@ console.log(JSON.stringify({
         self.assertEqual(result["beforeActions"][:3], ["scrollDraft", "approveDraft", "rejectDraft"])
         self.assertEqual(result["approveCall"]["interrupt"], "draft_spec_review")
         self.assertEqual(result["approveCall"]["action"], "approve")
-        self.assertEqual(result["afterApproveTitle"], "Generate R code for ADDM")
+        self.assertEqual(result["afterApproveTitle"], "Build code package for ADDM")
         self.assertEqual(result["afterApproveActions"], ["generateCode"])
         self.assertTrue(result["nativeFullRunCalled"])
         self.assertFalse(result["draftSpecEndpointCalled"])
@@ -7011,7 +7016,7 @@ console.log(JSON.stringify({
         self.assertEqual(result["rejectCall"]["action"], "reject")
         self.assertFalse(result["generatedVisible"])
         self.assertFalse(result["reviewVisible"])
-        self.assertEqual(result["afterTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["afterTitle"], "Build code package for ADAE")
         self.assertEqual(result["afterActions"], ["generateCode"])
         self.assertEqual(result["operationTitle"], "Code rejected")
         self.assertIn("ready for revised R code generation", result["operationDetail"])
@@ -7863,8 +7868,8 @@ console.log(JSON.stringify({
             check=True,
         )
         result = json.loads(completed.stdout.strip())
-        self.assertEqual(result["beforeTitle"], "Generate R code for ADAE")
-        self.assertEqual(result["beforeLabel"], "Generate R Code")
+        self.assertEqual(result["beforeTitle"], "Build code package for ADAE")
+        self.assertEqual(result["beforeLabel"], "Build Code Package")
         self.assertEqual(result["beforeAction"], "generateCode")
         self.assertFalse(result["inDraftBefore"])
         self.assertTrue(result["draftBeforeExists"])
@@ -10402,7 +10407,7 @@ console.log(JSON.stringify({
         self.assertIn("approved for this run", result["draftPane"])
         self.assertIn("AETERM", result["draftPane"])
         self.assertIn("copy AE.AETERM", result["draftPane"])
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
         self.assertEqual(result["nextActions"], ["generateCode"])
 
     def test_index_approved_draft_without_cached_variables_shows_status_card(self) -> None:
@@ -10479,9 +10484,9 @@ console.log(JSON.stringify({
         )
         result = json.loads(completed.stdout.strip())
         self.assertIn("Draft spec approved", result["draftPane"])
-        self.assertIn("Ready for R code generation", result["draftPane"])
+        self.assertIn("Ready to build a code package", result["draftPane"])
         self.assertNotIn("<table", result["draftPane"])
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
         self.assertEqual(result["nextActions"], ["generateCode"])
 
     def test_index_hydrates_approved_draft_spec_from_recorded_artifact(self) -> None:
@@ -10578,7 +10583,7 @@ console.log(JSON.stringify({
         self.assertEqual(result["variable"], "AETERM")
         self.assertIn("AETERM", result["draftPane"])
         self.assertIn("copy AE.AETERM", result["draftPane"])
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
         self.assertEqual(result["nextActions"], ["generateCode"])
 
     def test_index_bottom_generate_button_label_follows_graph_action(self) -> None:
@@ -10750,13 +10755,13 @@ console.log(JSON.stringify({
         )
         result = json.loads(completed.stdout.strip())
         self.assertIn("Uploaded spec confirmed", result["draftPane"])
-        self.assertIn("Ready for R code generation", result["draftPane"])
+        self.assertIn("Ready to build a code package", result["draftPane"])
         self.assertIn("Spec preview", result["draftPane"])
         self.assertIn("AETERM", result["draftPane"])
         self.assertIn("Copy from AE.AETERM", result["draftPane"])
         self.assertIn("Spec parsed with low-risk warnings.", result["draftPane"])
         self.assertNotIn("D:/tmp/study", result["draftPane"])
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
         self.assertEqual(result["nextActions"], ["generateCode"])
 
     def test_index_dashboard_stays_visible_when_restored_progress_lacks_input_summary(self) -> None:
@@ -10842,7 +10847,7 @@ console.log(JSON.stringify({
         self.assertFalse(result["runtimeHidden"])
         self.assertFalse(result["currentHidden"])
         self.assertFalse(result["queueHidden"])
-        self.assertEqual(result["nextTitle"], "Generate R code for ADAE")
+        self.assertEqual(result["nextTitle"], "Build code package for ADAE")
 
     def test_index_recovers_dependency_plan_projection_from_graph_state(self) -> None:
         client = TestClient(create_app())
@@ -16554,7 +16559,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["status"], "code_generated")
         self.assertTrue(payload["draft_spec_path"].endswith("approved_specs/adae_approved_spec.json"))
         self.assertTrue(any("user-approved draft spec" in warning for warning in payload["warnings"]))
-        self.assertEqual([request.node for request in requests], ["draft_spec_from_evidence", "generate_downstream_code_for_review"])
+        self.assertEqual([request.node for request in requests], ["draft_spec_from_evidence", "code_agent_build_code_package"])
         draft_spec = json.loads((study_dir / "runs" / "run_missing_spec_draft" / "specs" / "adae_draft_spec.json").read_text(encoding="utf-8"))
         self.assertEqual(draft_spec["dataset"], "ADAE")
         self.assertEqual(draft_spec["status"], "draft")

@@ -102,6 +102,12 @@ class GraphGatewayCodeGenerationResult(GraphGatewayResult):
     warnings: list[str]
     dependency_review_status: str | None = None
     dependency_warnings: list[str] | None = None
+    code_agent_package_path: str | None = None
+    code_agent_review_path: str | None = None
+    code_agent_attempts: list[dict[str, Any]] | None = None
+    trial_run_status: str | None = None
+    trial_runtime_report_path: str | None = None
+    trial_output_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -910,11 +916,18 @@ class GraphGateway:
         review_dir = run_dir / "review"
         review_dir.mkdir(parents=True, exist_ok=True)
         review_path = review_dir / f"{target.lower()}_code_review.json"
-        static_check_path = run_dir / "static_checks" / f"{target.lower()}_static_check.json"
+        code_state = self._generated_code_state(root, run_id=run_id, dataset=target)
+        recorded_static_path = str(code_state.get("static_check_path") or "").strip()
+        static_check_path = (
+            _resolve_run_artifact_path(run_dir, recorded_static_path)
+            if recorded_static_path
+            else run_dir / "static_checks" / f"{target.lower()}_static_check.json"
+        )
+        if static_check_path is None:
+            static_check_path = run_dir / "static_checks" / f"{target.lower()}_static_check.json"
         static_path_for_state = static_check_path if static_check_path.exists() else None
         code_sha = f"sha256:{sha256_file(code_path)}"
         static_check_sha = f"sha256:{sha256_file(static_check_path)}" if static_check_path.exists() else None
-        code_state = self._generated_code_state(root, run_id=run_id, dataset=target)
         spec_path = code_state.get("spec_path")
         spec_sha = code_state.get("spec_sha256")
         if spec_path and not spec_sha:
@@ -3404,6 +3417,7 @@ class GraphGateway:
         agent_node_inputs: list[dict[str, Any]] | None = None,
         agent_node_outputs: list[dict[str, Any]] | None = None,
         risk_flags: list[str] | None = None,
+        code_agent_metadata: dict[str, Any] | None = None,
     ) -> GraphGatewayResult:
         """Persist generated-code review interrupt into canonical graph state."""
 
@@ -3485,6 +3499,7 @@ class GraphGateway:
                 "expected_outputs": list(expected_outputs or []),
                 "input_fingerprint": fingerprint,
                 "terminal_failure_followup": terminal_followup,
+                "code_agent": dict(code_agent_metadata or {}),
             }
         )
         dataset_state.current_interrupt = InterruptState(
@@ -3596,6 +3611,17 @@ class GraphGateway:
         """Persist a DatasetGraph code-generation result through the canonical gateway path."""
 
         if result.get("status") == "failed":
+            if result.get("code_agent_package_path"):
+                return self._record_blocked_code_agent_package(
+                    root=root,
+                    study_id=study_id,
+                    run_id=run_id,
+                    target=target,
+                    result=result,
+                    dependency_artifacts=dependency_artifacts,
+                    llm_provider=llm_provider,
+                    gate=gate,
+                )
             message = str(result.get("real_run_error") or f"Code generation failed for {target}.")
             if "No approved input_spec or approved draft spec is available" in message:
                 message = (
@@ -3636,6 +3662,7 @@ class GraphGateway:
             agent_node_inputs=list(result.get("agent_node_inputs", [])),
             agent_node_outputs=list(result.get("agent_node_outputs", [])),
             risk_flags=list(result.get("risk_flags", [])),
+            code_agent_metadata=_code_agent_metadata_from_dataset_result(result),
         )
         projection = self._handoff_dependency_review_to_product_step(
             root=root,
@@ -3679,6 +3706,203 @@ class GraphGateway:
             warnings=list(result.get("product_context_warnings", [])),
             dependency_review_status=gateway_result.graph_state.dependency_review_status,
             dependency_warnings=list(gate.dependency_warnings),
+            code_agent_package_path=result.get("code_agent_package_path"),
+            code_agent_review_path=result.get("code_agent_review_path"),
+            code_agent_attempts=list(result.get("code_agent_attempts", [])),
+            trial_run_status=result.get("trial_run_status"),
+            trial_runtime_report_path=result.get("trial_runtime_report_path"),
+            trial_output_path=result.get("trial_output_path"),
+        )
+
+    def _record_blocked_code_agent_package(
+        self,
+        *,
+        root: Path,
+        study_id: str,
+        run_id: str,
+        target: str,
+        result: dict[str, Any],
+        dependency_artifacts: list[dict[str, Any]],
+        llm_provider: dict[str, Any],
+        gate: GraphGatewayDependencyGateResult,
+    ) -> GraphGatewayCodeGenerationResult:
+        """Persist Code Agent package evidence when code generation stops blocked."""
+
+        next_state = self._load_or_create_state(
+            root=root,
+            study_id=study_id,
+            run_id=run_id,
+            target=target,
+            input_fingerprint_payload=input_fingerprint(root),
+        )
+        fingerprint = input_fingerprint(root)
+        dataset_state = self._dataset_state(next_state, target=target, fingerprint=fingerprint)
+        code_path = _optional_existing_path(result.get("code_path"))
+        static_check_path = _optional_existing_path(result.get("static_check_path"))
+        package_path = _optional_existing_path(result.get("code_agent_package_path"))
+        review_path = _optional_existing_path(result.get("code_agent_review_path"))
+        response_path = _optional_existing_path(result.get("llm_response_path"))
+        parsed_path = _optional_existing_path(result.get("parsed_response_path"))
+        runtime_report_path = _optional_existing_path(result.get("trial_runtime_report_path"))
+        trial_output_path = _optional_existing_path(result.get("trial_output_path"))
+        failure_classification = dict(result.get("code_agent_failure_classification") or {})
+        message = str(
+            failure_classification.get("reason")
+            or result.get("real_run_error")
+            or f"Code Agent package is blocked for {target}."
+        )
+        next_action = str(
+            failure_classification.get("next_action")
+            or result.get("next_action")
+            or "review_terminal_failure"
+        )
+        code_sha = f"sha256:{sha256_file(code_path)}" if code_path else None
+        static_sha = f"sha256:{sha256_file(static_check_path)}" if static_check_path else None
+        dataset_state.code_state.update(
+            {
+                "status": "blocked",
+                "code_path": str(code_path.as_posix()) if code_path else None,
+                "code_sha256": code_sha,
+                "static_check_path": str(static_check_path.as_posix()) if static_check_path else None,
+                "static_check_sha256": static_sha,
+                "dependency_artifacts": dependency_artifacts or [],
+                "generation_quality": _generation_quality_from_dataset_result(result, llm_provider=llm_provider),
+                "assumptions": list(result.get("code_assumptions", [])),
+                "risk_points": list(result.get("code_risk_points", [])),
+                "used_inputs": list(result.get("code_used_inputs", [])),
+                "expected_outputs": list(result.get("code_expected_outputs", [])),
+                "input_fingerprint": fingerprint,
+                "failure_classification": failure_classification,
+                "code_agent": _code_agent_metadata_from_dataset_result(result),
+            }
+        )
+        dataset_state.execution_state.update(
+            {
+                "status": "terminal_failure",
+                "terminal_failure": True,
+                "partial_output_usable": False,
+                "validation_status": "not_run",
+                "source": "code_agent_package_builder",
+                "message": message,
+                "next_action": next_action,
+                "trial_run_status": result.get("trial_run_status"),
+                "trial_runtime_report_path": str(runtime_report_path.as_posix()) if runtime_report_path else None,
+                "trial_output_path": str(trial_output_path.as_posix()) if trial_output_path else None,
+            }
+        )
+        dataset_state.validation_summary.update(
+            {
+                "status": "not_run",
+                "terminal_failure": True,
+                "partial_output_usable": False,
+            }
+        )
+        dataset_state.failures = [
+            FailureRecord(
+                failure_id=f"code_agent_blocked_{run_id}_{target.lower()}",
+                dataset=target,
+                node="code_agent_build_code_package",
+                failure_type=_failure_type_from_code_agent_category(failure_classification),
+                message=message,
+                artifact_ids=[],
+                root_cause=str(failure_classification.get("category") or "code_agent_blocked"),
+                recommended_route=_route_from_code_agent_next_action(next_action),
+                repair_attempt=len(result.get("code_agent_attempts") or []),
+            )
+        ]
+        dataset_state.current_interrupt = InterruptState(
+            name="terminal_failure",
+            dataset=target,
+            reason="Code Agent could not build a review-ready code package.",
+            payload={
+                "source": "code_agent_package_builder",
+                "message": message,
+                "next_action": next_action,
+                "failure_classification": failure_classification,
+                "code_agent_package_path": str(package_path.as_posix()) if package_path else None,
+                "code_agent_review_path": str(review_path.as_posix()) if review_path else None,
+            },
+        )
+        dataset_state.status = "terminal_failure"
+        dataset_state.updated_at = utc_now()
+        for artifact_path, artifact_id, role, kind in [
+            (code_path, "generated_code", "output", "generated_code"),
+            (static_check_path, "static_check", "audit", "tool_log"),
+            (package_path, "code_agent_package", "audit", "tool_log"),
+            (review_path, "code_agent_review", "audit", "tool_log"),
+            (response_path, "code_agent_response", "audit", "llm_response"),
+            (parsed_path, "code_agent_parsed_response", "audit", "tool_log"),
+            (runtime_report_path, "code_agent_trial_runtime", "audit", "tool_log"),
+        ]:
+            if artifact_path:
+                _upsert_artifact(dataset_state, _artifact_ref(target, artifact_id, role, artifact_path, kind=kind))
+        _append_agent_decisions(
+            dataset_state,
+            [
+                record_agent_decision(
+                    agent="code_agent",
+                    node="code_agent_build_code_package",
+                    decision="code_agent_package_blocked",
+                    dataset=target,
+                    status="terminal_failure",
+                    reason=message,
+                    outputs={
+                        "package_path": str(package_path.as_posix()) if package_path else None,
+                        "trial_run_status": result.get("trial_run_status"),
+                        "next_action": next_action,
+                    },
+                    risk_flags=list(result.get("risk_flags", [])) or ["code_agent_package_blocked"],
+                )
+            ],
+        )
+        _append_risk_flags(dataset_state, list(result.get("risk_flags", [])) or ["code_agent_package_blocked"])
+        dataset_state.result_summary = DatasetResultSummary(
+            dataset=target,
+            status="terminal_failure",
+            validation_status="not_run",
+            compare_status="not_run",
+            failure_ids=[failure.failure_id for failure in dataset_state.failures],
+            metadata={
+                "graph_product_generate_code": True,
+                "code_agent_blocked": True,
+                "trial_run_status": result.get("trial_run_status"),
+                "next_action": next_action,
+            },
+        )
+        next_state.datasets[target] = dataset_state
+        _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
+        _sync_study_agent_decisions(next_state)
+        next_state.updated_at = utc_now()
+        self._persist_graph_state(root, next_state, node="code_agent_package_blocked")
+        projection = self._handoff_dependency_review_to_product_step(
+            root=root,
+            state=next_state,
+            gate=gate,
+            preferred_interrupt=dataset_state.current_interrupt,
+        )
+        return GraphGatewayCodeGenerationResult(
+            graph_state=next_state,
+            workflow_projection=projection,
+            code_path=str(code_path.as_posix()) if code_path else "",
+            generated_code=str(result.get("generated_code") or ""),
+            static_check_path=str(static_check_path.as_posix()) if static_check_path else None,
+            draft_spec_path=None,
+            response_path=str(response_path.as_posix()) if response_path else None,
+            parsed_response_path=str(parsed_path.as_posix()) if parsed_path else None,
+            context_path=None,
+            assumptions=list(result.get("code_assumptions", [])),
+            risk_points=list(result.get("code_risk_points", [])),
+            used_inputs=list(result.get("code_used_inputs", [])),
+            expected_outputs=list(result.get("code_expected_outputs", [])),
+            warnings=list(result.get("product_context_warnings", [])),
+            dependency_review_status=next_state.dependency_review_status,
+            dependency_warnings=list(gate.dependency_warnings),
+            code_agent_package_path=str(package_path.as_posix()) if package_path else None,
+            code_agent_review_path=str(review_path.as_posix()) if review_path else None,
+            code_agent_attempts=list(result.get("code_agent_attempts", [])),
+            trial_run_status=result.get("trial_run_status"),
+            trial_runtime_report_path=str(runtime_report_path.as_posix()) if runtime_report_path else None,
+            trial_output_path=str(trial_output_path.as_posix()) if trial_output_path else None,
         )
 
     def record_execution(
@@ -6179,6 +6403,7 @@ def _runtime_dependency_output_artifact(dataset_state: DatasetRunState, *, run_d
             return artifact
     return None
 
+
 def _waiting_runtime_dependencies(state: StudyRunState, target: str) -> list[str]:
     """Return upstream ADaM datasets whose real runtime output is still needed."""
 
@@ -6444,6 +6669,54 @@ def _generation_quality_from_dataset_result(result: dict[str, Any], *, llm_provi
         "provider_base_url": result.get("provider_base_url"),
         "not_real_derivation": not_real_derivation,
     }
+
+
+def _code_agent_metadata_from_dataset_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Return Code Agent package metadata safe to persist in DatasetRunState."""
+
+    return {
+        "version": "v1",
+        "package_path": result.get("code_agent_package_path"),
+        "review_path": result.get("code_agent_review_path"),
+        "attempts": list(result.get("code_agent_attempts", [])),
+        "trial_run_status": result.get("trial_run_status"),
+        "trial_runtime_report_path": result.get("trial_runtime_report_path"),
+        "trial_output_path": result.get("trial_output_path"),
+        "official_output_created": False,
+        "official_output_policy": "Official ADaM output is created only after human code approval.",
+    }
+
+
+def _optional_existing_path(value: object) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    return path if path.exists() and path.is_file() else None
+
+
+def _failure_type_from_code_agent_category(classification: dict[str, Any]) -> str:
+    category = str(classification.get("category") or "").strip().lower()
+    if category == "environment_error":
+        return "sandbox_error"
+    if category == "input_or_spec_error":
+        return "spec_error"
+    if category == "static_contract_error":
+        return "code_error"
+    if category == "code_error":
+        return "code_error"
+    return "unknown"
+
+
+def _route_from_code_agent_next_action(next_action: object) -> str:
+    action = str(next_action or "").strip().lower()
+    if action in {"repair_code", "human_review_code_package"}:
+        return "repair_code"
+    if action in {"review_inputs_or_spec", "revise_spec"}:
+        return "revise_spec"
+    if action == "fix_runtime_environment":
+        return "fail"
+    return "human_review"
 
 
 def _assert_dependency_artifacts_current(records: list[Any], *, stale_message: str) -> None:

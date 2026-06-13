@@ -29,6 +29,7 @@ from adam_agent.api.models import (
     GenerateCodeResponse,
     GraphCommandRequest,
     GraphCommandResponse,
+    ImportExternalCodePackageRequest,
     LLMConnectionTestRequest,
     LLMConnectionTestResponse,
     NativeDatasetFullRunStartRequest,
@@ -70,6 +71,7 @@ from adam_agent.api.service import (
     finalize_dataset_inputs,
     generate_dataset_draft_spec,
     generate_dataset_code,
+    import_external_code_package_for_dataset,
     persist_code_review,
     persist_dependency_review,
     persist_draft_spec_review,
@@ -317,6 +319,17 @@ def create_app() -> FastAPI:
     def generate_code(run_id: str, dataset: str, request: GenerateCodeRequest) -> GenerateCodeResponse:
         try:
             return generate_dataset_code(run_id, dataset, request)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/runs/{run_id}/datasets/{dataset}/import-external-code-package", response_model=GenerateCodeResponse)
+    def import_external_code_package(
+        run_id: str,
+        dataset: str,
+        request: ImportExternalCodePackageRequest,
+    ) -> GenerateCodeResponse:
+        try:
+            return import_external_code_package_for_dataset(run_id, dataset, request)
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

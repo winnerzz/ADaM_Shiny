@@ -2878,6 +2878,9 @@ class GraphGatewayTests(unittest.TestCase):
                 "code_risk_points": ["Review generated derivation."],
                 "code_used_inputs": ["AE"],
                 "code_expected_outputs": ["outputs/adae.csv"],
+                "code_agent_package_path": str((run_dir / "code_agent" / "adae" / "package.json").as_posix()),
+                "code_agent_attempts": [{"attempt": 1, "status": "trial_passed"}],
+                "trial_run_status": "pass",
                 "product_context_warnings": ["Context warning."],
                 "agent_decisions": [],
                 "agent_node_inputs": [
@@ -2963,6 +2966,9 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(dataset_state.code_state["risk_points"], ["Review generated derivation."])
         self.assertEqual(dataset_state.code_state["used_inputs"], ["AE"])
         self.assertEqual(dataset_state.code_state["expected_outputs"], ["outputs/adae.csv"])
+        self.assertEqual(dataset_state.code_state["code_agent"]["version"], "v1")
+        self.assertEqual(dataset_state.code_state["code_agent"]["trial_run_status"], "pass")
+        self.assertEqual(dataset_state.code_state["code_agent"]["attempts"], [{"attempt": 1, "status": "trial_passed"}])
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_inputs], ["code_agent", "static_review_agent"])
         self.assertEqual([item["agent"] for item in dataset_state.agent_node_outputs], ["code_agent", "static_review_agent"])
         self.assertEqual(
@@ -2979,6 +2985,90 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(
             [item["decision"] for item in persisted_state["agent_node_outputs"]],
             ["dependency_plan_prepared", "r_code_generated", "static_check_recorded"],
+        )
+
+    def test_gateway_generate_code_persists_blocked_code_agent_package(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_code_agent_blocked") / "PSY201"
+        run_id = "run_lg2_gateway_code_agent_blocked"
+        run_dir = study_dir / "runs" / run_id
+        code_dir = run_dir / "code"
+        llm_dir = run_dir / "llm"
+        agent_dir = run_dir / "code_agent" / "adae"
+        runtime_dir = run_dir / "_ca" / "adae" / "a01"
+        spec_dir = study_dir / "input_spec"
+        code_dir.mkdir(parents=True)
+        llm_dir.mkdir()
+        agent_dir.mkdir(parents=True)
+        runtime_dir.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (study_dir / "input_sdtm").mkdir()
+        (study_dir / "input_sdtm" / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (spec_dir / "adae.json").write_text(
+            json.dumps({"dataset": "ADAE", "variables": [{"variable": "USUBJID"}]}),
+            encoding="utf-8",
+        )
+        code_path = code_dir / "build_adae.R"
+        code_path.write_text("write.csv(data.frame(USUBJID='01'), 'outputs/wrong.csv')\n", encoding="utf-8")
+        static_path, _static_sha = _write_static_check_for_code(study_dir, run_id, "ADAE", code_path)
+        response_path = llm_dir / "adae_response.json"
+        parsed_path = llm_dir / "adae_parsed_response.json"
+        package_path = agent_dir / "package.json"
+        review_path = agent_dir / "review.md"
+        runtime_path = runtime_dir / "runtime_report.json"
+        response_path.write_text(json.dumps({"dataset": "ADAE"}), encoding="utf-8")
+        parsed_path.write_text(json.dumps({"dataset": "ADAE", "r_code": code_path.read_text(encoding="utf-8")}), encoding="utf-8")
+        package_path.write_text(json.dumps({"official_output_created": False, "trial_run_status": "runtime_failed"}), encoding="utf-8")
+        review_path.write_text("# Code Agent Review\n", encoding="utf-8")
+        runtime_path.write_text(json.dumps({"exit_code": 1, "trial_run": True}), encoding="utf-8")
+        gateway = GraphGateway()
+
+        with patch("adam_agent.graph.gateway.compile_dataset_graph") as compile_graph:
+            compile_graph.return_value.invoke.return_value = {
+                "status": "failed",
+                "failure_type": "code_generation_error",
+                "real_run_error": "R exited with code 1.",
+                "next_action": "human_review_code_package",
+                "code_path": str(code_path.as_posix()),
+                "generated_code": code_path.read_text(encoding="utf-8"),
+                "static_check_path": str(static_path.as_posix()),
+                "llm_response_path": str(response_path.as_posix()),
+                "parsed_response_path": str(parsed_path.as_posix()),
+                "code_agent_package_path": str(package_path.as_posix()),
+                "code_agent_review_path": str(review_path.as_posix()),
+                "code_agent_attempts": [{"attempt": 1, "status": "blocked"}],
+                "trial_run_status": "runtime_failed",
+                "trial_runtime_report_path": str(runtime_path.as_posix()),
+                "code_agent_failure_classification": {
+                    "category": "code_error",
+                    "repairable": False,
+                    "reason": "R exited with code 1.",
+                    "next_action": "human_review_code_package",
+                },
+                "risk_flags": ["code_agent_package_blocked"],
+            }
+            result = gateway.generate_code(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                dataset="ADAE",
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        dataset_state = result.graph_state.datasets["ADAE"]
+        self.assertEqual(dataset_state.status, "terminal_failure")
+        self.assertEqual(dataset_state.current_interrupt.name, "terminal_failure")
+        self.assertEqual(dataset_state.code_state["status"], "blocked")
+        self.assertEqual(dataset_state.code_state["code_agent"]["package_path"], str(package_path.as_posix()))
+        self.assertEqual(dataset_state.code_state["code_agent"]["attempts"], [{"attempt": 1, "status": "blocked"}])
+        self.assertEqual(dataset_state.execution_state["source"], "code_agent_package_builder")
+        self.assertEqual(dataset_state.failures[0].node, "code_agent_build_code_package")
+        self.assertEqual(result.code_agent_package_path, str(package_path.as_posix()))
+        persisted_state = json.loads((run_dir / "graph_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted_state["datasets"]["ADAE"]["status"], "terminal_failure")
+        self.assertEqual(
+            persisted_state["datasets"]["ADAE"]["code_state"]["code_agent"]["trial_run_status"],
+            "runtime_failed",
         )
 
     def test_gateway_native_code_review_roundtrip_persists_formal_review_artifact(self) -> None:
@@ -6762,6 +6852,7 @@ class GraphGatewayTests(unittest.TestCase):
             llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
         )
         self.assertIn("ADAE", continued.started_datasets)
+
     def test_gateway_native_study_loop_dependency_output_gate_requires_run_output_artifact_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_hash_gate") / "PSY201"
         output_dir = study_dir / "runs" / "run_lg2_native_study_loop_dependency_hash_gate" / "outputs"

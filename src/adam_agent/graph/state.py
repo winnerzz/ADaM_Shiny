@@ -100,6 +100,13 @@ class DatasetGraphState(TypedDict, total=False):
     code_risk_points: list[str]
     code_used_inputs: list[str]
     code_expected_outputs: list[str]
+    code_agent_package_path: str
+    code_agent_review_path: str
+    code_agent_attempts: list[dict[str, object]]
+    trial_run_status: str
+    trial_runtime_report_path: str
+    trial_output_path: str
+    code_agent_failure_classification: dict[str, object]
     next_action: str
     dependency_resolution: list[dict[str, object]]
     llm_exposure: dict[str, object]

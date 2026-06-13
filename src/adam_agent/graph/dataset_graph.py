@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from adam_agent.agents import build_agent_node_input, build_agent_node_output, record_agent_decision
+from adam_agent.agents.code_agent import build_code_package
 from adam_agent.downstream.runner import DownstreamRunResult, run_downstream_adam
 from adam_agent.graph.execution import GraphExecutionError, execute_approved_r_code
 from adam_agent.graph.execution_modes import (
@@ -47,16 +48,11 @@ from adam_agent.llm.draft_spec import (
 )
 from adam_agent.llm.generated_code import (
     LLMGeneratedCodeError,
-    parse_generated_code_response,
-    write_generated_code_artifacts,
 )
 from adam_agent.llm.mock_code import default_mock_generated_code_response
-from adam_agent.llm.prompt_compaction import (
-    MAX_SAMPLE_ROWS_IN_PROMPT,
-    compact_prompt_from_context,
-    write_compact_prompt_artifact,
-)
+from adam_agent.llm.prompt_compaction import MAX_SAMPLE_ROWS_IN_PROMPT
 from adam_agent.schemas.artifacts import ArtifactRef
+from adam_agent.schemas.code_agent import CodeAgentTask
 from adam_agent.schemas.graph_state import StudyRunState
 from adam_agent.schemas.llm import LLMExposureConfig
 from adam_agent.schemas.routing import FailureRecord
@@ -710,90 +706,154 @@ def generate_r_code_agent_node(
             next_action="review_draft_spec",
         )
 
-    code_input = _code_agent_input(state, context_dict)
     try:
-        provider_config = LLMProviderConfig(**state.get("llm_provider", {}))
-        exposure = LLMExposureConfig.model_validate(state.get("llm_exposure", {}))
-        llm_client = llm_client_builder(provider_config)
-        if provider_config.provider.strip().lower() == "mock":
-            llm_client = MockLLMClient(fixed_response_text=default_mock_generated_code_response(target))
-        compact_prompt = compact_prompt_from_context(context_dict)
-        prompt_artifact = write_compact_prompt_artifact(
-            study_id=state["study_id"],
-            run_id=state["run_id"],
-            target_dataset=target,
-            study_dir=study_dir,
-            prompt=compact_prompt,
-            source_context_artifact_id=_artifact_id(state.get("product_context_artifact")),
-        )
-        llm_response = llm_client.generate(
-            _llm_request_for_code_generation(
-                prompt=compact_prompt,
-                target=target,
+        code_agent_result = build_code_package(
+            CodeAgentTask(
+                study_dir=study_dir,
                 study_id=state["study_id"],
                 run_id=state["run_id"],
-                provider_config=provider_config,
-                exposure=exposure,
-                context_dict=context_dict,
-                prompt_artifact=prompt_artifact,
+                dataset=target,
+                context=context_dict,
+                context_artifact_id=_artifact_id(state.get("product_context_artifact")),
+                spec_source=str(spec_source or ""),
+                approved_spec_path=str(target_spec.get("path") or "") or None,
+                llm_provider=dict(state.get("llm_provider", {})),
+                llm_exposure=dict(state.get("llm_exposure", {})),
+                rscript_path=state.get("rscript_path") or None,
+                max_attempts=2,
+                required_identifiers=_required_identifiers_from_spec(target_spec),
+                required_identifier_source_id=_spec_source_id(target_spec),
+            ),
+            llm_client_builder=llm_client_builder,
+        )
+        if not code_agent_result.ready_for_human_review:
+            failure = code_agent_result.failure_classification
+            reason = failure.reason if failure is not None else "Code Agent package is blocked."
+            result = _product_failure(
+                "code_generation_error",
+                reason,
+                next_action=failure.next_action if failure is not None else "review_code_package",
             )
-        )
-        package = parse_generated_code_response(llm_response.response_text, expected_dataset=target)
-        call_record = llm_response.call_record
-        llm_provider = _llm_call_field(call_record, "provider", provider_config.provider)
-        llm_model = _llm_call_field(call_record, "model", provider_config.model)
-        provider_alias = _llm_call_field(call_record, "provider_alias", None)
-        transport = _llm_call_field(call_record, "transport", None)
-        provider_base_url = _llm_call_field(call_record, "provider_base_url", None)
-        not_real_derivation = _not_real_generation(
-            provider_config,
-            provider=llm_provider,
-            provider_alias=provider_alias,
-            transport=transport,
-        )
-        artifacts = write_generated_code_artifacts(
-            study_id=state["study_id"],
-            run_id=state["run_id"],
-            study_dir=study_dir,
-            package=package,
-            response_text=llm_response.response_text,
-        )
-        static_check_path = _write_static_check_report(
-            study_dir=Path(study_dir),
-            run_id=state["run_id"],
-            study_id=state["study_id"],
-            target=target,
-            code_path=Path(artifacts.code_artifact.path),
-            required_identifiers=_required_identifiers_from_spec(target_spec),
-            required_identifier_source_id=_spec_source_id(target_spec),
-            rscript_path=state.get("rscript_path") or None,
-        )
+            result.update(
+                {
+                    "code_path": code_agent_result.final_code_path,
+                    "generated_code": code_agent_result.final_code,
+                    "static_check_path": code_agent_result.static_check_path,
+                    "llm_response_path": code_agent_result.response_path,
+                    "parsed_response_path": code_agent_result.parsed_response_path,
+                    "llm_provider": code_agent_result.llm_provider,
+                    "llm_model": code_agent_result.llm_model,
+                    "provider_alias": code_agent_result.provider_alias,
+                    "transport": code_agent_result.transport,
+                    "provider_base_url": code_agent_result.provider_base_url,
+                    "not_real_derivation": code_agent_result.not_real_derivation,
+                    "code_assumptions": code_agent_result.assumptions,
+                    "code_risk_points": code_agent_result.risk_points,
+                    "code_used_inputs": code_agent_result.used_inputs,
+                    "code_expected_outputs": code_agent_result.expected_outputs,
+                    "code_agent_package_path": code_agent_result.review_package_path,
+                    "code_agent_review_path": code_agent_result.review_markdown_path,
+                    "code_agent_attempts": [attempt.model_dump(mode="json") for attempt in code_agent_result.attempts],
+                    "trial_run_status": code_agent_result.trial_run_status,
+                    "trial_runtime_report_path": code_agent_result.trial_runtime_report_path,
+                    "trial_output_path": code_agent_result.trial_output_path,
+                    "code_agent_failure_classification": failure.model_dump(mode="json") if failure else {},
+                    "risk_flags": code_agent_result.risk_points + ["code_agent_package_blocked"],
+                }
+            )
+            return result
+        static_check_path = Path(code_agent_result.static_check_path)
+        if not static_check_path.exists():
+            static_check_path = _write_static_check_report(
+                study_dir=Path(study_dir),
+                run_id=state["run_id"],
+                study_id=state["study_id"],
+                target=target,
+                code_path=Path(code_agent_result.final_code_path),
+                required_identifiers=_required_identifiers_from_spec(target_spec),
+                required_identifier_source_id=_spec_source_id(target_spec),
+                rscript_path=state.get("rscript_path") or None,
+            )
     except (LLMGeneratedCodeError, LLMProviderResponseError, StaticRuleError, ValueError) as exc:
         return _product_failure("code_generation_error", str(exc), next_action="generate_code")
 
+    prompt_artifact = _tool_log_artifact_from_path(
+        state,
+        Path(code_agent_result.prompt_path),
+        kind_id="code_agent_prompt",
+        kind="llm_prompt",
+        format="txt",
+    )
+    response_artifact = _tool_log_artifact_from_path(
+        state,
+        Path(code_agent_result.response_path),
+        kind_id="code_agent_response",
+        kind="llm_response",
+        format="json",
+    )
+    parsed_artifact = _tool_log_artifact_from_path(
+        state,
+        Path(code_agent_result.parsed_response_path),
+        kind_id="code_agent_parsed_response",
+        kind="tool_log",
+        format="json",
+    )
+    code_artifact = ArtifactRef(
+        artifact_id=f"generated_code_{state['study_id'].lower()}_{state['run_id']}_{target.lower()}",
+        kind="generated_code",
+        path=str(Path(code_agent_result.final_code_path).as_posix()),
+        sha256=f"sha256:{sha256_file(Path(code_agent_result.final_code_path))}",
+        dataset=target,
+        format="R",
+        role="output",
+        metadata={
+            "source": "code_agent_package",
+            "used_inputs": code_agent_result.used_inputs,
+            "expected_outputs": code_agent_result.expected_outputs,
+        },
+    )
+    static_artifact = _tool_log_artifact(state, static_check_path, kind_id="static_check")
+    code_agent_package_artifact = _tool_log_artifact_from_path(
+        state,
+        Path(code_agent_result.review_package_path),
+        kind_id="code_agent_package",
+        kind="tool_log",
+        format="json",
+    )
+    code_agent_review_artifact = _tool_log_artifact_from_path(
+        state,
+        Path(code_agent_result.review_markdown_path) if code_agent_result.review_markdown_path else Path(code_agent_result.review_package_path),
+        kind_id="code_agent_review",
+        kind="tool_log",
+        format="md",
+    )
     code_artifact_ids = [
         prompt_artifact.artifact_id,
-        artifacts.response_artifact.artifact_id,
-        artifacts.package_artifact.artifact_id,
-        artifacts.code_artifact.artifact_id,
+        response_artifact.artifact_id,
+        parsed_artifact.artifact_id,
+        code_artifact.artifact_id,
+        code_agent_package_artifact.artifact_id,
     ]
-    static_artifact = _tool_log_artifact(state, static_check_path, kind_id="static_check")
     code_output = _code_agent_output(
         state,
         decision="r_code_generated",
         status="needs_review",
-        reason="Generated R code from an approved spec and stopped before execution.",
+        reason="Code Agent built a review package with static checks and trial-run evidence before official execution.",
         outputs={
-            "code_path": artifacts.code_artifact.path,
+            "code_path": code_agent_result.final_code_path,
             "spec_source": spec_source,
             "next_action": "review_code",
+            "package_kind": "code_agent_package",
+            "code_agent_package_path": code_agent_result.review_package_path,
+            "trial_run_status": code_agent_result.trial_run_status,
+            "attempt_count": len(code_agent_result.attempts),
         },
-        risk_flags=package.risk_points,
+        risk_flags=code_agent_result.risk_points,
         artifact_ids=code_artifact_ids,
     )
     static_input = _static_review_agent_input(
         state,
-        code_artifact_id=artifacts.code_artifact.artifact_id,
+        code_artifact_id=code_artifact.artifact_id,
         target_spec=target_spec,
     )
     static_output = _static_review_agent_output(
@@ -809,33 +869,41 @@ def generate_r_code_agent_node(
         "status": "needs_review",
         "route": "human_review",
         "current_interrupt": "code_review",
-        "generated_code": package.r_code,
-        "code_path": artifacts.code_artifact.path,
-        "llm_response_path": artifacts.response_artifact.path,
-        "parsed_response_path": artifacts.package_artifact.path,
+        "generated_code": code_agent_result.final_code,
+        "code_path": code_agent_result.final_code_path,
+        "llm_response_path": code_agent_result.response_path,
+        "parsed_response_path": code_agent_result.parsed_response_path,
         "static_check_path": str(static_check_path.as_posix()),
-        "llm_provider": llm_provider,
-        "llm_model": llm_model,
-        "provider_alias": provider_alias,
-        "transport": transport,
-        "provider_base_url": provider_base_url,
-        "not_real_derivation": not_real_derivation,
-        "code_assumptions": package.assumptions,
-        "code_risk_points": package.risk_points,
-        "code_used_inputs": package.used_inputs,
-        "code_expected_outputs": package.expected_outputs,
+        "llm_provider": code_agent_result.llm_provider,
+        "llm_model": code_agent_result.llm_model,
+        "provider_alias": code_agent_result.provider_alias,
+        "transport": code_agent_result.transport,
+        "provider_base_url": code_agent_result.provider_base_url,
+        "not_real_derivation": code_agent_result.not_real_derivation,
+        "code_assumptions": code_agent_result.assumptions,
+        "code_risk_points": code_agent_result.risk_points,
+        "code_used_inputs": code_agent_result.used_inputs,
+        "code_expected_outputs": code_agent_result.expected_outputs,
+        "code_agent_package_path": code_agent_result.review_package_path,
+        "code_agent_review_path": code_agent_result.review_markdown_path,
+        "code_agent_attempts": [attempt.model_dump(mode="json") for attempt in code_agent_result.attempts],
+        "trial_run_status": code_agent_result.trial_run_status,
+        "trial_runtime_report_path": code_agent_result.trial_runtime_report_path,
+        "trial_output_path": code_agent_result.trial_output_path,
         "next_action": "review_code",
         "audit_artifacts": [
             prompt_artifact,
-            artifacts.response_artifact,
-            artifacts.package_artifact,
-            artifacts.code_artifact,
+            response_artifact,
+            parsed_artifact,
+            code_artifact,
             static_artifact,
+            code_agent_package_artifact,
+            code_agent_review_artifact,
         ],
-        "agent_node_inputs": [code_input, static_input],
+        "agent_node_inputs": [_code_agent_input(state, context_dict), static_input],
         "agent_node_outputs": [code_output, static_output],
         "agent_decisions": list(code_output["agent_decisions"]) + list(static_output["agent_decisions"]),
-        "risk_flags": package.risk_points + ["static_check_limited_scope"],
+        "risk_flags": code_agent_result.risk_points + ["static_check_limited_scope"],
     }
 
 
@@ -2004,6 +2072,27 @@ def _tool_log_artifact(state: DatasetGraphState, path: Path, *, kind_id: str) ->
         sha256=f"sha256:{sha256_file(path)}",
         dataset=dataset,
         format="json",
+        role="audit",
+        metadata={kind_id: True},
+    )
+
+
+def _tool_log_artifact_from_path(
+    state: DatasetGraphState,
+    path: Path,
+    *,
+    kind_id: str,
+    kind: str = "tool_log",
+    format: str = "json",
+) -> ArtifactRef:
+    dataset = state["dataset"]
+    return ArtifactRef(
+        artifact_id=f"{kind_id}_{state['study_id'].lower()}_{state['run_id']}_{dataset.lower()}",
+        kind=kind,  # type: ignore[arg-type]
+        path=str(path.as_posix()),
+        sha256=f"sha256:{sha256_file(path)}",
+        dataset=dataset,
+        format=format,
         role="audit",
         metadata={kind_id: True},
     )

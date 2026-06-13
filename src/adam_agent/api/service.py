@@ -33,6 +33,7 @@ from adam_agent.api.models import (
     FinalizeInputsResponse,
     GenerateCodeResponse,
     GraphCommandResponse,
+    ImportExternalCodePackageRequest,
     LLMConnectionTestResponse,
     NativeDatasetFullRunStartResponse,
     NativeDatasetFullRunResumeResponse,
@@ -53,6 +54,11 @@ from adam_agent.api.models import (
     StudyInputSummary,
     TablePageResponse,
     TerminalFailureReviewResponse,
+)
+from adam_agent.agents.external_code_package import (
+    ExternalCodePackageError,
+    ExternalCodePackageImportRequest,
+    import_external_code_package,
 )
 from adam_agent.downstream.runner import StructuralStubRRunner
 from adam_agent.graph.dependency_resolution import (
@@ -1380,8 +1386,98 @@ def generate_dataset_code(run_id: str, dataset: str, request: Any) -> GenerateCo
         response_path=result.response_path,
         parsed_response_path=result.parsed_response_path,
         static_check_path=result.static_check_path,
+        code_agent_package_path=result.code_agent_package_path,
+        code_agent_review_path=result.code_agent_review_path,
+        code_agent_attempts=list(result.code_agent_attempts or []),
+        trial_run_status=result.trial_run_status,
+        trial_runtime_report_path=result.trial_runtime_report_path,
+        trial_output_path=result.trial_output_path,
         dependency_review_status=result.dependency_review_status,
         warnings=warnings,
+        **_gateway_compatibility_metadata(result),
+    )
+
+
+def import_external_code_package_for_dataset(
+    run_id: str,
+    dataset: str,
+    request: ImportExternalCodePackageRequest,
+) -> GenerateCodeResponse:
+    """Import external Codex-authored R code into the existing code-review gate."""
+
+    study_dir = Path(request.study_dir).expanduser()
+    if not study_dir.exists() or not study_dir.is_dir():
+        raise ApiServiceError(f"study_dir does not exist or is not a directory: {study_dir}")
+    target = dataset.strip().upper()
+    study_id = request.study_id or study_dir.name
+    try:
+        imported = import_external_code_package(
+            ExternalCodePackageImportRequest(
+                study_dir=str(study_dir),
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                staging_root=request.staging_root,
+                source_workspace=request.source_workspace,
+                package_id=request.package_id,
+                codex_thread_id=request.codex_thread_id,
+                code_path=request.code_path,
+                assumptions_path=request.assumptions_path,
+                rscript_path=request.rscript_path or _default_rscript_path(),
+                required_identifiers=list(request.required_identifiers or []),
+                required_identifier_source_id=request.required_identifier_source_id,
+            )
+        )
+        with _open_graph_gateway(study_dir=study_dir, run_id=run_id) as gateway:
+            result = gateway.record_code_generation(
+                study_dir=study_dir,
+                study_id=study_id,
+                run_id=run_id,
+                dataset=target,
+                code_path=imported.code_path,
+                code_sha256=imported.code_sha256,
+                static_check_path=imported.static_check_path,
+                static_check_sha256=imported.static_check_sha256,
+                spec_source="external_codex_package",
+                dependency_artifacts=[],
+                generation_quality={
+                    "source": "external_codex_package",
+                    "not_real_derivation": False,
+                    "review_required": True,
+                    "official_output_created": False,
+                },
+                input_fingerprint_payload=input_fingerprint(study_dir),
+                assumptions=imported.assumptions,
+                risk_points=imported.risk_points,
+                used_inputs=imported.used_inputs,
+                expected_outputs=imported.expected_outputs,
+                agent_decisions=imported.agent_decisions,
+                agent_node_inputs=imported.agent_node_inputs,
+                agent_node_outputs=imported.agent_node_outputs,
+                risk_flags=imported.risk_flags,
+                code_agent_metadata=imported.code_agent_metadata,
+            )
+    except (ExternalCodePackageError, ValueError) as exc:
+        raise ApiServiceError(str(exc)) from exc
+
+    code_text = Path(imported.code_path).read_text(encoding="utf-8", errors="replace")
+    return GenerateCodeResponse(
+        study_id=study_id,
+        run_id=run_id,
+        dataset=target,
+        status="external_code_imported",
+        code_path=imported.code_path,
+        generated_code=code_text,
+        assumptions=imported.assumptions,
+        risk_points=imported.risk_points,
+        used_inputs=imported.used_inputs,
+        expected_outputs=imported.expected_outputs,
+        static_check_path=imported.static_check_path,
+        code_agent_package_path=imported.package_manifest_path,
+        code_agent_review_path=imported.manifest_path,
+        code_agent_attempts=[],
+        trial_run_status="not_run",
+        warnings=imported.warnings,
         **_gateway_compatibility_metadata(result),
     )
 
