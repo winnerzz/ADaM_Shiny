@@ -3384,7 +3384,13 @@ console.log(JSON.stringify({
         self.assertEqual(response.status_code, 200)
         html = response.text
         demo_body = html.split("async function createDemoStudy()", 1)[1].split("function applyWorkspacePayload(payload)", 1)[0]
+        reset_body = html.split("function resetRunState()", 1)[1].split("function resetWorkflowPanels()", 1)[0]
+        panels_body = html.split("function resetWorkflowPanels()", 1)[1].split("function resetActiveDatasetView()", 1)[0]
         self.assertIn("await scanInputs({autoSelectTarget: false})", demo_body)
+        self.assertIn("resetRunState();", html.split("function applyWorkspacePayload(payload)", 1)[1].split("async function uploadRole(role)", 1)[0])
+        self.assertIn("resetWorkflowPanels();", reset_body)
+        self.assertIn("Load inputs first, then choose a target.", panels_body)
+        self.assertIn("No code generated yet.", panels_body)
         self.assertNotIn("autoSelectFirstTarget", demo_body)
         self.assertNotIn("preparePlan()", demo_body)
         self.assertNotIn("await refreshRunProgress()", demo_body)

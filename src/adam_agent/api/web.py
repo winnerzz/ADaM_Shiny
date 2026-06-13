@@ -4343,7 +4343,21 @@ INDEX_HTML = r"""<!doctype html>
       state.selectedTargetsForPlan = state.selectedTarget ? [state.selectedTarget] : [];
       state.tablePages = {};
       state.compareResults = {};
+      resetWorkflowPanels();
       resetActiveDatasetView();
+    }
+
+    function resetWorkflowPanels() {
+      byId('planView').innerHTML = '<p class="note">Load inputs first, then choose a target.</p>';
+      byId('draftSpecPane').innerHTML = '<p class="note">Finalize inputs after upload. If no approved spec is present, the app will generate a draft spec for review.</p>';
+      byId('reviewPane').innerHTML = '<p class="note">No code generated yet.</p>';
+      byId('specActionHints').innerHTML = '';
+      byId('generationActionHints').innerHTML = '';
+      byId('targetSelectionSummary').textContent = 'No target selected.';
+      setPill('planStatus', 'waiting');
+      setPill('codeStatus', 'not generated');
+      setPill('humanReviewQueueStatus', 'clear');
+      setPill('studyLoopResultStatus', 'idle');
     }
 
     function resetActiveDatasetView() {
