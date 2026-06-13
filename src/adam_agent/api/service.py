@@ -111,14 +111,29 @@ class ApiServiceError(RuntimeError):
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEMO_SOURCE_DIR = ROOT / "demo-data" / "shiny_minimal"
+APP_ROOT_ENV = "ADAM_AGENT_APP_ROOT"
+
+
+def _existing_project_path(*parts: str) -> Path:
+    """Resolve repo-level assets in both source and installed Docker layouts."""
+
+    candidates: list[Path] = []
+    configured_root = os.environ.get(APP_ROOT_ENV, "").strip()
+    if configured_root:
+        candidates.append(Path(configured_root).expanduser().joinpath(*parts))
+    candidates.extend([Path.cwd().joinpath(*parts), ROOT.joinpath(*parts)])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0] if candidates else ROOT.joinpath(*parts)
+
+
 DEFAULT_DEMO_STUDY_ROOT = ROOT / ".tmp_tests" / "ui_demo_study"
 DEFAULT_PRODUCT_STUDY_ROOT = Path(
     os.environ.get("LOCALAPPDATA")
     or os.environ.get("APPDATA")
     or (Path.home() / ".adam_agent_studio")
 ) / "ADaMAgentStudio" / "studies"
-DEFAULT_DEMO_CONFIG_PATH = ROOT / "studies" / "_template" / "configs" / "mock_downstream.json"
 DEFAULT_LOCAL_RSCRIPT_ENV = "ADAM_AGENT_RSCRIPT_PATH"
 STUDY_INPUT_FOLDERS = ["input_sdtm", "input_spec", "input_define", "reference_adam", "legacy_code", "runs"]
 UPLOAD_ROLE_TO_FOLDER = {
@@ -167,6 +182,14 @@ def _default_demo_study_root() -> Path:
 
 def _default_product_study_root() -> Path:
     return Path(os.environ.get(PRODUCT_STUDY_ROOT_ENV, DEFAULT_PRODUCT_STUDY_ROOT)).expanduser()
+
+
+def _default_demo_source_dir() -> Path:
+    return _existing_project_path("demo-data", "shiny_minimal")
+
+
+def _default_demo_config_path() -> Path:
+    return _existing_project_path("studies", "_template", "configs", "mock_downstream.json")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -661,7 +684,7 @@ def create_default_product_workspace() -> ProductWorkspaceResponse:
         study_dir=str(root.resolve().as_posix()),
         run_id=f"run_{stamp[:14]}",
         target_datasets=[],
-        config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
+        config_path=str(_default_demo_config_path().as_posix()),
         rscript_path=None,
         session_id=session_id,
         expires_at=expires_at.isoformat(timespec="seconds") if expires_at else None,
@@ -773,7 +796,7 @@ def prepare_demo_study(
 ) -> DemoStudyResponse:
     """Prepare a local demo study from the bundled minimal demo-data package."""
 
-    source = Path(demo_source_dir).expanduser() if demo_source_dir else DEFAULT_DEMO_SOURCE_DIR
+    source = Path(demo_source_dir).expanduser() if demo_source_dir else _default_demo_source_dir()
     if not source.exists() or not source.is_dir():
         raise ApiServiceError(f"Demo source folder does not exist: {source}")
 
@@ -817,7 +840,7 @@ def prepare_demo_study(
         demo_source_dir=str(source.resolve().as_posix()),
         run_id=f"run_ui_{stamp[:14]}",
         target_datasets=[],
-        config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
+        config_path=str(_default_demo_config_path().as_posix()),
         execution_mode=LLM_DOWNSTREAM_R_SANDBOX_MODE if _default_rscript_path() else LLM_DOWNSTREAM_PROVIDER_MODE,
         rscript_path=_default_rscript_path(),
         created_files=created_files,

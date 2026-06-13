@@ -7,6 +7,7 @@ import csv
 import inspect
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -11529,6 +11530,7 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
     def test_docker_compose_enables_ephemeral_demo_cleanup(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
+        self.assertIn("ADAM_AGENT_APP_ROOT: /app", compose)
         self.assertIn("ADAM_AGENT_EPHEMERAL_SESSIONS", compose)
         self.assertIn("ADAM_AGENT_SESSION_TTL_SECONDS", compose)
         self.assertIn("rm -rf /app/workspace/studies/* /app/workspace/demo_studies/*", compose)
@@ -11537,7 +11539,31 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
     def test_dockerfile_copies_bundled_demo_data(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
+        self.assertIn("ADAM_AGENT_APP_ROOT=/app", dockerfile)
         self.assertIn("COPY demo-data ./demo-data", dockerfile)
+
+    def test_docker_runtime_app_root_resolves_bundled_demo_assets(self) -> None:
+        app_root = _workspace_dir("phase8_docker_app_root")
+        shutil.copytree(ROOT / "demo-data" / "shiny_minimal", app_root / "demo-data" / "shiny_minimal")
+        config_target = app_root / "studies" / "_template" / "configs"
+        config_target.mkdir(parents=True)
+        shutil.copy2(ROOT / "studies" / "_template" / "configs" / "mock_downstream.json", config_target / "mock_downstream.json")
+        old_app_root = os.environ.get("ADAM_AGENT_APP_ROOT")
+        os.environ["ADAM_AGENT_APP_ROOT"] = str(app_root)
+        try:
+            import adam_agent.api.service as service
+
+            target = _workspace_dir("phase8_docker_app_root_demo") / "demo_adam"
+            payload = service.prepare_demo_study(study_dir=target)
+
+            self.assertTrue(Path(payload.demo_source_dir).is_relative_to(app_root / "demo-data" / "shiny_minimal"))
+            self.assertTrue(Path(payload.config_path).is_relative_to(config_target))
+            self.assertTrue((target / "input_sdtm" / "ae.csv").exists())
+        finally:
+            if old_app_root is None:
+                os.environ.pop("ADAM_AGENT_APP_ROOT", None)
+            else:
+                os.environ["ADAM_AGENT_APP_ROOT"] = old_app_root
 
     def test_workspace_endpoint_creates_canonical_folders(self) -> None:
         study_dir = _workspace_dir("phase8_workspace_endpoint") / "MY_STUDY"

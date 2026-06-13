@@ -4,6 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     DEBIAN_FRONTEND=noninteractive \
+    ADAM_AGENT_APP_ROOT=/app \
     ADAM_AGENT_PRODUCT_STUDY_ROOT=/app/workspace/studies \
     ADAM_AGENT_DEMO_STUDY_ROOT=/app/workspace/demo_studies \
     ADAM_AGENT_RSCRIPT_PATH=/usr/bin/Rscript \
