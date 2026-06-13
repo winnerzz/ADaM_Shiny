@@ -638,11 +638,34 @@ class ProductWorkspaceResponse(StrictBaseModel):
     target_datasets: list[str] = Field(default_factory=list)
     config_path: str
     rscript_path: str | None = None
+    session_id: str | None = None
+    expires_at: str | None = None
+    ephemeral: bool = False
     workspace_mode: str = "managed"
     config_mode: str = "server_default"
     rscript_mode: str = "path_lookup"
     input_summary: StudyInputSummary
     notes: list[str] = Field(default_factory=list)
+
+
+class ProductSessionRequest(StrictBaseModel):
+    """Browser-session lifecycle request for managed temporary product workspaces."""
+
+    session_id: NonEmptyStr
+    study_dir: str | None = None
+
+
+class ProductSessionResponse(StrictBaseModel):
+    """Browser-session lifecycle response."""
+
+    session_id: str
+    closed: bool = False
+    touched: bool = False
+    ephemeral: bool = True
+    expires_at: str | None = None
+    deleted_path: str | None = None
+    removed_sessions: list[str] = Field(default_factory=list)
+    message: str
 
 
 class RunStudyResponse(StrictBaseModel):

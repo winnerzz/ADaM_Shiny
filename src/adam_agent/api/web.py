@@ -2274,6 +2274,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="header-actions">
         <button class="secondary llm-config-button" id="openLlmSettingsButton" type="button" data-i18n="llmConfig">LLM Config</button>
         <button class="secondary" id="newStudyButton" type="button" data-i18n="newStudy">New Study</button>
+        <button class="secondary" id="endSessionButton" type="button" data-i18n="endSession">End Session</button>
         <span class="llm-mode-chip" id="llmModeChip">Mock LLM</span>
         <span class="language-toggle" aria-label="Language">
           <button type="button" data-lang-option="zh">中文</button>
@@ -2711,6 +2712,8 @@ INDEX_HTML = r"""<!doctype html>
     const I18N = {
       en: {
         llmConfig: 'LLM Config',
+        newStudy: 'New Study',
+        endSession: 'End Session',
         currentStatus: 'Current Status',
         environment: 'Environment',
         checkEnvironment: 'Check Environment',
@@ -2762,6 +2765,7 @@ INDEX_HTML = r"""<!doctype html>
       zh: {
         llmConfig: '模型设置',
         newStudy: '重新开始',
+        endSession: '结束并清除数据',
         currentStatus: '当前状态',
         environment: '运行环境',
         checkEnvironment: '检查环境',
@@ -2914,6 +2918,9 @@ INDEX_HTML = r"""<!doctype html>
 
     const state = {
       studyId: null,
+      productSessionId: null,
+      productSessionExpiresAt: null,
+      productSessionEphemeral: false,
       inputSummary: null,
       plan: null,
       graphState: null,
@@ -3261,6 +3268,9 @@ INDEX_HTML = r"""<!doctype html>
       const payload = {
         study_dir: studyDir(),
         study_id: state.studyId,
+        product_session_id: state.productSessionId,
+        product_session_expires_at: state.productSessionExpiresAt,
+        product_session_ephemeral: state.productSessionEphemeral,
         run_id: byId('runId').value.trim(),
         selected_target: state.selectedTarget,
         selected_targets: selectedTargets(),
@@ -3294,6 +3304,62 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    function productSessionPayload() {
+      if (!state.productSessionId) return null;
+      return {
+        session_id: state.productSessionId,
+        study_dir: studyDir() || null
+      };
+    }
+
+    function sendProductSessionBeacon() {
+      const payload = productSessionPayload();
+      if (!payload || !state.productSessionEphemeral || !navigator.sendBeacon) return false;
+      try {
+        const blob = new Blob([JSON.stringify(payload)], {type: 'application/json'});
+        return navigator.sendBeacon('/product-session/close', blob);
+      } catch {
+        return false;
+      }
+    }
+
+    async function closeProductSession({silent = false} = {}) {
+      const payload = productSessionPayload();
+      if (!payload || !state.productSessionEphemeral) {
+        clearBrowserSession();
+        return null;
+      }
+      try {
+        return await api('/product-session/close', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {
+        if (!silent) {
+          failOperation('Session cleanup failed', error);
+          throw error;
+        }
+        return null;
+      }
+    }
+
+    async function touchProductSession() {
+      const payload = productSessionPayload();
+      if (!payload || !state.productSessionEphemeral) return;
+      try {
+        const response = await api('/product-session/touch', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        state.productSessionExpiresAt = response.expires_at || state.productSessionExpiresAt;
+        saveBrowserSession();
+      } catch {
+        // TTL cleanup is best effort; active operations will surface real errors separately.
+      }
+    }
+
     async function restoreBrowserSession() {
       const saved = readBrowserSession();
       if (!saved?.study_dir || !saved?.run_id) return false;
@@ -3306,6 +3372,9 @@ INDEX_HTML = r"""<!doctype html>
       if (saved.config_path) byId('configPath').value = saved.config_path;
       if (saved.rscript_path) byId('rscriptPath').value = saved.rscript_path;
       state.studyId = saved.study_id || null;
+      state.productSessionId = saved.product_session_id || null;
+      state.productSessionExpiresAt = saved.product_session_expires_at || null;
+      state.productSessionEphemeral = Boolean(saved.product_session_ephemeral);
       state.selectedTarget = saved.selected_target || null;
       state.selectedTargetsForPlan = Array.isArray(saved.selected_targets)
         ? saved.selected_targets.map((target) => String(target || '').toUpperCase()).filter(Boolean)
@@ -3313,6 +3382,7 @@ INDEX_HTML = r"""<!doctype html>
       if (state.selectedTarget) recordTargetSource(state.selectedTarget, 'browser_session');
       beginOperation('Restoring last study', 'Reloading saved study inputs and graph progress from the local backend.');
       try {
+        await touchProductSession();
         await scanInputs({restoreMode: true});
         await refreshGraphReadModels();
         if (runId()) await loadReviewSummary(runId(), {detailLevel: 'summary'});
@@ -3578,6 +3648,7 @@ INDEX_HTML = r"""<!doctype html>
       const hasCurrentWork = Boolean(
         studyDir() ||
         state.studyId ||
+        state.productSessionId ||
         recognizedInputCount() ||
         state.plan ||
         state.runProgress ||
@@ -3586,14 +3657,18 @@ INDEX_HTML = r"""<!doctype html>
       );
       if (hasCurrentWork) {
         const ok = window.confirm(
-          'Start a new study in this browser? Existing run folders and audit files will be kept, but the current page state will be cleared.'
+          'Start a new study in this browser? Temporary session files for the current study will be removed when this server supports session cleanup.'
         );
         if (!ok) return;
       }
+      await closeProductSession({silent: true});
       clearBrowserSession();
       beginOperation('Starting new study', 'Clearing the current browser session and creating a fresh upload workspace.');
       state.inputSummary = null;
       state.studyId = null;
+      state.productSessionId = null;
+      state.productSessionExpiresAt = null;
+      state.productSessionEphemeral = false;
       state.selectedTarget = null;
       state.selectedTargetsForPlan = [];
       state.targetCandidates = [];
@@ -3609,8 +3684,52 @@ INDEX_HTML = r"""<!doctype html>
       resetRunState();
       renderInputSummary(null);
       await startUploadWorkspace();
-      addEvent('New study started', 'Previous browser session was cleared. Historical run folders were not deleted.');
+      addEvent('New study started', 'Previous temporary browser session was cleared when available.');
       completeOperation('New study ready', 'Upload SDTM, specs, reference ADaM, define, or legacy code by role.');
+    }
+
+    async function endCurrentSession() {
+      const hasCurrentWork = Boolean(studyDir() || state.studyId || state.productSessionId || recognizedInputCount());
+      if (!hasCurrentWork) {
+        clearBrowserSession();
+        completeOperation('Session cleared', 'There was no active study session on this page.');
+        return;
+      }
+      const ok = window.confirm(
+        'End this browser study session and remove its uploaded files, generated code, outputs, and audit files from the demo workspace?'
+      );
+      if (!ok) return;
+      beginOperation('Ending session', 'Removing temporary study files and clearing this browser page.');
+      try {
+        await closeProductSession({silent: false});
+      } catch {
+        return;
+      }
+      clearBrowserSession();
+      state.inputSummary = null;
+      state.studyId = null;
+      state.productSessionId = null;
+      state.productSessionExpiresAt = null;
+      state.productSessionEphemeral = false;
+      state.selectedTarget = null;
+      state.selectedTargetsForPlan = [];
+      state.targetCandidates = [];
+      state.targetEvidenceSources = {};
+      state.lastStudyLoopResult = null;
+      state.events = [];
+      state.selectedView = 'summary';
+      state.selectedResultView = 'generated';
+      byId('studyDir').value = '';
+      byId('runId').value = defaultRunId();
+      byId('workspaceMessage').textContent = '';
+      for (const id of Object.values(uploadStatus)) byId(id).textContent = '';
+      for (const id of Object.values(uploadInputs)) byId(id).value = '';
+      resetRunState();
+      renderInputSummary(null);
+      renderTargetButtons([]);
+      renderGraphAwareDashboard();
+      renderActionAvailability();
+      completeOperation('Session ended', 'Temporary files were removed when the session was still present.');
     }
 
     async function createDemoStudy() {
@@ -3640,6 +3759,9 @@ INDEX_HTML = r"""<!doctype html>
 
     function applyWorkspacePayload(payload) {
       state.studyId = payload.study_id || null;
+      state.productSessionId = payload.session_id || null;
+      state.productSessionExpiresAt = payload.expires_at || null;
+      state.productSessionEphemeral = Boolean(payload.ephemeral);
       byId('studyDir').value = payload.study_dir || '';
       byId('runId').value = payload.run_id || defaultRunId();
       state.runtimeDefaults = {
@@ -9302,6 +9424,7 @@ INDEX_HTML = r"""<!doctype html>
     byId('createDemoButton').addEventListener('click', createDemoStudy);
     byId('startUploadButton').addEventListener('click', startUploadWorkspace);
     byId('newStudyButton').addEventListener('click', startNewStudy);
+    byId('endSessionButton').addEventListener('click', endCurrentSession);
     byId('finalizeInputsButton').addEventListener('click', finalizeInputsForDraftSpec);
     byId('startStudyLoopButton').addEventListener('click', startNativeStudyLoop);
     byId('approveDraftSpecButton').addEventListener('click', (event) => approveDraftSpec(event.currentTarget));
@@ -9339,6 +9462,11 @@ INDEX_HTML = r"""<!doctype html>
   }
   for (const button of document.querySelectorAll('[data-lang-option]')) {
     button.addEventListener('click', () => setLanguage(button.dataset.langOption));
+  }
+  if (window.addEventListener) {
+    window.addEventListener('pagehide', () => {
+      if (state.productSessionEphemeral) sendProductSessionBeacon();
+    });
   }
     for (const button of document.querySelectorAll('[data-upload-role]')) {
       button.addEventListener('click', () => uploadRole(button.dataset.uploadRole));

@@ -12,7 +12,12 @@ services:
       ADAM_AGENT_DEMO_STUDY_ROOT: /app/workspace/demo_studies
       ADAM_AGENT_RSCRIPT_PATH: /usr/bin/Rscript
       ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND: sqlite
+      ADAM_AGENT_EPHEMERAL_SESSIONS: "1"
+      ADAM_AGENT_SESSION_TTL_SECONDS: "${ADAM_AGENT_SESSION_TTL_SECONDS:-3600}"
       ADAM_AGENT_LIVE_LLM_TIMEOUT: "${ADAM_AGENT_LIVE_LLM_TIMEOUT:-300}"
+    command: >
+      sh -c "rm -rf /app/workspace/studies/* /app/workspace/demo_studies/* &&
+      python -m uvicorn adam_agent.api.app:create_app --factory --host 0.0.0.0 --port 8005"
     volumes:
       - adam_agent_workspace:/app/workspace
 

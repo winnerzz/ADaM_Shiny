@@ -12,9 +12,10 @@ import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -38,6 +39,7 @@ from adam_agent.api.models import (
     NativeDatasetResumeResponse,
     NativeStudyDatasetStartResult,
     NativeStudyStartResponse,
+    ProductSessionResponse,
     ProductWorkspaceResponse,
     RuntimeReadinessCheck,
     RuntimeReadinessResponse,
@@ -134,6 +136,10 @@ SERVICE_CHECKPOINTER_BACKEND_ENV = "ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"
 DEFAULT_SERVICE_CHECKPOINTER_BACKEND = "sqlite"
 DEMO_STUDY_ROOT_ENV = "ADAM_AGENT_DEMO_STUDY_ROOT"
 PRODUCT_STUDY_ROOT_ENV = "ADAM_AGENT_PRODUCT_STUDY_ROOT"
+PRODUCT_EPHEMERAL_SESSIONS_ENV = "ADAM_AGENT_EPHEMERAL_SESSIONS"
+PRODUCT_SESSION_TTL_ENV = "ADAM_AGENT_SESSION_TTL_SECONDS"
+DEFAULT_PRODUCT_SESSION_TTL_SECONDS = 6 * 60 * 60
+PRODUCT_SESSION_MANIFEST = ".session.json"
 
 
 def _default_rscript_path() -> str | None:
@@ -161,6 +167,194 @@ def _default_demo_study_root() -> Path:
 
 def _default_product_study_root() -> Path:
     return Path(os.environ.get(PRODUCT_STUDY_ROOT_ENV, DEFAULT_PRODUCT_STUDY_ROOT)).expanduser()
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _product_ephemeral_sessions_enabled() -> bool:
+    return _env_flag(PRODUCT_EPHEMERAL_SESSIONS_ENV, default=False)
+
+
+def _product_session_ttl_seconds() -> int:
+    raw = os.environ.get(PRODUCT_SESSION_TTL_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PRODUCT_SESSION_TTL_SECONDS
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ApiServiceError(f"{PRODUCT_SESSION_TTL_ENV} must be an integer number of seconds.") from exc
+    if parsed < 60:
+        raise ApiServiceError(f"{PRODUCT_SESSION_TTL_ENV} must be at least 60 seconds.")
+    return parsed
+
+
+def _product_sessions_root() -> Path:
+    return _default_product_study_root() / "sessions"
+
+
+def _safe_resolve(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_session_id(session_id: str) -> str:
+    normalized = session_id.strip()
+    if not re.fullmatch(r"session_[0-9]{14}_[a-f0-9]{8}", normalized):
+        raise ApiServiceError("Invalid product session id.")
+    return normalized
+
+
+def _session_root_for_id(session_id: str) -> Path:
+    normalized = _validate_session_id(session_id)
+    sessions_root = _safe_resolve(_product_sessions_root())
+    session_root = _safe_resolve(sessions_root / normalized)
+    if not _is_relative_to(session_root, sessions_root):
+        raise ApiServiceError("Product session path escaped the managed session root.")
+    return session_root
+
+
+def _write_product_session_manifest(
+    *,
+    session_root: Path,
+    session_id: str,
+    study_dir: Path,
+    created_at: datetime,
+    expires_at: datetime,
+    status: str = "active",
+) -> None:
+    manifest = {
+        "session_id": session_id,
+        "created_at": created_at.isoformat(timespec="seconds"),
+        "last_seen_at": created_at.isoformat(timespec="seconds"),
+        "expires_at": expires_at.isoformat(timespec="seconds"),
+        "study_dir": str(_safe_resolve(study_dir).as_posix()),
+        "status": status,
+        "ephemeral": True,
+    }
+    session_root.mkdir(parents=True, exist_ok=True)
+    (session_root / PRODUCT_SESSION_MANIFEST).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def _read_product_session_manifest(session_root: Path) -> dict[str, Any] | None:
+    path = session_root / PRODUCT_SESSION_MANIFEST
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_session_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def cleanup_expired_product_sessions(*, now: datetime | None = None) -> ProductSessionResponse:
+    """Remove expired managed browser sessions under the product session root only."""
+
+    current = now or datetime.now()
+    sessions_root = _safe_resolve(_product_sessions_root())
+    if not sessions_root.exists():
+        return ProductSessionResponse(
+            session_id="session_cleanup",
+            removed_sessions=[],
+            message="No managed product session root exists yet.",
+        )
+    removed: list[str] = []
+    for child in sessions_root.iterdir():
+        if not child.is_dir() or not re.fullmatch(r"session_[0-9]{14}_[a-f0-9]{8}", child.name):
+            continue
+        session_root = _safe_resolve(child)
+        if not _is_relative_to(session_root, sessions_root):
+            continue
+        manifest = _read_product_session_manifest(session_root)
+        expires_at = _parse_session_datetime(manifest.get("expires_at") if manifest else None)
+        if expires_at is None:
+            mtime = datetime.fromtimestamp(session_root.stat().st_mtime)
+            expires_at = mtime + timedelta(seconds=_product_session_ttl_seconds())
+        if expires_at <= current:
+            shutil.rmtree(session_root)
+            removed.append(child.name)
+    return ProductSessionResponse(
+        session_id="session_cleanup",
+        removed_sessions=removed,
+        message=f"Removed {len(removed)} expired product session(s).",
+    )
+
+
+def touch_product_session(*, session_id: str, study_dir: str | Path | None = None) -> ProductSessionResponse:
+    """Refresh the TTL for an active managed product session."""
+
+    normalized = _validate_session_id(session_id)
+    session_root = _session_root_for_id(normalized)
+    if not session_root.exists():
+        raise ApiServiceError(f"Product session does not exist: {normalized}")
+    if study_dir is not None:
+        requested_study = _safe_resolve(Path(study_dir))
+        if not _is_relative_to(requested_study, session_root):
+            raise ApiServiceError("study_dir does not belong to the requested product session.")
+    manifest = _read_product_session_manifest(session_root) or {}
+    now = datetime.now()
+    expires_at = now + timedelta(seconds=_product_session_ttl_seconds())
+    manifest.update(
+        {
+            "session_id": normalized,
+            "last_seen_at": now.isoformat(timespec="seconds"),
+            "expires_at": expires_at.isoformat(timespec="seconds"),
+            "status": "active",
+            "ephemeral": True,
+        }
+    )
+    (session_root / PRODUCT_SESSION_MANIFEST).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return ProductSessionResponse(
+        session_id=normalized,
+        touched=True,
+        expires_at=expires_at.isoformat(timespec="seconds"),
+        message="Product session TTL refreshed.",
+    )
+
+
+def close_product_session(*, session_id: str, study_dir: str | Path | None = None) -> ProductSessionResponse:
+    """Delete one managed product session after validating its boundary."""
+
+    normalized = _validate_session_id(session_id)
+    session_root = _session_root_for_id(normalized)
+    if study_dir is not None:
+        requested_study = _safe_resolve(Path(study_dir))
+        if not _is_relative_to(requested_study, session_root):
+            raise ApiServiceError("study_dir does not belong to the requested product session.")
+    if not session_root.exists():
+        return ProductSessionResponse(
+            session_id=normalized,
+            closed=False,
+            deleted_path=str(session_root.as_posix()),
+            message="Product session was already removed.",
+        )
+    shutil.rmtree(session_root)
+    return ProductSessionResponse(
+        session_id=normalized,
+        closed=True,
+        deleted_path=str(session_root.as_posix()),
+        message="Product session files were removed.",
+    )
 
 
 # Keep service-layer GraphGateway construction centralized here. Endpoint
@@ -439,10 +633,29 @@ def _check_r_package(rscript_path: str | None, package: str) -> tuple[bool, dict
 def create_default_product_workspace() -> ProductWorkspaceResponse:
     """Create a default local workspace without making the user choose a path."""
 
+    ephemeral = _product_ephemeral_sessions_enabled()
+    if ephemeral:
+        cleanup_expired_product_sessions()
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     study_id = f"study_{stamp[:14]}"
-    root = _default_product_study_root() / study_id
+    session_id = f"session_{stamp[:14]}_{uuid4().hex[:8]}" if ephemeral else None
+    if session_id:
+        session_root = _session_root_for_id(session_id)
+        root = session_root / "study"
+        expires_at = datetime.now() + timedelta(seconds=_product_session_ttl_seconds())
+    else:
+        session_root = None
+        root = _default_product_study_root() / study_id
+        expires_at = None
     summary = ensure_study_workspace(StudyWorkspaceRequest(study_dir=str(root), study_id=study_id))
+    if session_id and session_root and expires_at:
+        _write_product_session_manifest(
+            session_root=session_root,
+            session_id=session_id,
+            study_dir=root,
+            created_at=datetime.now(),
+            expires_at=expires_at,
+        )
     return ProductWorkspaceResponse(
         study_id=study_id,
         study_dir=str(root.resolve().as_posix()),
@@ -450,13 +663,20 @@ def create_default_product_workspace() -> ProductWorkspaceResponse:
         target_datasets=[],
         config_path=str(DEFAULT_DEMO_CONFIG_PATH.as_posix()),
         rscript_path=None,
+        session_id=session_id,
+        expires_at=expires_at.isoformat(timespec="seconds") if expires_at else None,
+        ephemeral=bool(session_id),
         workspace_mode="managed",
         config_mode="server_default",
         rscript_mode="path_lookup",
         input_summary=summary,
         notes=[
             "A local workspace was created automatically for this browser session.",
-            "The default config and Rscript lookup are managed by the backend. Advanced path overrides are optional.",
+            (
+                "This internal demo session is temporary; use End Session to remove uploaded files and run artifacts."
+                if session_id
+                else "The default config and Rscript lookup are managed by the backend. Advanced path overrides are optional."
+            ),
         ],
     )
 

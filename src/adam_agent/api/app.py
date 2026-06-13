@@ -40,6 +40,8 @@ from adam_agent.api.models import (
     NativeDatasetResumeResponse,
     NativeStudyStartRequest,
     NativeStudyStartResponse,
+    ProductSessionRequest,
+    ProductSessionResponse,
     ProductWorkspaceResponse,
     RuntimeReadinessResponse,
     RunReviewSummary,
@@ -58,6 +60,8 @@ from adam_agent.api.service import (
     ApiServiceError,
     build_run_review_summary,
     compare_dataset_with_reference,
+    cleanup_expired_product_sessions,
+    close_product_session,
     create_default_product_workspace,
     dataset_download_path,
     delete_study_input_file,
@@ -87,6 +91,7 @@ from adam_agent.api.service import (
     submit_graph_command,
     summarize_study_inputs,
     test_llm_connection,
+    touch_product_session,
 )
 from adam_agent.api.web import INDEX_HTML
 
@@ -129,6 +134,27 @@ def create_app() -> FastAPI:
     def product_workspace() -> ProductWorkspaceResponse:
         try:
             return create_default_product_workspace()
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/product-session/touch", response_model=ProductSessionResponse)
+    def product_session_touch(request: ProductSessionRequest) -> ProductSessionResponse:
+        try:
+            return touch_product_session(session_id=request.session_id, study_dir=request.study_dir)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/product-session/close", response_model=ProductSessionResponse)
+    def product_session_close(request: ProductSessionRequest) -> ProductSessionResponse:
+        try:
+            return close_product_session(session_id=request.session_id, study_dir=request.study_dir)
+        except ApiServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/product-session/cleanup", response_model=ProductSessionResponse)
+    def product_session_cleanup() -> ProductSessionResponse:
+        try:
+            return cleanup_expired_product_sessions()
         except ApiServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

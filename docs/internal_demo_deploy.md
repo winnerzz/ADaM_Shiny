@@ -58,6 +58,24 @@ adam_agent_workspace
 
 不要把项目源码目录当作运行数据目录。
 
+## 临时会话和自动清理
+
+内部 demo 默认开启临时浏览器会话：
+
+- 每次点击 `Start Upload` 会创建一个独立 session study 目录。
+- 点击页面右上角 `End Session` 会删除该 session 的上传文件、生成代码、输出和审计文件。
+- 浏览器离开页面时会尽量发送清理请求；如果浏览器没有送达，后端会用 TTL 兜底。
+- 默认 TTL 是 1 小时，可通过 `ADAM_AGENT_SESSION_TTL_SECONDS` 调整。
+
+Docker demo 每次容器启动时还会清空：
+
+```text
+/app/workspace/studies
+/app/workspace/demo_studies
+```
+
+这适合小服务器上的内部测试，避免上传文件和 run 目录长期堆积。不要把这个 compose 配置直接当作需要长期保存审计记录的生产部署。
+
 ## 健康检查
 
 ```bash

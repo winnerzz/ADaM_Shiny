@@ -98,9 +98,13 @@ class Phase8ApiTests(unittest.TestCase):
         self._old_demo_root = os.environ.get("ADAM_AGENT_DEMO_STUDY_ROOT")
         self._old_product_root = os.environ.get("ADAM_AGENT_PRODUCT_STUDY_ROOT")
         self._old_rscript_path = os.environ.get("ADAM_AGENT_RSCRIPT_PATH")
+        self._old_ephemeral_sessions = os.environ.get("ADAM_AGENT_EPHEMERAL_SESSIONS")
+        self._old_session_ttl = os.environ.get("ADAM_AGENT_SESSION_TTL_SECONDS")
         os.environ["ADAM_AGENT_GRAPH_CHECKPOINTER_BACKEND"] = "memory"
         os.environ["ADAM_AGENT_DEMO_STUDY_ROOT"] = str(TMP_ROOT / "ui_demo_study")
         os.environ["ADAM_AGENT_PRODUCT_STUDY_ROOT"] = str(TMP_ROOT / "local_product_studies")
+        os.environ["ADAM_AGENT_EPHEMERAL_SESSIONS"] = "0"
+        os.environ["ADAM_AGENT_SESSION_TTL_SECONDS"] = "3600"
 
     def tearDown(self) -> None:
         if self._old_backend is None:
@@ -119,6 +123,14 @@ class Phase8ApiTests(unittest.TestCase):
             os.environ.pop("ADAM_AGENT_RSCRIPT_PATH", None)
         else:
             os.environ["ADAM_AGENT_RSCRIPT_PATH"] = self._old_rscript_path
+        if self._old_ephemeral_sessions is None:
+            os.environ.pop("ADAM_AGENT_EPHEMERAL_SESSIONS", None)
+        else:
+            os.environ["ADAM_AGENT_EPHEMERAL_SESSIONS"] = self._old_ephemeral_sessions
+        if self._old_session_ttl is None:
+            os.environ.pop("ADAM_AGENT_SESSION_TTL_SECONDS", None)
+        else:
+            os.environ["ADAM_AGENT_SESSION_TTL_SECONDS"] = self._old_session_ttl
 
     def test_health_endpoint(self) -> None:
         client = TestClient(create_app())
@@ -11419,6 +11431,100 @@ console.log(JSON.stringify({withProgress, legacyFallback}));
         self.assertEqual(payload["config_mode"], "server_default")
         self.assertEqual(payload["rscript_mode"], "path_lookup")
         self.assertIsNone(payload["rscript_path"])
+
+    def test_product_workspace_ephemeral_session_can_be_closed(self) -> None:
+        os.environ["ADAM_AGENT_EPHEMERAL_SESSIONS"] = "1"
+        os.environ["ADAM_AGENT_SESSION_TTL_SECONDS"] = "3600"
+        client = TestClient(create_app())
+
+        response = client.post("/product-workspace")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["ephemeral"])
+        self.assertRegex(payload["session_id"], r"^session_[0-9]{14}_[a-f0-9]{8}$")
+        study_dir = Path(payload["study_dir"])
+        self.assertTrue(study_dir.is_dir())
+        self.assertTrue(study_dir.is_relative_to(TMP_ROOT / "local_product_studies" / "sessions"))
+        self.assertTrue((study_dir.parent / ".session.json").exists())
+
+        close = client.post(
+            "/product-session/close",
+            json={"session_id": payload["session_id"], "study_dir": payload["study_dir"]},
+        )
+
+        self.assertEqual(close.status_code, 200, close.text)
+        close_payload = close.json()
+        self.assertTrue(close_payload["closed"])
+        self.assertFalse(study_dir.exists())
+
+    def test_product_session_close_rejects_study_dir_outside_session(self) -> None:
+        os.environ["ADAM_AGENT_EPHEMERAL_SESSIONS"] = "1"
+        client = TestClient(create_app())
+        response = client.post("/product-workspace")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        outside = TMP_ROOT / "outside_study"
+        outside.mkdir(exist_ok=True)
+
+        close = client.post(
+            "/product-session/close",
+            json={"session_id": payload["session_id"], "study_dir": str(outside)},
+        )
+
+        self.assertEqual(close.status_code, 400)
+        self.assertTrue(Path(payload["study_dir"]).exists())
+
+    def test_product_session_cleanup_removes_only_expired_managed_sessions(self) -> None:
+        from adam_agent.api import service
+
+        os.environ["ADAM_AGENT_EPHEMERAL_SESSIONS"] = "1"
+        os.environ["ADAM_AGENT_SESSION_TTL_SECONDS"] = "3600"
+        product_root = TMP_ROOT / "local_product_studies"
+        sessions_root = product_root / "sessions"
+        expired = sessions_root / "session_20200101000000_deadbeef"
+        active = sessions_root / "session_20990101000000_feedface"
+        unrelated = sessions_root / "manual_keep"
+        for path in [expired, active, unrelated]:
+            path.mkdir(parents=True, exist_ok=True)
+        (expired / ".session.json").write_text(
+            json.dumps({"session_id": expired.name, "expires_at": "2020-01-01T00:00:00"}),
+            encoding="utf-8",
+        )
+        (active / ".session.json").write_text(
+            json.dumps({"session_id": active.name, "expires_at": "2099-01-01T00:00:00"}),
+            encoding="utf-8",
+        )
+
+        result = service.cleanup_expired_product_sessions()
+
+        self.assertIn(expired.name, result.removed_sessions)
+        self.assertFalse(expired.exists())
+        self.assertTrue(active.exists())
+        self.assertTrue(unrelated.exists())
+
+    def test_index_exposes_product_session_cleanup_controls(self) -> None:
+        client = TestClient(create_app())
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        html = response.text
+        self.assertIn('id="endSessionButton"', html)
+        self.assertIn("data-i18n=\"endSession\"", html)
+        self.assertIn("product_session_id", html)
+        self.assertIn("/product-session/close", html)
+        self.assertIn("navigator.sendBeacon", html)
+        self.assertIn("window.addEventListener('pagehide'", html)
+        self.assertIn("byId('endSessionButton').addEventListener('click', endCurrentSession);", html)
+
+    def test_docker_compose_enables_ephemeral_demo_cleanup(self) -> None:
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn("ADAM_AGENT_EPHEMERAL_SESSIONS", compose)
+        self.assertIn("ADAM_AGENT_SESSION_TTL_SECONDS", compose)
+        self.assertIn("rm -rf /app/workspace/studies/* /app/workspace/demo_studies/*", compose)
+        self.assertIn("python -m uvicorn adam_agent.api.app:create_app --factory", compose)
 
     def test_workspace_endpoint_creates_canonical_folders(self) -> None:
         study_dir = _workspace_dir("phase8_workspace_endpoint") / "MY_STUDY"
