@@ -6658,6 +6658,110 @@ class GraphGatewayTests(unittest.TestCase):
         self.assertEqual(progress["study_loop_result"]["started_datasets"], ["ADAE"])
         self.assertEqual(progress["study_loop_result"]["skipped_datasets"][0]["dataset"], "ADSL")
 
+    def test_gateway_record_execution_refreshes_downstream_runtime_dependency_resolution(self) -> None:
+        study_dir = _workspace_dir("lg2_gateway_record_execution_unlocks_downstream") / "PSY201"
+        sdtm_dir = study_dir / "input_sdtm"
+        legacy_dir = study_dir / "legacy_code"
+        run_id = "run_lg2_record_execution_unlocks_downstream"
+        run_dir = study_dir / "runs" / run_id
+        output_dir = run_dir / "outputs"
+        sdtm_dir.mkdir(parents=True)
+        legacy_dir.mkdir()
+        output_dir.mkdir(parents=True)
+        (sdtm_dir / "dm.csv").write_text("USUBJID,STUDYID\n01,PSY201\n", encoding="utf-8")
+        (sdtm_dir / "ae.csv").write_text("USUBJID,AETERM\n01,HEADACHE\n", encoding="utf-8")
+        (legacy_dir / "addm.sas").write_text("data addm; set dm; run;\n", encoding="utf-8")
+        (legacy_dir / "adae.sas").write_text("data adae; set addm ae; run;\n", encoding="utf-8")
+        gateway = GraphGateway()
+
+        first = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADDM", "ADAE"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        if first.graph_state.current_interrupt and first.graph_state.current_interrupt.name == "dependency_review":
+            gateway.review_dependency(
+                study_dir=study_dir,
+                run_id=run_id,
+                decision="approve",
+                reviewer="tester",
+                notes="Accept dependency evidence for this unchanged run.",
+            )
+            first = gateway.start_native_study_product_loop(
+                study_dir=study_dir,
+                study_id="PSY201",
+                run_id=run_id,
+                target_datasets=["ADDM", "ADAE"],
+                llm_provider={"provider": "mock", "model": "mock-model"},
+                llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+            )
+
+        self.assertEqual(first.started_datasets, ["ADDM"])
+        before = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        before_by_dataset = {item["dataset"]: item for item in before["datasets"]}
+        self.assertEqual(before_by_dataset["ADAE"]["waiting_for_runtime_dependencies"], ["ADDM"])
+
+        addm_output = output_dir / "addm.csv"
+        addm_output.write_text("USUBJID,TRTSDT\n01,2024-01-01\n", encoding="utf-8")
+        gateway.record_execution(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            dataset="ADDM",
+            execution_state={
+                "status": "completed",
+                "terminal_failure": False,
+                "partial_output_usable": True,
+                "output_path": str(addm_output.as_posix()),
+                "generation_quality": {"not_real_derivation": False},
+                "not_real_derivation": False,
+            },
+            validation_summary={"status": "passed"},
+            artifacts=[
+                ArtifactRef(
+                    artifact_id="output_adam_psy201_run_lg2_record_execution_unlocks_downstream_addm",
+                    kind="output_adam",
+                    path=str(addm_output.as_posix()),
+                    sha256=f"sha256:{sha256_file(addm_output)}",
+                    dataset="ADDM",
+                    format="csv",
+                    role="output",
+                )
+            ],
+            input_fingerprint_payload=input_fingerprint(study_dir),
+        )
+
+        after = gateway.progress_summary(study_dir=study_dir, run_id=run_id)
+        after_by_dataset = {item["dataset"]: item for item in after["datasets"]}
+        self.assertEqual(after_by_dataset["ADAE"]["waiting_for_runtime_dependencies"], [])
+        self.assertFalse(after_by_dataset["ADAE"]["blocked"])
+        self.assertEqual(after_by_dataset["ADAE"]["blocked_reason"], "")
+        self.assertNotEqual(after_by_dataset["ADAE"]["next_action"], "complete_dependency_output")
+        self.assertNotEqual(after_by_dataset["ADAE"]["next_action"], "blocked")
+        self.assertIn("ADAE", after["runnable_datasets"])
+        self.assertNotIn("ADAE", {block["dataset"] for block in after["blocked_datasets"]})
+        graph_state_after_execution = gateway.load_graph_state(study_dir=study_dir, run_id=run_id)
+        resolution = [
+            record
+            for record in graph_state_after_execution.dependency_resolution
+            if record["target_dataset"] == "ADAE" and record["required_dataset"] == "ADDM"
+        ]
+        self.assertEqual(len(resolution), 1)
+        self.assertEqual(resolution[0]["resolution_status"], "available")
+        self.assertEqual(resolution[0]["artifact_source"], "run_output")
+
+        continued = gateway.start_native_study_product_loop(
+            study_dir=study_dir,
+            study_id="PSY201",
+            run_id=run_id,
+            target_datasets=["ADDM", "ADAE"],
+            llm_provider={"provider": "mock", "model": "mock-model"},
+            llm_exposure={"mode": "metadata_only", "data_classification": "unknown"},
+        )
+        self.assertIn("ADAE", continued.started_datasets)
     def test_gateway_native_study_loop_dependency_output_gate_requires_run_output_artifact_hash(self) -> None:
         study_dir = _workspace_dir("lg2_gateway_native_study_loop_dependency_hash_gate") / "PSY201"
         output_dir = study_dir / "runs" / "run_lg2_native_study_loop_dependency_hash_gate" / "outputs"

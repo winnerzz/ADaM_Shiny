@@ -38,6 +38,7 @@ from adam_agent.graph.terminal_failure_actions import (
     TERMINAL_FAILURE_REVIEW_ACTIONS,
     TERMINAL_FAILURE_REVIEW_ACTION_NAMES,
 )
+from adam_agent.graph.dependency_resolution import blocked_dependency_targets
 from adam_agent.graph.workflow_state import (
     compare_fingerprints,
     input_fingerprint,
@@ -3789,6 +3790,7 @@ class GraphGateway:
             metadata={"graph_product_execute": True, **execution_state},
         )
         next_state.datasets[target] = dataset_state
+        _refresh_runtime_dependency_state_from_outputs(next_state, run_dir=root / "runs" / run_id)
         _roll_up_study_state(next_state, preferred_interrupt=dataset_state.current_interrupt)
         _sync_study_agent_decisions(next_state)
         next_state.updated_at = utc_now()
@@ -4878,6 +4880,14 @@ class GraphGateway:
 
         root = Path(study_dir).expanduser()
         graph_state = self.load_graph_state(study_dir=root, run_id=run_id)
+        if _refresh_runtime_dependency_state_from_outputs(graph_state, run_dir=root / "runs" / run_id):
+            _roll_up_study_state(graph_state)
+            self._persist_graph_state(
+                root,
+                graph_state,
+                node="progress_runtime_dependency_refresh",
+                runtime_persistence_extra=_runtime_persistence_extras(graph_state),
+            )
         datasets = [_dataset_progress_item(graph_state, dataset) for dataset in _progress_dataset_order(graph_state)]
         output_quality_rollup = study_output_quality_rollup(
             datasets,
@@ -5923,6 +5933,251 @@ def _native_study_loop_dependency_outputs_available(state: StudyRunState, target
             available.add(required)
     return all(dependency in available for dependency in dependencies)
 
+
+def _refresh_runtime_dependency_resolution_from_outputs(state: StudyRunState, *, run_dir: Path) -> None:
+    """Update dependency-resolution records when graph-owned upstream outputs become usable."""
+
+    dependencies = state.dependency_plan.get("dataset_dependencies", {})
+    if not isinstance(dependencies, dict):
+        return
+
+    refreshed: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str]] = set()
+    for record in state.dependency_resolution:
+        item = dict(record)
+        target = str(item.get("target_dataset") or "").strip().upper()
+        required = str(item.get("required_dataset") or "").strip().upper()
+        if target and required:
+            seen_edges.add((target, required))
+            runtime_record = _runtime_dependency_resolution_record_from_state(state, target, required, run_dir=run_dir)
+            if runtime_record is not None:
+                item.update(runtime_record)
+        refreshed.append(item)
+
+    for target, required_values in dependencies.items():
+        normalized_target = str(target).strip().upper()
+        if not isinstance(required_values, list):
+            continue
+        for raw_required in required_values:
+            required = str(raw_required).strip().upper()
+            if not normalized_target or not required or (normalized_target, required) in seen_edges:
+                continue
+            runtime_record = _runtime_dependency_resolution_record_from_state(
+                state,
+                normalized_target,
+                required,
+                run_dir=run_dir,
+            )
+            if runtime_record is None:
+                continue
+            refreshed.append(runtime_record)
+            seen_edges.add((normalized_target, required))
+
+    state.dependency_resolution = refreshed
+    for dataset, dataset_state in state.datasets.items():
+        dataset_state.dependency_resolution = [
+            dict(record)
+            for record in refreshed
+            if str(record.get("target_dataset") or "").strip().upper() == dataset
+        ]
+
+
+def _refresh_runtime_dependency_state_from_outputs(state: StudyRunState, *, run_dir: Path) -> bool:
+    """Refresh dependency read models after upstream runtime outputs become usable."""
+
+    before = _dependency_read_model_signature(state)
+    _refresh_runtime_dependency_resolution_from_outputs(state, run_dir=run_dir)
+    _refresh_runnable_and_blocked_datasets_from_dependency_resolution(state)
+    return _dependency_read_model_signature(state) != before
+
+
+def _refresh_runnable_and_blocked_datasets_from_dependency_resolution(state: StudyRunState) -> None:
+    dependencies = state.dependency_plan.get("dataset_dependencies", {})
+    if not isinstance(dependencies, dict):
+        return
+
+    requested_set = {dataset.strip().upper() for dataset in state.requested_datasets if dataset.strip()}
+    requested_set.update(
+        dataset
+        for dataset, dataset_state in state.datasets.items()
+        if _has_dataset_product_progress(dataset_state)
+    )
+    target_datasets = _normalize_dataset_list(state.target_datasets)
+    satisfied_dependency_datasets = _available_dependency_targets_from_dicts(state.dependency_resolution)
+    runnable = _runnable_datasets_from_resolution(
+        target_datasets,
+        requested_set,
+        state.dependency_resolution,
+        dependencies=dependencies,
+        satisfied_dependency_datasets=satisfied_dependency_datasets,
+    )
+    direct_blocks = _missing_dependency_blocks_from_dicts(
+        state.dependency_resolution,
+        reportable_datasets=target_datasets,
+    )
+    dependency_blocks = direct_blocks + blocked_dependency_targets(
+        target_datasets=target_datasets,
+        candidate_datasets=state.requested_datasets,
+        runnable_datasets=runnable,
+        direct_blocks=direct_blocks,
+        dependencies=dependencies,
+        satisfied_dependency_datasets=satisfied_dependency_datasets,
+    )
+    unsupported = [
+        {"dataset": str(dataset), "reason": "unsupported_dataset", "blocked_by": "study_planner"}
+        for dataset in state.dependency_plan.get("unsupported_datasets", [])
+    ]
+    state.runnable_datasets = runnable
+    state.blocked_datasets = unsupported + dependency_blocks
+
+
+def _available_dependency_targets_from_dicts(records: list[dict[str, Any]]) -> list[str]:
+    available: list[str] = []
+    for record in records:
+        if str(record.get("resolution_status") or "").strip() != "available":
+            continue
+        if str(record.get("artifact_source") or "").strip() == "reference_adam":
+            continue
+        required = str(record.get("required_dataset") or "").strip().upper()
+        if required and required not in available:
+            available.append(required)
+    return available
+
+
+def _missing_dependency_blocks_from_dicts(
+    records: list[dict[str, Any]],
+    *,
+    reportable_datasets: list[str] | None = None,
+) -> list[dict[str, str]]:
+    reportable = set(_normalize_dataset_list(reportable_datasets or [])) if reportable_datasets is not None else None
+    blocked_by_dataset: dict[str, list[str]] = {}
+    for record in records:
+        if str(record.get("resolution_status") or "").strip() not in {"user_action_required", "found_but_unusable"}:
+            continue
+        target = str(record.get("target_dataset") or "").strip().upper()
+        required = str(record.get("required_dataset") or "").strip().upper()
+        if not target or (reportable is not None and target not in reportable):
+            continue
+        blocked_by_dataset.setdefault(target, [])
+        if required and required not in blocked_by_dataset[target]:
+            blocked_by_dataset[target].append(required)
+    return [
+        {
+            "dataset": dataset,
+            "reason": "dependency_user_action_required",
+            "blocked_by": ",".join(blocked_by),
+        }
+        for dataset, blocked_by in blocked_by_dataset.items()
+    ]
+
+
+def _runnable_datasets_from_resolution(
+    target_datasets: list[str],
+    requested_datasets: set[str],
+    dependency_resolutions: list[dict[str, Any]],
+    *,
+    dependencies: dict[str, list[str]],
+    satisfied_dependency_datasets: list[str],
+) -> list[str]:
+    approved_dependencies = {
+        str(record.get("required_dataset") or "").strip().upper()
+        for record in dependency_resolutions
+        if str(record.get("resolution_status") or "").strip() == "approved_for_system_generation"
+    }
+    unresolved_targets = {
+        str(record.get("target_dataset") or "").strip().upper()
+        for record in dependency_resolutions
+        if str(record.get("resolution_status") or "").strip() in {"user_action_required", "found_but_unusable"}
+    }
+    candidate_datasets = requested_datasets | approved_dependencies
+    satisfied = set(satisfied_dependency_datasets)
+    runnable: list[str] = []
+    changed = True
+    while changed:
+        changed = False
+        for dataset in target_datasets:
+            normalized = dataset.strip().upper()
+            if normalized in runnable or normalized not in candidate_datasets or normalized in unresolved_targets:
+                continue
+            required = [
+                str(dependency).strip().upper()
+                for dependency in dependencies.get(normalized, [])
+                if str(dependency).strip()
+            ]
+            if all(dependency in satisfied or dependency in runnable for dependency in required):
+                runnable.append(normalized)
+                changed = True
+    return runnable
+
+
+def _dependency_read_model_signature(state: StudyRunState) -> str:
+    payload = {
+        "runnable_datasets": state.runnable_datasets,
+        "blocked_datasets": state.blocked_datasets,
+        "dependency_resolution": state.dependency_resolution,
+        "dataset_dependency_resolution": {
+            dataset: dataset_state.dependency_resolution
+            for dataset, dataset_state in state.datasets.items()
+        },
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _runtime_dependency_resolution_record_from_state(
+    state: StudyRunState,
+    target: str,
+    required: str,
+    *,
+    run_dir: Path,
+) -> dict[str, Any] | None:
+    dependency_state = state.datasets.get(required)
+    if dependency_state is None:
+        return None
+    quality = dataset_output_quality(
+        status=dependency_state.status,
+        code_state=dependency_state.code_state,
+        execution_state=dependency_state.execution_state,
+        validation_summary=dependency_state.validation_summary,
+    )
+    if quality.get("runtime_dependency_eligible") is not True:
+        return None
+    output_artifact = _runtime_dependency_output_artifact(dependency_state, run_dir=run_dir)
+    if output_artifact is None:
+        return None
+    artifact_path = _resolve_run_artifact_path(run_dir, str(output_artifact.path))
+    if artifact_path is None or not artifact_path.exists() or not artifact_path.is_file():
+        return None
+    artifact_sha256 = str(output_artifact.sha256 or "").strip()
+    if not artifact_sha256:
+        artifact_sha256 = f"sha256:{sha256_file(artifact_path)}"
+    return {
+        "target_dataset": target,
+        "required_dataset": required,
+        "available": True,
+        "artifact_path": str(Path(str(output_artifact.path)).as_posix()),
+        "artifact_sha256": artifact_sha256,
+        "artifact_source": "run_output",
+        "resolution_status": "available",
+        "allowed_actions": [],
+        "selected_action": "use_run_output",
+        "reason": f"{target} depends on {required}; a graph-owned {required} run output is available.",
+    }
+
+
+def _runtime_dependency_output_artifact(dataset_state: DatasetRunState, *, run_dir: Path) -> ArtifactRef | None:
+    execution_output = str(dataset_state.execution_state.get("output_path") or "").strip()
+    if execution_output:
+        execution_path = _resolve_run_artifact_path(run_dir, execution_output)
+        for artifact in dataset_state.artifacts:
+            if artifact.kind != "output_adam":
+                continue
+            artifact_path = _resolve_run_artifact_path(run_dir, str(artifact.path))
+            if execution_path is not None and artifact_path is not None and _paths_equivalent(execution_path, artifact_path):
+                return artifact
+    for artifact in dataset_state.artifacts:
+        if artifact.kind == "output_adam":
+            return artifact
+    return None
 
 def _waiting_runtime_dependencies(state: StudyRunState, target: str) -> list[str]:
     """Return upstream ADaM datasets whose real runtime output is still needed."""
